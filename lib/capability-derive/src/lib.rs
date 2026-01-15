@@ -14,7 +14,6 @@ use proc_macro::TokenStream;
 pub(crate) mod capability;
 pub(crate) mod capability_ffi;
 pub(crate) mod capability_client;
-pub(crate) mod capability_client_impl;
 pub(crate) mod capability_export;
 pub(crate) mod capability_function;
 pub(crate) mod capability_server;
