@@ -368,6 +368,11 @@ impl CapabilityMethod {
         let ffi = self.build_ffi_meta(trait_name, state_name);
         ffi.generate_capability_ffi()
     }
+
+    pub fn wasm_import_generation(&self, trait_name: &Ident, state_name: &Ident) -> TokenStream {
+        let ffi = self.build_ffi_meta(trait_name, state_name);
+        ffi.generate_client_wasm()
+    }
 }
 
 #[cfg(test)]

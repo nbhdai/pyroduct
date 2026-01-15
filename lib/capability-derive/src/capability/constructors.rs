@@ -116,12 +116,8 @@ impl ClientConstructor {
 
         // 4. Build FFI Metadata
         // Determine Final Return Type
-        let final_return_type: Type = if let Some(err_type) = &self.error_type {            
-            parse_quote!(Result<Self, #err_type>)
-        } else {
-            parse_quote!(Self)
-        };
-        let ffi = client_constructor_ffi_meta(trait_name, &state_name, final_return_type, self.sig.asyncness.is_some());
+        
+        let ffi = client_constructor_ffi_meta(trait_name, &state_name, self.error_type.as_ref(), self.sig.asyncness.is_some());
 
         // 5. Generate the implementation
         // We reconstruct the signature because the return type might change.
@@ -152,12 +148,17 @@ impl ClientConstructor {
 
 /// Helper to construct the CapabilityFuncFFI configuration for constructors.
 /// Encapsulates naming conventions and return type logic.
-fn client_constructor_ffi_meta(
+pub fn client_constructor_ffi_meta(
     trait_name: &Ident,
     state_name: &Ident,
-    final_return_type: Type,
+    error_type: Option<&Type>,
     is_async: bool,
 ) -> CapabilityFuncFFI {
+    let return_type: Type = if let Some(err_type) = error_type {            
+        parse_quote!(Result<Self, #err_type>)
+    } else {
+        parse_quote!(Self)
+    };
     CapabilityFuncFFI {
         // Updated Path: __{trait}_{state}_new_client
         library: format_ident!("__{}_{}_new_client", trait_name, state_name), 
@@ -167,7 +168,7 @@ fn client_constructor_ffi_meta(
         fn_wasm_name: format_ident!("__{}_{}_new_client_wasm", trait_name, state_name),
         vis: syn::Visibility::Public(parse_quote!(pub)),
         is_async,
-        return_type: final_return_type,
+        return_type,
         input: None,
         client: Some(format_ident!("Self")),
         server: None, 

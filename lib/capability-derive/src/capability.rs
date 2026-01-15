@@ -12,7 +12,7 @@ use syn::{
 };
 
 mod constructors;
-use constructors::ClientConstructor;
+use constructors::{ClientConstructor, client_constructor_ffi_meta};
 mod methods;
 use methods::CapabilityMethod;
 
@@ -361,6 +361,54 @@ impl CapabilityDefTrait {
                 #(#capability_methods)*
             }
         }
+    }
+
+    pub fn generate_host_ffi_functions(&self) -> Result<TokenStream> {
+        let state_name = self.state_name.as_ref().ok_or(Error::new_spanned(
+            &self.trait_name, 
+            "State name required to generate host FFI functions."
+        ))?;
+        let trait_name = &self.trait_name;
+        
+        let constructor_ffi = client_constructor_ffi_meta(
+            trait_name,
+            state_name,
+            self.explicit_error_type.as_ref(),
+            false,
+        );
+        let constructor_ffi = constructor_ffi.generate_capability_ffi();
+
+        let method_ffis = self.methods.iter().map(|m| m.ffi_function_generation(trait_name, state_name));
+        
+        Ok(quote! {
+            #constructor_ffi
+            #(#method_ffis)*
+        })
+    }
+
+    pub fn generate_wasm_import_functions(&self) -> Result<TokenStream> {
+        let state_name = self.state_name.as_ref().ok_or(Error::new_spanned(
+            &self.trait_name, 
+            "State name required to generate WASM imports."
+        ))?;
+        let trait_name = &self.trait_name;
+
+        let constructor_ffi = client_constructor_ffi_meta(
+            trait_name,
+            state_name,
+            self.explicit_error_type.as_ref(),
+            false,
+        );
+        let constructor_ffi = constructor_ffi.generate_capability_ffi();
+
+        let method_imports = self.methods.iter().map(|m| m.wasm_import_generation(trait_name, state_name));
+
+        Ok(quote! {
+            extern "C" {
+                #constructor_ffi
+                #(#method_imports)*
+            }
+        })
     }
 }
 
