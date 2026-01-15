@@ -869,8 +869,8 @@ mod tests {
                 }
 
                 // Methods
-                fn query(&self, sql: String) -> Result<String, DbError>;
-                async fn execute(&self, sql: String) -> Result<u64, DbError>;
+                fn query(sql: String) -> Result<String, DbError>;
+                async fn execute(sql: String) -> Result<u64, DbError>;
             }
         };
 
@@ -900,11 +900,6 @@ mod tests {
             .expect("Failed to parse trait");
         let trait_output = def_from_trait.generate_trait_definition()
             .expect("Failed to generate definition from trait");
-
-        // 4. Generate Trait Definition from the IMPL source
-        // We must manually strip `state_name` because `generate_trait_definition`
-        // normally forbids generating a trait from an impl to prevent misuse.
-        // Stripping it simulates "if we treated this impl interface as the source of truth".
         let mut def_from_impl = CapabilityDefTrait::from_impl(impl_code)
             .expect("Failed to parse impl");
         
@@ -913,13 +908,7 @@ mod tests {
         
         let impl_output = def_from_impl.generate_trait_definition()
             .expect("Failed to generate definition from impl");
-
-        // 5. Verify they are identical
-        // This confirms that `from_impl` correctly normalized the inputs (converting methods, 
-        // handling constructors, and mapping types) exactly like `from_trait` does.
         assert_code_eq(&trait_output, &impl_output.to_string());
-        
-        // 6. Verify the content is what we expect (Server-side transformed trait)
         let expected = r#"
             pub trait Database {
                 type Client = DbClient;
@@ -935,4 +924,62 @@ mod tests {
         "#;
         assert_code_eq(&trait_output, expected);
     }
+
+
+    #[test]
+    fn test_trait_generation_consistency_between_source_and_impl_no_client() {
+        // 1. Define the Original Trait
+        // This is what the user defines in the shared library.
+        let trait_code = quote! {
+            trait Database {
+                type Error = DbError;
+
+                // Methods
+                fn query(sql: String) -> Result<String, DbError>;
+                async fn execute(sql: String) -> Result<u64, DbError>;
+            }
+        };
+
+        // 2. Define the Implementation
+        // This is what the user writes on the host side.
+        let impl_code = quote! {
+            impl Database for PostgresDriver {
+                type Error = DbError;
+
+                fn query(&self, sql: String) -> Result<String, DbError> {
+                    Ok("row".to_string())
+                }
+
+                async fn execute(&self, sql: String) -> Result<u64, DbError> {
+                    Ok(1)
+                }
+            }
+        };
+
+        // 3. Generate Trait Definition from the TRAIT source
+        let def_from_trait = CapabilityDefTrait::from_trait(trait_code)
+            .expect("Failed to parse trait");
+        let trait_output = def_from_trait.generate_trait_definition()
+            .expect("Failed to generate definition from trait");
+        let mut def_from_impl = CapabilityDefTrait::from_impl(impl_code)
+            .expect("Failed to parse impl");
+        
+        // HACK: Force state_name to None to bypass the guard for this specific comparison test
+        def_from_impl.state_name = None; 
+        
+        let impl_output = def_from_impl.generate_trait_definition()
+            .expect("Failed to generate definition from impl");
+
+        assert_code_eq(&trait_output, &impl_output.to_string());
+    
+        let expected = r#"
+            pub trait Database {
+                type Error = DbError;
+                fn query(&self, sql: String) -> Result<String, Self::Error>;
+                async fn execute(&self, sql: String) -> Result<u64, Self::Error>;
+            }
+        "#;
+        assert_code_eq(&trait_output, expected);
+    }
+}
 }

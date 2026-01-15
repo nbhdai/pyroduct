@@ -118,6 +118,97 @@ impl CapabilityMethod {
         })
     }
 
+    /// Creates a CapabilityMethod from a Host Implementation (impl Trait for State).
+    ///
+    /// Unlike `new` (which parses the Trait definition), this parses the implementation,
+    /// so it must Strip `&self`, Strip `client` arguments, and Unwrap `Result<T, E>`.
+    pub fn from_impl(
+        method: &ImplItemFn,
+        explicit_client_type: Option<&Type>,
+        explicit_error_type: Option<&Type>,
+    ) -> syn::Result<Self> {
+        let sig = &method.sig;
+        let mut clean_inputs = Vec::new();
+
+        // 1. Filter Inputs: Ignore &self and Client
+        for input in &sig.inputs {
+            match input {
+                FnArg::Receiver(_) => continue, // Ignore &self
+                FnArg::Typed(pat_type) => {
+                    let ty = &pat_type.ty;
+                    // Check if this is the client argument
+                    if let Some(client_type) = explicit_client_type {
+                         let is_client_type = if quote!(#ty).to_string() == quote!(#client_type).to_string() {
+                            true
+                        } else if let Type::Reference(type_ref) = &**ty {
+                            let inner = &type_ref.elem;
+                            quote!(#inner).to_string() == quote!(#client_type).to_string()
+                        } else {
+                            false
+                        };
+                        if is_client_type {
+                            continue; // Ignore client argument
+                        }
+                    }
+                    
+                    // Extract Name
+                    let arg_name = if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
+                        pat_ident.ident.clone()
+                    } else {
+                        // In impl blocks, patterns are allowed, but for capability extraction we prefer idents.
+                        // We'll warn or just return error if complex.
+                        return Err(Error::new_spanned(
+                            &pat_type.pat,
+                            "Host implementation arguments must be named identifiers.",
+                        ));
+                    };
+                    clean_inputs.push((arg_name, *ty.clone()));
+                }
+            }
+        }
+
+        // 2. Filter Output: Unwrap Result<T, E> -> T if error_type is present
+        let clean_output = if let Some(_) = explicit_error_type {
+            match &sig.output {
+                ReturnType::Default => ReturnType::Default,
+                ReturnType::Type(arrow, ty) => {
+                    // Try to unwrap Result
+                    if let Type::Path(tp) = &**ty {
+                        if tp.path.segments.last().map(|s| s.ident == "Result").unwrap_or(false) {
+                             if let PathArguments::AngleBracketed(args) = &tp.path.segments.last().unwrap().arguments {
+                                 if let Some(GenericArgument::Type(inner)) = args.args.first() {
+                                     ReturnType::Type(*arrow, Box::new(inner.clone()))
+                                 } else {
+                                     // Result without args?
+                                     sig.output.clone()
+                                 }
+                             } else {
+                                 sig.output.clone()
+                             }
+                        } else {
+                            // Returns something else, maybe explicit error not used correctly or just infallible?
+                            sig.output.clone()
+                        }
+                    } else {
+                        sig.output.clone()
+                    }
+                }
+            }
+        } else {
+            sig.output.clone()
+        };
+
+        Ok(Self {
+            name: sig.ident.clone(),
+            inputs: clean_inputs,
+            output: clean_output,
+            original_sig: sig.clone(), // Note: This stores the SERVER signature, but 'inputs'/'output' fields are cleaned.
+            attrs: method.attrs.clone(),
+            client_type: explicit_client_type.cloned(),
+            error_type: explicit_error_type.cloned(),
+        })
+    }
+
     /// Generates the transformed trait method signature.
     ///
     /// Transformation Rules:
