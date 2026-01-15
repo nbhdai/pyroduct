@@ -1,0 +1,31 @@
+error[E0425]: cannot find type `TRef` in this scope
+ --> tests/compile_fail/generics_not_supported_from.rs:5:10
+  |
+5 | #[derive(FromRow, DeepRef)]
+  |          ^^^^^^^ not found in this scope
+  |
+  = note: this error originates in the derive macro `FromRow` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0425]: cannot find type `TRef` in this scope
+ --> tests/compile_fail/generics_not_supported_from.rs:5:19
+  |
+5 | #[derive(FromRow, DeepRef)]
+  |                   ^^^^^^^ not found in this scope
+  |
+  = note: this error originates in the derive macro `DeepRef` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0107]: missing generics for struct `GenericStruct`
+ --> tests/compile_fail/generics_not_supported_from.rs:6:8
+  |
+6 | struct GenericStruct<T> {
+  |        ^^^^^^^^^^^^^ expected 1 generic argument
+  |
+note: struct defined here, with 1 generic parameter: `T`
+ --> tests/compile_fail/generics_not_supported_from.rs:6:8
+  |
+6 | struct GenericStruct<T> {
+  |        ^^^^^^^^^^^^^ -
+help: add missing generic argument
+  |
+6 | struct GenericStruct<T><T> {
+  |                     +++

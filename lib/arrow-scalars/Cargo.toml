@@ -1,0 +1,26 @@
+[package]
+name = "arrow-scalars"
+version = "0.3.10"
+edition = "2021"
+
+[features]
+default = ["macros"]
+macros = ["dep:arrow-derive"]
+
+[dependencies]
+arrow = "57.1.0"
+arrow-schema = { version = "57.1.0" , features = [ "serde" ]}
+arrow-derive = { path = "../arrow-derive", optional = true }
+half = { version = "2.7.1", features = ["serde", "rkyv"] }
+indexmap = "2.13.0"
+rkyv = "0.8.13"
+serde = "1.0.228"
+serde_json = "1.0.149"
+thiserror = "2.0.17"
+tracing = "0.1.44"
+
+[dev-dependencies]
+tempfile = "3.24.0"
+tracing-test = "0.2.5"
+trybuild = "1.0"
+macrotest = "1.0"

@@ -1,0 +1,7 @@
+[package]
+name = "state_capability"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[dependencies]

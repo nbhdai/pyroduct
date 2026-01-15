@@ -1,0 +1,7 @@
+error: Module function must return Result<T, String>
+ --> tests/module/compile_fail/wrong_return_type.rs:3:1
+  |
+3 | #[module(output = value)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `module` (in Nightly builds, run with -Z macro-backtrace for more info)

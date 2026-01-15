@@ -1,0 +1,615 @@
+use heck::AsSnakeCase;
+use proc_macro2::{Span, TokenStream};
+use quote::{format_ident, quote, ToTokens};
+use syn::parse::Parser;
+use syn::punctuated::Punctuated;
+use syn::visit_mut::{self, VisitMut};
+use syn::{
+    Error, Expr, ExprStruct, FnArg, GenericArgument, Ident, ImplItem, ImplItemFn, ItemImpl, ItemTrait, Member, Meta, Path, PathArguments, Result, ReturnType, Token, TraitItem, TraitItemFn, Type, TypePath, parse_quote, parse2
+};
+
+mod constructors;
+use constructors::ClientConstructor;
+mod methods;
+use methods::CapabilityMethod;
+
+// ==============================================================================
+// 1. Main Processor
+// ==============================================================================
+
+/// Processes the input Trait definition to generate the glue code for the
+/// capability system.
+///
+/// This structure manages the duality between the **Client Side** (WASM) and the
+/// **Server Side** (Host):
+///
+/// 1.  **Client State (`type Client`):**
+///     Represents the serializable configuration or state that exists inside the
+///     WASM module. Methods generated for the Client rely *only* on this state
+///     to package requests and send them to the host.
+///
+/// 2.  **Server State (Host Implementation):**
+///     Represents the actual backing struct on the Host that holds resources
+///     (database connections, hardware handles, etc.).
+///
+/// **Code Generation Responsibilities:**
+/// * **Client Impl:** Generates methods for the `Client` struct that serialize
+///     arguments and the `Client` state itself, delegating execution to the Host via FFI.
+/// * **Host FFI:** Generates the `extern "C"` entry points that receive the
+///     serialized `Client` state, deserialize it, and invoke the logic on the
+///     corresponding `Server` state instance.
+pub struct CapabilityDefTrait {
+    pub trait_name: Ident,
+    pub original_attrs: Vec<syn::Attribute>,
+    pub generics: syn::Generics,
+    pub methods: Vec<CapabilityMethod>,
+    pub constructors: Vec<ClientConstructor>,
+    pub other_items: Vec<TraitItem>,
+    pub explicit_error_type: Option<Type>,
+    pub explicit_client_type: Option<Type>,
+}
+
+
+impl CapabilityDefTrait {
+    pub fn new(item: TokenStream) -> syn::Result<Self> {
+        let input: ItemTrait = parse2(item)?;
+        let trait_name = input.ident.clone();
+        let mut methods = Vec::new();
+        let mut constructors = Vec::new();
+        let mut other_items = Vec::new();
+        let mut explicit_error_type: Option<Type> = None;
+        let mut explicit_client_type = None;
+
+        // 1. First Pass: Collect types and items.
+        // CRITICAL FIX: explicit handling of TraitItem::Fn to prevent duplication.
+        for item in &input.items {
+            match item {
+                TraitItem::Type(ty) if ty.ident == "Error" => {
+                    if let Some((_, error_type)) = &ty.default {
+                        explicit_error_type = Some(error_type.clone());
+                        other_items.push(item.clone());
+                    } else {
+                        return Err(syn::Error::new_spanned(ty, "Missing Error type, need a default = ...;"));
+                    }
+                    
+                }
+                TraitItem::Type(ty) if ty.ident == "Client" => {
+                    if let Some((_, client_type)) = &ty.default {
+                        // --- VALIDATION START ---
+                        // Enforce that the Client type is a simple struct (TypePath) 
+                        // with no generics, lifetimes, or qualified paths.
+                        match client_type {
+                            Type::Path(type_path) => {
+                                if type_path.qself.is_some() {
+                                    return Err(syn::Error::new_spanned(
+                                        client_type, 
+                                        "Client type cannot use qualified paths (e.g. <Type as Trait>::Assoc)."
+                                    ));
+                                }
+                                for segment in &type_path.path.segments {
+                                    if !matches!(segment.arguments, PathArguments::None) {
+                                        return Err(syn::Error::new_spanned(
+                                            client_type, 
+                                            "Client type cannot have generic arguments or lifetimes (e.g., Client<T>)."
+                                        ));
+                                    }
+                                }
+                            }
+                            _ => {
+                                return Err(syn::Error::new_spanned(
+                                    client_type, 
+                                    "Client type must be a simple struct path. References, pointers, or arrays are not allowed."
+                                ));
+                            }
+                        }
+                        explicit_client_type = Some(client_type.clone());
+                        other_items.push(item.clone());
+                    } else {
+                        return Err(syn::Error::new_spanned(ty, "Missing Client type, need a default = ...;"));
+                    }
+                }
+                // Functions are handled in the Second Pass. 
+                // We MUST skip them here to prevent them from being added to `other_items`.
+                TraitItem::Fn(_) => {} 
+
+                // Keep consts, macros, verbs, etc. as-is
+                _ => other_items.push(item.clone()),
+            }
+        }
+
+        // 2. Second Pass: Method Verification and Collection
+        for item in &input.items {
+            if let TraitItem::Fn(method) = item {
+                
+                // Determine if this method is a Client Constructor.
+                // It is a constructor ONLY if:
+                // 1. An explicit Client type was defined in the trait.
+                // 2. The method returns that Client type (or Self::Client).
+                let is_constructor = if let Some(client_type) = &explicit_client_type {
+                    if let ReturnType::Type(_, ty) = &method.sig.output {
+                        let ty_str = quote!(#ty).to_string();
+                        let client_str = quote!(#client_type).to_string();
+                        // Check against explicit type OR the alias "Self::Client"
+                        ty_str == client_str || ty_str == "Self :: Client"
+                    } else {
+                        false
+                    }
+                } else {
+                    // If no Client type is defined, nothing can be a constructor.
+                    false
+                };
+
+                if is_constructor {
+                    // Safe to unwrap here because is_constructor is only true if explicit_client_type is Some
+                    let client_type = explicit_client_type.as_ref().unwrap();
+                    
+                    let ctor = ClientConstructor::new(method, client_type, explicit_error_type.as_ref())?;
+                    constructors.push(ctor);
+                } else {
+                    // Parse as standard Capability Method
+                    // Note: CapabilityMethod::new handles the validation that NO inputs/outputs match the Client type
+                    let cap_method = CapabilityMethod::new(
+                        method.clone(), 
+                        explicit_client_type.as_ref(), 
+                        explicit_error_type.as_ref()
+                    )?;
+                    methods.push(cap_method);
+                }
+            }
+        }
+
+        // 3. Final Validation: Enforce Constructor Rules
+        if explicit_client_type.is_some() {
+            // Rule: If Client is defined, there must be at least 1 constructor.
+            if constructors.is_empty() {
+                return Err(syn::Error::new(
+                    Span::call_site(), 
+                    "A 'Client' type is defined, so you must provide at least one Client Constructor (static method returning Self::Client)."
+                ));
+            }
+        } else {
+            // Rule: If Client is NOT defined, there must be 0 constructors.
+            // (This is implicitly guaranteed by the `is_constructor` logic above, 
+            // but we can assert it to be safe).
+            if !constructors.is_empty() {
+                return Err(syn::Error::new(
+                    Span::call_site(), 
+                    "Client Constructors defined but no 'Client' type found."
+                ));
+            }
+        }
+
+
+        Ok(Self {
+            original_attrs: input.attrs,
+            generics: input.generics,
+            methods,
+            trait_name,
+            constructors,
+            other_items,
+            explicit_error_type,
+            explicit_client_type,
+        })
+    }
+
+    /// Generates the final TokenStream for the Trait definition.
+    ///
+    /// # Arguments
+    /// * `trait_name` - The identifier for the trait (e.g., `MyCapability`).
+    pub fn generate_trait_definition(&self, trait_name: &Ident) -> TokenStream {
+        let attrs = &self.original_attrs;
+        let generics = &self.generics;
+        
+        // 1. Re-emit existing associated types/consts (e.g., type Error; type State;)
+        // Note: Functions have been excluded from this list in Pass 1.
+        let other_items = &self.other_items;
+
+        // 2. Generate the method signatures using the logic defined in CapabilityMethod
+        let method_signatures = self.methods.iter().map(|m| m.trait_method_generation());
+
+        // 3. Conditionally generate the `new_client` method
+        let new_client_method = self.generate_new_client_signature();
+
+        // 4. Assemble the final Trait
+        quote! {
+            #(#attrs)*
+            pub trait #trait_name #generics {
+                #(#other_items)*
+                #new_client_method
+                #(#method_signatures)*
+            }
+        }
+    }
+
+    /// Helper to determine the signature of `new_client`
+    fn generate_new_client_signature(&self) -> TokenStream {
+        // If there is no client, we do not generate this method
+        if self.explicit_client_type.is_none() {
+            return quote! {};
+        }
+
+        // Determine return type based on existence of Error type
+        if self.explicit_error_type.is_some() {
+            quote! {
+                fn new_client(&self, client: &Self::Client) -> Result<(), Self::Error>;
+            }
+        } else {
+            quote! {
+                fn new_client(&self, client: &Self::Client) -> ();
+            }
+        }
+    }
+
+    /// Generates the `impl ClientType { ... }` block.
+    ///
+    /// This utilizes the `client_method_generation` helper to create 
+    /// the full implementation (signature + FFI delegation body).
+    pub fn generate_client_impl(&self, state_name: &Ident) -> TokenStream {
+        let client_type = match &self.explicit_client_type {
+            Some(ty) => ty,
+            None => return TokenStream::new(),
+        };
+
+        let (impl_generics, _, where_clause) = self.generics.split_for_impl();
+        let trait_name = &self.trait_name;
+        
+        // 1. Generate Capability Methods (delegators)
+        // These methods now return full function definitions (with bodies)
+        let capability_methods = self.methods.iter().map(|m| {
+            m.client_method_generation(trait_name, state_name)
+        });
+
+        // 2. Generate Constructors (user-defined factories)
+        // These methods also return full function definitions
+        let constructors = self.constructors.iter().map(|c| {
+            c.client_method_generation(trait_name, state_name)
+        });
+
+        // 3. Combine into the impl block
+        quote! {
+            impl #impl_generics #client_type #where_clause {
+                #(#constructors)*
+
+                #(#capability_methods)*
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fmt::assert_code_eq;
+
+    /// Helper to create a CapabilityDefTrait from raw code
+    fn create_def(code: TokenStream) -> CapabilityDefTrait {
+        CapabilityDefTrait::new(code).expect("Failed to parse capability trait")
+    }
+
+    #[test]
+    fn test_generate_client_impl_integration() {
+        // 1. Define a Trait with:
+        // - A Client type
+        // - A Constructor (returns Client)
+        // - A Capability Method (returns void)
+        let code = quote! {
+            trait MyTrait {
+                type Client = MyClient;
+                
+                fn new(id: u32) -> MyClient {
+                    MyClient { id }
+                }
+
+                fn get_info() -> u32;
+            }
+        };
+
+        // 2. Parse
+        let def = create_def(code);
+
+        // 3. Generate Client Impl
+        let state_name = format_ident!("MyState");
+        let output = def.generate_client_impl(&state_name);
+
+        // 4. Expected Output
+        // Should produce an impl block for MyClient containing both functions.
+        // We verify the structure and that delegation logic is present (calls to wasm).
+        let expected = r#"
+            impl MyClient {
+                // Constructor
+                pub fn new(id: u32) -> Self {
+                    let mut new_self = (|| {
+                        MyClient {
+                            id,
+                            __config_buf: std::vec::Vec::new(),
+                        }
+                    })();
+                    new_self.__config_buf = ::rkyv::to_bytes::<_, 256>(&new_self)
+                        .expect("Failed to serialize config")
+                        .into_vec();
+                    ::pyroduct::module_capability::access::call_from_wasm::<
+                        Self,
+                        (),
+                        Self,
+                        _,
+                    >(
+                        "__MyTrait_MyState_new_client",
+                        Some(client),
+                        None,
+                        |client_state_ptr: *const u8,
+                         client_state_len: usize,
+                         input_ptr: *const u8,
+                         input_len: usize| {
+                            unsafe {
+                                __MyTrait_MyState_new_client_wasm(
+                                    client_state_ptr,
+                                    client_state_len,
+                                    input_ptr,
+                                    input_len,
+                                )
+                            }
+                        },
+                    )
+                }
+
+                // Capability
+                pub fn get_info(&self) -> u32 {
+                    ::pyroduct::module_capability::access::call_from_wasm::<
+                        MyClient,
+                        (),
+                        u32,
+                        _,
+                    >(
+                        "__MyTrait_MyState_get_info",
+                        Some(client),
+                        None,
+                        |client_state_ptr: *const u8,
+                         client_state_len: usize,
+                         input_ptr: *const u8,
+                         input_len: usize| {
+                            unsafe {
+                                __MyTrait_MyState_get_info_wasm(
+                                    client_state_ptr,
+                                    client_state_len,
+                                    input_ptr,
+                                    input_len,
+                                )
+                            }
+                        },
+                    )
+                }
+            }
+        "#;
+
+        assert_code_eq(&output, expected);
+    }
+
+    #[test]
+    fn test_generate_client_impl_with_error_and_input_structs() {
+        // 1. Define Trait with Error type and Method inputs
+        let code = quote! {
+            trait AdvancedTrait {
+                type Client = AdvancedClient;
+                type Error = MyError;
+
+                // Constructor
+                fn create(name: String) -> AdvancedClient {
+                    AdvancedClient { name }
+                }
+
+                // Method with args
+                fn process(val: u32, flag: bool) -> u32;
+            }
+        };
+
+        let def = create_def(code);
+        let state_name = format_ident!("MyState");
+        let output = def.generate_client_impl(&state_name);
+
+        // 2. Expected Output
+        // - Constructor returns Result<Self, MyError>
+        // - Method `process` returns Result<u32, MyError>
+        // - Method `process` generates an input struct
+        let expected = r#"
+            impl AdvancedClient {
+                pub fn create(name: String) -> Result<Self, MyError> {
+                    let mut new_self = (|| {
+                        AdvancedClient {
+                            name,
+                            __config_buf: std::vec::Vec::new(),
+                        }
+                    })();
+                    new_self.__config_buf = ::rkyv::to_bytes::<_, 256>(&new_self)
+                        .expect("Failed to serialize config")
+                        .into_vec();
+                    ::pyroduct::module_capability::access::call_from_wasm::<
+                        Self,
+                        (),
+                        Result<Self, MyError>,
+                        _,
+                    >(
+                        "__AdvancedTrait_MyState_new_client",
+                        Some(client),
+                        None,
+                        |client_state_ptr: *const u8,
+                         client_state_len: usize,
+                         input_ptr: *const u8,
+                         input_len: usize| {
+                            unsafe {
+                                __AdvancedTrait_MyState_new_client_wasm(
+                                    client_state_ptr,
+                                    client_state_len,
+                                    input_ptr,
+                                    input_len,
+                                )
+                            }
+                        },
+                    )
+                }
+
+                pub fn process(&self, val: u32, flag: bool) -> Result<u32, MyError> {
+                    #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+                    #[rkyv(compare(PartialEq), derive(Debug))]
+                    struct __AdvancedTrait_MyState_process_Input {
+                        pub val: u32,
+                        pub flag: bool,
+                    }
+                    ::pyroduct::module_capability::access::call_from_wasm::<
+                        AdvancedClient,
+                        __AdvancedTrait_MyState_process_Input,
+                        Result<u32, MyError>,
+                        _,
+                    >(
+                        "__AdvancedTrait_MyState_process",
+                        Some(client),
+                        Some(&__AdvancedTrait_MyState_process_Input { val, flag }),
+                        |client_state_ptr: *const u8,
+                         client_state_len: usize,
+                         input_ptr: *const u8,
+                         input_len: usize| {
+                            unsafe {
+                                __AdvancedTrait_MyState_process_wasm(
+                                    client_state_ptr,
+                                    client_state_len,
+                                    input_ptr,
+                                    input_len,
+                                )
+                            }
+                        },
+                    )
+                }
+            }
+        "#;
+
+        assert_code_eq(&output, expected);
+    }
+
+    #[test]
+    fn test_no_client_impl_generated_if_no_client_type() {
+        // Trait without a Client type defined
+        let code = quote! {
+            trait PureInterface {
+                fn do_thing();
+            }
+        };
+
+        let def = create_def(code);
+        let state_name = format_ident!("MyState");
+        let output = def.generate_client_impl(&state_name);
+
+        // Should return empty stream (no impl block)
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn test_server_trait_and_ffi_generation() {
+        // This test verifies both the Trait definition generated for the server
+        // AND the FFI functions generated for the host to export.
+
+        // 1. Setup: Define a feature trait with Client, Error, and methods
+        let code = quote! {
+            trait SensorFeature {
+                type Client = SensorClient;
+                type Error = SensorError;
+
+                // Client Constructor (should NOT appear in server trait methods)
+                fn new(id: String) -> SensorClient {
+                    SensorClient { id }
+                }
+
+                // Capability 1: Sync, Multi-arg
+                fn calibrate(offset: i32, scale: f32) -> bool;
+
+                // Capability 2: Async, Single-arg
+                async fn read_async(timeout: u32) -> f64;
+            }
+        };
+        let def = create_def(code);
+        let trait_name = format_ident!("SensorFeature");
+        let state_name = format_ident!("HardwareState");
+
+        // 2. CHECK: Server Trait Generation
+        let server_trait = def.generate_trait_definition(&trait_name);
+        
+        // Expected Trait Structure:
+        // - Includes `new_client` lifecycle hook (injecting client state)
+        // - `calibrate` has `&self` and `client` arg injected, returns Result
+        // - `read_async` has `&self` and `client` arg injected, returns Result
+        let expected_trait = r#"
+            pub trait SensorFeature {
+                type Client = SensorClient;
+                type Error = SensorError;
+                fn new_client(&self, client: &Self::Client) -> Result<(), Self::Error>;
+                fn calibrate(&self, client: &Self::Client, offset: i32, scale: f32) -> Result<bool, Self::Error>;
+                async fn read_async(&self, client: &Self::Client, timeout: u32) -> Result<f64, Self::Error>;
+            }
+        "#;
+        assert_code_eq(&server_trait, expected_trait);
+
+        // 3. CHECK: Host FFI Generation
+        // We verify the FFI function for each capability method found in `def.methods`.
+
+        // A. Verify `calibrate` FFI
+        let calibrate_method = def.methods.iter().find(|m| m.name == "calibrate").expect("calibrate not found");
+        let calibrate_ffi = calibrate_method.ffi_function_generation(&trait_name, &state_name);
+        
+        let expected_calibrate_ffi = r#"
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn __SensorFeature_HardwareState_calibrate_ffi(
+                client_state_ptr: *const u8,
+                client_state_len: usize,
+                input_ptr: *const u8,
+                input_len: usize,
+                capability_state_ptr: *mut std::ffi::c_void,
+            ) -> ::pyroduct::capability_host::ffi::FfiResult {
+                ::pyroduct::capability::safe_call::sci_call::<
+                    HardwareState,
+                    SensorClient,
+                    __SensorFeature_HardwareState_calibrate_Input,
+                    Result<bool, SensorError>,
+                    _,
+                >(
+                    client_state_ptr,
+                    client_state_len,
+                    input_ptr,
+                    input_len,
+                    capability_state_ptr,
+                    |state, client, input| state.calibrate(client, input.offset, input.scale),
+                )
+            }
+        "#;
+        assert_code_eq(&calibrate_ffi, expected_calibrate_ffi);
+
+        // B. Verify `read_async` FFI
+        let read_method = def.methods.iter().find(|m| m.name == "read_async").expect("read_async not found");
+        let read_ffi = read_method.ffi_function_generation(&trait_name, &state_name);
+
+        let expected_read_ffi = r#"
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn __SensorFeature_HardwareState_read_async_ffi<'a>(
+                client_state_ptr: *const u8,
+                client_state_len: usize,
+                input_ptr: *const u8,
+                input_len: usize,
+                capability_state_ptr: *mut std::ffi::c_void,
+            ) -> ::pyroduct::capability_host::ffi::FfiBorrowedFutureResult<'a> {
+                ::pyroduct::capability::safe_async::sci_call::<
+                    HardwareState,
+                    SensorClient,
+                    u32,
+                    Result<f64, SensorError>,
+                    _,
+                    _,
+                >(
+                    client_state_ptr,
+                    client_state_len,
+                    input_ptr,
+                    input_len,
+                    capability_state_ptr,
+                    |state, client, input| async move { state.read_async(client, input).await },
+                )
+            }
+        "#;
+        assert_code_eq(&read_ffi, expected_read_ffi);
+    }
+}
