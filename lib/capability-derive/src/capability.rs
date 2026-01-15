@@ -234,28 +234,32 @@ impl CapabilityDefTrait {
         // 4. Second Pass: Methods
         for item in &input.items {
             if let ImplItem::Fn(impl_method) = item {
-                // Convert ImplItemFn -> TraitItemFn to reuse existing logic
-                let method = impl_fn_to_trait_fn(impl_method);
+                // In Host implementations, we look for 'new_client' to satisfy the constructor requirement.
+                // We do NOT use ClientConstructor::from_impl.
+                if impl_method.sig.ident == "new_client" {
+                    if let Some(client_type) = &explicit_client_type {
+                        // Manually construct a placeholder ClientConstructor. 
+                        // It will not be used for code generation (which uses generic names),
+                        // but it satisfies the validation check below.
+                        
+                        let client_name = if let Type::Path(type_path) = client_type {
+                            type_path.path.segments.last().unwrap().ident.to_string()
+                        } else {
+                            quote!(#client_type).to_string()
+                        };
 
-                let is_constructor = if let Some(client_type) = &explicit_client_type {
-                    if let ReturnType::Type(_, ty) = &method.sig.output {
-                        let ty_str = quote!(#ty).to_string();
-                        let client_str = quote!(#client_type).to_string();
-                        ty_str == client_str || ty_str == "Self :: Client"
-                    } else {
-                        false
+                        constructors.push(ClientConstructor {
+                            sig: impl_method.sig.clone(),
+                            block: parse_quote!({}), // Dummy block, unused for trait gen from impl
+                            client: client_type.clone(),
+                            client_name,
+                            inputs: vec![],
+                            error_type: explicit_error_type.clone(),
+                        });
                     }
                 } else {
-                    false
-                };
-
-                if is_constructor {
-                    let client_type = explicit_client_type.as_ref().unwrap();
-                    let ctor = ClientConstructor::new(&method, client_type, explicit_error_type.as_ref())?;
-                    constructors.push(ctor);
-                } else {
-                    let cap_method = CapabilityMethod::new(
-                        method.clone(), 
+                    let cap_method = CapabilityMethod::from_impl(
+                        impl_method, 
                         explicit_client_type.as_ref(), 
                         explicit_error_type.as_ref()
                     )?;
@@ -267,7 +271,7 @@ impl CapabilityDefTrait {
         // 5. Final Validation
         if explicit_client_type.is_some() {
             if constructors.is_empty() {
-                return Err(syn::Error::new(Span::call_site(), "Client type defined, but no Client Constructor found."));
+                return Err(syn::Error::new(Span::call_site(), "Client type defined, but no Client Constructor ('new_client') found in implementation."));
             }
         } else if !constructors.is_empty() {
              return Err(syn::Error::new(Span::call_site(), "Client Constructors defined but no 'Client' type found."));
@@ -361,15 +365,6 @@ impl CapabilityDefTrait {
 }
 
 // --- Converters: ImplItem -> TraitItem ---
-
-fn impl_fn_to_trait_fn(impl_fn: &ImplItemFn) -> TraitItemFn {
-    TraitItemFn {
-        attrs: impl_fn.attrs.clone(),
-        sig: impl_fn.sig.clone(),
-        default: Some(impl_fn.block.clone()),
-        semi_token: None,
-    }
-}
 
 fn impl_type_to_trait_type(impl_ty: &ImplItemType) -> TraitItem {
     TraitItem::Type(TraitItemType {
@@ -623,7 +618,7 @@ mod tests {
         let trait_name = format_ident!("SensorFeature");
         let state_name = format_ident!("HardwareState");
 
-        let server_trait = def.internal_generate_client_impl(&trait_name);
+        let server_trait = def.generate_trait_definition().unwrap();
         
         let expected_trait = r#"
             pub trait SensorFeature {
@@ -869,8 +864,8 @@ mod tests {
                 }
 
                 // Methods
-                fn query(sql: String) -> Result<String, DbError>;
-                async fn execute(sql: String) -> Result<u64, DbError>;
+                fn query(&self, sql: String) -> Result<String, DbError>;
+                async fn execute(&self, sql: String) -> Result<u64, DbError>;
             }
         };
 
@@ -881,7 +876,7 @@ mod tests {
                 type Client = DbClient;
                 type Error = DbError;
 
-                fn connect(&self, client: DbClient) -> Result<(), DbError> {
+                fn new_client(&self, client: &DbClient) -> Result<(), DbError> {
                     Ok(())
                 }
 
@@ -900,6 +895,11 @@ mod tests {
             .expect("Failed to parse trait");
         let trait_output = def_from_trait.generate_trait_definition()
             .expect("Failed to generate definition from trait");
+
+        // 4. Generate Trait Definition from the IMPL source
+        // We must manually strip `state_name` because `generate_trait_definition`
+        // normally forbids generating a trait from an impl to prevent misuse.
+        // Stripping it simulates "if we treated this impl interface as the source of truth".
         let mut def_from_impl = CapabilityDefTrait::from_impl(impl_code)
             .expect("Failed to parse impl");
         
@@ -908,7 +908,13 @@ mod tests {
         
         let impl_output = def_from_impl.generate_trait_definition()
             .expect("Failed to generate definition from impl");
+
+        // 5. Verify they are identical
+        // This confirms that `from_impl` correctly normalized the inputs (converting methods, 
+        // handling constructors, and mapping types) exactly like `from_trait` does.
         assert_code_eq(&trait_output, &impl_output.to_string());
+        
+        // 6. Verify the content is what we expect (Server-side transformed trait)
         let expected = r#"
             pub trait Database {
                 type Client = DbClient;
@@ -924,7 +930,6 @@ mod tests {
         "#;
         assert_code_eq(&trait_output, expected);
     }
-
 
     #[test]
     fn test_trait_generation_consistency_between_source_and_impl_no_client() {
@@ -981,5 +986,4 @@ mod tests {
         "#;
         assert_code_eq(&trait_output, expected);
     }
-}
 }
