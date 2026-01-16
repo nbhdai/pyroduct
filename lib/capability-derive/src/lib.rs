@@ -12,59 +12,19 @@
 use proc_macro::TokenStream;
 
 pub(crate) mod capability;
-pub(crate) mod capability_ffi;
 pub(crate) mod capability_client;
 pub(crate) mod capability_export;
+pub(crate) mod capability_ffi;
 pub(crate) mod capability_function;
 pub(crate) mod capability_server;
 pub(crate) mod utils;
 
-
 #[proc_macro_attribute]
-pub fn capability_client(attr: TokenStream, item: TokenStream) -> TokenStream {
-    capability_client::expand(attr.into(), item.into())
+pub fn capability(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    capability_export::expand(item.into())
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
-
-
-// #[proc_macro_attribute]
-// pub fn capability(attr: TokenStream, item: TokenStream) -> TokenStream {
-//     capability::expand(attr.into(), item.into())
-//         .unwrap_or_else(|e| e.to_compile_error())
-//         .into()
-// }
-
-
-#[proc_macro_attribute]
-pub fn capability_server(attr: TokenStream, item: TokenStream) -> TokenStream {
-    capability_server::expand(attr.into(), item.into())
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
-}
-
-#[proc_macro_attribute]
-pub fn capability_function(attr: TokenStream, item: TokenStream) -> TokenStream {
-    capability_function::expand(attr.into(), item.into())
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
-}
-
-
-#[proc_macro]
-pub fn capability_export(input: TokenStream) -> TokenStream {
-    capability_export::expand(input.into())
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
-}
-
-
-// #[proc_macro_attribute]
-// pub fn capability_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
-//     capability_impl::expand(attr.into(), item.into())
-//         .unwrap_or_else(|e| e.to_compile_error())
-//         .into()
-// }
 
 #[cfg(test)]
 pub mod fmt {
@@ -77,7 +37,7 @@ pub mod fmt {
             Err(err) => {
                 tracing::error!(?err, "Parsing Error");
                 tokens.to_string()
-            },
+            }
         }
     }
 
@@ -87,8 +47,8 @@ pub mod fmt {
             .expect("Generated tokens are not valid Rust code (syn::File)");
 
         // 2. Parse the expected string into a syn::File
-        let expected_file: syn::File = syn::parse_str(expected)
-            .expect("Expected string is not valid Rust code (syn::File)");
+        let expected_file: syn::File =
+            syn::parse_str(expected).expect("Expected string is not valid Rust code (syn::File)");
 
         // 3. Unparse both using prettyplease to normalize formatting
         let actual_str = prettyplease::unparse(&actual_file);
@@ -102,5 +62,4 @@ pub mod fmt {
             );
         }
     }
-
 }

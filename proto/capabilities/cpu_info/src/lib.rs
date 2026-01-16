@@ -93,10 +93,17 @@ pub fn get_cpu_count() -> u32 {
         None,
         None,
         |client_state_ptr: *const u8,
-            client_state_len: usize,
-            input_ptr: *const u8,
-            input_len: usize| {
-                unsafe { __functions_client::host_get_cpu_count(client_state_ptr, client_state_len, input_ptr, input_len) }
+         client_state_len: usize,
+         input_ptr: *const u8,
+         input_len: usize| {
+            unsafe {
+                __functions_client::host_get_cpu_count(
+                    client_state_ptr,
+                    client_state_len,
+                    input_ptr,
+                    input_len,
+                )
+            }
         },
     )
 }

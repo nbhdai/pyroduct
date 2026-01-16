@@ -235,6 +235,9 @@ fn test_bridge_handles_deserialization_failure() {
             let msg = e.to_string();
             assert!(msg.contains("expected value at line 1 column 1"));
         }
-        _ => panic!("Expected expected value at line 1 column 1, got: {:?}", host_result),
+        _ => panic!(
+            "Expected expected value at line 1 column 1, got: {:?}",
+            host_result
+        ),
     }
 }

@@ -1,14 +1,9 @@
-//
-use heck::AsSnakeCase;
 use proc_macro2::{Span, TokenStream};
-use quote::{format_ident, quote, ToTokens};
-use syn::parse::Parser;
+use quote::quote;
 use syn::punctuated::Punctuated;
-use syn::visit_mut::{self, VisitMut};
 use syn::{
-    Error, Expr, ExprStruct, FnArg, GenericArgument, Ident, ImplItem, ImplItemConst, ImplItemFn,
-    ImplItemType, ItemImpl, ItemTrait, Member, Meta, Path, PathArguments, Result, ReturnType,
-    Token, TraitItem, TraitItemConst, TraitItemFn, TraitItemType, Type, TypePath, parse2, parse_quote
+    Error, Ident, ImplItem, ImplItemConst, ImplItemType, ItemImpl, ItemTrait, PathArguments,
+    Result, ReturnType, TraitItem, TraitItemConst, TraitItemType, Type, parse_quote, parse2,
 };
 
 mod constructors;
@@ -54,13 +49,12 @@ pub struct CapabilityDefTrait {
     pub explicit_client_type: Option<Type>,
 }
 
-
 impl CapabilityDefTrait {
     /// Ingests a Trait Definition (original logic).
     pub fn from_trait(item: TokenStream) -> syn::Result<Self> {
         let input: ItemTrait = parse2(item)?;
         let trait_name = input.ident.clone();
-        
+
         // --- 1. Attribute Processing ---
         let mut state_name: Option<Ident> = None;
         let mut original_attrs = Vec::new();
@@ -70,7 +64,7 @@ impl CapabilityDefTrait {
                 // Parse #[capability_provider(MyState)]
                 state_name = Some(attr.parse_args::<Ident>().map_err(|e| {
                     syn::Error::new_spanned(
-                        &attr, 
+                        &attr,
                         format!("Invalid capability_provider format. Expected #[capability_provider(StateStructName)]. Error: {}", e)
                     )
                 })?);
@@ -80,10 +74,10 @@ impl CapabilityDefTrait {
         }
 
         let state_name = state_name.ok_or(syn::Error::new_spanned(
-                &trait_name, 
-                "Missing required attribute: #[capability_provider(StateStructName)]. \
-                This is required to generate the correct client-side FFI bindings."
-            ))?;
+            &trait_name,
+            "Missing required attribute: #[capability_provider(StateStructName)]. \
+                This is required to generate the correct client-side FFI bindings.",
+        ))?;
 
         let trait_name = input.ident.clone();
         let mut methods = Vec::new();
@@ -100,9 +94,11 @@ impl CapabilityDefTrait {
                         explicit_error_type = Some(error_type.clone());
                         other_items.push(item.clone());
                     } else {
-                        return Err(syn::Error::new_spanned(ty, "Missing Error type, need a default = ...;"));
+                        return Err(syn::Error::new_spanned(
+                            ty,
+                            "Missing Error type, need a default = ...;",
+                        ));
                     }
-                    
                 }
                 TraitItem::Type(ty) if ty.ident == "Client" => {
                     if let Some((_, client_type)) = &ty.default {
@@ -111,33 +107,36 @@ impl CapabilityDefTrait {
                             Type::Path(type_path) => {
                                 if type_path.qself.is_some() {
                                     return Err(syn::Error::new_spanned(
-                                        client_type, 
-                                        "Client type cannot use qualified paths (e.g. <Type as Trait>::Assoc)."
+                                        client_type,
+                                        "Client type cannot use qualified paths (e.g. <Type as Trait>::Assoc).",
                                     ));
                                 }
                                 for segment in &type_path.path.segments {
                                     if !matches!(segment.arguments, PathArguments::None) {
                                         return Err(syn::Error::new_spanned(
-                                            client_type, 
-                                            "Client type cannot have generic arguments or lifetimes (e.g., Client<T>)."
+                                            client_type,
+                                            "Client type cannot have generic arguments or lifetimes (e.g., Client<T>).",
                                         ));
                                     }
                                 }
                             }
                             _ => {
                                 return Err(syn::Error::new_spanned(
-                                    client_type, 
-                                    "Client type must be a simple struct path. References, pointers, or arrays are not allowed."
+                                    client_type,
+                                    "Client type must be a simple struct path. References, pointers, or arrays are not allowed.",
                                 ));
                             }
                         }
                         explicit_client_type = Some(client_type.clone());
                         other_items.push(item.clone());
                     } else {
-                        return Err(syn::Error::new_spanned(ty, "Missing Client type, need a default = ...;"));
+                        return Err(syn::Error::new_spanned(
+                            ty,
+                            "Missing Client type, need a default = ...;",
+                        ));
                     }
                 }
-                TraitItem::Fn(_) => {} 
+                TraitItem::Fn(_) => {}
                 _ => other_items.push(item.clone()),
             }
         }
@@ -159,13 +158,14 @@ impl CapabilityDefTrait {
 
                 if is_constructor {
                     let client_type = explicit_client_type.as_ref().unwrap();
-                    let ctor = ClientConstructor::new(method, client_type, explicit_error_type.as_ref())?;
+                    let ctor =
+                        ClientConstructor::new(method, client_type, explicit_error_type.as_ref())?;
                     constructors.push(ctor);
                 } else {
                     let cap_method = CapabilityMethod::from_trait(
-                        method.clone(), 
-                        explicit_client_type.as_ref(), 
-                        explicit_error_type.as_ref()
+                        method.clone(),
+                        explicit_client_type.as_ref(),
+                        explicit_error_type.as_ref(),
                     )?;
                     methods.push(cap_method);
                 }
@@ -176,15 +176,15 @@ impl CapabilityDefTrait {
         if explicit_client_type.is_some() {
             if constructors.is_empty() {
                 return Err(syn::Error::new(
-                    Span::call_site(), 
-                    "A 'Client' type is defined, so you must provide at least one Client Constructor (static method returning Self::Client)."
+                    Span::call_site(),
+                    "A 'Client' type is defined, so you must provide at least one Client Constructor (static method returning Self::Client).",
                 ));
             }
         } else {
             if !constructors.is_empty() {
                 return Err(syn::Error::new(
-                    Span::call_site(), 
-                    "Client Constructors defined but no 'Client' type found."
+                    Span::call_site(),
+                    "Client Constructors defined but no 'Client' type found.",
                 ));
             }
         }
@@ -210,14 +210,22 @@ impl CapabilityDefTrait {
         // 1. Extract Trait Name
         let trait_name = match &input.trait_ {
             Some((_, path, _)) => path.segments.last().unwrap().ident.clone(),
-            None => return Err(Error::new_spanned(input, "Capability definition must be a trait implementation (impl Trait for State).")),
+            None => {
+                return Err(Error::new_spanned(
+                    input,
+                    "Capability definition must be a trait implementation (impl Trait for State).",
+                ));
+            }
         };
 
         // 2. Extract State Name
         let state_name = if let Type::Path(type_path) = &*input.self_ty {
-             type_path.path.segments.last().unwrap().ident.clone()
+            type_path.path.segments.last().unwrap().ident.clone()
         } else {
-             return Err(Error::new_spanned(input.self_ty, "Implementation target must be a struct (TypePath)."));
+            return Err(Error::new_spanned(
+                input.self_ty,
+                "Implementation target must be a struct (TypePath).",
+            ));
         };
 
         let mut methods = Vec::new();
@@ -240,20 +248,31 @@ impl CapabilityDefTrait {
                     match client_type {
                         Type::Path(type_path) => {
                             if type_path.qself.is_some() {
-                                return Err(syn::Error::new_spanned(client_type, "Client type cannot use qualified paths."));
+                                return Err(syn::Error::new_spanned(
+                                    client_type,
+                                    "Client type cannot use qualified paths.",
+                                ));
                             }
                             for segment in &type_path.path.segments {
                                 if !matches!(segment.arguments, PathArguments::None) {
-                                    return Err(syn::Error::new_spanned(client_type, "Client type cannot have generic arguments."));
+                                    return Err(syn::Error::new_spanned(
+                                        client_type,
+                                        "Client type cannot have generic arguments.",
+                                    ));
                                 }
                             }
                         }
-                        _ => return Err(syn::Error::new_spanned(client_type, "Client type must be a simple struct path.")),
+                        _ => {
+                            return Err(syn::Error::new_spanned(
+                                client_type,
+                                "Client type must be a simple struct path.",
+                            ));
+                        }
                     }
                     explicit_client_type = Some(client_type.clone());
                     other_items.push(impl_type_to_trait_type(ty));
                 }
-                ImplItem::Fn(_) => {} 
+                ImplItem::Fn(_) => {}
                 ImplItem::Const(c) => other_items.push(impl_const_to_trait_const(c)),
                 _ => {} // Ignore macros etc.
             }
@@ -266,10 +285,10 @@ impl CapabilityDefTrait {
                 // We do NOT use ClientConstructor::from_impl.
                 if impl_method.sig.ident == "new_client" {
                     if let Some(client_type) = &explicit_client_type {
-                        // Manually construct a placeholder ClientConstructor. 
+                        // Manually construct a placeholder ClientConstructor.
                         // It will not be used for code generation (which uses generic names),
                         // but it satisfies the validation check below.
-                        
+
                         let client_name = if let Type::Path(type_path) = client_type {
                             type_path.path.segments.last().unwrap().ident.to_string()
                         } else {
@@ -287,9 +306,9 @@ impl CapabilityDefTrait {
                     }
                 } else {
                     let cap_method = CapabilityMethod::from_impl(
-                        impl_method, 
-                        explicit_client_type.as_ref(), 
-                        explicit_error_type.as_ref()
+                        impl_method,
+                        explicit_client_type.as_ref(),
+                        explicit_error_type.as_ref(),
                     )?;
                     methods.push(cap_method);
                 }
@@ -299,10 +318,16 @@ impl CapabilityDefTrait {
         // 5. Final Validation
         if explicit_client_type.is_some() {
             if constructors.is_empty() {
-                return Err(syn::Error::new(Span::call_site(), "Client type defined, but no Client Constructor ('new_client') found in implementation."));
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "Client type defined, but no Client Constructor ('new_client') found in implementation.",
+                ));
             }
         } else if !constructors.is_empty() {
-             return Err(syn::Error::new(Span::call_site(), "Client Constructors defined but no 'Client' type found."));
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "Client Constructors defined but no 'Client' type found.",
+            ));
         }
 
         Ok(Self {
@@ -322,7 +347,10 @@ impl CapabilityDefTrait {
     /// Generates the final TokenStream for the Trait definition.
     pub fn generate_trait_definition(&self) -> Result<TokenStream> {
         if self.from_impl {
-            return Err(Error::new_spanned(&self.trait_name, "Unable to generate a trait definition from an impl."));
+            return Err(Error::new_spanned(
+                &self.trait_name,
+                "Unable to generate a trait definition from an impl.",
+            ));
         }
         let trait_name = &self.trait_name;
         let attrs = &self.original_attrs;
@@ -361,7 +389,10 @@ impl CapabilityDefTrait {
     /// Generates the `impl ClientType { ... }` block.
     pub fn generate_client_impl(&self) -> Result<TokenStream> {
         if self.from_impl {
-            return Err(Error::new_spanned(&self.trait_name, "Unable to generate a client definition from an impl."));
+            return Err(Error::new_spanned(
+                &self.trait_name,
+                "Unable to generate a client definition from an impl.",
+            ));
         }
         let client_type = match &self.explicit_client_type {
             Some(ty) => ty,
@@ -370,14 +401,16 @@ impl CapabilityDefTrait {
 
         let (impl_generics, _, where_clause) = self.generics.split_for_impl();
         let trait_name = &self.trait_name;
-        
-        let capability_methods = self.methods.iter().map(|m| {
-            m.client_method_generation(trait_name, &self.state_name)
-        });
 
-        let constructors = self.constructors.iter().map(|c| {
-            c.client_method_generation(trait_name, &self.state_name)
-        });
+        let capability_methods = self
+            .methods
+            .iter()
+            .map(|m| m.client_method_generation(trait_name, &self.state_name));
+
+        let constructors = self
+            .constructors
+            .iter()
+            .map(|c| c.client_method_generation(trait_name, &self.state_name));
 
         Ok(quote! {
             impl #impl_generics #client_type #where_clause {
@@ -390,7 +423,7 @@ impl CapabilityDefTrait {
 
     pub fn generate_host_ffi_functions(&self) -> Result<TokenStream> {
         let trait_name = &self.trait_name;
-        
+
         let constructor_ffi = client_constructor_ffi_meta(
             trait_name,
             &self.state_name,
@@ -399,8 +432,11 @@ impl CapabilityDefTrait {
         );
         let constructor_ffi = constructor_ffi.generate_capability_ffi();
 
-        let method_ffis = self.methods.iter().map(|m| m.ffi_function_generation(trait_name, &self.state_name));
-        
+        let method_ffis = self
+            .methods
+            .iter()
+            .map(|m| m.ffi_function_generation(trait_name, &self.state_name));
+
         Ok(quote! {
             #constructor_ffi
             #(#method_ffis)*
@@ -419,7 +455,10 @@ impl CapabilityDefTrait {
         );
         let constructor_ffi = constructor_ffi.generate_client_wasm();
 
-        let method_imports = self.methods.iter().map(|m| m.wasm_import_generation(trait_name, state_name));
+        let method_imports = self
+            .methods
+            .iter()
+            .map(|m| m.wasm_import_generation(trait_name, state_name));
 
         Ok(quote! {
             extern "C" {
@@ -460,9 +499,10 @@ fn impl_const_to_trait_const(impl_c: &ImplItemConst) -> TraitItem {
     })
 }
 
-
 #[cfg(test)]
 mod tests {
+    use quote::format_ident;
+
     use super::*;
     use crate::fmt::assert_code_eq;
 
@@ -477,7 +517,7 @@ mod tests {
             #[capability_provider(MyState)]
             trait MyTrait {
                 type Client = MyClient;
-                
+
                 fn new(id: u32) -> MyClient {
                     MyClient { id }
                 }
@@ -660,7 +700,6 @@ mod tests {
         };
 
         let def = create_def(code);
-        let state_name = format_ident!("MyState");
         let output = def.generate_client_impl().unwrap();
         assert!(output.is_empty());
     }
@@ -687,7 +726,7 @@ mod tests {
         let state_name = format_ident!("HardwareState");
 
         let server_trait = def.generate_trait_definition().unwrap();
-        
+
         let expected_trait = r#"
             pub trait SensorFeature {
                 type Client = SensorClient;
@@ -699,9 +738,13 @@ mod tests {
         "#;
         assert_code_eq(&server_trait, expected_trait);
 
-        let calibrate_method = def.methods.iter().find(|m| m.name == "calibrate").expect("calibrate not found");
+        let calibrate_method = def
+            .methods
+            .iter()
+            .find(|m| m.name == "calibrate")
+            .expect("calibrate not found");
         let calibrate_ffi = calibrate_method.ffi_function_generation(&trait_name, &state_name);
-        
+
         let expected_calibrate_ffi = r#"
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn __SensorFeature_HardwareState_calibrate_ffi(
@@ -729,7 +772,11 @@ mod tests {
         "#;
         assert_code_eq(&calibrate_ffi, expected_calibrate_ffi);
 
-        let read_method = def.methods.iter().find(|m| m.name == "read_async").expect("read_async not found");
+        let read_method = def
+            .methods
+            .iter()
+            .find(|m| m.name == "read_async")
+            .expect("read_async not found");
         let read_ffi = read_method.ffi_function_generation(&trait_name, &state_name);
 
         let expected_read_ffi = r#"
@@ -787,7 +834,9 @@ mod tests {
         let def = create_def(code);
 
         // 3. Generate the server-side trait definition
-        let output = def.generate_trait_definition().expect("Failed to generate trait definition");
+        let output = def
+            .generate_trait_definition()
+            .expect("Failed to generate trait definition");
 
         // 4. Verify Output
         // - `new_client` signature is generated.
@@ -817,11 +866,11 @@ mod tests {
                 type Client = MyClient;
                 type Error = MyError;
 
-                fn new_client(&self, client: &MyClient) -> Result<(), Self::Error> { 
-                    MyClient { id } 
+                fn new_client(&self, client: &MyClient) -> Result<(), Self::Error> {
+                    MyClient { id }
                 }
-                
-                fn do_thing() -> Result<u32, Self::Error> { 
+
+                fn do_thing() -> Result<u32, Self::Error> {
                     Some(42)
                 }
             }
@@ -835,104 +884,42 @@ mod tests {
         assert_eq!(def.state_name.to_string(), "MyState");
 
         // 4. Verify Client Implementation Generation using assert_code_eq
-        let client_impl = def.generate_client_impl().unwrap();
-        
-        // Expected Logic:
-        // - Constructor `new` converts to `new_client` FFI call returning Result.
-        // - Method `do_thing` converts to FFI call returning Result.
-        // - `__config_buf` injection happens in the constructor.
-        let expected_client_impl = r#"
-            impl MyClient {
-                pub fn new(id: u32) -> Result<Self, MyError> {
-                    let mut new_self = (|| {
-                        MyClient {
-                            id,
-                            __config_buf: std::vec::Vec::new(),
-                        }
-                    })();
-                    new_self.__config_buf = ::rkyv::to_bytes::<_, 256>(&new_self)
-                        .expect("Failed to serialize config")
-                        .into_vec();
-                    ::pyroduct::module_capability::access::call_from_wasm::<
-                        Self,
-                        (),
-                        Result<(), MyError>,
-                        _,
-                    >(
-                        "__MyTrait_MyState_new_client",
-                        Some(client),
-                        None,
-                        |client_state_ptr: *const u8,
-                         client_state_len: usize,
-                         input_ptr: *const u8,
-                         input_len: usize| {
-                            unsafe {
-                                __MyTrait_MyState_new_client_wasm(
-                                    client_state_ptr,
-                                    client_state_len,
-                                    input_ptr,
-                                    input_len,
-                                )
-                            }
-                        },
-                    )
-                }
-
-                pub fn do_thing(&self) -> Result<u32, MyError> {
-                    ::pyroduct::module_capability::access::call_from_wasm::<
-                        MyClient,
-                        (),
-                        Result<u32, MyError>,
-                        _,
-                    >(
-                        "__MyTrait_MyState_do_thing",
-                        Some(client),
-                        None,
-                        |client_state_ptr: *const u8,
-                         client_state_len: usize,
-                         input_ptr: *const u8,
-                         input_len: usize| {
-                            unsafe {
-                                __MyTrait_MyState_do_thing_wasm(
-                                    client_state_ptr,
-                                    client_state_len,
-                                    input_ptr,
-                                    input_len,
-                                )
-                            }
-                        },
-                    )
-                }
-            }
-        "#;
-        
-        assert_code_eq(&client_impl, expected_client_impl);
+        let client_impl_result = def.generate_client_impl();
+        assert_eq!(
+            client_impl_result.unwrap_err().to_string(),
+            "Unable to generate a client definition from an impl."
+        );
 
         // 5. Verify that Trait Definition generation is explicitly forbidden for Impl inputs.
         // The `CapabilityDefTrait` logic returns an error if `state_name` is present.
         let trait_gen_result = def.generate_trait_definition();
-        assert!(trait_gen_result.is_err(), "Should not be able to generate a trait definition from an impl block");
+        assert!(
+            trait_gen_result.is_err(),
+            "Should not be able to generate a trait definition from an impl block"
+        );
         assert_eq!(
-            trait_gen_result.unwrap_err().to_string(), 
+            trait_gen_result.unwrap_err().to_string(),
             "Unable to generate a trait definition from an impl."
         );
 
         // 6. Verify WASM Import Generation
         // This ensures the WASM glue code for the client -> host transition is correct.
-        let wasm_imports = def.generate_wasm_import_functions().expect("Failed to generate WASM imports");
+        let wasm_imports = def
+            .generate_wasm_import_functions()
+            .expect("Failed to generate WASM imports");
         let expected_wasm = r#"
             extern "C" {
-                pub fn __MyTrait_MyState_new_client_wasm(
-                    client_state_ptr: *const u8,
-                    client_state_len: usize,
-                    input_ptr: *const u8,
-                    input_len: usize,
+                fn __MyTrait_MyState_new_client_wasm(
+                    cs_ptr: *const u8,
+                    cs_len: usize,
+                    in_ptr: *const u8,
+                    in_len: usize,
                 ) -> *const u8;
-                pub fn __MyTrait_MyState_do_thing_wasm(
-                    client_state_ptr: *const u8,
-                    client_state_len: usize,
-                    input_ptr: *const u8,
-                    input_len: usize,
+                fn __MyTrait_MyState_do_thing_wasm(
+                    cs_ptr: *const u8,
+                    cs_len: usize,
+                    in_ptr: *const u8,
+                    in_len: usize,
                 ) -> *const u8;
             }
         "#;
@@ -940,7 +927,9 @@ mod tests {
 
         // 7. Verify Host FFI Generationclient identifier.
         // The method FFI (`do_thing`) correctly resolves `MyClient`.
-        let host_ffi = def.generate_host_ffi_functions().expect("Failed to generate Host FFI");
+        let host_ffi = def
+            .generate_host_ffi_functions()
+            .expect("Failed to generate Host FFI");
         let expected_ffi = r#"
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn __MyTrait_MyState_new_client_ffi(
@@ -950,10 +939,9 @@ mod tests {
                 input_len: usize,
                 capability_state_ptr: *mut std::ffi::c_void,
             ) -> ::pyroduct::capability_host::ffi::FfiResult {
-                ::pyroduct::capability::safe_call::sci_call::<
+                ::pyroduct::capability::safe_call::sc_call::<
                     MyState,
                     Self,
-                    (),
                     Result<Self, MyError>,
                     _,
                 >(
@@ -962,7 +950,7 @@ mod tests {
                     input_ptr,
                     input_len,
                     capability_state_ptr,
-                    |state, client, input| state.new_client(client),
+                    |state, client| state.new_client(client),
                 )
             }
             #[unsafe(no_mangle)]
@@ -973,10 +961,9 @@ mod tests {
                 input_len: usize,
                 capability_state_ptr: *mut std::ffi::c_void,
             ) -> ::pyroduct::capability_host::ffi::FfiResult {
-                ::pyroduct::capability::safe_call::sci_call::<
+                ::pyroduct::capability::safe_call::sc_call::<
                     MyState,
                     MyClient,
-                    (),
                     Result<u32, MyError>,
                     _,
                 >(
@@ -985,7 +972,7 @@ mod tests {
                     input_ptr,
                     input_len,
                     capability_state_ptr,
-                    |state, client, input| state.do_thing(client),
+                    |state, client| state.do_thing(client),
                 )
             }
         "#;
@@ -1008,8 +995,8 @@ mod tests {
                 }
 
                 // Methods
-                fn query(sql: String) -> Result<String, DbError>;
-                async fn execute(sql: String) -> Result<u64, DbError>;
+                fn query(sql: String) -> String;
+                async fn execute(sql: String) -> u64;
             }
         };
 
@@ -1035,29 +1022,31 @@ mod tests {
         };
 
         // 3. Generate Trait Definition from the TRAIT source
-        let def_from_trait = CapabilityDefTrait::from_trait(trait_code)
-            .expect("Failed to parse trait");
-        let trait_output = def_from_trait.generate_trait_definition()
+        let def_from_trait =
+            CapabilityDefTrait::from_trait(trait_code).expect("Failed to parse trait");
+        let trait_output = def_from_trait
+            .generate_trait_definition()
             .expect("Failed to generate definition from trait");
 
         // 4. Generate Trait Definition from the IMPL source
         // We must manually strip `state_name` because `generate_trait_definition`
         // normally forbids generating a trait from an impl to prevent misuse.
         // Stripping it simulates "if we treated this impl interface as the source of truth".
-        let mut def_from_impl = CapabilityDefTrait::from_impl(impl_code)
-            .expect("Failed to parse impl");
-        
+        let mut def_from_impl =
+            CapabilityDefTrait::from_impl(impl_code).expect("Failed to parse impl");
+
         // HACK: Force state_name to None to bypass the guard for this specific comparison test
-        def_from_impl.from_impl = false; 
-        
-        let impl_output = def_from_impl.generate_trait_definition()
+        def_from_impl.from_impl = false;
+
+        let impl_output = def_from_impl
+            .generate_trait_definition()
             .expect("Failed to generate definition from impl");
 
         // 5. Verify they are identical
-        // This confirms that `from_impl` correctly normalized the inputs (converting methods, 
+        // This confirms that `from_impl` correctly normalized the inputs (converting methods,
         // handling constructors, and mapping types) exactly like `from_trait` does.
         assert_code_eq(&trait_output, &impl_output.to_string());
-        
+
         // 6. Verify the content is what we expect (Server-side transformed trait)
         let expected = r#"
             pub trait Database {
@@ -1080,12 +1069,13 @@ mod tests {
         // 1. Define the Original Trait
         // This is what the user defines in the shared library.
         let trait_code = quote! {
+            #[capability_provider(MyState)]
             trait Database {
                 type Error = DbError;
 
                 // Methods
-                fn query(sql: String) -> Result<String, DbError>;
-                async fn execute(sql: String) -> Result<u64, DbError>;
+                fn query(sql: String) -> String;
+                async fn execute(sql: String) -> u64;
             }
         };
 
@@ -1106,21 +1096,23 @@ mod tests {
         };
 
         // 3. Generate Trait Definition from the TRAIT source
-        let def_from_trait = CapabilityDefTrait::from_trait(trait_code)
-            .expect("Failed to parse trait");
-        let trait_output = def_from_trait.generate_trait_definition()
+        let def_from_trait =
+            CapabilityDefTrait::from_trait(trait_code).expect("Failed to parse trait");
+        let trait_output = def_from_trait
+            .generate_trait_definition()
             .expect("Failed to generate definition from trait");
-        let mut def_from_impl = CapabilityDefTrait::from_impl(impl_code)
-            .expect("Failed to parse impl");
-        
+        let mut def_from_impl =
+            CapabilityDefTrait::from_impl(impl_code).expect("Failed to parse impl");
+
         // HACK: Force state_name to None to bypass the guard for this specific comparison test
-        def_from_impl.from_impl = false; 
-        
-        let impl_output = def_from_impl.generate_trait_definition()
+        def_from_impl.from_impl = false;
+
+        let impl_output = def_from_impl
+            .generate_trait_definition()
             .expect("Failed to generate definition from impl");
 
         assert_code_eq(&trait_output, &impl_output.to_string());
-    
+
         let expected = r#"
             pub trait Database {
                 type Error = DbError;

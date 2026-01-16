@@ -1,6 +1,6 @@
-use tracing::info;
 use proto_cpu_info::get_cpu_count;
 use proto_http_client::HttpClient;
+use tracing::info;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn exter_call(input_ptr: *mut u8, input_len: usize) -> u64 {

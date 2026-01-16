@@ -1,6 +1,5 @@
 pub mod logging;
 
-
 pub use tracing;
 
 use arrow_scalars::{ArrowRow, DeepRef, FromRow, ToRow};

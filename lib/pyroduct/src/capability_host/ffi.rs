@@ -181,3 +181,11 @@ impl FfiResult {
         }
     }
 }
+
+#[repr(C)]
+pub struct CapabilityExports<'a> {
+    pub classes: *mut PluginExports<'a>,
+    pub len_classes: usize,
+    pub functions: *mut PluginFunction<'a>,
+    pub len_functions: usize,
+}

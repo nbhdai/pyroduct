@@ -4,7 +4,7 @@ use heck::AsSnakeCase;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::punctuated::Punctuated;
-use syn::{Expr, Ident, ItemStruct, Meta, Result, Token, Type, parse::Parser, parse2};
+use syn::{Expr, Ident, ItemStruct, Meta, Result, Token, Type, parse::Parser};
 
 #[derive(Debug, Clone)]
 pub struct ServerAttrs {
@@ -49,9 +49,8 @@ pub fn parse_server_attrs(attr: TokenStream) -> Result<ServerAttrs> {
     // let service = service.ok_or_else(|| {
     //     syn::Error::new(Span::call_site(), "Missing `service = TraitName` attribute")
     // })?;
-    let config = config.ok_or_else(|| {
-        syn::Error::new(Span::call_site(), "Missing `config = Struct` attribute")
-    })?;
+    let config = config
+        .ok_or_else(|| syn::Error::new(Span::call_site(), "Missing `config = Struct` attribute"))?;
 
     Ok(ServerAttrs {
         //service,
@@ -84,10 +83,6 @@ impl CapServer {
         })
     }
 
-    pub fn name(&self) -> &Ident {
-        &self.input.ident
-    }
-
     pub fn generate_init_trait(&self) -> TokenStream {
         let init_trait_name = &self.init_trait_name;
         let struct_vis = self.struct_vis.clone();
@@ -105,7 +100,10 @@ impl CapServer {
         let struct_name = self.struct_name.clone();
         let config_type = &self.attrs.config;
         let init_trait_name = &self.init_trait_name;
-        let init_ffi_name = format_ident!("__{}_ffi_init",  &AsSnakeCase(self.input.ident.to_string()).to_string());
+        let init_ffi_name = format_ident!(
+            "__{}_ffi_init",
+            &AsSnakeCase(self.input.ident.to_string()).to_string()
+        );
         if self.attrs.is_async {
             let ffi_func = quote! {
                 #[unsafe(no_mangle)]
@@ -122,7 +120,8 @@ impl CapServer {
                     }
                 }
             };
-            let ffi_export = quote!(::pyroduct::capability_host::ffi::PluginInitFn::Async(#init_ffi_name));
+            let ffi_export =
+                quote!(::pyroduct::capability_host::ffi::PluginInitFn::Async(#init_ffi_name));
             (ffi_func, ffi_export)
         } else {
             let ffi_func = quote! {
@@ -140,14 +139,18 @@ impl CapServer {
                     }
                 }
             };
-            let ffi_export = quote!(::pyroduct::capability_host::ffi::PluginInitFn::Sync(#init_ffi_name));
+            let ffi_export =
+                quote!(::pyroduct::capability_host::ffi::PluginInitFn::Sync(#init_ffi_name));
             (ffi_func, ffi_export)
         }
     }
 
     pub fn generate_drop_fn(&self) -> (TokenStream, TokenStream) {
         let struct_name = self.struct_name.clone();
-        let drop_ffi_name = format_ident!("__{}_ffi_drop",  &AsSnakeCase(self.input.ident.to_string()).to_string());
+        let drop_ffi_name = format_ident!(
+            "__{}_ffi_drop",
+            &AsSnakeCase(self.input.ident.to_string()).to_string()
+        );
         let ffi_func = quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn #drop_ffi_name(state: *mut std::ffi::c_void) {
@@ -156,26 +159,30 @@ impl CapServer {
                 }
             }
         };
-        let ffi_export = quote!(::pyroduct::capability_host::ffi::PluginDropFn::Sync(#drop_ffi_name));
+        let ffi_export =
+            quote!(::pyroduct::capability_host::ffi::PluginDropFn::Sync(#drop_ffi_name));
         (ffi_func, ffi_export)
-        
     }
 
     pub fn generate_reset_fn(&self) -> (TokenStream, TokenStream) {
         let struct_name = self.struct_name.clone();
         let init_trait_name = &self.init_trait_name;
-        let reset_ffi_name = format_ident!("__{}_ffi_reset",  &AsSnakeCase(self.input.ident.to_string()).to_string());
+        let reset_ffi_name = format_ident!(
+            "__{}_ffi_reset",
+            &AsSnakeCase(self.input.ident.to_string()).to_string()
+        );
         if self.attrs.is_async {
             let ffi_func = quote! {
                 #[unsafe(no_mangle)]
                 pub unsafe extern "C" fn #reset_ffi_name<'a>(state: *mut std::ffi::c_void) -> ::pyroduct::capability_host::ffi::FfiBorrowedFutureResult<'a> {
                     ::pyroduct::capability::safe_lifecycle::execute_safe_async_reset::<#struct_name, _, _>(
                         state,
-                        |state| async move { <#struct_name as #init_trait_name>::reset(state).await }, 
+                        |state| async move { <#struct_name as #init_trait_name>::reset(state).await },
                     )
                 }
             };
-            let ffi_export = quote!(::pyroduct::capability_host::ffi::PluginResetFn::Async(#reset_ffi_name));
+            let ffi_export =
+                quote!(::pyroduct::capability_host::ffi::PluginResetFn::Async(#reset_ffi_name));
             (ffi_func, ffi_export)
         } else {
             let ffi_func = quote! {
@@ -187,43 +194,18 @@ impl CapServer {
                     )
                 }
             };
-            let ffi_export = quote!(::pyroduct::capability_host::ffi::PluginResetFn::Sync(#reset_ffi_name));
+            let ffi_export =
+                quote!(::pyroduct::capability_host::ffi::PluginResetFn::Sync(#reset_ffi_name));
             (ffi_func, ffi_export)
         }
     }
-}
-
-pub fn expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
-    let input: ItemStruct = parse2(item)?;
-    let cap_server = CapServer::new(attr, input.clone())?;
-
-    let input = cap_server.input.clone();
-    let init_trait = cap_server.generate_init_trait();
-    let (init_fn, _init_fn_export) = cap_server.generate_init_fn();
-    let (drop_fn, _drop_fn_export) = cap_server.generate_drop_fn();
-    let (reset_fn, _reset_fn_export) = cap_server.generate_reset_fn();
-
-
-    let output = quote! {
-        // The struct definition
-        #input
-
-        // Init trait (if not stateless)
-        #init_trait
-
-        // FFI lifecycle functions
-        #init_fn
-        #drop_fn
-        #reset_fn
-    };
-
-    Ok(output)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use quote::quote;
+    use syn::parse2;
 
     fn format_tokens(tokens: &TokenStream) -> String {
         // Try to parse and format as a file, fallback to raw string if it fails
@@ -232,7 +214,7 @@ mod tests {
             Err(err) => {
                 tracing::error!(?err, "Parsing Error");
                 tokens.to_string()
-            },
+            }
         }
     }
 
@@ -246,11 +228,13 @@ mod tests {
             }
         };
 
-        let result = expand(attr, item).expect("Expansion failed");
+        let item = parse2(item).expect("error");
+        let result = CapServer::new(attr, item)
+            .expect("Expansion failed")
+            .generate_init_trait();
         tracing::info!("Generated tokens: {}", format_tokens(&result));
 
         tracing::info!("Generated tokens: {}", &result);
-
 
         let result_str = result.to_string();
 
@@ -258,27 +242,30 @@ mod tests {
         assert!(result_str.contains("pub trait GreeterServerInit"));
         assert!(result_str.contains("fn new (config : & GreeterConfig) -> Self"));
         assert!(result_str.contains("fn reset (& mut self)"));
-        
+
         // Should NOT have with_config method (no config provided)
         assert!(!result_str.contains("fn with_config"));
-        
+
         // Should generate plugin_init
         //assert!(result_str.contains("PluginInitFn :: Sync ( __greeter_server_ffi_init )"));
         assert!(result_str.contains("pub extern \"C\" fn __greeter_server_ffi_init"));
-        assert!(result_str.contains("| config | < GreeterServer as GreeterServerInit > :: new (& config)"));
+        assert!(
+            result_str
+                .contains("| config | < GreeterServer as GreeterServerInit > :: new (& config)")
+        );
         assert!(result_str.contains("execute_safe_init :: < GreeterConfig , GreeterServer , _ >"));
-        
+
         // Should generate plugin_drop
         //assert!(result_str.contains("PluginDropFn :: Sync ( __greeter_server_ffi_drop )"));
         assert!(result_str.contains("pub unsafe extern \"C\" fn __greeter_server_ffi_drop"));
         assert!(result_str.contains("Box :: from_raw (state as * mut GreeterServer)"));
-        
+
         // Should generate plugin_reset
         //assert!(result_str.contains("PluginResetFn :: Sync ( __greeter_server_ffi_reset )"));
         assert!(result_str.contains("pub unsafe extern \"C\" fn __greeter_server_ffi_reset"));
         assert!(result_str.contains("execute_safe_reset :: < GreeterServer , _ >"));
         assert!(result_str.contains("< GreeterServer as GreeterServerInit > :: reset (state)"));
-        
+
         tracing::debug!("Simple stateful server test passed");
     }
 
@@ -292,11 +279,13 @@ mod tests {
             }
         };
 
-        let result = expand(attr, item).expect("Expansion failed");
+        let item = parse2(item).expect("error");
+        let result = CapServer::new(attr, item)
+            .expect("Expansion failed")
+            .generate_init_trait();
         tracing::info!("Generated tokens: {}", format_tokens(&result));
 
         tracing::info!("Generated tokens: {}", &result);
-
 
         let result_str = result.to_string();
 
@@ -304,27 +293,32 @@ mod tests {
         assert!(result_str.contains("pub trait GreeterServerInit"));
         assert!(result_str.contains("fn new (config : & GreeterConfig) -> Self"));
         assert!(result_str.contains("fn reset (& mut self)"));
-        
+
         // Should NOT have with_config method (no config provided)
         assert!(!result_str.contains("fn with_config"));
-        
+
         // Should generate plugin_init
         //assert!(result_str.contains("PluginInitFn :: Sync ( __greeter_server_ffi_init )"));
         assert!(result_str.contains("pub extern \"C\" fn __greeter_server_ffi_init < 'a >"));
         assert!(result_str.contains("| config | async move { < GreeterServer as GreeterServerInit > :: new (& config) . await"));
-        assert!(result_str.contains("execute_safe_async_init :: < GreeterConfig , GreeterServer , _ , _ >"));
-        
+        assert!(
+            result_str
+                .contains("execute_safe_async_init :: < GreeterConfig , GreeterServer , _ , _ >")
+        );
+
         // Should generate plugin_drop
         //assert!(result_str.contains("PluginDropFn :: Sync ( __greeter_server_ffi_drop )"));
         assert!(result_str.contains("pub unsafe extern \"C\" fn __greeter_server_ffi_drop"));
         assert!(result_str.contains("Box :: from_raw (state as * mut GreeterServer)"));
-        
+
         // Should generate plugin_reset
         //assert!(result_str.contains("PluginResetFn :: Sync ( __greeter_server_ffi_reset )"));
-        assert!(result_str.contains("pub unsafe extern \"C\" fn __greeter_server_ffi_reset < 'a >"));
+        assert!(
+            result_str.contains("pub unsafe extern \"C\" fn __greeter_server_ffi_reset < 'a >")
+        );
         assert!(result_str.contains("execute_safe_async_reset :: < GreeterServer , _ , _ >"));
         assert!(result_str.contains("| state | async move { < GreeterServer as GreeterServerInit > :: reset (state) . await }"));
-        
+
         tracing::debug!("Simple stateful server test passed");
     }
 }

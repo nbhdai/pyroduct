@@ -1,8 +1,6 @@
 use proc_macro2::TokenStream;
-use quote::{quote, format_ident};
+use quote::{format_ident, quote};
 use syn::{Ident, Type, Visibility};
-
-use crate::{capability_client::CapClient, capability_server::CapServer};
 
 #[derive(Debug, Clone)]
 pub enum InputParams {
@@ -10,7 +8,7 @@ pub enum InputParams {
     Many {
         params: Vec<(Ident, Type)>,
         input_struct_name: Ident,
-    }
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -31,18 +29,17 @@ pub struct CapabilityFuncFFI {
     pub client: Option<Ident>,
     /// The server this is associated with
     pub server: Option<Ident>,
-    /// Whether the function takes &self or &mut self
-    pub has_self: bool,
 }
 
 impl CapabilityFuncFFI {
     /// Generate the input struct if needed
     pub fn generate_input_struct(&self) -> TokenStream {
-        if let Some(InputParams::Many { params, input_struct_name  }) = &self.input {
-            let fields: Vec<_> = params
-                .iter()
-                .map(|(n, t)| quote! { pub #n: #t })
-                .collect();
+        if let Some(InputParams::Many {
+            params,
+            input_struct_name,
+        }) = &self.input
+        {
+            let fields: Vec<_> = params.iter().map(|(n, t)| quote! { pub #n: #t }).collect();
 
             quote! {
                 #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
@@ -62,7 +59,7 @@ impl CapabilityFuncFFI {
 
         // Determine the helper function based on what's present (in "sci" order)
         let helper_fn = self.determine_helper_fn();
-        
+
         // Determine generic parameters based on what's present
         let generics = self.determine_generics();
 
@@ -71,16 +68,16 @@ impl CapabilityFuncFFI {
 
         // Return type and body wrapper
         let (func_lifetime, ffi_ret, body) = if self.is_async {
-            (   
+            (
                 quote!(<'a>),
                 quote!(::pyroduct::capability_host::ffi::FfiBorrowedFutureResult<'a>),
-                quote!(async move { #method_call.await })
+                quote!(async move { #method_call.await }),
             )
         } else {
             (
                 quote!(),
                 quote!(::pyroduct::capability_host::ffi::FfiResult),
-                quote!(#method_call)
+                quote!(#method_call),
             )
         };
 
@@ -113,8 +110,8 @@ impl CapabilityFuncFFI {
 
     /// Generate the client-side WASM wrapper
     pub fn generate_module_function(&self) -> TokenStream {
-        let fn_name = &self.fn_name;
-        let vis = &self.vis;
+        // let fn_name = &self.fn_name;
+        // let vis = &self.vis;
         // let fn_ffi_name = &self.fn_ffi_name; // Not used in client wrapper directly
         let fn_wasm_name = &self.fn_wasm_name;
         let return_type = &self.return_type;
@@ -122,11 +119,11 @@ impl CapabilityFuncFFI {
 
         // Build function parameters
         let mut fn_params = Vec::new();
-        
+
         if let Some(client_name) = &self.client {
             fn_params.push(quote!(client: &#client_name));
         }
-        
+
         if let Some(input) = &self.input {
             match input {
                 InputParams::One(param_name, param_ty) => {
@@ -172,7 +169,7 @@ impl CapabilityFuncFFI {
 
     pub fn generate_client_wasm(&self) -> TokenStream {
         let fn_wasm_name = &self.fn_wasm_name;
-        quote!{
+        quote! {
             fn #fn_wasm_name(
                 cs_ptr: *const u8,
                 cs_len: usize,
@@ -220,8 +217,10 @@ impl CapabilityFuncFFI {
         // Input type (I)
         match &self.input {
             Some(InputParams::One(_, ty)) => generics.push(quote!(#ty)),
-            Some(InputParams::Many { input_struct_name, .. }) => generics.push(quote!(#input_struct_name)),
-            None => {},
+            Some(InputParams::Many {
+                input_struct_name, ..
+            }) => generics.push(quote!(#input_struct_name)),
+            None => {}
         }
 
         // Return type (O)
@@ -242,16 +241,14 @@ impl CapabilityFuncFFI {
     /// Determine closure parameters and the method call expression
     fn determine_closure_and_call(&self) -> (TokenStream, TokenStream) {
         let fn_name = &self.fn_name;
-        
+
         let mut closure_params = Vec::new();
         let mut call_args = Vec::new();
 
         // Server parameter
         if let Some(_) = &self.server {
             closure_params.push(quote!(state));
-            if self.has_self {
-                call_args.push(quote!(state));
-            }
+            call_args.push(quote!(state));
         }
 
         // Client parameter
@@ -263,7 +260,7 @@ impl CapabilityFuncFFI {
         // Input parameter
         if let Some(input) = &self.input {
             closure_params.push(quote!(input));
-            
+
             match input {
                 InputParams::One(..) => {
                     call_args.push(quote!(input));
@@ -282,7 +279,7 @@ impl CapabilityFuncFFI {
             quote!(|#(#closure_params),*|)
         };
 
-        let method_call = if self.has_self {
+        let method_call = if self.server.is_some() {
             // Method call on self
             let self_arg = closure_params.first().unwrap();
             let method_args = &call_args[1..]; // Skip self
@@ -299,18 +296,18 @@ impl CapabilityFuncFFI {
     pub fn determine_input_serialization(&self) -> (TokenStream, TokenStream) {
         match &self.input {
             Some(InputParams::One(param_name, param_ty)) => {
-                (
-                    quote!(#param_ty),
-                    quote!(Some(&#param_name))
-                )
-            },
-            Some(InputParams::Many { input_struct_name, params  }) => {
+                (quote!(#param_ty), quote!(Some(&#param_name)))
+            }
+            Some(InputParams::Many {
+                input_struct_name,
+                params,
+            }) => {
                 let args = params.iter().map(|(n, _)| quote!(#n));
                 (
                     quote!(#input_struct_name),
-                    quote!(Some(&#input_struct_name { #(#args),* }))
+                    quote!(Some(&#input_struct_name { #(#args),* })),
                 )
-            },
+            }
             None => (quote!(()), quote!(None)),
         }
     }
@@ -320,8 +317,7 @@ impl CapabilityFuncFFI {
 mod tests {
     use super::*;
     use crate::fmt::assert_code_eq;
-    use crate::{fmt::format_tokens};
-    use crate::capability_server::CapServer;
+    use crate::fmt::format_tokens;
     use quote::quote;
     use syn::{Visibility, parse_quote};
 
@@ -348,10 +344,8 @@ mod tests {
             input: None,
             client: None,
             server: None,
-            has_self: false,
         }
     }
-
 
     // ========================================================================
     // 1. Sync, No Input, No Client
@@ -360,7 +354,7 @@ mod tests {
     #[test]
     fn test_case_1_sync_no_input_no_client() {
         let ffi = mock_ffi_base("test_sync_empty", false);
-        
+
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
         let module_tokens = ffi.generate_module_function();
@@ -373,7 +367,7 @@ mod tests {
         tracing::info!("Struct Tokens: \n{}", format_tokens(&struct_tokens));
         tracing::info!("Capability Tokens: \n{}", format_tokens(&capability_tokens));
         tracing::info!("Module Tokens: \n{}", format_tokens(&module_tokens));
-        
+
         // Struct: should be empty
         assert!(struct_tokens.is_empty());
 
@@ -399,10 +393,10 @@ mod tests {
                 )
             }
         "#;
-        
+
         assert_code_eq(&capability_tokens, output_capability);
 
-        let output_module  = r#"
+        let output_module = r#"
             fn func() {
                 ::pyroduct::module_capability::access::call_from_wasm::<
                     (),
@@ -424,7 +418,7 @@ mod tests {
                 )
             }
         "#;
-        
+
         assert_code_eq(&module_tokens, output_module);
     }
 
@@ -435,7 +429,10 @@ mod tests {
     #[test]
     fn test_case_2_async_single_input_no_client() {
         let mut ffi = mock_ffi_base("test_async_single", true);
-        ffi.input = Some(InputParams::One(format_ident!("input_arg"), parse_quote!(String)));
+        ffi.input = Some(InputParams::One(
+            format_ident!("input_arg"),
+            parse_quote!(String),
+        ));
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
@@ -449,7 +446,7 @@ mod tests {
         tracing::info!("Struct Tokens: \n{}", format_tokens(&struct_tokens));
         tracing::info!("Capability Tokens: \n{}", format_tokens(&capability_tokens));
         tracing::info!("Module Tokens: \n{}", format_tokens(&module_tokens));
-        
+
         // Struct: should be empty for single input
         assert!(struct_tokens.is_empty());
 
@@ -477,7 +474,7 @@ mod tests {
                 )
             }
         "#;
-        
+
         assert_code_eq(&capability_tokens, output_capability);
 
         let output_module = r#"
@@ -502,7 +499,7 @@ mod tests {
                 )
             }
         "#;
-        
+
         // Module: Client Side
         assert_code_eq(&module_tokens, output_module);
     }
@@ -571,7 +568,7 @@ mod tests {
         "#;
 
         assert_code_eq(&capability_tokens, output_capability);
-        
+
         let output_module = r#"
             fn func() {
                 ::pyroduct::module_capability::access::call_from_wasm::<
@@ -620,10 +617,10 @@ mod tests {
         tracing::info!("Struct Tokens: \n{}", format_tokens(&struct_tokens));
         tracing::info!("Capability Tokens: \n{}", format_tokens(&capability_tokens));
         tracing::info!("Module Tokens: \n{}", format_tokens(&module_tokens));
-        
+
         // Struct: should be empty
         assert!(struct_tokens.is_empty());
-        
+
         let output_capability = r#"
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn __test_async_client_ffi<'a>(
@@ -700,10 +697,10 @@ mod tests {
         tracing::info!("Struct Tokens: \n{}", format_tokens(&struct_tokens));
         tracing::info!("Capability Tokens: \n{}", format_tokens(&capability_tokens));
         tracing::info!("Module Tokens: \n{}", format_tokens(&module_tokens));
-        
+
         // Struct: should be empty for single input
         assert!(struct_tokens.is_empty());
-        
+
         let output_capability = r#"
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn __test_sync_client_input_ffi(
@@ -730,7 +727,7 @@ mod tests {
         "#;
 
         assert_code_eq(&capability_tokens, output_capability);
- 
+
         let output_module = r#"
             fn func() {
                 ::pyroduct::module_capability::access::call_from_wasm::<
@@ -757,7 +754,7 @@ mod tests {
         assert_code_eq(&module_tokens, output_module);
     }
 
-// ========================================================================
+    // ========================================================================
     // 6. Async, Multi Input, Client Present
     // ========================================================================
     #[tracing_test::traced_test]
@@ -768,7 +765,7 @@ mod tests {
         ffi.input = Some(InputParams::Many {
             params: vec![
                 (format_ident!("port_name"), parse_quote!(String)),
-                (format_ident!("baud_rate"), parse_quote!(u32))
+                (format_ident!("baud_rate"), parse_quote!(u32)),
             ],
             input_struct_name: format_ident!("__FullInput"),
         });
@@ -795,7 +792,7 @@ mod tests {
             }
         "#;
         assert_code_eq(&struct_tokens, output_struct);
-        
+
         let output_capability = r#"
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn __test_async_full_ffi<'a>(
@@ -823,7 +820,7 @@ mod tests {
         "#;
 
         assert_code_eq(&capability_tokens, output_capability);
-        
+
         let output_module = r#"
             fn func() {
                 ::pyroduct::module_capability::access::call_from_wasm::<
@@ -859,8 +856,7 @@ mod tests {
     fn test_case_7_sync_server_input() {
         let mut ffi = mock_ffi_base("test_server_sync", false);
         ffi.server = Some(mock_server());
-        ffi.input = Some(InputParams::One(format_ident!("val"), parse_quote!(f64)));
-        ffi.has_self = true; // Server methods usually implies self
+        ffi.input = Some(InputParams::One(format_ident!("val"), parse_quote!(f64))); // Server methods usually implies self
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
@@ -874,7 +870,7 @@ mod tests {
         tracing::info!("Struct Tokens: \n{}", format_tokens(&struct_tokens));
         tracing::info!("Capability Tokens: \n{}", format_tokens(&capability_tokens));
         tracing::info!("Module Tokens: \n{}", format_tokens(&module_tokens));
-        
+
         // Struct: should be empty for single input
         assert!(struct_tokens.is_empty());
 
@@ -902,7 +898,7 @@ mod tests {
                 )
             }
         "#;
-        
+
         assert_code_eq(&capability_tokens, output_capability);
 
         let output_module = r#"
@@ -940,8 +936,10 @@ mod tests {
     fn test_case_8_async_server_input() {
         let mut ffi = mock_ffi_base("test_server_async", true);
         ffi.server = Some(mock_server());
-        ffi.input = Some(InputParams::One(format_ident!("query"), parse_quote!(String)));
-        ffi.has_self = true;
+        ffi.input = Some(InputParams::One(
+            format_ident!("query"),
+            parse_quote!(String),
+        ));
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
@@ -955,7 +953,7 @@ mod tests {
         tracing::info!("Struct Tokens: \n{}", format_tokens(&struct_tokens));
         tracing::info!("Capability Tokens: \n{}", format_tokens(&capability_tokens));
         tracing::info!("Module Tokens: \n{}", format_tokens(&module_tokens));
-        
+
         // Struct: should be empty for single input
         assert!(struct_tokens.is_empty());
 
@@ -984,7 +982,7 @@ mod tests {
                 )
             }
         "#;
-        
+
         assert_code_eq(&capability_tokens, output_capability);
 
         let output_module = r#"
@@ -1024,7 +1022,6 @@ mod tests {
         ffi.server = Some(mock_server());
         ffi.client = Some(mock_client());
         ffi.input = Some(InputParams::One(format_ident!("x"), parse_quote!(u8)));
-        ffi.has_self = true;
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
@@ -1038,7 +1035,7 @@ mod tests {
         tracing::info!("Struct Tokens: \n{}", format_tokens(&struct_tokens));
         tracing::info!("Capability Tokens: \n{}", format_tokens(&capability_tokens));
         tracing::info!("Module Tokens: \n{}", format_tokens(&module_tokens));
-        
+
         // Struct: should be empty for single input
         assert!(struct_tokens.is_empty());
 
@@ -1067,7 +1064,7 @@ mod tests {
                 )
             }
         "#;
-        
+
         // Capability: Should use sci_call
         assert_code_eq(&capability_tokens, output_capability);
 
@@ -1093,7 +1090,88 @@ mod tests {
                 )
             }
         "#;
-        
+
+        // Module: should take input parameter
+        assert_code_eq(&module_tokens, output_module);
+    }
+
+    // ========================================================================
+    // 10: Full SCI (Server, Client, Input)
+    // ========================================================================
+    #[tracing_test::traced_test]
+    #[test]
+    fn test_case_sc() {
+        let mut ffi = mock_ffi_base("test_sc", false);
+        ffi.server = Some(mock_server());
+        ffi.client = Some(mock_client());
+
+        let struct_tokens = ffi.generate_input_struct();
+        let capability_tokens = ffi.generate_capability_ffi();
+        let module_tokens = ffi.generate_module_function();
+        let module_tokens = quote! {
+            fn func() {
+                #module_tokens
+            }
+        };
+
+        tracing::info!("Struct Tokens: \n{}", format_tokens(&struct_tokens));
+        tracing::info!("Capability Tokens: \n{}", format_tokens(&capability_tokens));
+        tracing::info!("Module Tokens: \n{}", format_tokens(&module_tokens));
+
+        // Struct: should be empty for single input
+        assert!(struct_tokens.is_empty());
+
+        let output_capability = r#"
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn __test_sc_ffi(
+                client_state_ptr: *const u8,
+                client_state_len: usize,
+                input_ptr: *const u8,
+                input_len: usize,
+                capability_state_ptr: *mut std::ffi::c_void,
+            ) -> ::pyroduct::capability_host::ffi::FfiResult {
+                ::pyroduct::capability::safe_call::sc_call::<
+                    MockServer,
+                    MockClient,
+                    u32,
+                    _,
+                >(
+                    client_state_ptr,
+                    client_state_len,
+                    input_ptr,
+                    input_len,
+                    capability_state_ptr,
+                    |state, client| state.test_sc(client),
+                )
+            }
+        "#;
+
+        // Capability: Should use sci_call
+        assert_code_eq(&capability_tokens, output_capability);
+
+        let output_module = r#"
+            fn func() {
+                ::pyroduct::module_capability::access::call_from_wasm::<
+                    MockClient,
+                    (),
+                    u32,
+                    _,
+                >(
+                    "test_sc_lib",
+                    Some(client),
+                    None,
+                    |client_state_ptr: *const u8,
+                    client_state_len: usize,
+                    input_ptr: *const u8,
+                    input_len: usize| {
+                        unsafe {
+                            __test_sc_wasm(client_state_ptr, client_state_len, input_ptr, input_len)
+                        }
+                    },
+                )
+            }
+        "#;
+
         // Module: should take input parameter
         assert_code_eq(&module_tokens, output_module);
     }

@@ -1,14 +1,11 @@
-use heck::AsSnakeCase;
-use proc_macro2::{Span, TokenStream};
-use quote::{format_ident, quote, ToTokens};
-use syn::parse::Parser;
-use syn::punctuated::Punctuated;
+use proc_macro2::TokenStream;
+use quote::{format_ident, quote};
 use syn::visit_mut::{self, VisitMut};
 use syn::{
-    Error, Expr, ExprStruct, FnArg, GenericArgument, Ident, ImplItem, ImplItemFn, ItemImpl, ItemTrait, Member, Meta, Path, PathArguments, Result, ReturnType, Token, TraitItem, TraitItemFn, Type, TypePath, parse_quote, parse2
+    Error, ExprStruct, FnArg, Ident, Member, Path, ReturnType, TraitItemFn, Type, parse_quote,
 };
 
-use crate::capability_ffi::{CapabilityFuncFFI, InputParams};
+use crate::capability_ffi::CapabilityFuncFFI;
 
 #[derive(Debug)]
 pub struct ClientConstructor {
@@ -22,7 +19,7 @@ pub struct ClientConstructor {
 
 impl ClientConstructor {
     pub fn new(
-        method: &TraitItemFn, 
+        method: &TraitItemFn,
         explicit_client_type: &Type,
         explicit_error_type: Option<&Type>,
     ) -> syn::Result<Self> {
@@ -54,18 +51,22 @@ impl ClientConstructor {
         if let ReturnType::Type(_, ty) = &sig.output {
             let ty_str = quote!(#ty).to_string();
             let client_str = quote!(#explicit_client_type).to_string();
-            
+
             // Allow explicit type (MyClient) OR generic alias (Self::Client)
-            let is_valid_return = ty_str == client_str || ty_str == "Self :: Client" || ty_str == "Self";
+            let is_valid_return =
+                ty_str == client_str || ty_str == "Self :: Client" || ty_str == "Self";
 
             if !is_valid_return {
                 return Err(Error::new_spanned(
                     ty,
-                    format!("Client constructor must return the defined Client type '{}' directly (do not return Result).", client_str),
+                    format!(
+                        "Client constructor must return the defined Client type '{}' directly (do not return Result).",
+                        client_str
+                    ),
                 ));
             }
         } else {
-             return Err(Error::new_spanned(
+            return Err(Error::new_spanned(
                 &sig.output,
                 "Client constructor must return a value (the Client).",
             ));
@@ -110,14 +111,19 @@ impl ClientConstructor {
         let mut injector = ConfigBufInjector {
             target_ident: self.client_name.clone(),
         };
-        
+
         // 3. Run the visitor (Injects __config_buf)
         injector.visit_block_mut(&mut modified_block);
 
         // 4. Build FFI Metadata
         // Determine Final Return Type
-        
-        let ffi = client_constructor_ffi_meta(trait_name, &state_name, self.error_type.as_ref(), self.sig.asyncness.is_some());
+
+        let ffi = client_constructor_ffi_meta(
+            trait_name,
+            &state_name,
+            self.error_type.as_ref(),
+            self.sig.asyncness.is_some(),
+        );
 
         // 5. Generate the implementation
         // We reconstruct the signature because the return type might change.
@@ -127,7 +133,7 @@ impl ClientConstructor {
         let final_return_type = &ffi.return_type;
 
         let wasm_call = ffi.generate_module_function();
-        
+
         let logic = quote! {
             let mut new_self = (|| #modified_block )();
 
@@ -154,15 +160,15 @@ pub fn client_constructor_ffi_meta(
     error_type: Option<&Type>,
     is_async: bool,
 ) -> CapabilityFuncFFI {
-    let return_type: Type = if let Some(err_type) = error_type {            
+    let return_type: Type = if let Some(err_type) = error_type {
         parse_quote!(Result<Self, #err_type>)
     } else {
         parse_quote!(Self)
     };
     CapabilityFuncFFI {
         // Updated Path: __{trait}_{state}_new_client
-        library: format_ident!("__{}_{}_new_client", trait_name, state_name), 
-        fn_name: format_ident!("new_client"), 
+        library: format_ident!("__{}_{}_new_client", trait_name, state_name),
+        fn_name: format_ident!("new_client"),
         // Host/Wasm names aligned with library path
         fn_ffi_name: format_ident!("__{}_{}_new_client_ffi", trait_name, state_name),
         fn_wasm_name: format_ident!("__{}_{}_new_client_wasm", trait_name, state_name),
@@ -171,8 +177,7 @@ pub fn client_constructor_ffi_meta(
         return_type,
         input: None,
         client: Some(format_ident!("Self")),
-        server: None, 
-        has_self: false,
+        server: Some(state_name.clone()),
     }
 }
 
@@ -227,23 +232,24 @@ impl VisitMut for ConfigBufInjector {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::fmt::assert_code_eq; 
-    use syn::{parse_quote, Type, TraitItemFn};
-    use quote::ToTokens;
     use super::super::ClientConstructor;
+    use super::*;
+    use crate::fmt::assert_code_eq;
+    use syn::{TraitItemFn, Type};
 
     /// Helper to create a ClientConstructor from raw code
     fn create_constructor(
-        func_code: TokenStream, 
+        func_code: TokenStream,
         client_type_str: &str,
-        error_type_str: Option<&str>
+        error_type_str: Option<&str>,
     ) -> ClientConstructor {
         let method: TraitItemFn = syn::parse2(func_code).expect("Failed to parse fn");
         let client_type: Type = syn::parse_str(client_type_str).expect("Failed to parse type");
-        let error_type: Option<Type> = error_type_str.map(|s| syn::parse_str(s).expect("Failed to parse error"));
-        
-        ClientConstructor::new(&method, &client_type, error_type.as_ref()).expect("Constructor creation failed")
+        let error_type: Option<Type> =
+            error_type_str.map(|s| syn::parse_str(s).expect("Failed to parse error"));
+
+        ClientConstructor::new(&method, &client_type, error_type.as_ref())
+            .expect("Constructor creation failed")
     }
 
     #[test]
@@ -379,10 +385,14 @@ mod tests {
         };
         let method: TraitItemFn = syn::parse2(code).unwrap();
         let client_type: Type = syn::parse_str("MyClient").unwrap();
-        
+
         let res = ClientConstructor::new(&method, &client_type, None);
         assert!(res.is_err());
-        assert!(res.unwrap_err().to_string().contains("must return the defined Client type 'MyClient' directly"));
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("must return the defined Client type 'MyClient' directly")
+        );
     }
 
     #[test]
@@ -445,7 +455,7 @@ mod tests {
                 )
             }
         "#;
-        
+
         assert_code_eq(&output, expected);
     }
 }

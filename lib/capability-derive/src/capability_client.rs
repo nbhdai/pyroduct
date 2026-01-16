@@ -2,8 +2,8 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Fields, Ident, ItemStruct, Path, Result, Token, parse_quote, parse2};
 use syn::punctuated::Punctuated;
+use syn::{Fields, ItemStruct, Path, Result, Token, parse_quote};
 
 #[derive(Default, Debug, Clone)]
 struct ClientAttrs {
@@ -28,10 +28,6 @@ impl CapClient {
         Ok(Self { input, attrs })
     }
 
-    pub fn name(&self) -> &Ident {
-        &self.input.ident
-    }
-
     pub fn expand(mut self) -> Result<TokenStream> {
         // Check for and remove standard Debug derive if present
         let has_debug = self.remove_std_debug();
@@ -39,9 +35,9 @@ impl CapClient {
         // Add necessary derives and the config buffer field
         self.add_derives();
         self.add_buffer()?;
-        
+
         let input = &self.input;
-        
+
         // If Debug was requested, generate our custom implementation that hides the buffer
         let debug_impl = if has_debug {
             self.generate_custom_debug()
@@ -51,8 +47,8 @@ impl CapClient {
 
         let trait_impl = self.generate_client_trait();
 
-        Ok(quote! { 
-            #input 
+        Ok(quote! {
+            #input
             #debug_impl
             #trait_impl
         })
@@ -64,15 +60,25 @@ impl CapClient {
 
         for attr in self.input.attrs.drain(..) {
             if attr.path().is_ident("derive") {
-                if let Ok(paths) = attr.parse_args_with(Punctuated::<Path, Token![,]>::parse_terminated) {
+                if let Ok(paths) =
+                    attr.parse_args_with(Punctuated::<Path, Token![,]>::parse_terminated)
+                {
                     let mut new_paths = Punctuated::<Path, Token![,]>::new();
                     let mut modified = false;
 
                     for path in paths {
                         // Check for "Debug", "std::fmt::Debug", "core::fmt::Debug"
-                        let is_debug = path.is_ident("Debug") || 
-                            (path.segments.last().map(|s| s.ident == "Debug").unwrap_or(false) && 
-                             path.segments.first().map(|s| s.ident == "std" || s.ident == "core").unwrap_or(false));
+                        let is_debug = path.is_ident("Debug")
+                            || (path
+                                .segments
+                                .last()
+                                .map(|s| s.ident == "Debug")
+                                .unwrap_or(false)
+                                && path
+                                    .segments
+                                    .first()
+                                    .map(|s| s.ident == "std" || s.ident == "core")
+                                    .unwrap_or(false));
 
                         if is_debug {
                             found_debug = true;
@@ -106,16 +112,16 @@ impl CapClient {
     fn generate_custom_debug(&self) -> TokenStream {
         let struct_name = &self.input.ident;
         let (impl_generics, ty_generics, where_clause) = self.input.generics.split_for_impl();
-        
+
         let mut field_debugs = TokenStream::new();
         if let Fields::Named(fields) = &self.input.fields {
             for field in &fields.named {
                 let fname = field.ident.as_ref().unwrap();
                 let fname_str = fname.to_string();
-                
+
                 // Skip our internal buffer field
                 if fname_str == "__config_buf" {
-                    continue; 
+                    continue;
                 }
 
                 field_debugs.extend(quote! {
@@ -138,7 +144,7 @@ impl CapClient {
     fn generate_client_trait(&self) -> TokenStream {
         let struct_name = &self.input.ident;
         let (impl_generics, ty_generics, where_clause) = self.input.generics.split_for_impl();
-        
+
         quote! {
             /// Trait providing access to the client capability configuration buffer.
             impl #impl_generics ::pyroduct::module_capability::CapabilityClient for #struct_name #ty_generics #where_clause {
@@ -151,16 +157,22 @@ impl CapClient {
 
     fn add_derives(&mut self) {
         // Add rkyv derives required for serialization
-        self.input.attrs.push(parse_quote!(#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]));
+        self.input
+            .attrs
+            .push(parse_quote!(#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]));
         // Add rkyv specific configuration
-        self.input.attrs.push(parse_quote!(#[rkyv(compare(PartialEq), derive(Debug))]));
+        self.input
+            .attrs
+            .push(parse_quote!(#[rkyv(compare(PartialEq), derive(Debug))]));
     }
 
     fn has_serde_derive(&self) -> bool {
         for attr in &self.input.attrs {
             if attr.path().is_ident("derive") {
                 // Try to parse the arguments as a comma-separated list of paths
-                if let Ok(paths) = attr.parse_args_with(Punctuated::<Path, Token![,]>::parse_terminated) {
+                if let Ok(paths) =
+                    attr.parse_args_with(Punctuated::<Path, Token![,]>::parse_terminated)
+                {
                     for path in paths {
                         // Check for simple ident "Serialize" / "Deserialize"
                         if path.is_ident("Serialize") || path.is_ident("Deserialize") {
@@ -200,29 +212,22 @@ impl CapClient {
                         __config_buf: Vec<u8>
                     });
                 }
-                
+
                 Ok(())
             }
-            _ => {
-                Err(syn::Error::new_spanned(
-                    &self.input,
-                    "capability_client only supports structs with named fields"
-                ))
-            }
+            _ => Err(syn::Error::new_spanned(
+                &self.input,
+                "capability_client only supports structs with named fields",
+            )),
         }
     }
-}
-
-pub fn expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
-    let input: ItemStruct = parse2(item)?;
-    let client = CapClient::new(attr, input)?;
-    client.expand()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use quote::quote;
+    use syn::parse2;
 
     fn format_tokens(tokens: &TokenStream) -> String {
         // Try to parse and format as a file, fallback to raw string if it fails
@@ -231,7 +236,7 @@ mod tests {
             Err(err) => {
                 tracing::error!(?err, "Parsing Error");
                 tokens.to_string()
-            },
+            }
         }
     }
 
@@ -245,14 +250,19 @@ mod tests {
             }
         };
 
-        let result = expand(attr, item).expect("Expansion failed");
+        let item = parse2(item).expect("error");
+
+        let result = CapClient::new(attr, item)
+            .expect("Expansion failed")
+            .expand()
+            .expect("error");
         tracing::info!("Generated tokens: {}", format_tokens(&result));
         let result_str = result.to_string();
 
         assert!(result_str.contains("__config_buf : Vec < u8 >"));
         assert!(result_str.contains("# [rkyv (with = rkyv :: with :: Skip)]"));
         assert!(!result_str.contains("# [serde (skip)]"));
-        
+
         tracing::debug!("Client without serde passed");
     }
 
@@ -267,14 +277,18 @@ mod tests {
             }
         };
 
-        let result = expand(attr, item).expect("Expansion failed");
+        let item = parse2(item).expect("error");
+        let result = CapClient::new(attr, item)
+            .expect("Expansion failed")
+            .expand()
+            .expect("error");
         tracing::info!("Generated tokens: {}", format_tokens(&result));
 
         let result_str = result.to_string();
 
         assert!(result_str.contains("__config_buf : Vec < u8 >"));
         assert!(result_str.contains("# [serde (skip)]"));
-        
+
         tracing::debug!("Client with simple serde derive passed");
     }
 
@@ -289,31 +303,34 @@ mod tests {
             }
         };
 
-        let result = expand(attr, item).expect("Expansion failed");
+        let item = parse2(item).expect("error");
+        let result = CapClient::new(attr, item)
+            .expect("Expansion failed")
+            .expand()
+            .expect("error");
         tracing::info!("Generated tokens: {}", format_tokens(&result));
 
         let result_str = result.to_string();
 
         // Check that `derive(Clone, Debug)` became `derive(Clone)`
         // Note: Exact string match depends on spacing, but we check conceptually
-        assert!(result_str.contains("derive (Clone)")); 
-        
+        assert!(result_str.contains("derive (Clone)"));
+
         // Ensure standard Debug derive is NOT present in the list (or list is just Clone)
         // We might see `derive (rkyv::Archive...)` which is added separately.
-        
+
         // Check that a manual impl was generated
         assert!(result_str.contains("impl std :: fmt :: Debug for MyDebugClient"));
         assert!(result_str.contains("f . debug_struct"));
-        
+
         // Check that fields are included
         assert!(result_str.contains(". field (\"name\" , & self . name)"));
-        
+
         // Check that buffer is NOT included in the debug fields
         assert!(!result_str.contains(". field (\"__config_buf\""));
 
         tracing::debug!("Client debug override passed");
     }
-
 
     #[tracing_test::traced_test]
     #[test]
@@ -325,13 +342,19 @@ mod tests {
             }
         };
 
-        let result = expand(attr, item).expect("Expansion failed");
+        let item = parse2(item).expect("error");
+        let result = CapClient::new(attr, item)
+            .expect("Expansion failed")
+            .expand()
+            .expect("error");
         tracing::info!("Generated tokens: {}", format_tokens(&result));
         tracing::info!("Generated tokens: {}", &result);
         let result_str = result.to_string();
 
         // Check for trait implementation
-        assert!(result_str.contains("impl :: pyroduct :: module_capability :: CapabilityClient for ConfiguredClient"));
+        assert!(result_str.contains(
+            "impl :: pyroduct :: module_capability :: CapabilityClient for ConfiguredClient"
+        ));
         assert!(result_str.contains("& self . __config_buf"));
 
         tracing::debug!("Client trait generation passed");

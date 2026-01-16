@@ -197,7 +197,6 @@ struct OpenInput {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod ffi {
-    
 
     #[derive(serde::Serialize, serde::Deserialize)]
     pub struct __SerialPoolConfig {

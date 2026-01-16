@@ -17,7 +17,6 @@ pub use arrow_derive::{DeepRef, FromRow, ToRow};
 pub use arrow_scalars;
 pub use tracing;
 
-
 /// Module Derive Macro
 ///
 /// This crate provides the `#[module]` attribute macro to generate the WASM
@@ -87,6 +86,27 @@ pub use tracing;
 /// ```
 pub use module_derive::module;
 
+/// Unified capability export macro that handles all FFI generation.
+///
+/// # Usage
+/// ```ignore
+/// capability! {
+///     env = "my_capability",
+///     
+///     #[capability_client]
+///     pub struct MyClient { ... }
+///     
+///     #[capability]
+///     pub trait MyTrait { ... }
+///     
+///     #[capability_server(service = MyTrait)]
+///     pub struct MyServer { ... }
+///     
+///     impl MyTrait for MyServer { ... }
+/// }
+/// ```
+///
+/// ## Functions
 /// Marks a standalone function as a capability function (Pattern 1: no state).
 ///
 /// This attribute generates the necessary FFI boilerplate to expose a host-side function
@@ -117,9 +137,8 @@ pub use module_derive::module;
 ///     Ok(vec![])
 /// }
 /// ```
-pub use capability_derive::capability_function;
-
-
+///
+/// ## Clients
 /// Marks a struct as client-side state that gets serialized and sent to the host.
 ///
 /// Generates rkyv derives for serialization.
@@ -133,8 +152,8 @@ pub use capability_derive::capability_function;
 ///     pub timeout_secs: Option<u64>,
 /// }
 /// ```
-pub use capability_derive::capability_client;
-
+///
+/// ## Services
 /// Defines a capability trait with automatic FFI generation.
 ///
 /// # Attributes
@@ -155,8 +174,8 @@ pub use capability_derive::capability_client;
 ///     async fn get(#[client_state] client: &HttpClient, path: &str) -> Result<HttpResponse, String>;
 /// }
 /// ```
-pub use capability_derive::capability;
-
+///
+/// ## Service Implementations
 /// Marks a struct as the server-side implementation of a capability.
 ///
 /// # Attributes
@@ -187,8 +206,8 @@ pub use capability_derive::capability;
 ///     fn report(&mut self, message: String) -> String { ... }
 /// }
 /// ```
-pub use capability_derive::capability_server;
-
+///
+/// ## Service Definitions
 /// Generates FFI host functions from a trait implementation.
 ///
 /// This should be placed on the `impl TraitName for ServerStruct` block.
@@ -206,19 +225,4 @@ pub use capability_derive::capability_server;
 ///     }
 /// }
 /// ```
-pub use capability_derive::capability_impl;
-
-/// Generates the plugin manifest and exports.
-///
-/// # Usage
-///
-/// For stateless functions:
-/// ```ignore
-/// capability_export!(env = "cpu_info", functions = [get_cpu_count, get_architecture]);
-/// ```
-///
-/// For server structs:
-/// ```ignore
-/// capability_export!(env = "reporter", ReporterServer);
-/// ```
-pub use capability_derive::capability_export;
+pub use capability_derive::capability;

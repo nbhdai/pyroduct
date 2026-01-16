@@ -3,7 +3,7 @@
 use heck::AsSnakeCase;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{FnArg, Ident, ItemFn, Result, parse2};
+use syn::{FnArg, Ident, ItemFn, Result};
 
 use crate::capability_ffi::{CapabilityFuncFFI, InputParams};
 use crate::utils::{get_param_name, get_param_type, get_return_type};
@@ -19,15 +19,21 @@ impl CapFn {
     }
 
     pub fn input(&self) -> Option<InputParams> {
-        let params: Vec<_> = self.input.sig.inputs.iter().filter_map(|arg| {
-            if let FnArg::Typed(_) = arg {
-                let name = get_param_name(arg)?;
-                let ty = get_param_type(arg)?;
-                Some((name, ty.clone()))
-            } else {
-                None
-            }
-        }).collect();
+        let params: Vec<_> = self
+            .input
+            .sig
+            .inputs
+            .iter()
+            .filter_map(|arg| {
+                if let FnArg::Typed(_) = arg {
+                    let name = get_param_name(arg)?;
+                    let ty = get_param_type(arg)?;
+                    Some((name, ty.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         match params.len() {
             0 => None,
@@ -48,17 +54,26 @@ impl CapFn {
     /// Creates a CapabilityFuncFFI with no client or state (standalone function)
     pub fn to_ffi(&self, library: &Ident) -> CapabilityFuncFFI {
         CapabilityFuncFFI {
-            library: format_ident!("__{}__{}__func", AsSnakeCase(library.to_string()).to_string(), AsSnakeCase(self.input.sig.ident.to_string()).to_string()),
+            library: format_ident!(
+                "__{}__{}__func",
+                AsSnakeCase(library.to_string()).to_string(),
+                AsSnakeCase(self.input.sig.ident.to_string()).to_string()
+            ),
             fn_name: self.input.sig.ident.clone(),
-            fn_ffi_name: format_ident!("__{}_ffi", AsSnakeCase(self.input.sig.ident.to_string()).to_string()),
-            fn_wasm_name: format_ident!("__{}_wasm", AsSnakeCase(self.input.sig.ident.to_string()).to_string()),
+            fn_ffi_name: format_ident!(
+                "__{}_ffi",
+                AsSnakeCase(self.input.sig.ident.to_string()).to_string()
+            ),
+            fn_wasm_name: format_ident!(
+                "__{}_wasm",
+                AsSnakeCase(self.input.sig.ident.to_string()).to_string()
+            ),
             vis: self.input.vis.clone(),
             is_async: self.input.sig.asyncness.is_some(),
             return_type: get_return_type(&self.input.sig.output).into(),
             input: self.input(),
-            client: None,  // No client for standalone functions
-            server: None,  // No server for standalone functions
-            has_self: false,      // No self for standalone functions
+            client: None, // No client for standalone functions
+            server: None, // No server for standalone functions
         }
     }
 
@@ -73,7 +88,7 @@ impl CapFn {
 
         // Build function parameters
         let mut fn_params = Vec::new();
-        
+
         if let Some(input) = &ffi.input {
             match input {
                 InputParams::One(param_name, param_ty) => {
@@ -95,51 +110,13 @@ impl CapFn {
     }
 }
 
-pub(crate) fn expand(_attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
-    let input = parse2(item)?;
-    let cap_fn = CapFn::new(input)?;
-    
-    let ffi = cap_fn.to_ffi(&format_ident!("env"));
-    
-    let input = &cap_fn.input;
-    let input_struct = ffi.generate_input_struct();
-    let input_struct_complex = if input_struct.is_empty() {
-        TokenStream::new()
-    } else {
-        quote! {
-            #[cfg(feature = "capability")]
-            #input_struct
-        }
-    };
-    let capability_fn = ffi.generate_capability_ffi();
-    let client_fn = cap_fn.generate_module_function(&format_ident!("env"));
-
-    let output = quote! {
-        // Original function (host-side implementation)
-        #[cfg(feature = "capability")]
-        #input
-
-        // Input struct for serialization
-        #input_struct_complex
-
-        // Host FFI function
-        #[cfg(feature = "capability")]
-        #capability_fn
-
-        // Client-side wrapper
-        #client_fn
-    };
-
-    Ok(output)
-}
-
-
 #[cfg(test)]
 mod tests {
     use crate::fmt::assert_code_eq;
 
     use super::*;
     use quote::quote;
+    use syn::parse2;
 
     #[tracing_test::traced_test]
     #[test]
@@ -150,8 +127,12 @@ mod tests {
             }
         };
 
-        let result = expand(quote!(), item).expect("Expansion failed");
-        
+        let lib_name = format_ident!("MyLib");
+        let item = parse2(item).expect("error");
+        let result = CapFn::new(item)
+            .expect("Expansion failed")
+            .generate_module_function(&lib_name);
+
         let expected = r#"
             #[cfg(feature = "capability")]
             pub fn get_count() -> u32 {
@@ -215,7 +196,11 @@ mod tests {
             }
         };
 
-        let result = expand(quote!(), item).expect("Expansion failed");
+        let lib_name = format_ident!("MyLib");
+        let item = parse2(item).expect("error");
+        let result = CapFn::new(item)
+            .expect("Expansion failed")
+            .generate_module_function(&lib_name);
 
         let expected = r#"
             #[cfg(feature = "capability")]
@@ -285,7 +270,11 @@ mod tests {
             }
         };
 
-        let result = expand(quote!(), item).expect("Expansion failed");
+        let lib_name = format_ident!("MyLib");
+        let item = parse2(item).expect("error");
+        let result = CapFn::new(item)
+            .expect("Expansion failed")
+            .generate_module_function(&lib_name);
 
         let expected = r#"
             #[cfg(feature = "capability")]
