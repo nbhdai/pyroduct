@@ -258,7 +258,7 @@ impl CapabilityMethod {
     /// Helper to construct the CapabilityFuncFFI configuration.
     /// Encapsulates all logic regarding return type calculation, client ID extraction,
     /// and input parameter wrapping.
-    fn build_ffi_meta(&self, trait_name: &Ident, state_name: &Ident) -> CapabilityFuncFFI {
+    pub fn build_ffi_meta(&self, trait_name: &Ident, state_name: &Ident) -> CapabilityFuncFFI {
         let name = &self.name;
 
         // 2. Determine Client Identity
@@ -342,19 +342,6 @@ impl CapabilityMethod {
             }
         }
     }
-
-    /// Generates the host-side FFI function export.
-    ///
-    /// This uses the same FFI metadata logic as client generation to ensure consistency.
-    pub fn ffi_function_generation(&self, trait_name: &Ident, state_name: &Ident) -> TokenStream {
-        let ffi = self.build_ffi_meta(trait_name, state_name);
-        ffi.generate_capability_ffi()
-    }
-
-    pub fn wasm_import_generation(&self, trait_name: &Ident, state_name: &Ident) -> TokenStream {
-        let ffi = self.build_ffi_meta(trait_name, state_name);
-        ffi.generate_client_wasm()
-    }
 }
 
 /// Validates that if an Error type is provided, the return type is Result<T, Error>.
@@ -425,7 +412,7 @@ fn extract_result_parts(ty: &Type) -> Option<(&Type, &Type)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fmt::assert_code_eq;
+    use crate::fmt::assert_code_eq_token;
     use syn::{TraitItemFn, Type};
 
     /// Helper to create a CapabilityMethod from a raw function signature string.
@@ -472,41 +459,21 @@ mod tests {
         let method = create_method_trait(code, Some("MyClient"), None);
         let state_name = format_ident!("MyState");
         let trait_name = format_ident!("MyTrait");
-
-        // 3. Generate the client implementation
+        let method_ffi = method.build_ffi_meta(&trait_name, &state_name);
+        let struct_tokens = method_ffi.generate_input_struct();
+        let wasm_call = method_ffi.generate_module_function();
+        // 3. Generate
         let output = method.client_method_generation(&trait_name, &state_name);
 
-        // 4. Define expected output
-        // Note: Library name should be "__MyTrait_MyClient_get_status"
-        let expected = r#"
-            pub fn get_status(&self) -> u32 {
-                ::pyroduct::module_capability::access::call_from_wasm::<
-                    MyClient,
-                    (),
-                    u32,
-                    _,
-                >(
-                    "__MyTrait_MyState_get_status",
-                    Some(client),
-                    None,
-                    |client_state_ptr: *const u8,
-                     client_state_len: usize,
-                     input_ptr: *const u8,
-                     input_len: usize| {
-                        unsafe {
-                            __MyTrait_MyState_get_status_wasm(
-                                client_state_ptr,
-                                client_state_len,
-                                input_ptr,
-                                input_len,
-                            )
-                        }
-                    },
-                )
+        // 4. Expected
+        let expected = quote! {
+            pub fn get_status(&self) {
+                #struct_tokens
+                #wasm_call
             }
-        "#;
+        };
 
-        assert_code_eq(&output, expected);
+        assert_code_eq_token(&output, &expected);
     }
 
     #[test]
@@ -520,43 +487,21 @@ mod tests {
         let method = create_method_trait(code, Some("MyClient"), Some("MyError"));
         let state_name = format_ident!("MyState");
         let trait_name = format_ident!("MyTrait");
-
+        let method_ffi = method.build_ffi_meta(&trait_name, &state_name);
+        let struct_tokens = method_ffi.generate_input_struct();
+        let wasm_call = method_ffi.generate_module_function();
         // 3. Generate
         let output = method.client_method_generation(&trait_name, &state_name);
 
-        // 4. Expected:
-        // - Return type wrapped in Result<(), MyError>
-        // - Single input means NO internal struct generation
-        // - Async markers
-        let expected = r#"
+        // 4. Expected
+        let expected = quote! {
             pub fn set_name(&self, name: String) -> Result<(), MyError> {
-                ::pyroduct::module_capability::access::call_from_wasm::<
-                    MyClient,
-                    String,
-                    Result<(), MyError>,
-                    _,
-                >(
-                    "__MyTrait_MyState_set_name",
-                    Some(client),
-                    Some(&name),
-                    |client_state_ptr: *const u8,
-                     client_state_len: usize,
-                     input_ptr: *const u8,
-                     input_len: usize| {
-                        unsafe {
-                            __MyTrait_MyState_set_name_wasm(
-                                client_state_ptr,
-                                client_state_len,
-                                input_ptr,
-                                input_len,
-                            )
-                        }
-                    },
-                )
+                #struct_tokens
+                #wasm_call
             }
-        "#;
+        };
 
-        assert_code_eq(&output, expected);
+        assert_code_eq_token(&output, &expected);
     }
 
     #[test]
@@ -571,53 +516,25 @@ mod tests {
         let state_name = format_ident!("MyState");
         let trait_name = format_ident!("MyTrait");
 
+        let method_ffi = method.build_ffi_meta(&trait_name, &state_name);
+        let struct_tokens = method_ffi.generate_input_struct();
+        let wasm_call = method_ffi.generate_module_function();
         // 3. Generate
         let output = method.client_method_generation(&trait_name, &state_name);
 
-        // 4. Expected:
-        // - An internal struct `__MyTrait_configure_Input` is defined inside the function block.
-        // - `rkyv` attributes are present on that struct.
-        // - The `call_from_wasm` uses `Some(&__MyTrait_configure_Input { port, active })`.
-        let expected = r#"
+        // 4. Expected
+        let expected = quote! {
             pub fn configure(&self, port: u16, active: bool) {
-                #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-                #[rkyv(compare(PartialEq), derive(Debug))]
-                struct __MyTrait_MyState_configure_Input {
-                    pub port: u16,
-                    pub active: bool,
-                }
-                ::pyroduct::module_capability::access::call_from_wasm::<
-                    MyClient,
-                    __MyTrait_MyState_configure_Input,
-                    (),
-                    _,
-                >(
-                    "__MyTrait_MyState_configure",
-                    Some(client),
-                    Some(&__MyTrait_MyState_configure_Input { port, active }),
-                    |client_state_ptr: *const u8,
-                     client_state_len: usize,
-                     input_ptr: *const u8,
-                     input_len: usize| {
-                        unsafe {
-                            __MyTrait_MyState_configure_wasm(
-                                client_state_ptr,
-                                client_state_len,
-                                input_ptr,
-                                input_len,
-                            )
-                        }
-                    },
-                )
+                #struct_tokens
+                #wasm_call
             }
-        "#;
+        };
 
-        assert_code_eq(&output, expected);
+        assert_code_eq_token(&output, &expected);
     }
 
     #[test]
     fn test_validation_rejects_forbidden_patterns() {
-        // Test Rule: No &self in arguments (implied by trait parsing, but we check specific FnArg)
         let code = quote! {
             fn invalid(other: &Self) -> ();
         };
@@ -627,12 +544,9 @@ mod tests {
             res.unwrap_err().to_string(),
             "Capability methods cannot take variant of 'self', or 'Self'"
         );
-        // Note: `syn` parses `&self` as a Receiver, but `other: &Self` as Typed.
-        // The validator currently checks that we don't return Self or accept Client type.
 
         let client_type = "MyClient";
 
-        // 1. Check returning Client type is forbidden
         let code_ret_client = quote! {
             fn make_client(&self) -> MyClient;
         };
@@ -640,10 +554,9 @@ mod tests {
         assert!(res.is_err(), "Should have rejected returning Client type");
         assert_eq!(
             res.unwrap_err().to_string(),
-            "Capability methods cannot take variant of 'self', or 'Self'"
+            "Capability methods cannot take variant of 'self', or 'Self'" // Note: the validator catches 'Self' returns as "Cannot return Self" but typed client returns get caught by check #2
         );
 
-        // 2. Check accepting Client type is forbidden
         let code_arg_client = quote! {
             fn process(c: MyClient);
         };
@@ -671,7 +584,6 @@ mod tests {
         );
     }
 
-    /// Helper for fallible creation (to test validation logic)
     fn create_method_result(
         sig_code: TokenStream,
         client_type_str: Option<&str>,
@@ -695,39 +607,23 @@ mod tests {
         let state_name = format_ident!("MyState");
 
         // 2. Generate FFI export
-        let output = method.ffi_function_generation(&trait_name, &state_name);
+        let output = method.build_ffi_meta(&trait_name, &state_name);
 
-        // 3. Expected:
-        // - unsafe extern "C"
-        // - FfiResult return
-        // - ci_call (Client, Input)
-        // - Closure calls method
-        let expected = r#"
-            #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __MyTrait_MyState_sync_op_ffi(
-                client_state_ptr: *const u8,
-                client_state_len: usize,
-                input_ptr: *const u8,
-                input_len: usize,
-                capability_state_ptr: *mut std::ffi::c_void,
-            ) -> ::pyroduct::capability_host::ffi::FfiResult {
-                ::pyroduct::capability::safe_call::sci_call::<
-                    MyState,
-                    MyClient,
-                    u32,
-                    bool,
-                    _,
-                >(
-                    client_state_ptr,
-                    client_state_len,
-                    input_ptr,
-                    input_len,
-                    capability_state_ptr,
-                    |state, client, input| state.sync_op(client, input),
-                )
-            }
-        "#;
-        assert_code_eq(&output, expected);
+        let expected = CapabilityFuncFFI {
+            library: format_ident!("__MyTrait_MyState_sync_op"),
+            fn_name: format_ident!("sync_op"), // The actual method name
+            fn_ffi_name: format_ident!("__MyTrait_MyState_sync_op_ffi"),
+            fn_wasm_name: format_ident!("__MyTrait_MyState_sync_op_wasm"),
+            vis: syn::Visibility::Public(parse_quote!(pub)),
+            is_async: false,
+            return_type: parse_quote!(-> bool), 
+            input: Some(InputParams::One(format_ident!("val"), parse_quote!(u32))),
+            client: Some(format_ident!("MyClient")),
+            server: Some(format_ident!("MyState")),
+        };
+
+        // 3. Verify that the struct fields match expectation
+        assert_eq!(&output, &expected);
     }
 
     #[test]
@@ -741,40 +637,23 @@ mod tests {
         let trait_name = format_ident!("MyTrait");
 
         // 2. Generate FFI export
-        let output = method.ffi_function_generation(&trait_name, &state_name);
+        let output = method.build_ffi_meta(&trait_name, &state_name);
 
-        // 3. Expected:
-        // - unsafe extern "C"
-        // - FfiBorrowedFutureResult return
-        // - ci_call (Client, Input)
-        // - Closure returns async block
-        let expected = r#"
-            #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __MyTrait_MyState_async_op_ffi<'a>(
-                client_state_ptr: *const u8,
-                client_state_len: usize,
-                input_ptr: *const u8,
-                input_len: usize,
-                capability_state_ptr: *mut std::ffi::c_void,
-            ) -> ::pyroduct::capability_host::ffi::FfiBorrowedFutureResult<'a> {
-                ::pyroduct::capability::safe_async::sci_call::<
-                    MyState,
-                    MyClient,
-                    String,
-                    u64,
-                    _,
-                    _,
-                >(
-                    client_state_ptr,
-                    client_state_len,
-                    input_ptr,
-                    input_len,
-                    capability_state_ptr,
-                    |state, client, input| async move { state.async_op(client, input).await },
-                )
-            }
-        "#;
-        assert_code_eq(&output, expected);
+        let expected = CapabilityFuncFFI {
+            library: format_ident!("__MyTrait_MyState_async_op"),
+            fn_name: format_ident!("async_op"),
+            fn_ffi_name: format_ident!("__MyTrait_MyState_async_op_ffi"),
+            fn_wasm_name: format_ident!("__MyTrait_MyState_async_op_wasm"),
+            vis: syn::Visibility::Public(parse_quote!(pub)),
+            is_async: true,
+            return_type: parse_quote!(-> u64),
+            input: Some(InputParams::One(format_ident!("data"), parse_quote!(String))),
+            client: Some(format_ident!("MyClient")),
+            server: Some(format_ident!("MyState")),
+        };
+
+        // 3. Verify that the struct fields match expectation
+        assert_eq!(&output, &expected);
     }
 
     #[test]

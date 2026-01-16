@@ -4,7 +4,7 @@ use syn::{Ident, ReturnType, Type, Visibility};
 
 use crate::utils::return_to_type;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputParams {
     One(Ident, Type),
     Many {
@@ -13,7 +13,7 @@ pub enum InputParams {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityFuncFFI {
     pub library: Ident,
     pub fn_name: Ident,

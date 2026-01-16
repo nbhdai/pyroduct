@@ -1,5 +1,6 @@
+use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{FnArg, Ident, Pat, ReturnType, Type, parse2, token::RArrow};
+use syn::{Attribute, FnArg, Ident, Pat, ReturnType, Type, parse2, token::RArrow};
 
 pub fn type_to_return(arg: &Type) -> ReturnType {
     ReturnType::Type(RArrow::default(), Box::new(arg.clone()))
@@ -66,5 +67,23 @@ pub fn is_self_ref_or_type(input: &FnArg) -> bool {
             }
             false
         }
+    }
+}
+
+
+pub fn has_attr(attrs: &[Attribute], name: &str) -> bool {
+    attrs.iter().any(|attr| attr.path().is_ident(name))
+}
+
+pub fn remove_attr(attrs: &mut Vec<Attribute>, name: &str) -> TokenStream {
+    if let Some(idx) = attrs.iter().position(|attr| attr.path().is_ident(name)) {
+        let attr = attrs.remove(idx);
+        match attr.meta {
+            syn::Meta::Path(_) => quote!(),
+            syn::Meta::List(l) => l.tokens,
+            syn::Meta::NameValue(nv) => quote!(#nv),
+        }
+    } else {
+        quote!()
     }
 }
