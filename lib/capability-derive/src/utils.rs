@@ -1,18 +1,14 @@
 use quote::quote;
-use syn::{FnArg, Ident, Pat, ReturnType, Type, parse_quote};
+use syn::{FnArg, Ident, Pat, ReturnType, Type, parse2, token::RArrow};
 
-/// Get the return type, defaulting to () if none specified
-pub fn get_return_type(ret: &ReturnType) -> Type {
-    match &ret {
-        ReturnType::Default => {
-            tracing::trace!("No return type specified, defaulting to unit ()");
-            parse_quote!(())
-        }
-        ReturnType::Type(_rarrow, return_type) => {
-            let rt = return_type.as_ref().clone();
-            tracing::trace!("Detected return type: {}", quote!(#rt));
-            rt
-        }
+pub fn type_to_return(arg: &Type) -> ReturnType {
+    ReturnType::Type(RArrow::default(), Box::new(arg.clone()))
+} 
+
+pub fn return_to_type(arg: &ReturnType) -> Type {
+    match arg {
+        ReturnType::Default => parse2(quote!(())).expect("Works"),
+        ReturnType::Type(_, arg_type) => arg_type.as_ref().clone(),
     }
 }
 

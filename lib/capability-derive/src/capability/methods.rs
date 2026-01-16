@@ -261,20 +261,6 @@ impl CapabilityMethod {
     fn build_ffi_meta(&self, trait_name: &Ident, state_name: &Ident) -> CapabilityFuncFFI {
         let name = &self.name;
 
-        // 1. Determine Final Return Type
-        let final_return_type: Type = if let Some(error_type) = &self.error_type {
-            let inner_type = match &self.output {
-                ReturnType::Default => quote! { () },
-                ReturnType::Type(_, ty) => quote! { #ty },
-            };
-            parse_quote! { Result<#inner_type, #error_type> }
-        } else {
-            match &self.output {
-                ReturnType::Default => parse_quote!(()),
-                ReturnType::Type(_, ty) => *ty.clone(),
-            }
-        };
-
         // 2. Determine Client Identity
         // If client_type is set, we extract the ident (e.g. "MyClient").
         // CapabilityFuncFFI expects Option<Ident>.
@@ -309,7 +295,7 @@ impl CapabilityMethod {
             fn_wasm_name: format_ident!("__{}_{}_{}_wasm", trait_name, state_name, name),
             vis: syn::Visibility::Public(parse_quote!(pub)),
             is_async: self.original_sig.asyncness.is_some(),
-            return_type: final_return_type,
+            return_type: self.output.clone(),
             input: input_params,
             client: client_ident,
             server: Some(state_name.clone()),
@@ -336,8 +322,7 @@ impl CapabilityMethod {
         let ffi = self.build_ffi_meta(trait_name, state_name);
 
         // 4. Prepare Return Type for Signature
-        let final_ret_ty = &ffi.return_type;
-        let return_tokens = quote! { -> #final_ret_ty };
+        let return_tokens = &ffi.return_type;
 
         // 5. Generate Logic components
         // If there are multiple inputs, this returns the struct definition.
@@ -379,7 +364,7 @@ pub fn transform_return_type(output: &ReturnType, target_error: &Type) -> syn::R
         ReturnType::Default => {
             Err(Error::new_spanned(
                 output,
-                format!("Method must return Result<T, MyError> or Result<T, Self::Error>.", quote!(#target_error))
+                format!("Method must return Result<T, {}> or Result<T, Self::Error>.", quote!(#target_error).to_string()),
             ))
         }
         ReturnType::Type(arrow, ty) => {
@@ -387,7 +372,7 @@ pub fn transform_return_type(output: &ReturnType, target_error: &Type) -> syn::R
             let (ok_type, err_type) = extract_result_parts(ty)
                 .ok_or_else(|| Error::new_spanned(
                     ty,
-                    "Method must return Result<T, MyError> or Result<T, Self::Error>."
+                    format!("Method must return Result<T, {}> or Result<T, Self::Error>.", quote!(#target_error).to_string()),
                 ))?;
             
             // 2. Normalize types to strings for comparison
@@ -411,7 +396,7 @@ pub fn transform_return_type(output: &ReturnType, target_error: &Type) -> syn::R
             // 4. Construct the new Result<T, MyError>
             // This replaces whatever was there (even Self::Error) with MyError
             let new_ty: Type = parse2(quote! {
-                core::result::Result<#ok_type, #target_error>
+                Result<#ok_type, #target_error>
             })?;
 
             Ok(ReturnType::Type(*arrow, Box::new(new_ty)))
@@ -594,7 +579,7 @@ mod tests {
         // - `rkyv` attributes are present on that struct.
         // - The `call_from_wasm` uses `Some(&__MyTrait_configure_Input { port, active })`.
         let expected = r#"
-            pub fn configure(&self, port: u16, active: bool) -> () {
+            pub fn configure(&self, port: u16, active: bool) {
                 #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
                 #[rkyv(compare(PartialEq), derive(Debug))]
                 struct __MyTrait_MyState_configure_Input {
@@ -795,13 +780,13 @@ mod tests {
     #[test]
     pub fn from_impl_and_from_trait() {
         let trait_code = quote! {
-            fn process(data: u32) -> u32 {
+            fn process1(data: u32) -> u32 {
                 data
             }
         };
         let trait_method = create_method_trait(trait_code, Some("MyClient"), None);
         let impl_code = quote! {
-            fn process(&self, client: &MyClient, data: u32) -> u32 {
+            fn process1(&self, client: &MyClient, data: u32) -> u32 {
                 data
             }
         };
@@ -809,13 +794,13 @@ mod tests {
         assert_eq!(&trait_method, &impl_method);
 
         let trait_code = quote! {
-            fn process(data: u32) -> Result<u32, MyError> {
+            fn process2(data: u32) -> Result<u32, MyError> {
                 data
             }
         };
         let trait_method = create_method_trait(trait_code, Some("MyClient"), Some("MyError"));
         let impl_code = quote! {
-            fn process(&self, client: &MyClient, data: u32) -> Result<u32, MyError> {
+            fn process2(&self, client: &MyClient, data: u32) -> Result<u32, MyError> {
                 data
             }
         };
@@ -823,13 +808,13 @@ mod tests {
         assert_eq!(&trait_method, &impl_method);
 
         let trait_code = quote! {
-            async fn process(data: u32) -> Result<u32, MyError> {
+            async fn process3(data: u32) -> Result<u32, MyError> {
                 data
             }
         };
         let trait_method = create_method_trait(trait_code, None, Some("MyError"));
         let impl_code = quote! {
-            async fn process(&self, data: u32) -> Result<u32, MyError> {
+            async fn process3(&self, data: u32) -> Result<u32, MyError> {
                 data
             }
         };
@@ -837,13 +822,13 @@ mod tests {
         assert_eq!(&trait_method, &impl_method);
 
         let trait_code = quote! {
-            async fn process(data: u32) -> Result<u32, MyError> {
+            async fn process4(data: u32) -> Result<u32, MyError> {
                 data
             }
         };
         let trait_method = create_method_trait(trait_code, None, Some("MyError"));
         let impl_code = quote! {
-            async fn process(&self, data: u32) -> Result<u32, Self::Error> {
+            async fn process4(&self, data: u32) -> Result<u32, Self::Error> {
                 data
             }
         };

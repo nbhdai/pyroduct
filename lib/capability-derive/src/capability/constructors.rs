@@ -3,7 +3,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::visit_mut::{self, VisitMut};
 use syn::{
-    Error, ExprStruct, FnArg, Ident, Member, Path, ReturnType, TraitItemFn, Type, parse_quote,
+    Error, ExprStruct, FnArg, Ident, Member, Path, ReturnType, TraitItemFn, Type, parse_quote, parse2,
 };
 
 use crate::capability_ffi::CapabilityFuncFFI;
@@ -151,10 +151,10 @@ pub fn client_constructor_ffi_meta(
     error_type: Option<&Type>,
     is_async: bool,
 ) -> CapabilityFuncFFI {
-    let return_type: Type = if let Some(err_type) = error_type {
-        parse_quote!(Result<Self, #err_type>)
+    let return_type: ReturnType = if let Some(err_type) = error_type {
+        parse2(parse_quote!(Result<Self, #err_type>)).expect("This really should parse")
     } else {
-        parse_quote!(Self)
+        parse2(parse_quote!(Self)).expect("This really should parse")
     };
     CapabilityFuncFFI {
         // Updated Path: __{trait}_{state}_new_client

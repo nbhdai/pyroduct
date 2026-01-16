@@ -1,6 +1,8 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Ident, Type, Visibility};
+use syn::{Ident, ReturnType, Type, Visibility};
+
+use crate::utils::return_to_type;
 
 #[derive(Debug, Clone)]
 pub enum InputParams {
@@ -22,7 +24,7 @@ pub struct CapabilityFuncFFI {
 
     pub vis: Visibility,
     pub is_async: bool,
-    pub return_type: Type,
+    pub return_type: ReturnType,
     /// The name of the generated input struct
     pub input: Option<InputParams>,
     /// The client state parameter, if any (Name, Type)
@@ -114,7 +116,7 @@ impl CapabilityFuncFFI {
         // let vis = &self.vis;
         // let fn_ffi_name = &self.fn_ffi_name; // Not used in client wrapper directly
         let fn_wasm_name = &self.fn_wasm_name;
-        let return_type = &self.return_type;
+        let return_type = return_to_type(&self.return_type);
         let library_name = self.library.to_string();
 
         // Build function parameters
@@ -224,7 +226,7 @@ impl CapabilityFuncFFI {
         }
 
         // Return type (O)
-        let return_type = &self.return_type;
+        let return_type = return_to_type(&self.return_type);
         generics.push(quote!(#return_type));
 
         // Function type for the closure
@@ -318,6 +320,7 @@ mod tests {
     use super::*;
     use crate::fmt::assert_code_eq;
     use crate::fmt::format_tokens;
+    use crate::utils::type_to_return;
     use quote::quote;
     use syn::{Visibility, parse_quote};
 
@@ -340,7 +343,7 @@ mod tests {
             fn_wasm_name: format_ident!("__{}_wasm", name),
             vis: Visibility::Public(parse_quote!(pub)),
             is_async,
-            return_type: parse_quote!(u32), // Default return type
+            return_type: type_to_return(&parse_quote!(u32)), // Default return type
             input: None,
             client: None,
             server: None,

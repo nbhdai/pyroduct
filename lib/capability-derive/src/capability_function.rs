@@ -6,7 +6,7 @@ use quote::{format_ident, quote};
 use syn::{FnArg, Ident, ItemFn, Result};
 
 use crate::capability_ffi::{CapabilityFuncFFI, InputParams};
-use crate::utils::{get_param_name, get_param_type, get_return_type};
+use crate::utils::{get_param_name, get_param_type};
 
 #[derive(Debug, Clone)]
 pub(crate) struct CapFn {
@@ -70,7 +70,7 @@ impl CapFn {
             ),
             vis: self.input.vis.clone(),
             is_async: self.input.sig.asyncness.is_some(),
-            return_type: get_return_type(&self.input.sig.output).into(),
+            return_type: self.input.sig.output.clone(),
             input: self.input(),
             client: None, // No client for standalone functions
             server: None, // No server for standalone functions
