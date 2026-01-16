@@ -467,7 +467,7 @@ mod tests {
 
         // 4. Expected
         let expected = quote! {
-            pub fn get_status(&self) {
+            pub fn get_status(&self) -> u32 {
                 #struct_tokens
                 #wasm_call
             }

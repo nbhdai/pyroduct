@@ -17,9 +17,9 @@ fn parse_client_attrs(_attr: TokenStream) -> Result<ClientAttrs> {
 
 #[derive(Debug, Clone)]
 pub struct CapClient {
-    input: ItemStruct,
+    pub input: ItemStruct,
     #[allow(dead_code)]
-    attrs: ClientAttrs,
+    pub attrs: ClientAttrs,
 }
 
 impl CapClient {

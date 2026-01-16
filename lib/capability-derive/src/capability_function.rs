@@ -134,28 +134,6 @@ mod tests {
             .generate_module_function(&lib_name);
 
         let expected = r#"
-            #[cfg(feature = "capability")]
-            pub fn get_count() -> u32 {
-                42
-            }
-            #[cfg(feature = "capability")]
-            #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __get_count_ffi(
-                client_state_ptr: *const u8,
-                client_state_len: usize,
-                input_ptr: *const u8,
-                input_len: usize,
-                capability_state_ptr: *mut std::ffi::c_void,
-            ) -> ::pyroduct::capability_host::ffi::FfiResult {
-                ::pyroduct::capability::safe_call::empty_call::<u32, _>(
-                    client_state_ptr,
-                    client_state_len,
-                    input_ptr,
-                    input_len,
-                    capability_state_ptr,
-                    || get_count(),
-                )
-            }
             #[cfg(feature = "module")]
             pub fn get_count() -> u32 {
                 ::pyroduct::module_capability::access::call_from_wasm::<
@@ -203,33 +181,6 @@ mod tests {
             .generate_module_function(&lib_name);
 
         let expected = r#"
-            #[cfg(feature = "capability")]
-            async fn fetch_data(url: String) -> String {
-                url
-            }
-            #[cfg(feature = "capability")]
-            #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __fetch_data_ffi<'a>(
-                client_state_ptr: *const u8,
-                client_state_len: usize,
-                input_ptr: *const u8,
-                input_len: usize,
-                capability_state_ptr: *mut std::ffi::c_void,
-            ) -> ::pyroduct::capability_host::ffi::FfiBorrowedFutureResult<'a> {
-                ::pyroduct::capability::safe_async::i_call::<
-                    String,
-                    String,
-                    _,
-                    _,
-                >(
-                    client_state_ptr,
-                    client_state_len,
-                    input_ptr,
-                    input_len,
-                    capability_state_ptr,
-                    |input| async move { fetch_data(input).await },
-                )
-            }
             #[cfg(feature = "module")]
             fn fetch_data(url: String) -> String {
                 ::pyroduct::module_capability::access::call_from_wasm::<
@@ -277,34 +228,11 @@ mod tests {
             .generate_module_function(&lib_name);
 
         let expected = r#"
-            #[cfg(feature = "capability")]
-            pub fn add(a: u32, b: u32) -> u32 {
-                a + b
-            }
-            #[cfg(feature = "capability")]
             #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
             #[rkyv(compare(PartialEq), derive(Debug))]
             struct __add_Input {
                 pub a: u32,
                 pub b: u32,
-            }
-            #[cfg(feature = "capability")]
-            #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __add_ffi(
-                client_state_ptr: *const u8,
-                client_state_len: usize,
-                input_ptr: *const u8,
-                input_len: usize,
-                capability_state_ptr: *mut std::ffi::c_void,
-            ) -> ::pyroduct::capability_host::ffi::FfiResult {
-                ::pyroduct::capability::safe_call::i_call::<__add_Input, u32, _>(
-                    client_state_ptr,
-                    client_state_len,
-                    input_ptr,
-                    input_len,
-                    capability_state_ptr,
-                    |input| add(input.a, input.b),
-                )
             }
             #[cfg(feature = "module")]
             pub fn add(a: u32, b: u32) -> u32 {

@@ -7,6 +7,7 @@ use syn::{
 };
 
 use crate::capability_ffi::CapabilityFuncFFI;
+use crate::utils::type_to_return;
 
 #[derive(Debug)]
 pub struct ClientConstructor {
@@ -136,7 +137,7 @@ impl ClientConstructor {
         };
 
         quote! {
-            pub fn #name #generics (#inputs) -> #final_return_type #where_clause {
+            pub fn #name #generics (#inputs) #final_return_type #where_clause {
                 #logic
             }
         }
@@ -152,9 +153,9 @@ pub fn client_constructor_ffi_meta(
     is_async: bool,
 ) -> CapabilityFuncFFI {
     let return_type: ReturnType = if let Some(err_type) = error_type {
-        parse2(parse_quote!(Result<Self, #err_type>)).expect("This really should parse")
+        type_to_return(&parse2(quote!(Result<Self, #err_type>)).expect("This really should parse"))
     } else {
-        parse2(parse_quote!(Self)).expect("This really should parse")
+        type_to_return(&parse2(quote!(Self)).expect("This really should parse"))
     };
     CapabilityFuncFFI {
         // Updated Path: __{trait}_{state}_new_client
@@ -225,7 +226,7 @@ impl VisitMut for ConfigBufInjector {
 mod tests {
     use super::super::ClientConstructor;
     use super::*;
-    use crate::fmt::assert_code_eq;
+    use crate::fmt::assert_code_eq_token;
     use syn::{TraitItemFn, Type};
 
     /// Helper to create a ClientConstructor from raw code
@@ -257,12 +258,19 @@ mod tests {
         let trait_name = format_ident!("MyTrait");
         let state_name = format_ident!("MyState");
 
-        // 3. Generate
+        // 3. Generate Expected FFI Call
+        let wasm_call = client_constructor_ffi_meta(
+            &trait_name,
+            &state_name,
+            None,
+            false,
+        ).generate_module_function();
+
+        // 4. Generate
         let output = ctor.client_method_generation(&trait_name, &state_name);
 
-        // 4. Expected Output:
-        // - Library path includes Client name: "__MyTrait_MyState_new_client"
-        let expected = r#"
+        // 5. Expected Output
+        let expected = quote! {
             pub fn new(id: u32) -> Self {
                 let mut new_self = (|| {
                     MyClient {
@@ -274,35 +282,17 @@ mod tests {
                 new_self.__config_buf = ::rkyv::to_bytes::<_, 256>(&new_self)
                     .expect("Failed to serialize config")
                     .into_vec();
-                ::pyroduct::module_capability::access::call_from_wasm::<
-                    Self,
-                    (),
-                    Self,
-                    _,
-                >(
-                    "__MyTrait_MyState_new_client",
-                    Some(client),
-                    None,
-                    |
-                        client_state_ptr: *const u8,
-                        client_state_len: usize,
-                        input_ptr: *const u8,
-                        input_len: usize|
-                    {
-                        unsafe {
-                            __MyTrait_MyState_new_client_wasm(
-                                client_state_ptr,
-                                client_state_len,
-                                input_ptr,
-                                input_len,
-                            )
-                        }
-                    },
-                )
-            }
-        "#;
+                
+                let ffi_result = #wasm_call;
 
-        assert_code_eq(&output, expected);
+                match ffi_result {
+                    Ok(_) => Ok(new_self),
+                    Err(e) => Err(e.into()),
+                }
+            }
+        };
+
+        assert_code_eq_token(&output, &expected);
     }
 
     #[test]
@@ -319,12 +309,21 @@ mod tests {
         let trait_name = format_ident!("MyTrait");
         let state_name = format_ident!("MyState");
 
-        // 3. Generate
+        // 3. Generate Expected FFI Call
+        let error_type: Type = parse_quote!(MyError);
+        let wasm_call = client_constructor_ffi_meta(
+            &trait_name,
+            &state_name,
+            Some(&error_type),
+            false,
+        ).generate_module_function();
+
+        // 4. Generate
         let output = ctor.client_method_generation(&trait_name, &state_name);
 
-        // 4. Expected Output:
-        // - Library path: "__MyTrait_MyClient_new_client"
-        let expected = r#"
+        // 5. Expected Output
+        // Note: The signature returns Result<Self, MyError>
+        let expected = quote! {
             pub fn create(name: String) -> Result<Self, MyError> {
                 let mut new_self = (|| {
                     MyClient {
@@ -335,35 +334,17 @@ mod tests {
                 new_self.__config_buf = ::rkyv::to_bytes::<_, 256>(&new_self)
                     .expect("Failed to serialize config")
                     .into_vec();
-                ::pyroduct::module_capability::access::call_from_wasm::<
-                    Self,
-                    (),
-                    Result<Self, MyError>,
-                    _,
-                >(
-                    "__MyTrait_MyState_new_client",
-                    Some(client),
-                    None,
-                    |
-                        client_state_ptr: *const u8,
-                        client_state_len: usize,
-                        input_ptr: *const u8,
-                        input_len: usize|
-                    {
-                        unsafe {
-                            __MyTrait_MyState_new_client_wasm(
-                                client_state_ptr,
-                                client_state_len,
-                                input_ptr,
-                                input_len,
-                            )
-                        }
-                    },
-                )
-            }
-        "#;
+                
+                let ffi_result = #wasm_call;
 
-        assert_code_eq(&output, expected);
+                match ffi_result {
+                    Ok(_) => Ok(new_self),
+                    Err(e) => Err(e.into()),
+                }
+            }
+        };
+
+        assert_code_eq_token(&output, &expected);
     }
 
     #[test]
@@ -402,9 +383,18 @@ mod tests {
         let ctor = create_constructor(code, "MyClient", None);
         let trait_name = format_ident!("MyTrait");
         let state_name = format_ident!("MyState");
+
+        // Generate FFI call for expectation
+        let wasm_call = client_constructor_ffi_meta(
+            &trait_name,
+            &state_name,
+            None,
+            false,
+        ).generate_module_function();
+
         let output = ctor.client_method_generation(&trait_name, &state_name);
 
-        let expected = r#"
+        let expected = quote! {
             pub fn build(x: usize, y: usize) -> Self {
                 let mut new_self = (|| {
                     let z = x + y;
@@ -419,34 +409,16 @@ mod tests {
                 new_self.__config_buf = ::rkyv::to_bytes::<_, 256>(&new_self)
                     .expect("Failed to serialize config")
                     .into_vec();
-                ::pyroduct::module_capability::access::call_from_wasm::<
-                    Self,
-                    (),
-                    Self,
-                    _,
-                >(
-                    "__MyTrait_MyState_new_client",
-                    Some(client),
-                    None,
-                    |
-                        client_state_ptr: *const u8,
-                        client_state_len: usize,
-                        input_ptr: *const u8,
-                        input_len: usize|
-                    {
-                        unsafe {
-                            __MyTrait_MyState_new_client_wasm(
-                                client_state_ptr,
-                                client_state_len,
-                                input_ptr,
-                                input_len,
-                            )
-                        }
-                    },
-                )
-            }
-        "#;
+                
+                let ffi_result = #wasm_call;
 
-        assert_code_eq(&output, expected);
+                match ffi_result {
+                    Ok(_) => Ok(new_self),
+                    Err(e) => Err(e.into()),
+                }
+            }
+        };
+
+        assert_code_eq_token(&output, &expected);
     }
 }
