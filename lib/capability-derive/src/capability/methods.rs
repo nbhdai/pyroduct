@@ -20,7 +20,7 @@ pub struct CapabilityMethod {
 }
 
 impl CapabilityMethod {
-    pub fn new(
+    pub fn from_trait(
         method: TraitItemFn,
         explicit_client_type: Option<&Type>,
         explicit_error_type: Option<&Type>, // Passed in as requested, even if unused for current validation rules
@@ -202,7 +202,7 @@ impl CapabilityMethod {
             name: sig.ident.clone(),
             inputs: clean_inputs,
             output: clean_output,
-            original_sig: sig.clone(), // Note: This stores the SERVER signature, but 'inputs'/'output' fields are cleaned.
+            original_sig: sig.clone(),
             attrs: method.attrs.clone(),
             client_type: explicit_client_type.cloned(),
             error_type: explicit_error_type.cloned(),
@@ -392,7 +392,7 @@ mod tests {
         let client_type: Option<Type> = client_type_str.map(|s| syn::parse_str(s).expect("Failed to parse client type"));
         let error_type: Option<Type> = error_type_str.map(|s| syn::parse_str(s).expect("Failed to parse error type"));
 
-        CapabilityMethod::new(
+        CapabilityMethod::from_trait(
             method,
             client_type.as_ref(),
             error_type.as_ref(),
@@ -591,7 +591,7 @@ mod tests {
         let client_type: Option<Type> = client_type_str.map(|s| syn::parse_str(s).unwrap());
         let error_type: Option<Type> = error_type_str.map(|s| syn::parse_str(s).unwrap());
 
-        CapabilityMethod::new(
+        CapabilityMethod::from_trait(
             method,
             client_type.as_ref(),
             error_type.as_ref(),
