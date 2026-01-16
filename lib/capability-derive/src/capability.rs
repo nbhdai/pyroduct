@@ -335,7 +335,7 @@ impl CapabilityDefTrait {
             trait_name,
             state_name,
             from_impl: true,
-            constructors,
+            constructors: Vec::new(),
             other_items,
             explicit_error_type,
             explicit_client_type,

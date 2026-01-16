@@ -2,10 +2,10 @@ use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use syn::{
     Error, FnArg, GenericArgument, Ident, ImplItemFn, PathArguments, ReturnType, TraitItemFn, Type,
-    parse_quote,
+    parse_quote, parse2,
 };
 
-use crate::capability_ffi::{CapabilityFuncFFI, InputParams};
+use crate::{capability_ffi::{CapabilityFuncFFI, InputParams}, utils::{compare_types, is_self_ref_or_type}};
 
 /// Represents a validated method within the Capability trait.
 #[derive(Debug, PartialEq)]
@@ -31,9 +31,9 @@ impl CapabilityMethod {
         // Rule 1: Do not have a &self (or self, &mut self)
         // --------------------------------------------------------
         for input in &sig.inputs {
-            if let FnArg::Receiver(rec) = input {
+            if is_self_ref_or_type(input) {
                 return Err(Error::new_spanned(
-                    rec,
+                    input,
                     "Capability methods cannot take variant of 'self', or 'Self'",
                 ));
             }
@@ -76,12 +76,12 @@ impl CapabilityMethod {
                 // If a Client type is defined, ensure this argument is NOT that client
                 if let Some(client_type) = explicit_client_type {
                     let is_client_type =
-                        if quote!(#ty).to_string() == quote!(#client_type).to_string() {
+                        if compare_types(ty, &client_type) {
                             true
                         } else if let Type::Reference(type_ref) = &**ty {
                             // Also check if it is &ClientType
                             let inner = &type_ref.elem;
-                            quote!(#inner).to_string() == quote!(#client_type).to_string()
+                            compare_types(inner, &client_type)
                         } else {
                             false
                         };
@@ -111,14 +111,16 @@ impl CapabilityMethod {
         // --------------------------------------------------------
         // Rule 5: Strict Error Type Enforcement
         // --------------------------------------------------------
-        if let Some(expected_error) = explicit_error_type {
-            validate_return_type(&sig.output, expected_error)?;
-        }
+        let output = if let Some(expected_error) = explicit_error_type {
+            transform_return_type(&sig.output, expected_error)?
+        } else {
+            sig.output.clone()
+        };
 
         Ok(Self {
             name: sig.ident.clone(),
             inputs: clean_inputs,
-            output: sig.output.clone(),
+            output,
             original_sig: sig.clone(),
             attrs: method.attrs,
             client_type: explicit_client_type.cloned(),
@@ -182,15 +184,17 @@ impl CapabilityMethod {
         // --------------------------------------------------------
         // Rule 5: Strict Error Type Enforcement
         // --------------------------------------------------------
-        if let Some(expected_error) = explicit_error_type {
-            validate_return_type(&sig.output, expected_error)?;
-        }
+        let output = if let Some(expected_error) = explicit_error_type {
+            transform_return_type(&sig.output, expected_error)?
+        } else {
+            sig.output.clone()
+        };
 
         // 3. Reconstruct the Signature
         // We break up original_sig into components to reflect the clean interface
         let mut new_sig = sig.clone();
         new_sig.inputs = signature_inputs;
-        new_sig.output = sig.output.clone();
+        new_sig.output = output;
 
         Ok(Self {
             name: sig.ident.clone(),
@@ -369,34 +373,48 @@ impl CapabilityMethod {
 }
 
 /// Validates that if an Error type is provided, the return type is Result<T, Error>.
-pub fn validate_return_type(output: &ReturnType, expected_error: &Type) -> syn::Result<()> {
+pub fn transform_return_type(output: &ReturnType, target_error: &Type) -> syn::Result<ReturnType> {
     match output {
+        // Handle cases where no return type is specified (e.g., fn logic())
         ReturnType::Default => {
             Err(Error::new_spanned(
                 output,
-                format!("Method must return Result<T, {}> because an Error type is defined.", quote!(#expected_error))
+                format!("Method must return Result<T, MyError> or Result<T, Self::Error>.", quote!(#target_error))
             ))
         }
-        ReturnType::Type(_, ty) => {
-            let (_ok, err) = extract_result_parts(ty)
+        ReturnType::Type(arrow, ty) => {
+            // 1. Extract the inner T and E from Result<T, E>
+            let (ok_type, err_type) = extract_result_parts(ty)
                 .ok_or_else(|| Error::new_spanned(
                     ty,
-                    format!("Method must return Result<T, {}>.", quote!(#expected_error))
+                    "Method must return Result<T, MyError> or Result<T, Self::Error>."
                 ))?;
             
-            // Normalize to string for comparison
-            let actual_err_str = quote!(#err).to_string().replace(" ", "");
-            let expected_err_str = quote!(#expected_error).to_string().replace(" ", "");
+            // 2. Normalize types to strings for comparison
+            let actual_err_str = quote!(#err_type).to_string().replace(" ", "");
+            let target_err_str = quote!(#target_error).to_string().replace(" ", "");
             let self_err_str = "Self::Error";
             
-            if actual_err_str != expected_err_str && actual_err_str != self_err_str {
-                    Err(Error::new_spanned(
-                    err,
-                    format!("Error type mismatch. Expected '{}' or 'Self::Error', found '{}'.", expected_err_str, actual_err_str)
-                ))
-            } else {
-                Ok(())
+            // 3. Validation Logic
+            // We allow the change if it's already the target error or if it's "Self::Error"
+            if actual_err_str != target_err_str && actual_err_str != self_err_str {
+                return Err(Error::new_spanned(
+                    err_type,
+                    format!(
+                        "Invalid error type. Expected '{}' or 'Self::Error', found '{}'.", 
+                        target_err_str, 
+                        actual_err_str
+                    )
+                ));
             }
+
+            // 4. Construct the new Result<T, MyError>
+            // This replaces whatever was there (even Self::Error) with MyError
+            let new_ty: Type = parse2(quote! {
+                core::result::Result<#ok_type, #target_error>
+            })?;
+
+            Ok(ReturnType::Type(*arrow, Box::new(new_ty)))
         }
     }
 }
@@ -510,7 +528,7 @@ mod tests {
     fn test_async_single_arg_with_error() {
         // 1. Define input: Async method, takes a String
         let code = quote! {
-            async fn set_name(name: String) -> ();
+            async fn set_name(name: String) -> Result<(), Self::Error>;
         };
 
         // 2. Parse with an Error type defined
@@ -619,7 +637,7 @@ mod tests {
             fn invalid(other: &Self) -> ();
         };
         let res = create_method_result(code, None, None);
-        assert!(res.is_err(), "Should have rejected returning Client type");
+        assert!(res.is_err(), "Capability methods cannot take self");
         assert_eq!(
             res.unwrap_err().to_string(),
             "Capability methods cannot take variant of 'self', or 'Self'"
@@ -652,6 +670,19 @@ mod tests {
         assert_eq!(
             res.unwrap_err().to_string(),
             "Capability methods must not accept the 'Client' type as an argument."
+        );
+
+        let code_arg_client = quote! {
+            fn process(c: f32) -> u32;
+        };
+        let res = create_method_result(code_arg_client, None, Some("MyError"));
+        assert!(
+            res.is_err(),
+            "Should have rejected a non result return"
+        );
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            "Method must return Result<T, MyError> or Result<T, Self::Error>."
         );
     }
 
@@ -778,7 +809,7 @@ mod tests {
         assert_eq!(&trait_method, &impl_method);
 
         let trait_code = quote! {
-            fn process(data: u32) -> u32 {
+            fn process(data: u32) -> Result<u32, MyError> {
                 data
             }
         };
@@ -792,7 +823,7 @@ mod tests {
         assert_eq!(&trait_method, &impl_method);
 
         let trait_code = quote! {
-            async fn process(data: u32) -> u32 {
+            async fn process(data: u32) -> Result<u32, MyError> {
                 data
             }
         };
@@ -806,7 +837,7 @@ mod tests {
         assert_eq!(&trait_method, &impl_method);
 
         let trait_code = quote! {
-            async fn process(data: u32) -> u32 {
+            async fn process(data: u32) -> Result<u32, MyError> {
                 data
             }
         };
