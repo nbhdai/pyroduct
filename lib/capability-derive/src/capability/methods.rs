@@ -108,6 +108,13 @@ impl CapabilityMethod {
             }
         }
 
+        // --------------------------------------------------------
+        // Rule 5: Strict Error Type Enforcement
+        // --------------------------------------------------------
+        if let Some(expected_error) = explicit_error_type {
+            validate_return_type(&sig.output, expected_error)?;
+        }
+
         Ok(Self {
             name: sig.ident.clone(),
             inputs: clean_inputs,
@@ -172,66 +179,23 @@ impl CapabilityMethod {
             }
         }
 
-        // 2. Filter Output: Unwrap Result<T, E> -> T if error_type is present AND E matches
-        let clean_output = if let Some(target_error) = explicit_error_type {
-            match &sig.output {
-                ReturnType::Default => ReturnType::Default,
-                ReturnType::Type(arrow, ty) => {
-                    let mut unwrapped_type = None;
-
-                    // Try to unwrap Result
-                    if let Type::Path(tp) = &**ty {
-                        if tp
-                            .path
-                            .segments
-                            .last()
-                            .map(|s| s.ident == "Result")
-                            .unwrap_or(false)
-                        {
-                            if let PathArguments::AngleBracketed(args) =
-                                &tp.path.segments.last().unwrap().arguments
-                            {
-                                // We expect Result<T, E> (2 arguments) to perform strict matching
-                                if args.args.len() == 2 {
-                                    if let GenericArgument::Type(error_arg) = &args.args[1] {
-                                        let error_str = quote!(#error_arg).to_string();
-                                        println!("{}", error_str);
-                                        // Compare the error argument with the explicit_error_type
-                                        if error_str == quote!(#target_error).to_string()
-                                            || error_str == "Self :: Error"
-                                        {
-                                            // It matches! Extract T
-                                            if let GenericArgument::Type(inner_t) = &args.args[0] {
-                                                unwrapped_type = Some(inner_t.clone());
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if let Some(t) = unwrapped_type {
-                        ReturnType::Type(*arrow, Box::new(t))
-                    } else {
-                        sig.output.clone()
-                    }
-                }
-            }
-        } else {
-            sig.output.clone()
-        };
+        // --------------------------------------------------------
+        // Rule 5: Strict Error Type Enforcement
+        // --------------------------------------------------------
+        if let Some(expected_error) = explicit_error_type {
+            validate_return_type(&sig.output, expected_error)?;
+        }
 
         // 3. Reconstruct the Signature
         // We break up original_sig into components to reflect the clean interface
         let mut new_sig = sig.clone();
         new_sig.inputs = signature_inputs;
-        new_sig.output = clean_output.clone();
+        new_sig.output = sig.output.clone();
 
         Ok(Self {
             name: sig.ident.clone(),
             inputs: clean_inputs,
-            output: clean_output,
+            output: new_sig.output.clone(),
             original_sig: new_sig, // Used the modified, clean signature
             attrs: method.attrs.clone(),
             client_type: explicit_client_type.cloned(),
@@ -402,6 +366,57 @@ impl CapabilityMethod {
         let ffi = self.build_ffi_meta(trait_name, state_name);
         ffi.generate_client_wasm()
     }
+}
+
+/// Validates that if an Error type is provided, the return type is Result<T, Error>.
+pub fn validate_return_type(output: &ReturnType, expected_error: &Type) -> syn::Result<()> {
+    match output {
+        ReturnType::Default => {
+            Err(Error::new_spanned(
+                output,
+                format!("Method must return Result<T, {}> because an Error type is defined.", quote!(#expected_error))
+            ))
+        }
+        ReturnType::Type(_, ty) => {
+            let (_ok, err) = extract_result_parts(ty)
+                .ok_or_else(|| Error::new_spanned(
+                    ty,
+                    format!("Method must return Result<T, {}>.", quote!(#expected_error))
+                ))?;
+            
+            // Normalize to string for comparison
+            let actual_err_str = quote!(#err).to_string().replace(" ", "");
+            let expected_err_str = quote!(#expected_error).to_string().replace(" ", "");
+            let self_err_str = "Self::Error";
+            
+            if actual_err_str != expected_err_str && actual_err_str != self_err_str {
+                    Err(Error::new_spanned(
+                    err,
+                    format!("Error type mismatch. Expected '{}' or 'Self::Error', found '{}'.", expected_err_str, actual_err_str)
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Helper to decompose a Result<T, E> into (T, E).
+fn extract_result_parts(ty: &Type) -> Option<(&Type, &Type)> {
+    if let Type::Path(tp) = ty {
+        if let Some(segment) = tp.path.segments.last() {
+             if segment.ident == "Result" {
+                 if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                     if args.args.len() == 2 {
+                         let t = if let GenericArgument::Type(ty) = &args.args[0] { ty } else { return None; };
+                         let e = if let GenericArgument::Type(ty) = &args.args[1] { ty } else { return None; };
+                         return Some((t, e));
+                     }
+                 }
+             }
+        }
+    }
+    None
 }
 
 #[cfg(test)]

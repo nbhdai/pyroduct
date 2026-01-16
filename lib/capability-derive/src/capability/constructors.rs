@@ -1,3 +1,4 @@
+use heck::AsSnakeCase;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::visit_mut::{self, VisitMut};
@@ -11,9 +12,7 @@ use crate::capability_ffi::CapabilityFuncFFI;
 pub struct ClientConstructor {
     pub sig: syn::Signature,
     pub block: syn::Block,
-    pub client: Type,
     pub client_name: String,
-    pub inputs: Vec<(Ident, Type)>,
     pub error_type: Option<Type>,
 }
 
@@ -72,17 +71,6 @@ impl ClientConstructor {
             ));
         }
 
-        // 4. Extract inputs for FFI metadata
-        let mut clean_inputs = Vec::new();
-        for input in &sig.inputs {
-            if let FnArg::Typed(pat_type) = input {
-                let ty = &pat_type.ty;
-                if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
-                    clean_inputs.push((pat_ident.ident.clone(), *ty.clone()));
-                }
-            }
-        }
-
         // 5: Get the client name
         let client_name = if let Type::Path(type_path) = explicit_client_type {
             type_path.path.segments.last().unwrap().ident.to_string()
@@ -93,9 +81,7 @@ impl ClientConstructor {
         Ok(Self {
             sig: sig.clone(),
             block,
-            client: explicit_client_type.clone(),
             client_name,
-            inputs: clean_inputs,
             error_type: explicit_error_type.cloned(),
         })
     }
@@ -141,7 +127,12 @@ impl ClientConstructor {
                 .expect("Failed to serialize config")
                 .into_vec();
 
-            #wasm_call
+            let ffi_result = #wasm_call;
+
+            match ffi_result {
+                Ok(_) => Ok(new_self),
+                Err(e) => Err(e.into()),
+            }
         };
 
         quote! {
@@ -167,11 +158,11 @@ pub fn client_constructor_ffi_meta(
     };
     CapabilityFuncFFI {
         // Updated Path: __{trait}_{state}_new_client
-        library: format_ident!("__{}_{}_new_client", trait_name, state_name),
+        library: format_ident!("__{}__{}__new_client", AsSnakeCase(trait_name.to_string()).to_string(), AsSnakeCase(state_name.to_string()).to_string()),
         fn_name: format_ident!("new_client"),
         // Host/Wasm names aligned with library path
-        fn_ffi_name: format_ident!("__{}_{}_new_client_ffi", trait_name, state_name),
-        fn_wasm_name: format_ident!("__{}_{}_new_client_wasm", trait_name, state_name),
+        fn_ffi_name: format_ident!("__{}__{}__new_client_ffi", AsSnakeCase(trait_name.to_string()).to_string(), AsSnakeCase(state_name.to_string()).to_string()),
+        fn_wasm_name: format_ident!("__{}__{}__new_client_wasm", AsSnakeCase(trait_name.to_string()).to_string(), AsSnakeCase(state_name.to_string()).to_string()),
         vis: syn::Visibility::Public(parse_quote!(pub)),
         is_async,
         return_type,

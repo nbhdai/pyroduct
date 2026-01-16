@@ -298,9 +298,7 @@ impl CapabilityDefTrait {
                         constructors.push(ClientConstructor {
                             sig: impl_method.sig.clone(),
                             block: parse_quote!({}), // Dummy block, unused for trait gen from impl
-                            client: client_type.clone(),
                             client_name,
-                            inputs: vec![],
                             error_type: explicit_error_type.clone(),
                         });
                     }
@@ -541,7 +539,7 @@ mod tests {
                     new_self.__config_buf = ::rkyv::to_bytes::<_, 256>(&new_self)
                         .expect("Failed to serialize config")
                         .into_vec();
-                    ::pyroduct::module_capability::access::call_from_wasm::<
+                    let ffi_result = ::pyroduct::module_capability::access::call_from_wasm::<
                         Self,
                         (),
                         Self,
@@ -563,7 +561,12 @@ mod tests {
                                 )
                             }
                         },
-                    )
+                    );
+
+                    match ffi_result {
+                        Ok(_) => Ok(new_self),
+                        Err(e) => Err(e.into()),
+                    }
                 }
 
                 pub fn get_info(&self) -> u32 {
@@ -628,7 +631,7 @@ mod tests {
                     new_self.__config_buf = ::rkyv::to_bytes::<_, 256>(&new_self)
                         .expect("Failed to serialize config")
                         .into_vec();
-                    ::pyroduct::module_capability::access::call_from_wasm::<
+                    let ffi_result = ::pyroduct::module_capability::access::call_from_wasm::<
                         Self,
                         (),
                         Result<Self, MyError>,
@@ -650,7 +653,12 @@ mod tests {
                                 )
                             }
                         },
-                    )
+                    );
+
+                    match ffi_result {
+                        Ok(_) => Ok(new_self),
+                        Err(e) => Err(e.into()),
+                    }
                 }
 
                 pub fn process(&self, val: u32, flag: bool) -> Result<u32, MyError> {
