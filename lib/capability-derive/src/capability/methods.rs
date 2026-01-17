@@ -1,3 +1,4 @@
+use heck::AsSnakeCase;
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use syn::{
@@ -269,6 +270,7 @@ impl CapabilityMethod {
         } else {
             None
         };
+        let ident_root = format_ident!("__{}__{}__{}", AsSnakeCase(trait_name.to_string()).to_string(), AsSnakeCase(state_name.to_string()).to_string(), AsSnakeCase(name.to_string()).to_string());
 
         // 3. Determine Input Parameters
         let input_params = if self.inputs.is_empty() {
@@ -278,7 +280,7 @@ impl CapabilityMethod {
             Some(InputParams::One(n.clone(), t.clone()))
         } else {
             let params = self.inputs.clone();
-            let struct_name = format_ident!("__{}_{}_{}_Input", trait_name, state_name, name);
+            let struct_name = format_ident!("{}__Input", ident_root);
             Some(InputParams::Many {
                 params,
                 input_struct_name: struct_name,
@@ -288,11 +290,11 @@ impl CapabilityMethod {
         // 4. Construct Struct
         CapabilityFuncFFI {
             // Library path: __user_trait__struct_name__method_name
-            library: format_ident!("__{}_{}_{}", trait_name, state_name, name),
+            library: ident_root.clone(),
             fn_name: name.clone(),
             // These names are primarily used for host-side generation, but required by struct
-            fn_ffi_name: format_ident!("__{}_{}_{}_ffi", trait_name, state_name, name),
-            fn_wasm_name: format_ident!("__{}_{}_{}_wasm", trait_name, state_name, name),
+            fn_ffi_name: format_ident!("{}__ffi", ident_root),
+            fn_wasm_name: format_ident!("{}__wasm", ident_root),
             vis: syn::Visibility::Public(parse_quote!(pub)),
             is_async: self.original_sig.asyncness.is_some(),
             return_type: self.output.clone(),
@@ -610,10 +612,10 @@ mod tests {
         let output = method.build_ffi_meta(&trait_name, &state_name);
 
         let expected = CapabilityFuncFFI {
-            library: format_ident!("__MyTrait_MyState_sync_op"),
+            library: format_ident!("__my_trait__my_state__sync_op"),
             fn_name: format_ident!("sync_op"), // The actual method name
-            fn_ffi_name: format_ident!("__MyTrait_MyState_sync_op_ffi"),
-            fn_wasm_name: format_ident!("__MyTrait_MyState_sync_op_wasm"),
+            fn_ffi_name: format_ident!("__my_trait__my_state__sync_op__ffi"),
+            fn_wasm_name: format_ident!("__my_trait__my_state__sync_op__wasm"),
             vis: syn::Visibility::Public(parse_quote!(pub)),
             is_async: false,
             return_type: parse_quote!(-> bool), 
@@ -640,10 +642,10 @@ mod tests {
         let output = method.build_ffi_meta(&trait_name, &state_name);
 
         let expected = CapabilityFuncFFI {
-            library: format_ident!("__MyTrait_MyState_async_op"),
+            library: format_ident!("__my_trait__my_state__async_op"),
             fn_name: format_ident!("async_op"),
-            fn_ffi_name: format_ident!("__MyTrait_MyState_async_op_ffi"),
-            fn_wasm_name: format_ident!("__MyTrait_MyState_async_op_wasm"),
+            fn_ffi_name: format_ident!("__my_trait__my_state__async_op__ffi"),
+            fn_wasm_name: format_ident!("__my_trait__my_state__async_op__wasm"),
             vis: syn::Visibility::Public(parse_quote!(pub)),
             is_async: true,
             return_type: parse_quote!(-> u64),

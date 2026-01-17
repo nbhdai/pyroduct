@@ -162,8 +162,8 @@ pub fn client_constructor_ffi_meta(
         library: format_ident!("__{}__{}__new_client", AsSnakeCase(trait_name.to_string()).to_string(), AsSnakeCase(state_name.to_string()).to_string()),
         fn_name: format_ident!("new_client"),
         // Host/Wasm names aligned with library path
-        fn_ffi_name: format_ident!("__{}__{}__new_client_ffi", AsSnakeCase(trait_name.to_string()).to_string(), AsSnakeCase(state_name.to_string()).to_string()),
-        fn_wasm_name: format_ident!("__{}__{}__new_client_wasm", AsSnakeCase(trait_name.to_string()).to_string(), AsSnakeCase(state_name.to_string()).to_string()),
+        fn_ffi_name: format_ident!("__{}__{}__new_client__ffi", AsSnakeCase(trait_name.to_string()).to_string(), AsSnakeCase(state_name.to_string()).to_string()),
+        fn_wasm_name: format_ident!("__{}__{}__new_client__wasm", AsSnakeCase(trait_name.to_string()).to_string(), AsSnakeCase(state_name.to_string()).to_string()),
         vis: syn::Visibility::Public(parse_quote!(pub)),
         is_async,
         return_type,

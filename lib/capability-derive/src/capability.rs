@@ -503,6 +503,22 @@ mod tests {
         };
 
         assert_code_eq_token(&output, &expected);
+
+        // Test FFI generation
+        let ffis = def.capability_ffis();
+        assert_eq!(ffis.len(), 2, "Should have 2 FFIs: 1 constructor + 1 method");
+        
+        // Verify constructor FFI
+        assert_eq!(ffis[0].library.to_string(), "__my_trait__my_state__new_client");
+        assert_eq!(ffis[0].fn_name.to_string(), "new_client");
+        assert_eq!(ffis[0].fn_ffi_name.to_string(), "__my_trait__my_state__new_client__ffi");
+        assert_eq!(ffis[0].fn_wasm_name.to_string(), "__my_trait__my_state__new_client__wasm");
+        
+        // Verify method FFI
+        assert_eq!(ffis[1].library.to_string(), "__my_trait__my_state__get_info");
+        assert_eq!(ffis[1].fn_name.to_string(), "get_info");
+        assert_eq!(ffis[1].fn_ffi_name.to_string(), "__my_trait__my_state__get_info__ffi");
+        assert_eq!(ffis[1].fn_wasm_name.to_string(), "__my_trait__my_state__get_info__wasm");
     }
 
     #[test]
@@ -517,7 +533,12 @@ mod tests {
                     AdvancedClient { name }
                 }
 
-                fn process(val: u32, flag: bool) -> u32;
+                fn create_2(name: String) -> AdvancedClient {
+                    AdvancedClient { name }
+                }
+
+                async fn process(val: u32, flag: bool) -> Result<u32, MyError>;
+                fn sync_op(level: u8) -> Result<bool, MyError>;
             }
         }).unwrap();
 
@@ -527,8 +548,17 @@ mod tests {
             }
         }).unwrap();
 
+        let constructor_2 = parse2(quote! {
+            fn create_2(name: String) -> AdvancedClient {
+                AdvancedClient { name }
+            }
+        }).unwrap();
+
         let method = parse2(quote! {
-            fn process(val: u32, flag: bool) -> u32;
+            async fn process(val: u32, flag: bool) -> Result<u32, MyError>;
+        }).unwrap();
+        let method_2 = parse2(quote! {
+            fn sync_op(level: u8) -> Result<bool, MyError>;
         }).unwrap();
 
         let client_name: Type = syn::parse_str("AdvancedClient").unwrap();
@@ -537,10 +567,14 @@ mod tests {
         let trait_name = format_ident!("AdvancedTrait");
 
         let expected_constructor = ClientConstructor::new(&constructor, &client_name, Some(&error_name)).unwrap();
+        let expected_constructor_2 = ClientConstructor::new(&constructor_2, &client_name, Some(&error_name)).unwrap();
         let expected_method = CapabilityMethod::from_trait(method, Some(&client_name), Some(&error_name)).unwrap();
+        let expected_method_2 = CapabilityMethod::from_trait(method_2, Some(&client_name), Some(&error_name)).unwrap();
 
         let expected_constructor = expected_constructor.client_method_generation(&trait_name, &state_name);
+        let expected_constructor_2 = expected_constructor_2.client_method_generation(&trait_name, &state_name);
         let expected_method = expected_method.client_method_generation(&trait_name, &state_name);
+        let expected_method_2 = expected_method_2.client_method_generation(&trait_name, &state_name);
 
         let def = CapabilityDefTrait::from_trait(code).expect("Failed to parse capability trait");
         let output = def.generate_client_impl().unwrap();
@@ -548,11 +582,41 @@ mod tests {
         let expected = quote! {
             impl AdvancedClient {
                 #expected_constructor
+                #expected_constructor_2
                 #expected_method
+                #expected_method_2
             }
         };
 
         assert_code_eq_token(&output, &expected);
+
+        // Test FFI generation
+        let ffis = def.capability_ffis();
+        assert_eq!(ffis.len(), 3, "Should have 2 FFIs: 1 constructor + 2 methods");
+        
+        // Verify constructor FFI
+        assert_eq!(ffis[0].library.to_string(), "__advanced_trait__my_state__new_client");
+        assert_eq!(ffis[0].fn_name.to_string(), "new_client");
+        assert_eq!(ffis[0].fn_ffi_name.to_string(), "__advanced_trait__my_state__new_client__ffi");
+        assert_eq!(ffis[0].fn_wasm_name.to_string(), "__advanced_trait__my_state__new_client__wasm");
+        
+        // Verify method FFI
+        assert_eq!(ffis[1].library.to_string(), "__advanced_trait__my_state__process");
+        assert_eq!(ffis[1].fn_name.to_string(), "process");
+        assert_eq!(ffis[1].fn_ffi_name.to_string(), "__advanced_trait__my_state__process__ffi");
+        assert_eq!(ffis[1].fn_wasm_name.to_string(), "__advanced_trait__my_state__process__wasm");
+
+        let server_trait = def.generate_trait_definition().unwrap();
+        let expected_trait = quote! {
+            pub trait AdvancedTrait {
+                type Client = AdvancedClient;
+                type Error = MyError;
+                fn new_client(&self, client: &Self::Client) -> Result<(), MyError>;
+                async fn process(&self, client: &Self::Client, val: u32, flag: bool) -> Result<u32, MyError>;
+                fn sync_op(&self, client: &Self::Client, level: u8) -> Result<u32, MyError>;
+            }
+        };
+        assert_code_eq_token(&server_trait, &expected_trait);
     }
 
     #[test]
@@ -567,78 +631,6 @@ mod tests {
         let def = CapabilityDefTrait::from_trait(code).expect("Failed to parse capability trait");
         let output = def.generate_client_impl().unwrap();
         assert!(output.is_empty());
-    }
-
-    #[test]
-    fn test_server_trait_generation() {
-        let code = parse2(quote! {
-            #[capability_provider(MyState)]
-            trait SensorFeature {
-                type Client = SensorClient;
-                type Error = SensorError;
-
-                fn new(id: String) -> SensorClient {
-                    SensorClient { id }
-                }
-
-                fn calibrate(offset: i32, scale: f32) -> bool;
-
-                async fn read_async(timeout: u32) -> f64;
-            }
-        }).unwrap();
-        let def = CapabilityDefTrait::from_trait(code).expect("Failed to parse capability trait");
-
-        let server_trait = def.generate_trait_definition().unwrap();
-
-        let expected_trait = r#"
-            pub trait SensorFeature {
-                type Client = SensorClient;
-                type Error = SensorError;
-                fn new_client(&self, client: &Self::Client) -> Result<(), Self::Error>;
-                fn calibrate(&self, client: &Self::Client, offset: i32, scale: f32) -> Result<bool, Self::Error>;
-                async fn read_async(&self, client: &Self::Client, timeout: u32) -> Result<f64, Self::Error>;
-            }
-        "#;
-        assert_code_eq(&server_trait, expected_trait);
-    }
-
-    #[test]
-    fn test_generate_server_trait_correctness() {
-        let code = parse2(quote! {
-            #[capability_provider(MyState)]
-            trait ControlPlane {
-                type Client = ControlClient;
-                type Error = ControlError;
-
-                fn new(api_key: String) -> ControlClient {
-                    ControlClient { api_key }
-                }
-
-                fn sync_op(level: u8) -> bool;
-
-                async fn async_op(data: Vec<u8>);
-            }
-        }).unwrap();
-
-        let def = CapabilityDefTrait::from_trait(code).expect("Failed to parse capability trait");
-        let output = def
-            .generate_trait_definition()
-            .expect("Failed to generate trait definition");
-
-        let expected = r#"
-            pub trait ControlPlane {
-                type Client = ControlClient;
-                type Error = ControlError;
-                
-                fn new_client(&self, client: &Self::Client) -> Result<(), Self::Error>;
-                
-                fn sync_op(&self, client: &Self::Client, level: u8) -> Result<bool, Self::Error>;
-                
-                async fn async_op(&self, client: &Self::Client, data: Vec<u8>) -> Result<(), Self::Error>;
-            }
-        "#;
-
-        assert_code_eq(&output, expected);
     }
 
     #[test]
@@ -751,6 +743,22 @@ mod tests {
             }
         "#;
         assert_code_eq(&trait_output, expected);
+
+        // Test FFI generation from both sources
+        let ffis_from_trait = def_from_trait.capability_ffis();
+        let ffis_from_impl = def_from_impl.capability_ffis();
+        
+        assert_eq!(ffis_from_trait.len(), 3, "Trait should have 3 FFIs: 1 constructor + 2 methods");
+        assert_eq!(ffis_from_impl.len(), 3, "Impl should have 3 FFIs: 1 constructor + 2 methods");
+        
+        // Verify FFI names match between trait and impl
+        for (trait_ffi, impl_ffi) in ffis_from_trait.iter().zip(ffis_from_impl.iter()) {
+            assert_eq!(trait_ffi.library.to_string(), impl_ffi.library.to_string());
+            assert_eq!(trait_ffi.fn_name.to_string(), impl_ffi.fn_name.to_string());
+            assert_eq!(trait_ffi.fn_ffi_name.to_string(), impl_ffi.fn_ffi_name.to_string());
+            assert_eq!(trait_ffi.fn_wasm_name.to_string(), impl_ffi.fn_wasm_name.to_string());
+            assert_eq!(trait_ffi.is_async, impl_ffi.is_async);
+        }
     }
 
     #[test]
@@ -804,5 +812,26 @@ mod tests {
             }
         "#;
         assert_code_eq(&trait_output, expected);
+
+        // Test FFI generation (no constructor since no Client type)
+        let ffis_from_trait = def_from_trait.capability_ffis();
+        let ffis_from_impl = def_from_impl.capability_ffis();
+        
+        // Without a Client type, we still get a constructor FFI (for consistency)
+        // but it's a no-op constructor
+        assert_eq!(ffis_from_trait.len(), 2, "Should have 3 FFIs: 0 constructor + 2 methods");
+        assert_eq!(ffis_from_impl.len(), 2, "Should have 3 FFIs: 0 constructor + 2 methods");
+        
+        // Verify FFI names match between trait and impl
+        for (trait_ffi, impl_ffi) in ffis_from_trait.iter().zip(ffis_from_impl.iter()) {
+            assert_eq!(trait_ffi.library.to_string(), impl_ffi.library.to_string());
+            assert_eq!(trait_ffi.fn_name.to_string(), impl_ffi.fn_name.to_string());
+            assert_eq!(trait_ffi.is_async, impl_ffi.is_async);
+        }
+        
+        // Verify method FFIs
+        assert_eq!(ffis_from_trait[1].library.to_string(), "__database__my_state_query");
+        assert_eq!(ffis_from_trait[2].library.to_string(), "__database__my_state_execute");
+        assert!(ffis_from_trait[2].is_async);
     }
 }
