@@ -10,7 +10,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::{
-    Attribute, Ident, Item, ItemImpl, ItemStruct, LitStr, Result, Token, parse2,
+    Attribute, Error, Ident, Item, ItemImpl, ItemStruct, ItemTrait, LitStr, Result, Token, parse2
 };
 
 use crate::capability::CapabilityDefTrait;
@@ -64,22 +64,20 @@ impl Parse for CapabilityModule {
         }
 
         // Storage
-        let mut parsed_traits: HashMap<String, CapabilityDefTrait> = HashMap::new();
+        let mut parsed_impls: Vec<ItemImpl> = Vec::new();
         let mut parsed_functions: Vec<CapFn> = Vec::new();
         
         // ==============================================================================
-        // Pass 1: Traits and Functions
+        // Pass 1: Implementations and Functions
         // ==============================================================================
         let mut remaining_items = Vec::new();
         
         for item in all_items {
             match item {
-                // #[capability] trait
-                Item::Trait(mut t) if has_attr(&t.attrs, "capability") => {
-                    let _ = remove_attr(&mut t.attrs, "capability");
-                    let name = t.ident.to_string();
-                    let def = CapabilityDefTrait::from_trait(t)?;
-                    parsed_traits.insert(name, def);
+                // impl Trait for Server
+                Item::Impl(mut i) if has_attr(&i.attrs, "capability") => {
+                    let _ = remove_attr(&mut i.attrs, "capability");
+                    parsed_impls.push(i);
                 }
                 // #[capability_function]
                 Item::Fn(mut f) if has_attr(&f.attrs, "capability_function") => {
@@ -96,9 +94,9 @@ impl Parse for CapabilityModule {
         // ==============================================================================
         let mut parsed_servers: HashMap<String, CapServer> = HashMap::new();
         let mut parsed_clients: HashMap<String, CapClient> = HashMap::new();
-        let mut parsed_impls: Vec<ItemImpl> = Vec::new();
+        let mut parsed_traits: HashMap<String, CapabilityDefTrait> = HashMap::new();
         let mut other_items = Vec::new();
-
+        let mut final_traits: HashMap<String, CapabilityDefTrait> = HashMap::new();
         for item in remaining_items {
             match item {
                 // #[capability_client]
@@ -113,10 +111,9 @@ impl Parse for CapabilityModule {
                     let server = CapServer::new(attr, s)?;
                     parsed_servers.insert(server.struct_name.to_string(), server);
                 }
-                // impl Trait for Server
-                Item::Impl(mut i) if has_attr(&i.attrs, "capability") => {
-                    let _ = remove_attr(&mut i.attrs, "capability");
-                    parsed_impls.push(i);
+                // #[capability] trait
+                Item::Trait(mut t) if has_attr(&t.attrs, "capability") => {
+                    // Drop this for now
                 }
                 // Pass-through
                 other => other_items.push(other),
@@ -129,55 +126,42 @@ impl Parse for CapabilityModule {
         let mut services = Vec::new();
 
         for impl_item in parsed_impls {
+            let trait_def = CapabilityDefTrait::from_impl(&impl_item)?;
+            parsed_traits.insert(trait_def.trait_name.to_string(), trait_def.clone());
+
             // A. Identify Server
             let server_name = if let syn::Type::Path(p) = &*impl_item.self_ty {
                 p.path.segments.last().unwrap().ident.to_string()
             } else {
-                // If we can't identify the server, pass it through as raw item
-                other_items.push(Item::Impl(impl_item));
-                continue;
+                return Err(Error::new_spanned(impl_item, "Cannot parse the associated server"));
             };
 
-            // B. Identify Trait
-            let trait_name = match &impl_item.trait_ {
-                Some((_, path, _)) => path.segments.last().unwrap().ident.to_string(),
-                None => {
-                    // Impl without trait? should not happen for capability impls usually
-                    other_items.push(Item::Impl(impl_item));
-                    continue;
-                }
-            };
-
-            // C. Link Server + Trait + Client
-            if let Some(server) = parsed_servers.remove(&server_name) {
-                // We found a matching server. 
-                // Resolve Trait Definition (prefer explicit trait, fallback to parsing impl)
-                let trait_def = if let Some(def) = parsed_traits.remove(&trait_name) {
-                    def
-                } else {
-                     CapabilityDefTrait::from_impl(&impl_item)?
-                };
-
-                // Resolve Client (based on type defined in Trait)
-                let mut client_def = None;
-                if let Some(syn::Type::Path(p)) = &trait_def.explicit_client_type {
-                     let client_name = p.path.segments.last().unwrap().ident.to_string();
-                     if let Some(c) = parsed_clients.remove(&client_name) {
-                         client_def = Some(c);
-                     }
-                }
-
-                services.push(CapabilityService {
-                    struct_def: server,
-                    trait_def,
-                    orig_impl: impl_item,
-                    client: client_def,
-                });
-
+            let server = if let Some(server) = parsed_servers.remove(&server_name) {
+                server
             } else {
                 // Impl exists but no matching #[capability_server] found in this block.
-                other_items.push(Item::Impl(impl_item));
+                return Err(Error::new_spanned(impl_item, "Cannot find the associated server"));
+            };
+
+            // Resolve Client (based on type defined in Trait)
+            let mut client_def = None;
+            if let Some(syn::Type::Path(p)) = &trait_def.explicit_client_type {
+                let client_name = p.path.segments.last().unwrap().ident.to_string();
+                if let Some(c) = parsed_clients.remove(&client_name) {
+                client_def = Some(c);
+                } else {
+                return Err(Error::new_spanned(impl_item, "Cannot find the associated client"));
+                }
             }
+
+            services.push(CapabilityService {
+                struct_def: server,
+                trait_def,
+                orig_impl: impl_item,
+                client: client_def,
+            });
+
+            
         }
 
         // ==============================================================================
@@ -233,7 +217,7 @@ mod tests {
             #[capability_client]
             struct MyClient { val: u32 }
 
-            #[capability_server]
+            #[capability_server(config = MyServer)]
             struct MyServer { internal: i32 }
 
             #[capability]
@@ -278,18 +262,20 @@ mod tests {
         let input = quote! {
             env = "cleanup_test",
 
+            struct UsedConfig { a: u32 }
+
             // --- Used Pair ---
             #[capability_client]
             struct UsedClient { a: u32 }
 
-            #[capability_server]
+            #[capability_server(config = UsedConfig)]
             struct UsedServer { b: i32 }
 
             // --- Unused Pair ---
+            struct UnusedConfig { a: i32 }
             #[capability_client]
             struct UnusedClient { c: u32 }
-
-            #[capability_server]
+            #[capability_server(config = UnusedConfig)]
             struct UnusedServer { d: i32 }
 
             #[capability]
@@ -362,7 +348,7 @@ mod tests {
         let input = quote! {
             env = "fallback_env",
 
-            #[capability_server]
+            #[capability_server(config = Self)]
             struct MyServer;
 
             #[capability]

@@ -38,6 +38,7 @@ use crate::capability_ffi::CapabilityFuncFFI;
 /// * **Host FFI:** Generates the `extern "C"` entry points that receive the
 ///     serialized `Client` state, deserialize it, and invoke the logic on the
 ///     corresponding `Server` state instance.
+#[derive(Debug, Clone, PartialEq)]
 pub struct CapabilityDefTrait {
     pub trait_name: Ident,
     pub state_name: Ident,

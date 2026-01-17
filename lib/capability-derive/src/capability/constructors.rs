@@ -9,7 +9,7 @@ use syn::{
 use crate::capability_ffi::CapabilityFuncFFI;
 use crate::utils::type_to_return;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ClientConstructor {
     pub sig: syn::Signature,
     pub block: syn::Block,

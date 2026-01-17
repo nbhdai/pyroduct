@@ -9,7 +9,7 @@ use syn::{
 use crate::{capability_ffi::{CapabilityFuncFFI, InputParams}, utils::{compare_types, is_self_ref_or_type}};
 
 /// Represents a validated method within the Capability trait.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CapabilityMethod {
     pub name: Ident,
     pub inputs: Vec<(Ident, Type)>,
