@@ -206,22 +206,10 @@ mod tests {
     use super::*;
     use quote::quote;
     use syn::parse2;
-
-    fn format_tokens(tokens: &TokenStream) -> String {
-        // Try to parse and format as a file, fallback to raw string if it fails
-        match syn::parse_file(&tokens.to_string()) {
-            Ok(file) => prettyplease::unparse(&file),
-            Err(err) => {
-                tracing::error!(?err, "Parsing Error");
-                tokens.to_string()
-            }
-        }
-    }
-
-    #[tracing_test::traced_test]
+#[tracing_test::traced_test]
     #[test]
-    fn test_simple_stateful_server() {
-        let attr = quote! { service = Greeter, config = GreeterConfig};
+    fn test_sync_server_init_trait() {
+        let attr = quote! { service = Greeter, config = GreeterConfig };
         let item = quote! {
             pub struct GreeterServer {
                 count: u32,
@@ -229,50 +217,23 @@ mod tests {
         };
 
         let item = parse2(item).expect("error");
-        let result = CapServer::new(attr, item)
-            .expect("Expansion failed")
-            .generate_init_trait();
-        tracing::info!("Generated tokens: {}", format_tokens(&result));
+        let server = CapServer::new(attr, item).expect("Expansion failed");
+        let result = server.generate_init_trait();
 
-        tracing::info!("Generated tokens: {}", &result);
+        let expected = quote! {
+            pub trait GreeterServerInit {
+                fn new(config: &GreeterConfig) -> Self;
+                fn reset(&mut self);
+            }
+        };
 
-        let result_str = result.to_string();
-
-        // Should generate init trait
-        assert!(result_str.contains("pub trait GreeterServerInit"));
-        assert!(result_str.contains("fn new (config : & GreeterConfig) -> Self"));
-        assert!(result_str.contains("fn reset (& mut self)"));
-
-        // Should NOT have with_config method (no config provided)
-        assert!(!result_str.contains("fn with_config"));
-
-        // Should generate plugin_init
-        //assert!(result_str.contains("PluginInitFn :: Sync ( __greeter_server_ffi_init )"));
-        assert!(result_str.contains("pub extern \"C\" fn __greeter_server_ffi_init"));
-        assert!(
-            result_str
-                .contains("| config | < GreeterServer as GreeterServerInit > :: new (& config)")
-        );
-        assert!(result_str.contains("execute_safe_init :: < GreeterConfig , GreeterServer , _ >"));
-
-        // Should generate plugin_drop
-        //assert!(result_str.contains("PluginDropFn :: Sync ( __greeter_server_ffi_drop )"));
-        assert!(result_str.contains("pub unsafe extern \"C\" fn __greeter_server_ffi_drop"));
-        assert!(result_str.contains("Box :: from_raw (state as * mut GreeterServer)"));
-
-        // Should generate plugin_reset
-        //assert!(result_str.contains("PluginResetFn :: Sync ( __greeter_server_ffi_reset )"));
-        assert!(result_str.contains("pub unsafe extern \"C\" fn __greeter_server_ffi_reset"));
-        assert!(result_str.contains("execute_safe_reset :: < GreeterServer , _ >"));
-        assert!(result_str.contains("< GreeterServer as GreeterServerInit > :: reset (state)"));
-
-        tracing::debug!("Simple stateful server test passed");
+        crate::fmt::assert_code_eq_token(&result, &expected);
     }
 
     #[tracing_test::traced_test]
     #[test]
-    fn test_simple_stateful_async_server() {
-        let attr = quote! { service = Greeter, config = GreeterConfig, async_init};
+    fn test_sync_server_init_fn() {
+        let attr = quote! { service = Greeter, config = GreeterConfig };
         let item = quote! {
             pub struct GreeterServer {
                 count: u32,
@@ -280,45 +241,192 @@ mod tests {
         };
 
         let item = parse2(item).expect("error");
-        let result = CapServer::new(attr, item)
-            .expect("Expansion failed")
-            .generate_init_trait();
-        tracing::info!("Generated tokens: {}", format_tokens(&result));
+        let server = CapServer::new(attr, item).expect("Expansion failed");
+        let (result, _export) = server.generate_init_fn();
 
-        tracing::info!("Generated tokens: {}", &result);
+        let expected = quote! {
+            #[unsafe(no_mangle)]
+            pub extern "C" fn __greeter_server_ffi_init(
+                config_ptr: *const u8,
+                config_len: usize
+            ) -> ::pyroduct::capability_host::ffi::FfiInitResult {
+                unsafe {
+                    ::pyroduct::capability::safe_lifecycle::execute_safe_init::<GreeterConfig, GreeterServer, _>(
+                        config_ptr,
+                        config_len,
+                        |config| <GreeterServer as GreeterServerInit>::new(&config)
+                    )
+                }
+            }
+        };
 
-        let result_str = result.to_string();
+        crate::fmt::assert_code_eq_token(&result, &expected);
+    }
 
-        // Should generate init trait
-        assert!(result_str.contains("pub trait GreeterServerInit"));
-        assert!(result_str.contains("fn new (config : & GreeterConfig) -> Self"));
-        assert!(result_str.contains("fn reset (& mut self)"));
+    #[tracing_test::traced_test]
+    #[test]
+    fn test_sync_server_drop_fn() {
+        let attr = quote! { service = Greeter, config = GreeterConfig };
+        let item = quote! {
+            pub struct GreeterServer {
+                count: u32,
+            }
+        };
 
-        // Should NOT have with_config method (no config provided)
-        assert!(!result_str.contains("fn with_config"));
+        let item = parse2(item).expect("error");
+        let server = CapServer::new(attr, item).expect("Expansion failed");
+        let (result, _export) = server.generate_drop_fn();
 
-        // Should generate plugin_init
-        //assert!(result_str.contains("PluginInitFn :: Sync ( __greeter_server_ffi_init )"));
-        assert!(result_str.contains("pub extern \"C\" fn __greeter_server_ffi_init < 'a >"));
-        assert!(result_str.contains("| config | async move { < GreeterServer as GreeterServerInit > :: new (& config) . await"));
-        assert!(
-            result_str
-                .contains("execute_safe_async_init :: < GreeterConfig , GreeterServer , _ , _ >")
-        );
+        let expected = quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn __greeter_server_ffi_drop(state: *mut std::ffi::c_void) {
+                if !state.is_null() {
+                    drop(unsafe { Box::from_raw(state as *mut GreeterServer) });
+                }
+            }
+        };
 
-        // Should generate plugin_drop
-        //assert!(result_str.contains("PluginDropFn :: Sync ( __greeter_server_ffi_drop )"));
-        assert!(result_str.contains("pub unsafe extern \"C\" fn __greeter_server_ffi_drop"));
-        assert!(result_str.contains("Box :: from_raw (state as * mut GreeterServer)"));
+        crate::fmt::assert_code_eq_token(&result, &expected);
+    }
 
-        // Should generate plugin_reset
-        //assert!(result_str.contains("PluginResetFn :: Sync ( __greeter_server_ffi_reset )"));
-        assert!(
-            result_str.contains("pub unsafe extern \"C\" fn __greeter_server_ffi_reset < 'a >")
-        );
-        assert!(result_str.contains("execute_safe_async_reset :: < GreeterServer , _ , _ >"));
-        assert!(result_str.contains("| state | async move { < GreeterServer as GreeterServerInit > :: reset (state) . await }"));
+    #[tracing_test::traced_test]
+    #[test]
+    fn test_sync_server_reset_fn() {
+        let attr = quote! { service = Greeter, config = GreeterConfig };
+        let item = quote! {
+            pub struct GreeterServer {
+                count: u32,
+            }
+        };
 
-        tracing::debug!("Simple stateful server test passed");
+        let item = parse2(item).expect("error");
+        let server = CapServer::new(attr, item).expect("Expansion failed");
+        let (result, _export) = server.generate_reset_fn();
+
+        let expected = quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn __greeter_server_ffi_reset(
+                state: *mut std::ffi::c_void
+            ) -> ::pyroduct::capability_host::ffi::FfiResult {
+                ::pyroduct::capability::safe_lifecycle::execute_safe_reset::<GreeterServer, _>(
+                    state,
+                    |state| <GreeterServer as GreeterServerInit>::reset(state)
+                )
+            }
+        };
+
+        crate::fmt::assert_code_eq_token(&result, &expected);
+    }
+
+    #[tracing_test::traced_test]
+    #[test]
+    fn test_async_server_init_trait() {
+        let attr = quote! { service = Greeter, config = GreeterConfig, async_init };
+        let item = quote! {
+            pub struct GreeterServer {
+                count: u32,
+            }
+        };
+
+        let item = parse2(item).expect("error");
+        let server = CapServer::new(attr, item).expect("Expansion failed");
+        let result = server.generate_init_trait();
+
+        let expected = quote! {
+            pub trait GreeterServerInit {
+                fn new(config: &GreeterConfig) -> Self;
+                fn reset(&mut self);
+            }
+        };
+
+        crate::fmt::assert_code_eq_token(&result, &expected);
+    }
+
+    #[tracing_test::traced_test]
+    #[test]
+    fn test_async_server_init_fn() {
+        let attr = quote! { service = Greeter, config = GreeterConfig, async_init };
+        let item = quote! {
+            pub struct GreeterServer {
+                count: u32,
+            }
+        };
+
+        let item = parse2(item).expect("error");
+        let server = CapServer::new(attr, item).expect("Expansion failed");
+        let (result, _export) = server.generate_init_fn();
+
+        let expected = quote! {
+            #[unsafe(no_mangle)]
+            pub extern "C" fn __greeter_server_ffi_init<'a>(
+                config_ptr: *const u8,
+                config_len: usize
+            ) -> ::pyroduct::capability_host::ffi::FfiBorrowedFutureObjectResult<'a> {
+                unsafe {
+                    ::pyroduct::capability::safe_lifecycle::execute_safe_async_init::<GreeterConfig, GreeterServer, _, _>(
+                        config_ptr,
+                        config_len,
+                        |config| async move { <GreeterServer as GreeterServerInit>::new(&config).await },
+                    )
+                }
+            }
+        };
+
+        crate::fmt::assert_code_eq_token(&result, &expected);
+    }
+
+    #[tracing_test::traced_test]
+    #[test]
+    fn test_async_server_drop_fn() {
+        let attr = quote! { service = Greeter, config = GreeterConfig, async_init };
+        let item = quote! {
+            pub struct GreeterServer {
+                count: u32,
+            }
+        };
+
+        let item = parse2(item).expect("error");
+        let server = CapServer::new(attr, item).expect("Expansion failed");
+        let (result, _export) = server.generate_drop_fn();
+
+        let expected = quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn __greeter_server_ffi_drop(state: *mut std::ffi::c_void) {
+                if !state.is_null() {
+                    drop(unsafe { Box::from_raw(state as *mut GreeterServer) });
+                }
+            }
+        };
+
+        crate::fmt::assert_code_eq_token(&result, &expected);
+    }
+
+    #[tracing_test::traced_test]
+    #[test]
+    fn test_async_server_reset_fn() {
+        let attr = quote! { service = Greeter, config = GreeterConfig, async_init };
+        let item = quote! {
+            pub struct GreeterServer {
+                count: u32,
+            }
+        };
+
+        let item = parse2(item).expect("error");
+        let server = CapServer::new(attr, item).expect("Expansion failed");
+        let (result, _export) = server.generate_reset_fn();
+
+        let expected = quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn __greeter_server_ffi_reset<'a>(
+                state: *mut std::ffi::c_void
+            ) -> ::pyroduct::capability_host::ffi::FfiBorrowedFutureResult<'a> {
+                ::pyroduct::capability::safe_lifecycle::execute_safe_async_reset::<GreeterServer, _, _>(
+                    state,
+                    |state| async move { <GreeterServer as GreeterServerInit>::reset(state).await },
+                )
+            }
+        };
+
+        crate::fmt::assert_code_eq_token(&result, &expected);
     }
 }

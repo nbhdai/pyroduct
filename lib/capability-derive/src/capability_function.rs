@@ -99,11 +99,13 @@ impl CapFn {
                 }
             }
         }
+        let struct_component = ffi.generate_input_struct();
         let wasm_component = ffi.generate_module_function();
 
         quote! {
             #[cfg(feature = "module")]
-            #vis fn #fn_name(#(#fn_params),*) -> #return_type {
+            #vis fn #fn_name(#(#fn_params),*) #return_type {
+                #struct_component
                 #wasm_component
             }
         }
@@ -112,7 +114,7 @@ impl CapFn {
 
 #[cfg(test)]
 mod tests {
-    use crate::fmt::assert_code_eq;
+    use crate::fmt::{assert_code_eq, assert_code_eq_token};
 
     use super::*;
     use quote::quote;
@@ -129,40 +131,23 @@ mod tests {
 
         let lib_name = format_ident!("MyLib");
         let item = parse2(item).expect("error");
-        let result = CapFn::new(item)
-            .expect("Expansion failed")
-            .generate_module_function(&lib_name);
+        let parsed = CapFn::new(item)
+            .expect("Expansion failed");
+        let ffi = parsed.to_ffi(&lib_name);
+        let call_struct = ffi.generate_input_struct();
+        let wasm_call = ffi.generate_module_function();
+        
+        let result = parsed.generate_module_function(&lib_name);
 
-        let expected = r#"
+        let expected = quote! {
             #[cfg(feature = "module")]
             pub fn get_count() -> u32 {
-                ::pyroduct::module_capability::access::call_from_wasm::<
-                    (),
-                    (),
-                    u32,
-                    _,
-                >(
-                    "__env__get_count__func",
-                    None,
-                    None,
-                    |client_state_ptr: *const u8,
-                     client_state_len: usize,
-                     input_ptr: *const u8,
-                     input_len: usize| {
-                        unsafe {
-                            __get_count_wasm(
-                                client_state_ptr,
-                                client_state_len,
-                                input_ptr,
-                                input_len,
-                            )
-                        }
-                    },
-                )
+                #call_struct
+                #wasm_call
             }
-        "#;
+        };
 
-        assert_code_eq(&result, expected);
+        assert_code_eq_token(&result, &expected);
     }
 
     #[tracing_test::traced_test]
@@ -176,40 +161,23 @@ mod tests {
 
         let lib_name = format_ident!("MyLib");
         let item = parse2(item).expect("error");
-        let result = CapFn::new(item)
-            .expect("Expansion failed")
-            .generate_module_function(&lib_name);
+        let parsed = CapFn::new(item)
+            .expect("Expansion failed");
+        let ffi = parsed.to_ffi(&lib_name);
+        let call_struct = ffi.generate_input_struct();
+        let wasm_call = ffi.generate_module_function();
+        
+        let result = parsed.generate_module_function(&lib_name);
 
-        let expected = r#"
+        let expected = quote! {
             #[cfg(feature = "module")]
             fn fetch_data(url: String) -> String {
-                ::pyroduct::module_capability::access::call_from_wasm::<
-                    (),
-                    String,
-                    String,
-                    _,
-                >(
-                    "__env__fetch_data__func",
-                    None,
-                    Some(&url),
-                    |client_state_ptr: *const u8,
-                     client_state_len: usize,
-                     input_ptr: *const u8,
-                     input_len: usize| {
-                        unsafe {
-                            __fetch_data_wasm(
-                                client_state_ptr,
-                                client_state_len,
-                                input_ptr,
-                                input_len,
-                            )
-                        }
-                    },
-                )
+                #call_struct
+                #wasm_call
             }
-        "#;
+        };
 
-        assert_code_eq(&result, expected);
+        assert_code_eq_token(&result, &expected);
     }
 
     #[tracing_test::traced_test]
@@ -223,45 +191,22 @@ mod tests {
 
         let lib_name = format_ident!("MyLib");
         let item = parse2(item).expect("error");
-        let result = CapFn::new(item)
-            .expect("Expansion failed")
-            .generate_module_function(&lib_name);
+        let parsed = CapFn::new(item)
+            .expect("Expansion failed");
+        let ffi = parsed.to_ffi(&lib_name);
+        let call_struct = ffi.generate_input_struct();
+        let wasm_call = ffi.generate_module_function();
+        
+        let result = parsed.generate_module_function(&lib_name);
 
-        let expected = r#"
-            #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-            #[rkyv(compare(PartialEq), derive(Debug))]
-            struct __add_Input {
-                pub a: u32,
-                pub b: u32,
-            }
+        let expected = quote! {
             #[cfg(feature = "module")]
             pub fn add(a: u32, b: u32) -> u32 {
-                ::pyroduct::module_capability::access::call_from_wasm::<
-                    (),
-                    __add_Input,
-                    u32,
-                    _,
-                >(
-                    "__env__add__func",
-                    None,
-                    Some(&__add_Input { a, b }),
-                    |client_state_ptr: *const u8,
-                     client_state_len: usize,
-                     input_ptr: *const u8,
-                     input_len: usize| {
-                        unsafe {
-                            __add_wasm(
-                                client_state_ptr,
-                                client_state_len,
-                                input_ptr,
-                                input_len,
-                            )
-                        }
-                    },
-                )
+                #call_struct
+                #wasm_call
             }
-        "#;
+        };
 
-        assert_code_eq(&result, expected);
+        assert_code_eq_token(&result, &expected);
     }
 }

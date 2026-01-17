@@ -228,7 +228,6 @@ impl CapabilityDefTrait {
         };
 
         let mut methods = Vec::new();
-        let mut constructors = Vec::new();
         let mut other_items = Vec::new();
         let mut explicit_error_type: Option<Type> = None;
         let mut explicit_client_type = None;
@@ -277,30 +276,14 @@ impl CapabilityDefTrait {
             }
         }
 
+        let mut has_new_client = false;
         // 4. Second Pass: Methods
         for item in &input.items {
             if let ImplItem::Fn(impl_method) = item {
                 // In Host implementations, we look for 'new_client' to satisfy the constructor requirement.
                 // We do NOT use ClientConstructor::from_impl.
                 if impl_method.sig.ident == "new_client" {
-                    if let Some(client_type) = &explicit_client_type {
-                        // Manually construct a placeholder ClientConstructor.
-                        // It will not be used for code generation (which uses generic names),
-                        // but it satisfies the validation check below.
-
-                        let client_name = if let Type::Path(type_path) = client_type {
-                            type_path.path.segments.last().unwrap().ident.to_string()
-                        } else {
-                            quote!(#client_type).to_string()
-                        };
-
-                        constructors.push(ClientConstructor {
-                            sig: impl_method.sig.clone(),
-                            block: parse_quote!({}), // Dummy block, unused for trait gen from impl
-                            client_name,
-                            error_type: explicit_error_type.clone(),
-                        });
-                    }
+                    has_new_client = true;
                 } else {
                     let cap_method = CapabilityMethod::from_impl(
                         impl_method,
@@ -312,15 +295,14 @@ impl CapabilityDefTrait {
             }
         }
 
-        // 5. Final Validation
-        if explicit_client_type.is_some() {
-            if constructors.is_empty() {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "Client type defined, but no Client Constructor ('new_client') found in implementation.",
-                ));
-            }
-        } else if !constructors.is_empty() {
+        // 5. Final Validation (this is pointless as the rust won't compile with an incorrect trait definition).
+        if explicit_client_type.is_some() && !has_new_client {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "Client type defined, but no Client Constructor ('new_client') found in implementation.",
+            ));
+        }
+        if explicit_client_type.is_none() && has_new_client {
             return Err(syn::Error::new(
                 Span::call_site(),
                 "Client Constructors defined but no 'Client' type found.",
@@ -491,80 +473,36 @@ mod tests {
             }
         }).unwrap();
 
+        let constructor = parse2(quote! {
+            fn new(id: u32) -> MyClient {
+                MyClient { id }
+            }
+        }).unwrap();
+
+        let method = parse2(quote! {
+            fn get_info() -> u32;
+        }).unwrap();
+        let client_name = syn::parse_str("MyClient").unwrap();
+        let state_name = format_ident!("MyState");
+        let trait_name = format_ident!("MyTrait");
+
+        let expected_constructor = ClientConstructor::new(&constructor, &client_name, None).unwrap();
+        let expected_method = CapabilityMethod::from_trait(method, Some(&client_name), None).unwrap();
+
+        let expected_constructor = expected_constructor.client_method_generation(&trait_name, &state_name);
+        let expected_method = expected_method.client_method_generation(&trait_name, &state_name);
+
         let def = CapabilityDefTrait::from_trait(code).expect("Failed to parse capability trait");
         let output = def.generate_client_impl().unwrap();
 
-        let expected = r#"
+        let expected = quote! {
             impl MyClient {
-                pub fn new(id: u32) -> Self {
-                    let mut new_self = (|| {
-                        MyClient {
-                            id,
-                            __config_buf: std::vec::Vec::new(),
-                        }
-                    })();
-                    new_self.__config_buf = ::rkyv::to_bytes::<_, 256>(&new_self)
-                        .expect("Failed to serialize config")
-                        .into_vec();
-                    let ffi_result = ::pyroduct::module_capability::access::call_from_wasm::<
-                        Self,
-                        (),
-                        Self,
-                        _,
-                    >(
-                        "__MyTrait_MyState_new_client",
-                        Some(client),
-                        None,
-                        |client_state_ptr: *const u8,
-                         client_state_len: usize,
-                         input_ptr: *const u8,
-                         input_len: usize| {
-                            unsafe {
-                                __MyTrait_MyState_new_client_wasm(
-                                    client_state_ptr,
-                                    client_state_len,
-                                    input_ptr,
-                                    input_len,
-                                )
-                            }
-                        },
-                    );
-
-                    match ffi_result {
-                        Ok(_) => Ok(new_self),
-                        Err(e) => Err(e.into()),
-                    }
-                }
-
-                pub fn get_info(&self) -> u32 {
-                    ::pyroduct::module_capability::access::call_from_wasm::<
-                        MyClient,
-                        (),
-                        u32,
-                        _,
-                    >(
-                        "__MyTrait_MyState_get_info",
-                        Some(client),
-                        None,
-                        |client_state_ptr: *const u8,
-                         client_state_len: usize,
-                         input_ptr: *const u8,
-                         input_len: usize| {
-                            unsafe {
-                                __MyTrait_MyState_get_info_wasm(
-                                    client_state_ptr,
-                                    client_state_len,
-                                    input_ptr,
-                                    input_len,
-                                )
-                            }
-                        },
-                    )
-                }
+                #expected_constructor
+                #expected_method
             }
-        "#;
+        };
 
-        assert_code_eq(&output, expected);
+        assert_code_eq_token(&output, &expected);
     }
 
     #[test]
@@ -697,8 +635,6 @@ mod tests {
             }
         }).unwrap();
         let def = CapabilityDefTrait::from_trait(code).expect("Failed to parse capability trait");
-        let trait_name = format_ident!("SensorFeature");
-        let state_name = format_ident!("HardwareState");
 
         let server_trait = def.generate_trait_definition().unwrap();
 
