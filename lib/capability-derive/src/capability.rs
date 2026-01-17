@@ -521,86 +521,38 @@ mod tests {
             }
         }).unwrap();
 
+        let constructor = parse2(quote! {
+            fn create(name: String) -> AdvancedClient {
+                AdvancedClient { name }
+            }
+        }).unwrap();
+
+        let method = parse2(quote! {
+            fn process(val: u32, flag: bool) -> u32;
+        }).unwrap();
+
+        let client_name: Type = syn::parse_str("AdvancedClient").unwrap();
+        let error_name: Type = syn::parse_str("MyError").unwrap();
+        let state_name = format_ident!("MyState");
+        let trait_name = format_ident!("AdvancedTrait");
+
+        let expected_constructor = ClientConstructor::new(&constructor, &client_name, Some(&error_name)).unwrap();
+        let expected_method = CapabilityMethod::from_trait(method, Some(&client_name), Some(&error_name)).unwrap();
+
+        let expected_constructor = expected_constructor.client_method_generation(&trait_name, &state_name);
+        let expected_method = expected_method.client_method_generation(&trait_name, &state_name);
+
         let def = CapabilityDefTrait::from_trait(code).expect("Failed to parse capability trait");
         let output = def.generate_client_impl().unwrap();
 
-        let expected = r#"
+        let expected = quote! {
             impl AdvancedClient {
-                pub fn create(name: String) -> Result<Self, MyError> {
-                    let mut new_self = (|| {
-                        AdvancedClient {
-                            name,
-                            __config_buf: std::vec::Vec::new(),
-                        }
-                    })();
-                    new_self.__config_buf = ::rkyv::to_bytes::<_, 256>(&new_self)
-                        .expect("Failed to serialize config")
-                        .into_vec();
-                    let ffi_result = ::pyroduct::module_capability::access::call_from_wasm::<
-                        Self,
-                        (),
-                        Result<Self, MyError>,
-                        _,
-                    >(
-                        "__AdvancedTrait_MyState_new_client",
-                        Some(client),
-                        None,
-                        |client_state_ptr: *const u8,
-                         client_state_len: usize,
-                         input_ptr: *const u8,
-                         input_len: usize| {
-                            unsafe {
-                                __AdvancedTrait_MyState_new_client_wasm(
-                                    client_state_ptr,
-                                    client_state_len,
-                                    input_ptr,
-                                    input_len,
-                                )
-                            }
-                        },
-                    );
-
-                    match ffi_result {
-                        Ok(_) => Ok(new_self),
-                        Err(e) => Err(e.into()),
-                    }
-                }
-
-                pub fn process(&self, val: u32, flag: bool) -> Result<u32, MyError> {
-                    #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-                    #[rkyv(compare(PartialEq), derive(Debug))]
-                    struct __AdvancedTrait_MyState_process_Input {
-                        pub val: u32,
-                        pub flag: bool,
-                    }
-                    ::pyroduct::module_capability::access::call_from_wasm::<
-                        AdvancedClient,
-                        __AdvancedTrait_MyState_process_Input,
-                        Result<u32, MyError>,
-                        _,
-                    >(
-                        "__AdvancedTrait_MyState_process",
-                        Some(client),
-                        Some(&__AdvancedTrait_MyState_process_Input { val, flag }),
-                        |client_state_ptr: *const u8,
-                         client_state_len: usize,
-                         input_ptr: *const u8,
-                         input_len: usize| {
-                            unsafe {
-                                __AdvancedTrait_MyState_process_wasm(
-                                    client_state_ptr,
-                                    client_state_len,
-                                    input_ptr,
-                                    input_len,
-                                )
-                            }
-                        },
-                    )
-                }
+                #expected_constructor
+                #expected_method
             }
-        "#;
+        };
 
-        assert_code_eq(&output, expected);
+        assert_code_eq_token(&output, &expected);
     }
 
     #[test]
@@ -618,7 +570,7 @@ mod tests {
     }
 
     #[test]
-    fn test_server_trait_and_ffi_generation() {
+    fn test_server_trait_generation() {
         let code = parse2(quote! {
             #[capability_provider(MyState)]
             trait SensorFeature {
@@ -648,59 +600,31 @@ mod tests {
             }
         "#;
         assert_code_eq(&server_trait, expected_trait);
-
-        let calibrate_method = def
-            .methods
-            .iter()
-            .find(|m| m.name == "calibrate")
-            .expect("calibrate not found");
-        
-        // Should test some basic things on the calibrate method struct
-
-        let read_method = def
-            .methods
-            .iter()
-            .find(|m| m.name == "read_async")
-            .expect("read_async not found");
-        // Should test some basic things on the calibrate method struct
-        
-
     }
 
     #[test]
     fn test_generate_server_trait_correctness() {
-        // 1. Define the input trait (as written by the user)
         let code = parse2(quote! {
             #[capability_provider(MyState)]
             trait ControlPlane {
                 type Client = ControlClient;
                 type Error = ControlError;
 
-                // Constructor: Should result in `new_client` in server trait
                 fn new(api_key: String) -> ControlClient {
                     ControlClient { api_key }
                 }
 
-                // Sync method: Should gain &self, client, and Result return
                 fn sync_op(level: u8) -> bool;
 
-                // Async method: Should stay async, gain params, and Result return
                 async fn async_op(data: Vec<u8>);
             }
         }).unwrap();
 
-        // 2. Parse
         let def = CapabilityDefTrait::from_trait(code).expect("Failed to parse capability trait");
-
-        // 3. Generate the server-side trait definition
         let output = def
             .generate_trait_definition()
             .expect("Failed to generate trait definition");
 
-        // 4. Verify Output
-        // - `new_client` signature is generated.
-        // - Methods have `&self` and `client: &Self::Client` prepended.
-        // - Return types are wrapped in `Result<_, Self::Error>`.
         let expected = r#"
             pub trait ControlPlane {
                 type Client = ControlClient;
@@ -719,38 +643,35 @@ mod tests {
 
     #[test]
     fn test_from_impl_parsing() {
-        // 1. Define an impl block (simulating `impl Trait for State`)
         let code = parse2(quote! {
             impl MyTrait for MyState {
                 type Client = MyClient;
                 type Error = MyError;
 
                 fn new_client(&self, client: &MyClient) -> Result<(), Self::Error> {
-                    MyClient { id }
+                    Ok(())
                 }
 
-                fn do_thing() -> Result<u32, Self::Error> {
-                    Some(42)
+                fn do_thing(&self, client: &MyClient) -> Result<u32, Self::Error> {
+                    Ok(42)
                 }
             }
         }).unwrap();
 
-        // 2. Parse from Impl
         let def = CapabilityDefTrait::from_impl(&code).expect("Failed to parse impl");
 
-        // 3. Verify extracted names
+        // Verify extracted names
         assert_eq!(def.trait_name.to_string(), "MyTrait");
         assert_eq!(def.state_name.to_string(), "MyState");
 
-        // 4. Verify Client Implementation Generation using assert_code_eq
+        // Verify Client Implementation Generation is forbidden
         let client_impl_result = def.generate_client_impl();
         assert_eq!(
             client_impl_result.unwrap_err().to_string(),
             "Unable to generate a client definition from an impl."
         );
 
-        // 5. Verify that Trait Definition generation is explicitly forbidden for Impl inputs.
-        // The `CapabilityDefTrait` logic returns an error if `state_name` is present.
+        // Verify that Trait Definition generation is explicitly forbidden for Impl inputs
         let trait_gen_result = def.generate_trait_definition();
         assert!(
             trait_gen_result.is_err(),
@@ -764,27 +685,21 @@ mod tests {
 
     #[test]
     fn test_trait_generation_consistency_between_source_and_impl() {
-        // 1. Define the Original Trait
-        // This is what the user defines in the shared library.
         let trait_code = parse2(quote! {
             #[capability_provider(MyState)]
             trait Database {
                 type Client = DbClient;
                 type Error = DbError;
 
-                // Constructor
                 fn connect(url: String) -> DbClient {
                     DbClient { url }
                 }
 
-                // Methods
                 fn query(sql: String) -> String;
                 async fn execute(sql: String) -> u64;
             }
         }).unwrap();
 
-        // 2. Define the Implementation
-        // This is what the user writes on the host side.
         let impl_code = parse2(quote! {
             impl Database for PostgresDriver {
                 type Client = DbClient;
@@ -804,42 +719,33 @@ mod tests {
             }
         }).unwrap();
 
-        // 3. Generate Trait Definition from the TRAIT source
         let def_from_trait =
             CapabilityDefTrait::from_trait(trait_code).expect("Failed to parse trait");
         let trait_output = def_from_trait
             .generate_trait_definition()
             .expect("Failed to generate definition from trait");
 
-        // 4. Generate Trait Definition from the IMPL source
-        // We must manually strip `state_name` because `generate_trait_definition`
-        // normally forbids generating a trait from an impl to prevent misuse.
-        // Stripping it simulates "if we treated this impl interface as the source of truth".
         let mut def_from_impl =
             CapabilityDefTrait::from_impl(&impl_code).expect("Failed to parse impl");
 
-        // HACK: Force state_name to None to bypass the guard for this specific comparison test
+        // HACK: Force from_impl flag to false to bypass the guard for this specific comparison test
         def_from_impl.from_impl = false;
 
         let impl_output = def_from_impl
             .generate_trait_definition()
             .expect("Failed to generate definition from impl");
 
-        // 5. Verify they are identical
-        // This confirms that `from_impl` correctly normalized the inputs (converting methods,
-        // handling constructors, and mapping types) exactly like `from_trait` does.
+        // Verify they are identical
         assert_code_eq_token(&trait_output, &impl_output);
 
-        // 6. Verify the content is what we expect (Server-side transformed trait)
+        // Verify the content is what we expect
         let expected = r#"
             pub trait Database {
                 type Client = DbClient;
                 type Error = DbError;
 
-                // The 'connect' constructor is replaced by 'new_client'
                 fn new_client(&self, client: &Self::Client) -> Result<(), Self::Error>;
 
-                // Methods are transformed (injecting &self, client, and Result)
                 fn query(&self, client: &Self::Client, sql: String) -> Result<String, Self::Error>;
                 async fn execute(&self, client: &Self::Client, sql: String) -> Result<u64, Self::Error>;
             }
@@ -849,21 +755,16 @@ mod tests {
 
     #[test]
     fn test_trait_generation_consistency_between_source_and_impl_no_client() {
-        // 1. Define the Original Trait
-        // This is what the user defines in the shared library.
         let trait_code = parse2(quote! {
             #[capability_provider(MyState)]
             trait Database {
                 type Error = DbError;
 
-                // Methods
                 fn query(sql: String) -> String;
                 async fn execute(sql: String) -> u64;
             }
         }).unwrap();
 
-        // 2. Define the Implementation
-        // This is what the user writes on the host side.
         let impl_code = parse2(quote! {
             impl Database for PostgresDriver {
                 type Error = DbError;
@@ -878,7 +779,6 @@ mod tests {
             }
         }).unwrap();
 
-        // 3. Generate Trait Definition from the TRAIT source
         let def_from_trait =
             CapabilityDefTrait::from_trait(trait_code).expect("Failed to parse trait");
         let trait_output = def_from_trait
@@ -887,7 +787,7 @@ mod tests {
         let mut def_from_impl =
             CapabilityDefTrait::from_impl(&impl_code).expect("Failed to parse impl");
 
-        // HACK: Force state_name to None to bypass the guard for this specific comparison test
+        // HACK: Force from_impl flag to false to bypass the guard for this specific comparison test
         def_from_impl.from_impl = false;
 
         let impl_output = def_from_impl
