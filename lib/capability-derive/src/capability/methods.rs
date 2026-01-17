@@ -236,19 +236,7 @@ impl CapabilityMethod {
             args_tokens.push(quote! { #arg_name: #arg_type });
         }
 
-        let return_tokens = if self.error_type.is_some() {
-            // Determine the inner type T for Result<T, E>
-            let inner_type = match &self.output {
-                ReturnType::Default => quote! { () },
-                ReturnType::Type(_, ty) => quote! { #ty },
-            };
-
-            // Wrap in Result<..., Self::Error>
-            quote! { -> Result<#inner_type, Self::Error> }
-        } else {
-            // No error defined, keep original return type (or empty)
-            self.output.to_token_stream()
-        };
+        let return_tokens = &self.original_sig.output;
 
         quote! {
             #(#attrs)*

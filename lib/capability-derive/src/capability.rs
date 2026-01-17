@@ -354,9 +354,9 @@ impl CapabilityDefTrait {
             return quote! {};
         }
 
-        if self.explicit_error_type.is_some() {
+        if let Some(error) = &self.explicit_error_type {
             quote! {
-                fn new_client(&self, client: &Self::Client) -> Result<(), Self::Error>;
+                fn new_client(&self, client: &Self::Client) -> Result<(), #error>;
             }
         } else {
             quote! {
@@ -402,15 +402,16 @@ impl CapabilityDefTrait {
 
     pub fn capability_ffis(&self) -> Vec<CapabilityFuncFFI> {
         let trait_name = &self.trait_name;
-
-        let constructor_ffi = client_constructor_ffi_meta(
-            trait_name,
-            &self.state_name,
-            self.explicit_error_type.as_ref(),
-            false,
-        );
         let mut capability_ffis = Vec::with_capacity(self.methods.len() + 1);
-        capability_ffis.push(constructor_ffi);
+        if self.explicit_client_type.is_some() {
+            let constructor_ffi = client_constructor_ffi_meta(
+                trait_name,
+                &self.state_name,
+                self.explicit_error_type.as_ref(),
+                false,
+            );
+            capability_ffis.push(constructor_ffi);
+        }
 
         capability_ffis.extend(self
             .methods
@@ -613,7 +614,7 @@ mod tests {
                 type Error = MyError;
                 fn new_client(&self, client: &Self::Client) -> Result<(), MyError>;
                 async fn process(&self, client: &Self::Client, val: u32, flag: bool) -> Result<u32, MyError>;
-                fn sync_op(&self, client: &Self::Client, level: u8) -> Result<u32, MyError>;
+                fn sync_op(&self, client: &Self::Client, level: u8) -> Result<bool, MyError>;
             }
         };
         assert_code_eq_token(&server_trait, &expected_trait);
@@ -678,7 +679,7 @@ mod tests {
     #[test]
     fn test_trait_generation_consistency_between_source_and_impl() {
         let trait_code = parse2(quote! {
-            #[capability_provider(MyState)]
+            #[capability_provider(PostgresDriver)]
             trait Database {
                 type Client = DbClient;
                 type Error = DbError;
@@ -687,8 +688,8 @@ mod tests {
                     DbClient { url }
                 }
 
-                fn query(sql: String) -> String;
-                async fn execute(sql: String) -> u64;
+                fn query(sql: String) -> Result<String, DbError>;
+                async fn execute(sql: String) -> Result<u64, DbError>;
             }
         }).unwrap();
 
@@ -736,10 +737,10 @@ mod tests {
                 type Client = DbClient;
                 type Error = DbError;
 
-                fn new_client(&self, client: &Self::Client) -> Result<(), Self::Error>;
+                fn new_client(&self, client: &Self::Client) -> Result<(), DbError>;
 
-                fn query(&self, client: &Self::Client, sql: String) -> Result<String, Self::Error>;
-                async fn execute(&self, client: &Self::Client, sql: String) -> Result<u64, Self::Error>;
+                fn query(&self, client: &Self::Client, sql: String) -> Result<String, DbError>;
+                async fn execute(&self, client: &Self::Client, sql: String) -> Result<u64, DbError>;
             }
         "#;
         assert_code_eq(&trait_output, expected);
@@ -764,12 +765,12 @@ mod tests {
     #[test]
     fn test_trait_generation_consistency_between_source_and_impl_no_client() {
         let trait_code = parse2(quote! {
-            #[capability_provider(MyState)]
+            #[capability_provider(PostgresDriver)]
             trait Database {
                 type Error = DbError;
 
-                fn query(sql: String) -> String;
-                async fn execute(sql: String) -> u64;
+                fn query(sql: String) -> Result<String, DbError>;
+                async fn execute(sql: String) -> Result<u64, DbError>;
             }
         }).unwrap();
 
@@ -807,8 +808,8 @@ mod tests {
         let expected = r#"
             pub trait Database {
                 type Error = DbError;
-                fn query(&self, sql: String) -> Result<String, Self::Error>;
-                async fn execute(&self, sql: String) -> Result<u64, Self::Error>;
+                fn query(&self, sql: String) -> Result<String, DbError>;
+                async fn execute(&self, sql: String) -> Result<u64, DbError>;
             }
         "#;
         assert_code_eq(&trait_output, expected);
@@ -830,8 +831,8 @@ mod tests {
         }
         
         // Verify method FFIs
-        assert_eq!(ffis_from_trait[1].library.to_string(), "__database__my_state_query");
-        assert_eq!(ffis_from_trait[2].library.to_string(), "__database__my_state_execute");
-        assert!(ffis_from_trait[2].is_async);
+        assert_eq!(ffis_from_trait[0].library.to_string(), "__database__postgres_driver__query");
+        assert_eq!(ffis_from_trait[1].library.to_string(), "__database__postgres_driver__execute");
+        assert!(ffis_from_trait[1].is_async);
     }
 }
