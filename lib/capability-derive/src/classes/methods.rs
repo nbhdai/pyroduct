@@ -6,7 +6,7 @@ use syn::{
     parse_quote, parse2,
 };
 
-use crate::{capability_ffi::{CapabilityFuncFFI, InputParams}, utils::{extract_ident_ignoring_ref, is_self_ref_or_type}};
+use crate::{ffi::{CapabilityFuncFFI, InputParams}, utils::{extract_ident_ignoring_ref, is_self_ref_or_type}};
 
 /// Represents a validated method within the Capability trait.
 #[derive(Debug, Clone, PartialEq)]

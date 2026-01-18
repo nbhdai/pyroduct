@@ -11,12 +11,10 @@
 
 use proc_macro::TokenStream;
 
+pub(crate) mod classes;
+pub(crate) mod ffi;
 pub(crate) mod capability;
-pub(crate) mod capability_client;
-pub(crate) mod capability_export;
-pub(crate) mod capability_ffi;
-pub(crate) mod capability_function;
-pub(crate) mod capability_server;
+pub(crate) mod function;
 pub(crate) mod utils;
 
 // #[proc_macro_attribute]

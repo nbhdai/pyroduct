@@ -6,7 +6,7 @@ use syn::{
     Error, ExprStruct, FnArg, Ident, Member, Path, ReturnType, TraitItemFn, Type, parse_quote, parse2,
 };
 
-use crate::capability_ffi::CapabilityFuncFFI;
+use crate::ffi::CapabilityFuncFFI;
 use crate::utils::type_to_return;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -217,7 +217,6 @@ impl VisitMut for ConfigBufInjector {
 
 #[cfg(test)]
 mod tests {
-    use super::super::ClientConstructor;
     use super::*;
     use crate::fmt::assert_code_eq_token;
     use syn::{TraitItemFn, Type};

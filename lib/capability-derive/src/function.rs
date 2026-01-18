@@ -5,7 +5,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{FnArg, Ident, ItemFn, Result};
 
-use crate::capability_ffi::{CapabilityFuncFFI, InputParams};
+use crate::ffi::{CapabilityFuncFFI, InputParams};
 use crate::utils::{get_param_name, get_param_type};
 
 #[derive(Debug, Clone)]
