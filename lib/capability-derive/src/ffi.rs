@@ -318,8 +318,6 @@ impl CapabilityFuncFFI {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fmt::assert_code_eq;
-    use crate::fmt::format_tokens;
     use crate::utils::type_to_return;
     use quote::quote;
     use syn::{Visibility, parse_quote};
@@ -353,7 +351,6 @@ mod tests {
     // ========================================================================
     // 1. Sync, No Input, No Client
     // ========================================================================
-    #[tracing_test::traced_test]
     #[test]
     fn test_case_1_sync_no_input_no_client() {
         let ffi = mock_ffi_base("test_sync_empty", false);
@@ -367,14 +364,10 @@ mod tests {
             }
         };
 
-        tracing::info!("Struct Tokens: \n{}", format_tokens(&struct_tokens));
-        tracing::info!("Capability Tokens: \n{}", format_tokens(&capability_tokens));
-        tracing::info!("Module Tokens: \n{}", format_tokens(&module_tokens));
-
         // Struct: should be empty
         assert!(struct_tokens.is_empty());
 
-        let output_capability = r#"
+        let output_capability = quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn __test_sync_empty_ffi(
                 client_state_ptr: *const u8,
@@ -395,11 +388,11 @@ mod tests {
                     || test_sync_empty(),
                 )
             }
-        "#;
+        };
 
-        assert_code_eq(&capability_tokens, output_capability);
+        crate::fmt::assert_code_eq_token(&capability_tokens, &output_capability);
 
-        let output_module = r#"
+        let output_module = quote! {
             fn func() {
                 ::pyroduct::module_capability::access::call_from_wasm::<
                     (),
@@ -420,15 +413,14 @@ mod tests {
                     },
                 )
             }
-        "#;
+        };
 
-        assert_code_eq(&module_tokens, output_module);
+        crate::fmt::assert_code_eq_token(&module_tokens, &output_module);
     }
 
     // ========================================================================
     // 2. Async, Single Input, No Client
     // ========================================================================
-    #[tracing_test::traced_test]
     #[test]
     fn test_case_2_async_single_input_no_client() {
         let mut ffi = mock_ffi_base("test_async_single", true);
@@ -446,14 +438,10 @@ mod tests {
             }
         };
 
-        tracing::info!("Struct Tokens: \n{}", format_tokens(&struct_tokens));
-        tracing::info!("Capability Tokens: \n{}", format_tokens(&capability_tokens));
-        tracing::info!("Module Tokens: \n{}", format_tokens(&module_tokens));
-
         // Struct: should be empty for single input
         assert!(struct_tokens.is_empty());
 
-        let output_capability = r#"
+        let output_capability = quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn __test_async_single_ffi<'a>(
                 client_state_ptr: *const u8,
@@ -476,11 +464,11 @@ mod tests {
                     |input| async move { test_async_single(input).await },
                 )
             }
-        "#;
+        };
 
-        assert_code_eq(&capability_tokens, output_capability);
+        crate::fmt::assert_code_eq_token(&capability_tokens, &output_capability);
 
-        let output_module = r#"
+        let output_module = quote! {
             fn func() {
                 ::pyroduct::module_capability::access::call_from_wasm::<
                     (),
@@ -501,16 +489,15 @@ mod tests {
                     },
                 )
             }
-        "#;
+        };
 
         // Module: Client Side
-        assert_code_eq(&module_tokens, output_module);
+        crate::fmt::assert_code_eq_token(&module_tokens, &output_module);
     }
 
     // ========================================================================
     // 3. Sync, Multi Input, No Client
     // ========================================================================
-    #[tracing_test::traced_test]
     #[test]
     fn test_case_3_sync_multi_input_no_client() {
         let mut ffi = mock_ffi_base("test_sync_multi", false);
@@ -531,22 +518,18 @@ mod tests {
             }
         };
 
-        tracing::info!("Struct Tokens: \n{}", format_tokens(&struct_tokens));
-        tracing::info!("Capability Tokens: \n{}", format_tokens(&capability_tokens));
-        tracing::info!("Module Tokens: \n{}", format_tokens(&module_tokens));
-
-        let output_struct = r#"
+        let output_struct = quote! {
             #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
             #[rkyv(compare(PartialEq), derive(Debug))]
             struct __MultiInput {
                 pub a: i32,
                 pub b: i32,
             }
-        "#;
+        };
 
-        assert_code_eq(&struct_tokens, output_struct);
+        crate::fmt::assert_code_eq_token(&struct_tokens, &output_struct);
 
-        let output_capability = r#"
+        let output_capability = quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn __test_sync_multi_ffi(
                 client_state_ptr: *const u8,
@@ -568,11 +551,11 @@ mod tests {
                     |input| test_sync_multi(input.a, input.b),
                 )
             }
-        "#;
+        };
 
-        assert_code_eq(&capability_tokens, output_capability);
+        crate::fmt::assert_code_eq_token(&capability_tokens, &output_capability);
 
-        let output_module = r#"
+        let output_module = quote! {
             fn func() {
                 ::pyroduct::module_capability::access::call_from_wasm::<
                     (),
@@ -593,16 +576,15 @@ mod tests {
                     },
                 )
             }
-        "#;
+        };
 
         // Module: Check client side
-        assert_code_eq(&module_tokens, output_module);
+        crate::fmt::assert_code_eq_token(&module_tokens, &output_module);
     }
 
     // ========================================================================
     // 4. Async, No Input, Client Present
     // ========================================================================
-    #[tracing_test::traced_test]
     #[test]
     fn test_case_4_async_no_input_with_client() {
         let mut ffi = mock_ffi_base("test_async_client", true);
@@ -617,14 +599,10 @@ mod tests {
             }
         };
 
-        tracing::info!("Struct Tokens: \n{}", format_tokens(&struct_tokens));
-        tracing::info!("Capability Tokens: \n{}", format_tokens(&capability_tokens));
-        tracing::info!("Module Tokens: \n{}", format_tokens(&module_tokens));
-
         // Struct: should be empty
         assert!(struct_tokens.is_empty());
 
-        let output_capability = r#"
+        let output_capability = quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn __test_async_client_ffi<'a>(
                 client_state_ptr: *const u8,
@@ -647,11 +625,11 @@ mod tests {
                     |client| async move { test_async_client(client).await },
                 )
             }
-        "#;
+        };
 
-        assert_code_eq(&capability_tokens, output_capability);
+        crate::fmt::assert_code_eq_token(&capability_tokens, &output_capability);
 
-        let output_module = r#"
+        let output_module = quote! {
             fn func() {
                 ::pyroduct::module_capability::access::call_from_wasm::<
                     MockClient,
@@ -672,16 +650,15 @@ mod tests {
                     },
                 )
             }
-        "#;
+        };
 
         // Module: should not take input parameter
-        assert_code_eq(&module_tokens, output_module);
+        crate::fmt::assert_code_eq_token(&module_tokens, &output_module);
     }
 
     // ========================================================================
     // 5. Sync, Single Input, Client Present
     // ========================================================================
-    #[tracing_test::traced_test]
     #[test]
     fn test_case_5_sync_single_input_with_client() {
         let mut ffi = mock_ffi_base("test_sync_client_input", false);
@@ -697,14 +674,10 @@ mod tests {
             }
         };
 
-        tracing::info!("Struct Tokens: \n{}", format_tokens(&struct_tokens));
-        tracing::info!("Capability Tokens: \n{}", format_tokens(&capability_tokens));
-        tracing::info!("Module Tokens: \n{}", format_tokens(&module_tokens));
-
         // Struct: should be empty for single input
         assert!(struct_tokens.is_empty());
 
-        let output_capability = r#"
+        let output_capability = quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn __test_sync_client_input_ffi(
                 client_state_ptr: *const u8,
@@ -727,11 +700,11 @@ mod tests {
                     |client, input| test_sync_client_input(client, input),
                 )
             }
-        "#;
+        };
 
-        assert_code_eq(&capability_tokens, output_capability);
+        crate::fmt::assert_code_eq_token(&capability_tokens, &output_capability);
 
-        let output_module = r#"
+        let output_module = quote! {
             fn func() {
                 ::pyroduct::module_capability::access::call_from_wasm::<
                     MockClient,
@@ -752,15 +725,14 @@ mod tests {
                     },
                 )
             }
-        "#;
+        };
 
-        assert_code_eq(&module_tokens, output_module);
+        crate::fmt::assert_code_eq_token(&module_tokens, &output_module);
     }
 
     // ========================================================================
     // 6. Async, Multi Input, Client Present
     // ========================================================================
-    #[tracing_test::traced_test]
     #[test]
     fn test_case_6_async_multi_input_with_client() {
         let mut ffi = mock_ffi_base("test_async_full", true);
@@ -782,21 +754,17 @@ mod tests {
             }
         };
 
-        tracing::info!("Struct Tokens: \n{}", format_tokens(&struct_tokens));
-        tracing::info!("Capability Tokens: \n{}", format_tokens(&capability_tokens));
-        tracing::info!("Module Tokens: \n{}", format_tokens(&module_tokens));
-
-        let output_struct = r#"
+        let output_struct = quote! {
             #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
             #[rkyv(compare(PartialEq), derive(Debug))]
             struct __FullInput {
                 pub port_name: String,
                 pub baud_rate: u32,
             }
-        "#;
-        assert_code_eq(&struct_tokens, output_struct);
+        };
+        crate::fmt::assert_code_eq_token(&struct_tokens, &output_struct);
 
-        let output_capability = r#"
+        let output_capability = quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn __test_async_full_ffi<'a>(
                 client_state_ptr: *const u8,
@@ -820,11 +788,11 @@ mod tests {
                     |client, input| async move { test_async_full(client, input.port_name, input.baud_rate).await },
                 )
             }
-        "#;
+        };
 
-        assert_code_eq(&capability_tokens, output_capability);
+        crate::fmt::assert_code_eq_token(&capability_tokens, &output_capability);
 
-        let output_module = r#"
+        let output_module = quote! {
             fn func() {
                 ::pyroduct::module_capability::access::call_from_wasm::<
                     MockClient,
@@ -845,16 +813,15 @@ mod tests {
                         },
                     )
             }
-        "#;
+        };
 
         // Module: should take multi input parameters
-        assert_code_eq(&module_tokens, output_module)
+        crate::fmt::assert_code_eq_token(&module_tokens, &output_module)
     }
 
     // ========================================================================
     // 7. Sync, Input, Server Present (No Client)
     // ========================================================================
-    #[tracing_test::traced_test]
     #[test]
     fn test_case_7_sync_server_input() {
         let mut ffi = mock_ffi_base("test_server_sync", false);
@@ -870,14 +837,10 @@ mod tests {
             }
         };
 
-        tracing::info!("Struct Tokens: \n{}", format_tokens(&struct_tokens));
-        tracing::info!("Capability Tokens: \n{}", format_tokens(&capability_tokens));
-        tracing::info!("Module Tokens: \n{}", format_tokens(&module_tokens));
-
         // Struct: should be empty for single input
         assert!(struct_tokens.is_empty());
 
-        let output_capability = r#"
+        let output_capability = quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn __test_server_sync_ffi(
                 client_state_ptr: *const u8,
@@ -900,11 +863,11 @@ mod tests {
                     |state, input| state.test_server_sync(input),
                 )
             }
-        "#;
+        };
 
-        assert_code_eq(&capability_tokens, output_capability);
+        crate::fmt::assert_code_eq_token(&capability_tokens, &output_capability);
 
-        let output_module = r#"
+        let output_module = quote! {
             fn func() {
                 ::pyroduct::module_capability::access::call_from_wasm::<
                     (),
@@ -925,16 +888,15 @@ mod tests {
                     },
                 )
             }
-        "#;
+        };
 
         // Module: should take input parameter
-        assert_code_eq(&module_tokens, output_module);
+        crate::fmt::assert_code_eq_token(&module_tokens, &output_module);
     }
 
     // ========================================================================
     // 8. Async, Input, Server Present (No Client)
     // ========================================================================
-    #[tracing_test::traced_test]
     #[test]
     fn test_case_8_async_server_input() {
         let mut ffi = mock_ffi_base("test_server_async", true);
@@ -953,14 +915,10 @@ mod tests {
             }
         };
 
-        tracing::info!("Struct Tokens: \n{}", format_tokens(&struct_tokens));
-        tracing::info!("Capability Tokens: \n{}", format_tokens(&capability_tokens));
-        tracing::info!("Module Tokens: \n{}", format_tokens(&module_tokens));
-
         // Struct: should be empty for single input
         assert!(struct_tokens.is_empty());
 
-        let output_capability = r#"
+        let output_capability = quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn __test_server_async_ffi<'a>(
                 client_state_ptr: *const u8,
@@ -984,11 +942,11 @@ mod tests {
                     |state, input| async move { state.test_server_async(input).await },
                 )
             }
-        "#;
+        };
 
-        assert_code_eq(&capability_tokens, output_capability);
+        crate::fmt::assert_code_eq_token(&capability_tokens, &output_capability);
 
-        let output_module = r#"
+        let output_module = quote! {
             fn func() {
                 ::pyroduct::module_capability::access::call_from_wasm::<
                     (),
@@ -1009,16 +967,15 @@ mod tests {
                     },
                 )
             }
-        "#;
+        };
 
         // Module: should be async and take input
-        assert_code_eq(&module_tokens, output_module);
+        crate::fmt::assert_code_eq_token(&module_tokens, &output_module);
     }
 
     // ========================================================================
     // 9: Full SCI (Server, Client, Input)
     // ========================================================================
-    #[tracing_test::traced_test]
     #[test]
     fn test_case_full_sci() {
         let mut ffi = mock_ffi_base("test_sci", false);
@@ -1035,14 +992,10 @@ mod tests {
             }
         };
 
-        tracing::info!("Struct Tokens: \n{}", format_tokens(&struct_tokens));
-        tracing::info!("Capability Tokens: \n{}", format_tokens(&capability_tokens));
-        tracing::info!("Module Tokens: \n{}", format_tokens(&module_tokens));
-
         // Struct: should be empty for single input
         assert!(struct_tokens.is_empty());
 
-        let output_capability = r#"
+        let output_capability = quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn __test_sci_ffi(
                 client_state_ptr: *const u8,
@@ -1066,12 +1019,12 @@ mod tests {
                     |state, client, input| state.test_sci(client, input),
                 )
             }
-        "#;
+        };
 
         // Capability: Should use sci_call
-        assert_code_eq(&capability_tokens, output_capability);
+        crate::fmt::assert_code_eq_token(&capability_tokens, &output_capability);
 
-        let output_module = r#"
+        let output_module = quote! {
             fn func() {
                 ::pyroduct::module_capability::access::call_from_wasm::<
                     MockClient,
@@ -1092,16 +1045,15 @@ mod tests {
                     },
                 )
             }
-        "#;
+        };
 
         // Module: should take input parameter
-        assert_code_eq(&module_tokens, output_module);
+        crate::fmt::assert_code_eq_token(&module_tokens, &output_module);
     }
 
     // ========================================================================
     // 10: Full SCI (Server, Client, Input)
     // ========================================================================
-    #[tracing_test::traced_test]
     #[test]
     fn test_case_sc() {
         let mut ffi = mock_ffi_base("test_sc", false);
@@ -1117,14 +1069,10 @@ mod tests {
             }
         };
 
-        tracing::info!("Struct Tokens: \n{}", format_tokens(&struct_tokens));
-        tracing::info!("Capability Tokens: \n{}", format_tokens(&capability_tokens));
-        tracing::info!("Module Tokens: \n{}", format_tokens(&module_tokens));
-
         // Struct: should be empty for single input
         assert!(struct_tokens.is_empty());
 
-        let output_capability = r#"
+        let output_capability = quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn __test_sc_ffi(
                 client_state_ptr: *const u8,
@@ -1147,12 +1095,12 @@ mod tests {
                     |state, client| state.test_sc(client),
                 )
             }
-        "#;
+        };
 
         // Capability: Should use sci_call
-        assert_code_eq(&capability_tokens, output_capability);
+        crate::fmt::assert_code_eq_token(&capability_tokens, &output_capability);
 
-        let output_module = r#"
+        let output_module = quote! {
             fn func() {
                 ::pyroduct::module_capability::access::call_from_wasm::<
                     MockClient,
@@ -1173,9 +1121,9 @@ mod tests {
                     },
                 )
             }
-        "#;
+        };
 
         // Module: should take input parameter
-        assert_code_eq(&module_tokens, output_module);
+        crate::fmt::assert_code_eq_token(&module_tokens, &output_module);
     }
 }

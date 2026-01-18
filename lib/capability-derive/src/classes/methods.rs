@@ -16,14 +16,14 @@ pub struct CapabilityMethod {
     pub output: ReturnType,
     pub original_sig: syn::Signature,
     pub attrs: Vec<syn::Attribute>,
-    pub client: Option<Ident>,
+    pub client: Ident,
     pub error_type: Option<Type>,
 }
 
 impl CapabilityMethod {
     pub fn from_trait(
         method: TraitItemFn,
-        explicit_client: Option<&Ident>,
+        client: &Ident,
         explicit_error_type: Option<&Type>, // Passed in as requested, even if unused for current validation rules
     ) -> syn::Result<Self> {
         let sig = &method.sig;
@@ -55,13 +55,11 @@ impl CapabilityMethod {
             }
 
             // Check for 'Client' return
-            if let Some(client) = explicit_client {
-                if quote!(#ty).to_string().contains(&client.to_string()) {
-                    return Err(Error::new_spanned(
-                        ty,
-                        "Capability methods cannot return the defined 'Client' type.",
-                    ));
-                }
+            if quote!(#ty).to_string().contains(&client.to_string()) {
+                return Err(Error::new_spanned(
+                    ty,
+                    "Capability methods cannot return the defined 'Client' type.",
+                ));
             }
         }
 
@@ -72,15 +70,13 @@ impl CapabilityMethod {
 
         for input in &sig.inputs {
             if let FnArg::Typed(pat_type) = input {
-                if let Some(client) = explicit_client {
-                    let input_type = pat_type.ty.as_ref();
-                    if let Some(input_ident) = extract_ident_ignoring_ref(input_type) {
-                        if input_ident == client {
-                            return Err(Error::new_spanned(
-                                &pat_type.pat,
-                                "Cannot input a client into the trait of a capability, automatically added",
-                            ));
-                        }
+                let input_type = pat_type.ty.as_ref();
+                if let Some(input_ident) = extract_ident_ignoring_ref(input_type) {
+                    if input_ident == client {
+                        return Err(Error::new_spanned(
+                            &pat_type.pat,
+                            "Trait methods of a capability cannot accept a Client",
+                        ));
                     }
                 }
 
@@ -113,7 +109,7 @@ impl CapabilityMethod {
             output,
             original_sig: sig.clone(),
             attrs: method.attrs,
-            client: explicit_client.cloned(),
+            client: client.clone(),
             error_type: explicit_error_type.cloned(),
         })
     }
@@ -127,13 +123,11 @@ impl CapabilityMethod {
     pub fn trait_method_generation(&self) -> TokenStream {
         let name = &self.name;
         let attrs = &self.attrs;
+        let client = &self.client;
 
         let mut args_tokens = Vec::new();
 
-        // If a Client is defined, inject it as the first argument after &self
-        if self.client.is_some() {
-            args_tokens.push(quote! { client: &Self::Client });
-        }
+        args_tokens.push(quote! { client: &#client });
 
         let async_symbol = if self.original_sig.asyncness.is_some() {
             quote!(async)
@@ -193,7 +187,7 @@ impl CapabilityMethod {
             is_async: self.original_sig.asyncness.is_some(),
             return_type: self.output.clone(),
             input: input_params,
-            client: client_ident,
+            client: Some(client_ident),
             server: Some(state_name.clone()),
         }
     }
@@ -308,23 +302,21 @@ fn extract_result_parts(ty: &Type) -> Option<(&Type, &Type)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fmt::assert_code_eq_token;
     use syn::{TraitItemFn, Type};
 
     /// Helper to create a CapabilityMethod from a raw function signature string.
     fn create_method_trait(
         sig_code: TokenStream,
-        client_str: Option<&str>,
+        client_str: &str,
         error_type_str: Option<&str>,
     ) -> CapabilityMethod {
         let method: TraitItemFn = syn::parse2(sig_code).expect("Failed to parse method signature");
 
-        let client: Option<Ident> =
-            client_str.map(|s| format_ident!("{s}"));
+        let client: Ident = format_ident!("{client_str}");
         let error_type: Option<Type> =
             error_type_str.map(|s| syn::parse_str(s).expect("Failed to parse error type"));
 
-        CapabilityMethod::from_trait(method, client.as_ref(), error_type.as_ref())
+        CapabilityMethod::from_trait(method, &client, error_type.as_ref())
             .expect("CapabilityMethod validation failed")
     }
 
@@ -336,7 +328,7 @@ mod tests {
         };
 
         // 2. Parse and process
-        let method = create_method_trait(code, Some("MyClient"), None);
+        let method = create_method_trait(code, "MyClient", None);
         let state_name = format_ident!("MyState");
         let trait_name = format_ident!("MyTrait");
         let method_ffi = method.build_ffi_meta(&trait_name, &state_name);
@@ -353,7 +345,7 @@ mod tests {
             }
         };
 
-        assert_code_eq_token(&output, &expected);
+        crate::fmt::assert_code_eq_token(&output, &expected);
     }
 
     #[test]
@@ -364,7 +356,7 @@ mod tests {
         };
 
         // 2. Parse with an Error type defined
-        let method = create_method_trait(code, Some("MyClient"), Some("MyError"));
+        let method = create_method_trait(code, "MyClient", Some("MyError"));
         let state_name = format_ident!("MyState");
         let trait_name = format_ident!("MyTrait");
         let method_ffi = method.build_ffi_meta(&trait_name, &state_name);
@@ -381,7 +373,7 @@ mod tests {
             }
         };
 
-        assert_code_eq_token(&output, &expected);
+        crate::fmt::assert_code_eq_token(&output, &expected);
     }
 
     #[test]
@@ -392,7 +384,7 @@ mod tests {
         };
 
         // 2. Parse
-        let method = create_method_trait(code, Some("MyClient"), None);
+        let method = create_method_trait(code, "MyClient", None);
         let state_name = format_ident!("MyState");
         let trait_name = format_ident!("MyTrait");
 
@@ -410,27 +402,27 @@ mod tests {
             }
         };
 
-        assert_code_eq_token(&output, &expected);
+        crate::fmt::assert_code_eq_token(&output, &expected);
     }
 
     #[test]
     fn test_validation_rejects_forbidden_patterns() {
+        let client = "MyClient";
         let code = quote! {
             fn invalid(other: &Self) -> ();
         };
-        let res = create_method_result(code, None, None);
+        let res = create_method_result(code, client, None);
         assert!(res.is_err(), "Capability methods cannot take self");
         assert_eq!(
             res.unwrap_err().to_string(),
             "Capability methods cannot take variant of 'self', or 'Self'"
         );
 
-        let client = "MyClient";
 
         let code_ret_client = quote! {
             fn make_client(&self) -> MyClient;
         };
-        let res = create_method_result(code_ret_client, Some(client), None);
+        let res = create_method_result(code_ret_client, client, None);
         assert!(res.is_err(), "Should have rejected returning Client type");
         assert_eq!(
             res.unwrap_err().to_string(),
@@ -440,20 +432,20 @@ mod tests {
         let code_arg_client = quote! {
             fn process(c: MyClient);
         };
-        let res = create_method_result(code_arg_client, Some(client), None);
+        let res = create_method_result(code_arg_client, client, None);
         assert!(
             res.is_err(),
             "Should have rejected accepting Client type argument"
         );
         assert_eq!(
             res.unwrap_err().to_string(),
-            "Capability methods must not accept the 'Client' type as an argument."
+            "Trait methods of a capability cannot accept a Client"
         );
 
         let code_arg_client = quote! {
             fn process(c: f32) -> u32;
         };
-        let res = create_method_result(code_arg_client, None, Some("MyError"));
+        let res = create_method_result(code_arg_client, client, Some("MyError"));
         assert!(
             res.is_err(),
             "Should have rejected a non result return"
@@ -466,14 +458,14 @@ mod tests {
 
     fn create_method_result(
         sig_code: TokenStream,
-        client_str: Option<&str>,
+        client_str: &str,
         error_type_str: Option<&str>,
     ) -> syn::Result<CapabilityMethod> {
         let method: TraitItemFn = syn::parse2(sig_code).unwrap();
-        let client: Option<Ident> = client_str.map(|s| format_ident!("{s}"));
+        let client: Ident = format_ident!("{client_str}");
         let error_type: Option<Type> = error_type_str.map(|s| syn::parse_str(s).unwrap());
 
-        CapabilityMethod::from_trait(method, client.as_ref(), error_type.as_ref())
+        CapabilityMethod::from_trait(method, &client, error_type.as_ref())
     }
 
     #[test]
@@ -482,7 +474,7 @@ mod tests {
         let code = quote! {
             fn sync_op(val: u32) -> bool;
         };
-        let method = create_method_trait(code, Some("MyClient"), None);
+        let method = create_method_trait(code, "MyClient", None);
         let trait_name = format_ident!("MyTrait");
         let state_name = format_ident!("MyState");
 
@@ -512,7 +504,7 @@ mod tests {
         let code = quote! {
             async fn async_op(data: String) -> u64;
         };
-        let method = create_method_trait(code, Some("MyClient"), None);
+        let method = create_method_trait(code, "MyClient", None);
         let state_name = format_ident!("MyState");
         let trait_name = format_ident!("MyTrait");
 

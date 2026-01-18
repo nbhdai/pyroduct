@@ -114,8 +114,6 @@ impl CapFn {
 
 #[cfg(test)]
 mod tests {
-    use crate::fmt::{assert_code_eq, assert_code_eq_token};
-
     use super::*;
     use quote::quote;
     use syn::parse2;
@@ -147,7 +145,7 @@ mod tests {
             }
         };
 
-        assert_code_eq_token(&result, &expected);
+        crate::fmt::assert_code_eq_token(&result, &expected);
     }
 
     #[tracing_test::traced_test]
@@ -177,7 +175,7 @@ mod tests {
             }
         };
 
-        assert_code_eq_token(&result, &expected);
+        crate::fmt::assert_code_eq_token(&result, &expected);
     }
 
     #[tracing_test::traced_test]
@@ -207,6 +205,6 @@ mod tests {
             }
         };
 
-        assert_code_eq_token(&result, &expected);
+        crate::fmt::assert_code_eq_token(&result, &expected);
     }
 }

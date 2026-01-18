@@ -212,7 +212,6 @@ impl CapClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fmt::assert_code_eq_token;
     use syn::parse2;
 
     /// Helper to expand the client macro from raw struct code.
@@ -253,7 +252,7 @@ mod tests {
             }
         };
 
-        assert_code_eq_token(&output, &expected);
+        crate::fmt::assert_code_eq_token(&output, &expected);
     }
 
     #[test]
@@ -289,7 +288,7 @@ mod tests {
             }
         };
 
-        assert_code_eq_token(&output, &expected);
+        crate::fmt::assert_code_eq_token(&output, &expected);
     }
 
     #[test]
@@ -335,7 +334,7 @@ mod tests {
             }
         };
 
-        assert_code_eq_token(&output, &expected);
+        crate::fmt::assert_code_eq_token(&output, &expected);
     }
 
     #[test]

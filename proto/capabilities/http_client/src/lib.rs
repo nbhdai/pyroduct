@@ -198,33 +198,30 @@ pub mod __http_ffi {
         id: u64,
         log_callback: ::pyroduct::capability_host::ffi::LogCallback,
     ) -> ::pyroduct::capability_host::ffi::PluginExports<'a> {
-        static MOD: &str = "env";
-        static FN_GET: &str = "host_http_get";
-        static FN_POST: &str = "host_http_post";
-
         ::pyroduct::capability::init_logging(id, log_callback);
-
-        let mut exports = vec![
+        static CLASS: &'static str = "env";
+        static FUNC_1: &'static str = "host_http_get";
+        static FUNC_2: &'static str = "host_http_post";
+        static EXPORTS: [::pyroduct::capability_host::ffi::PluginExport;2] = [
             ::pyroduct::capability_host::ffi::PluginExport {
-                module: MOD.as_ptr(),
-                module_len: MOD.len(),
-                name: FN_GET.as_ptr(),
-                name_len: FN_GET.len(),
+                module: CLASS.as_ptr(),
+                module_len: CLASS.len(),
+                name: FUNC_1.as_ptr(),
+                name_len: FUNC_1.len(),
                 func: ::pyroduct::capability_host::ffi::PluginFunction::Async(host_http_get),
             },
             ::pyroduct::capability_host::ffi::PluginExport {
-                module: MOD.as_ptr(),
-                module_len: MOD.len(),
-                name: FN_POST.as_ptr(),
-                name_len: FN_POST.len(),
+                module: "env".as_ptr(),
+                module_len: 3,
+                name: FUNC_2.as_ptr(),
+                name_len: FUNC_2.len(),
                 func: ::pyroduct::capability_host::ffi::PluginFunction::Async(host_http_post),
             },
         ];
 
         let result = ::pyroduct::capability_host::ffi::PluginExports {
-            len: exports.len(),
-            cap: exports.capacity(),
-            ptr: exports.as_mut_ptr(),
+            len: EXPORTS.len(),
+            ptr: EXPORTS.as_ptr(),
             reset: ::pyroduct::capability_host::ffi::PluginResetFn::Null,
             init: ::pyroduct::capability_host::ffi::PluginInitFn::Null,
             drop: ::pyroduct::capability_host::ffi::PluginDropFn::Null,

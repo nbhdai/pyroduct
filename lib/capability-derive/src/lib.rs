@@ -39,28 +39,6 @@ pub mod fmt {
         }
     }
 
-    pub fn assert_code_eq(tokens: &TokenStream, expected: &str) {
-        // 1. Parse the generated TokenStream into a syn::File
-        let actual_file: syn::File = syn::parse2(tokens.clone())
-            .expect("Generated tokens are not valid Rust code (syn::File)");
-
-        // 2. Parse the expected string into a syn::File
-        let expected_file: syn::File =
-            syn::parse_str(expected).expect("Expected string is not valid Rust code (syn::File)");
-
-        // 3. Unparse both using prettyplease to normalize formatting
-        let actual_str = prettyplease::unparse(&actual_file);
-        let expected_str = prettyplease::unparse(&expected_file);
-
-        // 4. Compare the normalized strings
-        if actual_str != expected_str {
-            panic!(
-                "Code mismatch!\n\nEXPECTED:\n{}\n\nACTUAL:\n{}\n",
-                expected_str, actual_str
-            );
-        }
-    }
-
     pub fn assert_code_eq_token(tokens: &TokenStream, expected: &TokenStream) {
         // 1. Parse the generated TokenStream into a syn::File
         let actual_file: syn::File = syn::parse2(tokens.clone())

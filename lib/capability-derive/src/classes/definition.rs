@@ -92,36 +92,6 @@ impl CapabilityDefTrait {
             }
         }
 
-        // 2. Second Pass: Method Verification and Collection
-        for item in &input.items {
-            if let TraitItem::Fn(method) = item {
-                let is_constructor = if let Some(client_type) = &explicit_client_type {
-                    if let ReturnType::Type(_, ty) = &method.sig.output {
-                        let ty_str = quote!(#ty).to_string();
-                        let client_str = quote!(#client_type).to_string();
-                        ty_str == client_str || ty_str == "Self :: Client"
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
-                if is_constructor {
-                    let client_type = explicit_client_type.as_ref().unwrap();
-                    let ctor =
-                        ClientConstructor::new(method, client_type, explicit_error_type.as_ref())?;
-                    constructors.push(ctor);
-                } else {
-                    let cap_method = CapabilityMethod::from_trait(
-                        method.clone(),
-                        explicit_client_type.as_ref(),
-                        explicit_error_type.as_ref(),
-                    )?;
-                    methods.push(cap_method);
-                }
-            }
-        }
         let client_name = if let Some(explicit_client_type) = explicit_client_type {
             explicit_client_type
         } else {
@@ -130,6 +100,33 @@ impl CapabilityDefTrait {
                 "Missing Client type",
             ));
         };
+
+        // 2. Second Pass: Method Verification and Collection
+        for item in &input.items {
+            if let TraitItem::Fn(method) = item {
+                let is_constructor = if let ReturnType::Type(_, ty) = &method.sig.output {
+                    let ty_str = quote!(#ty).to_string();
+                    let client_str = quote!(#client_name).to_string();
+                    ty_str == client_str || ty_str == "Self :: Client"
+                } else {
+                    false
+                };
+
+                if is_constructor {
+                    let ctor =
+                        ClientConstructor::new(method, &client_name, explicit_error_type.as_ref())?;
+                    constructors.push(ctor);
+                } else {
+                    let cap_method = CapabilityMethod::from_trait(
+                        method.clone(),
+                        &client_name,
+                        explicit_error_type.as_ref(),
+                    )?;
+                    methods.push(cap_method);
+                }
+            }
+        }
+        
 
         // 3. Final Validation
         if constructors.is_empty() {
@@ -267,7 +264,6 @@ mod tests {
     use syn::parse2;
 
     use super::*;
-    use crate::fmt::assert_code_eq_token;
 
     #[test]
     fn test_generate_client_impl_integration() {
@@ -297,7 +293,7 @@ mod tests {
         let trait_name = format_ident!("MyTrait");
 
         let expected_constructor = ClientConstructor::new(&constructor, &client_name, None).unwrap();
-        let expected_method = CapabilityMethod::from_trait(method, Some(&client_name), None).unwrap();
+        let expected_method = CapabilityMethod::from_trait(method, &client_name, None).unwrap();
 
         let expected_constructor = expected_constructor.client_method_generation(&trait_name, &state_name);
         let expected_method = expected_method.client_method_generation(&trait_name, &state_name);
@@ -312,7 +308,7 @@ mod tests {
             }
         };
 
-        assert_code_eq_token(&output, &expected);
+        crate::fmt::assert_code_eq_token(&output, &expected);
 
         // Test FFI generation
         let ffis = def.capability_ffis();
@@ -377,8 +373,8 @@ mod tests {
 
         let expected_constructor = ClientConstructor::new(&constructor, &client_name, Some(&error_name)).unwrap();
         let expected_constructor_2 = ClientConstructor::new(&constructor_2, &client_name, Some(&error_name)).unwrap();
-        let expected_method = CapabilityMethod::from_trait(method, Some(&client_name), Some(&error_name)).unwrap();
-        let expected_method_2 = CapabilityMethod::from_trait(method_2, Some(&client_name), Some(&error_name)).unwrap();
+        let expected_method = CapabilityMethod::from_trait(method, &client_name, Some(&error_name)).unwrap();
+        let expected_method_2 = CapabilityMethod::from_trait(method_2, &client_name, Some(&error_name)).unwrap();
 
         let expected_constructor = expected_constructor.client_method_generation(&trait_name, &state_name);
         let expected_constructor_2 = expected_constructor_2.client_method_generation(&trait_name, &state_name);
@@ -397,7 +393,7 @@ mod tests {
             }
         };
 
-        assert_code_eq_token(&output, &expected);
+        crate::fmt::assert_code_eq_token(&output, &expected);
 
         // Test FFI generation
         let ffis = def.capability_ffis();
@@ -420,12 +416,12 @@ mod tests {
             pub trait AdvancedTrait {
                 type Client = AdvancedClient;
                 type Error = MyError;
-                fn new_client(&self, client: &Self::Client) -> Result<(), MyError>;
-                async fn process(&self, client: &Self::Client, val: u32, flag: bool) -> Result<u32, MyError>;
-                fn sync_op(&self, client: &Self::Client, level: u8) -> Result<bool, MyError>;
+                fn new_client(&self, client: &AdvancedClient) -> Result<(), MyError>;
+                async fn process(&self, client: &AdvancedClient, val: u32, flag: bool) -> Result<u32, MyError>;
+                fn sync_op(&self, client: &AdvancedClient, level: u8) -> Result<bool, MyError>;
             }
         };
-        assert_code_eq_token(&server_trait, &expected_trait);
+        crate::fmt::assert_code_eq_token(&server_trait, &expected_trait);
     }
 
     #[test]
@@ -437,8 +433,7 @@ mod tests {
         }).unwrap();
         let state_name = format_ident!("MyState");
 
-        let def = CapabilityDefTrait::from_trait(code, state_name).expect("Failed to parse capability trait");
-        let output = def.generate_client_impl();
-        assert!(output.is_empty());
+        let result = CapabilityDefTrait::from_trait(code, state_name);
+        assert!(result.is_err());
     }
 }

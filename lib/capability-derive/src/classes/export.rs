@@ -29,6 +29,7 @@ impl CapabilityService {
             #client_methods
         })
     }
+
     /// State and lifecycle
     pub fn state_and_lifecycle(&self) -> TokenStream {
         let state = &self.struct_def.input;
@@ -129,17 +130,180 @@ impl CapabilityService {
             ];
             
             // Generate the PluginExports struct
-            pub static #plugin_exports_name: ::pyroduct::capability_host::ffi::PluginExports = {
-                let mut exports = #exports_array_name;
+            pub static #plugin_exports_name: ::pyroduct::capability_host::ffi::PluginExports = ::pyroduct::capability_host::ffi::PluginExports {
+                ptr: exports.as_mut_ptr(),
+                init: #init_export,
+                drop: #drop_export,
+                reset: #reset_export,
+                len: #num_exports,
+                cap: #num_exports,
+            };
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quote::quote;
+    use syn::parse2;
+
+    #[tracing_test::traced_test]
+    #[test]
+    fn test_generate_ffi_exports() {
+        // Create a complete service definition
+        let server_attr = quote! { service = MyTrait, config = MyConfig };
+        let server_struct = quote! {
+            pub struct MyServer {
+                count: u32,
+            }
+        };
+        
+        let trait_def = quote! {
+            trait MyTrait {
+                type Client = MyClient;
+                
+                fn new(id: u32) -> MyClient {
+                    MyClient { id }
+                }
+                
+                fn get_info() -> Result<u32, MyError>;
+                async fn process(val: u32) -> Result<bool, MyError>;
+            }
+        };
+        
+        let impl_def = quote! {
+            impl MyTrait for MyServer {
+                type Client = MyClient;
+                
+                fn new_client(&self, client: &MyClient) -> Result<(), MyError> {
+                    Ok(())
+                }
+                
+                fn get_info(&self, client: &MyClient) -> Result<u32, MyError> {
+                    Ok(42)
+                }
+            }
+        };
+        
+        let client_struct = quote! {
+            pub struct MyClient {
+                id: u32,
+            }
+        };
+        
+        // Parse all components
+        let server = CapServer::new(server_attr, parse2(server_struct).unwrap()).unwrap();
+        let (init_func, init_export) = server.generate_init_fn();
+        let (reset_func, reset_export) = server.generate_init_fn();
+        let (drop_func, drop_export) = server.generate_init_fn();
+
+        let trait_item = parse2(trait_def).unwrap();
+        let trait_parsed = CapabilityDefTrait::from_trait(trait_item, quote::format_ident!("MyServer")).unwrap();
+        let orig_impl = parse2(impl_def).unwrap();
+        let client = CapClient::new(parse2(client_struct).unwrap()).unwrap();
+        
+        let service = CapabilityService {
+            struct_def: server,
+            trait_def: trait_parsed,
+            orig_impl,
+            client,
+        };
+        
+        // Generate FFI exports
+        let output = service.generate_ffi_exports();
+        
+        // Expected output
+        let expected = quote! {
+            // Generate all FFI functions
+            #init_func
+            #drop_func
+            #reset_func
+            
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn __my_trait__my_server__new_client__ffi(
+                client_state_ptr: *const u8,
+                client_state_len: usize,
+                input_ptr: *const u8,
+                input_len: usize,
+                capability_state_ptr: *mut std::ffi::c_void,
+            ) -> ::pyroduct::capability_host::ffi::FfiResult {
+                ::pyroduct::capability::safe_call::sc_call::
+                    MyServer,
+                    Self,
+                    Self,
+                    _,
+                >(
+                    client_state_ptr,
+                    client_state_len,
+                    input_ptr,
+                    input_len,
+                    capability_state_ptr,
+                    |state, client| state.new_client(client),
+                )
+            }
+            
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn __my_trait__my_server__get_info__ffi(
+                client_state_ptr: *const u8,
+                client_state_len: usize,
+                input_ptr: *const u8,
+                input_len: usize,
+                capability_state_ptr: *mut std::ffi::c_void,
+            ) -> ::pyroduct::capability_host::ffi::FfiResult {
+                ::pyroduct::capability::safe_call::sc_call::
+                    MyServer,
+                    MyClient,
+                    Result<u32, MyError>,
+                    _,
+                >(
+                    client_state_ptr,
+                    client_state_len,
+                    input_ptr,
+                    input_len,
+                    capability_state_ptr,
+                    |state, client| state.get_info(client),
+                )
+            }
+            
+            // Generate the static export array
+            static __MY_TRAIT__MY_SERVER__EXPORTS: [::pyroduct::capability_host::ffi::PluginExport; 3] = [
+                ::pyroduct::capability_host::ffi::PluginExport {
+                    module: "__my_trait__my_server__new_client".as_ptr(),
+                    module_len: "__my_trait__my_server__new_client".len(),
+                    name: "new_client".as_ptr(),
+                    name_len: "new_client".len(),
+                    func: ::pyroduct::capability_host::ffi::PluginFunction::Sync(__my_trait__my_server__new_client__ffi),
+                },
+                ::pyroduct::capability_host::ffi::PluginExport {
+                    module: "__my_trait__my_server__get_info".as_ptr(),
+                    module_len: "__my_trait__my_server__get_info".len(),
+                    name: "get_info".as_ptr(),
+                    name_len: "get_info".len(),
+                    func: ::pyroduct::capability_host::ffi::PluginFunction::Sync(__my_trait__my_server__get_info__ffi),
+                },
+                ::pyroduct::capability_host::ffi::PluginExport {
+                    module: "__my_trait__my_server__process".as_ptr(),
+                    module_len: "__my_trait__my_server__process".len(),
+                    name: "process".as_ptr(),
+                    name_len: "process".len(),
+                    func: ::pyroduct::capability_host::ffi::PluginFunction::Async(__my_trait__my_server__process__ffi),
+                }
+            ];
+            
+            // Generate the PluginExports struct
+            pub static __MY_TRAIT__MY_SERVER__PLUGIN_EXPORTS: ::pyroduct::capability_host::ffi::PluginExports = {
                 ::pyroduct::capability_host::ffi::PluginExports {
                     ptr: exports.as_mut_ptr(),
                     init: #init_export,
                     drop: #drop_export,
                     reset: #reset_export,
-                    len: #num_exports,
-                    cap: #num_exports,
+                    len: 3,
+                    cap: 3,
                 }
             };
-        }
+        };
+        
+        crate::fmt::assert_code_eq_token(&output, &expected);
     }
 }

@@ -218,7 +218,6 @@ impl VisitMut for ConfigBufInjector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fmt::assert_code_eq_token;
     use syn::{TraitItemFn, Type};
 
     /// Helper to create a ClientConstructor from raw code
@@ -284,7 +283,7 @@ mod tests {
             }
         };
 
-        assert_code_eq_token(&output, &expected);
+        crate::fmt::assert_code_eq_token(&output, &expected);
     }
 
     #[test]
@@ -336,7 +335,7 @@ mod tests {
             }
         };
 
-        assert_code_eq_token(&output, &expected);
+        crate::fmt::assert_code_eq_token(&output, &expected);
     }
 
     #[test]
@@ -411,6 +410,6 @@ mod tests {
             }
         };
 
-        assert_code_eq_token(&output, &expected);
+        crate::fmt::assert_code_eq_token(&output, &expected);
     }
 }

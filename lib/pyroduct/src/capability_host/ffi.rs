@@ -105,12 +105,11 @@ pub struct PluginExport<'a> {
 
 #[repr(C)]
 pub struct PluginExports<'a> {
-    pub ptr: *mut PluginExport<'a>,
+    pub ptr: *const PluginExport<'a>,
     pub init: PluginInitFn<'a>,
     pub drop: PluginDropFn,
     pub reset: PluginResetFn<'a>,
     pub len: usize,
-    pub cap: usize,
 }
 
 // --- Init Functions ---
