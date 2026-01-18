@@ -185,7 +185,7 @@ impl Parse for Capability {
 
 impl Capability {
     pub fn module_component(&self) -> TokenStream {
-        let wasm_mod = format_ident!("wasm");
+        let wasm_mod = format_ident!("__wasm");
         let functions = self.functions.iter().map(|f| f.generate_module_function(Some(&wasm_mod))).collect::<Vec<_>>();
         let clients = self.services.iter().map(|c| c.generate_module_client(Some(&wasm_mod))).collect::<Vec<_>>();
 
@@ -241,10 +241,10 @@ impl Capability {
         let others = &self.other_items;
         quote! {
             #module_component
-            pub mod wasm {
+            pub mod __wasm {
                 #wasm_calls_component
             }
-            pub mod capability {
+            pub mod __capability {
                 #capability_component
                 #(#others)*
                 #ffi_component
@@ -305,6 +305,7 @@ mod tests {
             }
         };
 
+
         let module: Capability = parse2(input).expect("Failed to parse module");
 
         assert_eq!(module.env_str, "test_env");
@@ -323,6 +324,8 @@ mod tests {
         // Verify used items are removed from other_items
         assert_eq!(count_structs_in_other(&module.other_items, "MyClient"), 0);
         assert_eq!(count_structs_in_other(&module.other_items, "MyServer"), 0);
+
+        println!("{}",crate::fmt::format_tokens(&module.everything()))
     }
 
     #[test]

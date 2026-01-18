@@ -124,12 +124,11 @@ impl CapabilityService {
 
             // Generate the PluginExports struct
             pub static #plugin_exports_name: ::pyroduct::capability_host::ffi::PluginExports = ::pyroduct::capability_host::ffi::PluginExports {
-                ptr: exports.as_mut_ptr(),
+                ptr: exports.as_ptr(),
                 init: #init_export,
                 drop: #drop_export,
                 reset: #reset_export,
                 len: #num_exports,
-                cap: #num_exports,
             };
         }
     }
@@ -272,12 +271,11 @@ mod tests {
 
             pub static __TEST_TRAIT__TEST_SERVER__PLUGIN_EXPORTS: ::pyroduct::capability_host::ffi::PluginExports =
                 ::pyroduct::capability_host::ffi::PluginExports {
-                    ptr: exports.as_mut_ptr(),
+                    ptr: exports.as_ptr(),
                     init: ::pyroduct::capability_host::ffi::PluginInitFn::Sync(__test_server__ffi_init),
                     drop: ::pyroduct::capability_host::ffi::PluginDropFn::Sync(__test_server__ffi_drop),
                     reset: ::pyroduct::capability_host::ffi::PluginResetFn::Sync(__test_server__ffi_reset),
                     len: 3usize,
-                    cap: 3usize,
                 };
         };
 

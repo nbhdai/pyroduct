@@ -171,6 +171,7 @@ impl CapabilityMethod {
         CapabilityFuncFFI {
             class: Some(self.class.clone()),
             fn_name: name.clone(),
+            constructor: false,
             vis: syn::Visibility::Public(parse_quote!(pub)),
             is_async: self.original_sig.asyncness.is_some(),
             return_type: self.output.clone(),

@@ -9,8 +9,7 @@ use tracing::{Span, error, info};
 use wasmtime::{Caller, Linker};
 
 use crate::capability_host::ffi::{
-    AsyncPluginProcessFn, PluginDropFn, PluginFunction, PluginInitFn, PluginRegisterFn,
-    PluginResetFn, SyncPluginProcessFn,
+    AsyncPluginProcessFn, PluginDropFn, PluginExport, PluginFunction, PluginInitFn, PluginRegisterFn, PluginResetFn, SyncPluginProcessFn
 };
 use crate::errors::{FfiError, PyroductError};
 use crate::host::ffi_bridge::{
@@ -572,7 +571,8 @@ impl DynamicCapability {
                 })?;
 
             let export = manifest_fn(span_id, log_callback);
-            let exports = Vec::from_raw_parts(export.ptr, export.len, export.cap);
+            let exports: *mut [PluginExport<'static>] = ptr::slice_from_raw_parts(export.ptr, export.len) as *mut _;
+            let exports: Box<[PluginExport<'static>]> = unsafe { Box::from_raw(exports) };
 
             let mut imports = Vec::new();
             for export in exports {

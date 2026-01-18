@@ -48,6 +48,7 @@ impl CapFn {
     pub fn to_ffi(&self) -> CapabilityFuncFFI {
         CapabilityFuncFFI {
             class: None,
+            constructor: false,
             fn_name: self.input.sig.ident.clone(),
             vis: self.input.vis.clone(),
             is_async: self.input.sig.asyncness.is_some(),

@@ -131,12 +131,13 @@ impl ClientConstructor {
 /// Encapsulates naming conventions and return type logic.
 pub fn client_constructor_ffi_meta(class: &Rc<ClassIdent>, is_async: bool) -> CapabilityFuncFFI {
     let return_type: ReturnType = if let Some(err_type) = &class.error_tn {
-        type_to_return(&parse2(quote!(Result<Self, #err_type>)).expect("This really should parse"))
+        type_to_return(&parse2(quote!(Result<(), #err_type>)).expect("This really should parse"))
     } else {
-        type_to_return(&parse2(quote!(Self)).expect("This really should parse"))
+        type_to_return(&parse2(quote!(())).expect("This really should parse"))
     };
     CapabilityFuncFFI {
         class: Some(class.clone()),
+        constructor: true,
         fn_name: format_ident!("new_client"),
         vis: syn::Visibility::Public(parse_quote!(pub)),
         is_async,

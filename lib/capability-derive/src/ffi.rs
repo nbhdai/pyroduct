@@ -16,12 +16,12 @@ pub enum InputParams {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityFuncFFI {
     pub class: Option<Rc<ClassIdent>>,
+    pub constructor: bool,
     pub fn_name: Ident,
 
     pub vis: Visibility,
     pub is_async: bool,
     pub return_type: ReturnType,
-    /// The name of the generated input struct
     pub input: Option<InputParams>,
 }
 
@@ -170,8 +170,13 @@ impl CapabilityFuncFFI {
 
         // Determine client serialization
         let (client_type, client_expr) = if let Some(class) = &self.class {
-            let client_tn = &class.client_tn;
-            (quote!(#client_tn), quote!(Some(client)))
+            if self.constructor {
+                let client_tn = &class.client_tn;
+                (quote!(#client_tn), quote!(Some(new_self)))
+            } else {
+                let client_tn = &class.client_tn;
+                (quote!(#client_tn), quote!(Some(self)))
+            }
         } else {
             (quote!(()), quote!(None))
         };
@@ -357,6 +362,7 @@ mod tests {
         if is_class {
             CapabilityFuncFFI {
                 class: Some(mock_class()),
+                constructor: false,
                 fn_name: format_ident!("{}", name),
                 vis: Visibility::Public(parse_quote!(pub)),
                 is_async,
@@ -366,6 +372,7 @@ mod tests {
         } else {
             CapabilityFuncFFI {
                 class: None,
+                constructor: false,
                 fn_name: format_ident!("{}", name),
                 vis: Visibility::Public(parse_quote!(pub)),
                 is_async,
