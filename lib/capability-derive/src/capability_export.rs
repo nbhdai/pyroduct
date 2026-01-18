@@ -18,7 +18,7 @@ use crate::capability_client::CapClient;
 use crate::capability_ffi::CapabilityFuncFFI;
 use crate::capability_function::CapFn;
 use crate::capability_server::CapServer;
-use crate::utils::{has_attr, remove_attr};
+use crate::utils::{extract_ident_ignoring_ref, extract_simple_self_type, extract_simple_trait_ident, has_attr, remove_attr};
 
 /// Represents a fully resolved service consisting of a Server, its Trait definition,
 /// the User's Implementation, and the associated Client.
@@ -66,6 +66,7 @@ impl Parse for CapabilityModule {
         // Storage
         let mut parsed_impls: Vec<ItemImpl> = Vec::new();
         let mut parsed_functions: Vec<CapFn> = Vec::new();
+        let mut parsed_traits: HashMap<Ident, ItemTrait> = HashMap::new();
         
         // ==============================================================================
         // Pass 1: Implementations and Functions
@@ -80,9 +81,15 @@ impl Parse for CapabilityModule {
                     parsed_impls.push(i);
                 }
                 // #[capability_function]
-                Item::Fn(mut f) if has_attr(&f.attrs, "capability_function") => {
-                    let _ = remove_attr(&mut f.attrs, "capability_function");
+                Item::Fn(mut f) if has_attr(&f.attrs, "capability") => {
+                    let _ = remove_attr(&mut f.attrs, "capability");
                     parsed_functions.push(CapFn::new(f)?);
+                }
+                // #[capability] trait
+                Item::Trait(mut t) if has_attr(&t.attrs, "capability") => {
+                    let _ = remove_attr(&mut t.attrs, "capability");
+                    let name = t.ident.clone();
+                    parsed_traits.insert(name, t);
                 }
                 // Determine other items for Pass 2
                 _ => remaining_items.push(item),
@@ -92,28 +99,22 @@ impl Parse for CapabilityModule {
         // ==============================================================================
         // Pass 2: Servers, Clients, and Implementations
         // ==============================================================================
-        let mut parsed_servers: HashMap<String, CapServer> = HashMap::new();
-        let mut parsed_clients: HashMap<String, CapClient> = HashMap::new();
-        let mut parsed_traits: HashMap<String, CapabilityDefTrait> = HashMap::new();
+        let mut parsed_servers: HashMap<Ident, CapServer> = HashMap::new();
+        let mut parsed_clients: HashMap<Ident, CapClient> = HashMap::new();
         let mut other_items = Vec::new();
-        let mut final_traits: HashMap<String, CapabilityDefTrait> = HashMap::new();
         for item in remaining_items {
             match item {
                 // #[capability_client]
                 Item::Struct(mut s) if has_attr(&s.attrs, "capability_client") => {
                     let attr = remove_attr(&mut s.attrs, "capability_client");
                     let client = CapClient::new(attr, s)?;
-                    parsed_clients.insert(client.input.ident.to_string(), client);
+                    parsed_clients.insert(client.input.ident.clone(), client);
                 }
                 // #[capability_server]
                 Item::Struct(mut s) if has_attr(&s.attrs, "capability_server") => {
                     let attr = remove_attr(&mut s.attrs, "capability_server");
                     let server = CapServer::new(attr, s)?;
-                    parsed_servers.insert(server.struct_name.to_string(), server);
-                }
-                // #[capability] trait
-                Item::Trait(mut t) if has_attr(&t.attrs, "capability") => {
-                    // Drop this for now
+                    parsed_servers.insert(server.struct_name.clone(), server);
                 }
                 // Pass-through
                 other => other_items.push(other),
@@ -126,17 +127,19 @@ impl Parse for CapabilityModule {
         let mut services = Vec::new();
 
         for impl_item in parsed_impls {
-            let trait_def = CapabilityDefTrait::from_impl(&impl_item)?;
-            parsed_traits.insert(trait_def.trait_name.to_string(), trait_def.clone());
-
             // A. Identify Server
-            let server_name = if let syn::Type::Path(p) = &*impl_item.self_ty {
-                p.path.segments.last().unwrap().ident.to_string()
+            let struct_name = extract_ident_ignoring_ref(&*impl_item.self_ty).ok_or({
+                Error::new_spanned(&impl_item.self_ty, "Unable to parse the server, should be a simple ident")
+            })?;
+            let trait_name = extract_simple_trait_ident(&impl_item)?;
+            let trait_def = if let Some(capability_trait) = parsed_traits.remove(&trait_name) {
+                CapabilityDefTrait::from_trait(capability_trait, struct_name.clone())?
             } else {
                 return Err(Error::new_spanned(impl_item, "Cannot parse the associated server"));
             };
 
-            let server = if let Some(server) = parsed_servers.remove(&server_name) {
+
+            let server = if let Some(server) = parsed_servers.remove(&struct_name) {
                 server
             } else {
                 // Impl exists but no matching #[capability_server] found in this block.
@@ -145,12 +148,11 @@ impl Parse for CapabilityModule {
 
             // Resolve Client (based on type defined in Trait)
             let mut client_def = None;
-            if let Some(syn::Type::Path(p)) = &trait_def.explicit_client_type {
-                let client_name = p.path.segments.last().unwrap().ident.to_string();
-                if let Some(c) = parsed_clients.remove(&client_name) {
+            if let Some(client) = &trait_def.explicit_client_type {
+                if let Some(c) = parsed_clients.remove(&client) {
                 client_def = Some(c);
                 } else {
-                return Err(Error::new_spanned(impl_item, "Cannot find the associated client"));
+                    return Err(Error::new_spanned(impl_item, "Cannot find the associated client"));
                 }
             }
 
@@ -223,6 +225,11 @@ mod tests {
             #[capability]
             trait MyTrait {
                 type Client = MyClient;
+                fn new_client(val: u32) -> MyClient {
+                    MyClient {
+                        val
+                    }
+                }
                 fn do_thing() -> bool;
             }
 
@@ -281,13 +288,18 @@ mod tests {
             #[capability]
             trait MyTrait {
                 type Client = UsedClient;
+                fn new_client(a: u32) -> UsedClient {
+                    UsedClient {
+                        a
+                    }
+                }
                 fn op();
             }
 
             #[capability]
             impl MyTrait for UsedServer {
                 type Client = UsedClient;
-                fn new_client(&self, c: &UsedClient) -> Result<(), ()> { Ok(()) }
+                fn new_client(&self, c: &UsedClient) { Ok(()) }
                 fn op(&self, c: &UsedClient) -> Result<(), ()> { Ok(()) }
             }
         };
@@ -329,44 +341,16 @@ mod tests {
         let input = quote! {
             env = "func_env",
             
-            #[capability_function]
+            #[capability]
             fn standalone_one() {}
 
-            #[capability_function]
+            #[capability]
             fn standalone_two(x: u32) -> u32 { x }
         };
 
         let module: CapabilityModule = parse2(input).expect("Failed to parse");
         assert_eq!(module.functions.len(), 2);
         assert_eq!(module.services.len(), 0);
-    }
-
-    #[test]
-    fn test_fallback_impl_parsing() {
-        // Trait definition is missing in the macro block (simulating external trait).
-        // Logic should fallback to parsing the Impl to build the TraitDef.
-        let input = quote! {
-            env = "fallback_env",
-
-            #[capability_server(config = Self)]
-            struct MyServer;
-
-            #[capability]
-            impl ExternalTrait for MyServer {
-                fn external_op() -> bool;
-            }
-        };
-
-        let module: CapabilityModule = parse2(input).expect("Failed to parse");
-
-        assert_eq!(module.services.len(), 1);
-        let service = &module.services[0];
-
-        assert_eq!(service.struct_def.struct_name.to_string(), "MyServer");
-        // Trait name comes from the impl line
-        assert_eq!(service.trait_def.trait_name.to_string(), "ExternalTrait");
-        // No client is linked because the Trait definition (which defines Client type) wasn't available
-        assert!(service.client.is_none());
     }
 
     #[test]

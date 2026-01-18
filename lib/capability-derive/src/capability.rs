@@ -12,6 +12,7 @@ mod methods;
 use methods::CapabilityMethod;
 
 use crate::capability_ffi::CapabilityFuncFFI;
+use crate::utils::{extract_ident_from_type, extract_ident_ignoring_ref};
 
 // ==============================================================================
 // 1. Main Processor
@@ -49,37 +50,13 @@ pub struct CapabilityDefTrait {
     pub constructors: Vec<ClientConstructor>,
     pub other_items: Vec<TraitItem>,
     pub explicit_error_type: Option<Type>,
-    pub explicit_client_type: Option<Type>,
+    pub explicit_client_type: Option<Ident>,
 }
 
 impl CapabilityDefTrait {
     /// Ingests a Trait Definition (original logic).
-    pub fn from_trait(input: ItemTrait) -> syn::Result<Self> {
+    pub fn from_trait(input: ItemTrait, state_name: Ident) -> syn::Result<Self> {
         let trait_name = input.ident.clone();
-
-        // --- 1. Attribute Processing ---
-        let mut state_name: Option<Ident> = None;
-        let mut original_attrs = Vec::new();
-
-        for attr in input.attrs {
-            if attr.path().is_ident("capability_provider") {
-                // Parse #[capability_provider(MyState)]
-                state_name = Some(attr.parse_args::<Ident>().map_err(|e| {
-                    syn::Error::new_spanned(
-                        &attr,
-                        format!("Invalid capability_provider format. Expected #[capability_provider(StateStructName)]. Error: {}", e)
-                    )
-                })?);
-            } else {
-                original_attrs.push(attr);
-            }
-        }
-
-        let state_name = state_name.ok_or(syn::Error::new_spanned(
-            &trait_name,
-            "Missing required attribute: #[capability_provider(StateStructName)]. \
-                This is required to generate the correct client-side FFI bindings.",
-        ))?;
 
         let trait_name = input.ident.clone();
         let mut methods = Vec::new();
@@ -105,30 +82,7 @@ impl CapabilityDefTrait {
                 TraitItem::Type(ty) if ty.ident == "Client" => {
                     if let Some((_, client_type)) = &ty.default {
                         // --- VALIDATION START ---
-                        match client_type {
-                            Type::Path(type_path) => {
-                                if type_path.qself.is_some() {
-                                    return Err(syn::Error::new_spanned(
-                                        client_type,
-                                        "Client type cannot use qualified paths (e.g. <Type as Trait>::Assoc).",
-                                    ));
-                                }
-                                for segment in &type_path.path.segments {
-                                    if !matches!(segment.arguments, PathArguments::None) {
-                                        return Err(syn::Error::new_spanned(
-                                            client_type,
-                                            "Client type cannot have generic arguments or lifetimes (e.g., Client<T>).",
-                                        ));
-                                    }
-                                }
-                            }
-                            _ => {
-                                return Err(syn::Error::new_spanned(
-                                    client_type,
-                                    "Client type must be a simple struct path. References, pointers, or arrays are not allowed.",
-                                ));
-                            }
-                        }
+                        let client_type = extract_ident_from_type(client_type)?;
                         explicit_client_type = Some(client_type.clone());
                         other_items.push(item.clone());
                     } else {
@@ -192,132 +146,13 @@ impl CapabilityDefTrait {
         }
 
         Ok(Self {
-            original_attrs,
+            original_attrs: input.attrs.clone(),
             generics: input.generics,
             methods,
             trait_name,
             state_name,
             from_impl: false,
             constructors,
-            other_items,
-            explicit_error_type,
-            explicit_client_type,
-        })
-    }
-
-    /// Ingests a Trait Implementation (`impl Trait for State`).
-    pub fn from_impl(input: &ItemImpl) -> syn::Result<Self> {
-        // 1. Extract Trait Name
-        let trait_name = match &input.trait_ {
-            Some((_, path, _)) => path.segments.last().unwrap().ident.clone(),
-            None => {
-                return Err(Error::new_spanned(
-                    input,
-                    "Capability definition must be a trait implementation (impl Trait for State).",
-                ));
-            }
-        };
-
-        // 2. Extract State Name
-        let state_name = if let Type::Path(type_path) = &*input.self_ty {
-            type_path.path.segments.last().unwrap().ident.clone()
-        } else {
-            return Err(Error::new_spanned(
-                input.self_ty.clone(),
-                "Implementation target must be a struct (TypePath).",
-            ));
-        };
-
-        let mut methods = Vec::new();
-        let mut other_items = Vec::new();
-        let mut explicit_error_type: Option<Type> = None;
-        let mut explicit_client_type = None;
-
-        // 3. First Pass (Impl Items -> Trait Items)
-        for item in &input.items {
-            match item {
-                ImplItem::Type(ty) if ty.ident == "Error" => {
-                    explicit_error_type = Some(ty.ty.clone());
-                    // Convert ImplItemType to TraitItemType for storage
-                    other_items.push(impl_type_to_trait_type(ty));
-                }
-                ImplItem::Type(ty) if ty.ident == "Client" => {
-                    let client_type = &ty.ty;
-                    // Validate Client Type (Copying logic from from_trait)
-                    match client_type {
-                        Type::Path(type_path) => {
-                            if type_path.qself.is_some() {
-                                return Err(syn::Error::new_spanned(
-                                    client_type,
-                                    "Client type cannot use qualified paths.",
-                                ));
-                            }
-                            for segment in &type_path.path.segments {
-                                if !matches!(segment.arguments, PathArguments::None) {
-                                    return Err(syn::Error::new_spanned(
-                                        client_type,
-                                        "Client type cannot have generic arguments.",
-                                    ));
-                                }
-                            }
-                        }
-                        _ => {
-                            return Err(syn::Error::new_spanned(
-                                client_type,
-                                "Client type must be a simple struct path.",
-                            ));
-                        }
-                    }
-                    explicit_client_type = Some(client_type.clone());
-                    other_items.push(impl_type_to_trait_type(ty));
-                }
-                ImplItem::Fn(_) => {}
-                ImplItem::Const(c) => other_items.push(impl_const_to_trait_const(c)),
-                _ => {} // Ignore macros etc.
-            }
-        }
-
-        let mut has_new_client = false;
-        // 4. Second Pass: Methods
-        for item in &input.items {
-            if let ImplItem::Fn(impl_method) = item {
-                // In Host implementations, we look for 'new_client' to satisfy the constructor requirement.
-                // We do NOT use ClientConstructor::from_impl.
-                if impl_method.sig.ident == "new_client" {
-                    has_new_client = true;
-                } else {
-                    let cap_method = CapabilityMethod::from_impl(
-                        impl_method,
-                        explicit_client_type.as_ref(),
-                        explicit_error_type.as_ref(),
-                    )?;
-                    methods.push(cap_method);
-                }
-            }
-        }
-
-        // 5. Final Validation (this is pointless as the rust won't compile with an incorrect trait definition).
-        if explicit_client_type.is_some() && !has_new_client {
-            return Err(syn::Error::new(
-                Span::call_site(),
-                "Client type defined, but no Client Constructor ('new_client') found in implementation.",
-            ));
-        }
-        if explicit_client_type.is_none() && has_new_client {
-            return Err(syn::Error::new(
-                Span::call_site(),
-                "Client Constructors defined but no 'Client' type found.",
-            ));
-        }
-
-        Ok(Self {
-            original_attrs: input.attrs.clone(),
-            generics: input.generics.clone(),
-            methods,
-            trait_name,
-            state_name,
-            from_impl: true,
-            constructors: Vec::new(),
             other_items,
             explicit_error_type,
             explicit_client_type,
@@ -463,7 +298,6 @@ mod tests {
     #[test]
     fn test_generate_client_impl_integration() {
         let code = parse2(quote! {
-            #[capability_provider(MyState)]
             trait MyTrait {
                 type Client = MyClient;
 
@@ -494,7 +328,7 @@ mod tests {
         let expected_constructor = expected_constructor.client_method_generation(&trait_name, &state_name);
         let expected_method = expected_method.client_method_generation(&trait_name, &state_name);
 
-        let def = CapabilityDefTrait::from_trait(code).expect("Failed to parse capability trait");
+        let def = CapabilityDefTrait::from_trait(code, state_name.clone()).expect("Failed to parse capability trait");
         let output = def.generate_client_impl().unwrap();
 
         let expected = quote! {
@@ -526,7 +360,6 @@ mod tests {
     #[test]
     fn test_generate_client_impl_with_error_and_input_structs() {
         let code = parse2(quote! {
-            #[capability_provider(MyState)]
             trait AdvancedTrait {
                 type Client = AdvancedClient;
                 type Error = MyError;
@@ -563,7 +396,7 @@ mod tests {
             fn sync_op(level: u8) -> Result<bool, MyError>;
         }).unwrap();
 
-        let client_name: Type = syn::parse_str("AdvancedClient").unwrap();
+        let client_name = format_ident!("AdvancedClient");
         let error_name: Type = syn::parse_str("MyError").unwrap();
         let state_name = format_ident!("MyState");
         let trait_name = format_ident!("AdvancedTrait");
@@ -578,7 +411,7 @@ mod tests {
         let expected_method = expected_method.client_method_generation(&trait_name, &state_name);
         let expected_method_2 = expected_method_2.client_method_generation(&trait_name, &state_name);
 
-        let def = CapabilityDefTrait::from_trait(code).expect("Failed to parse capability trait");
+        let def = CapabilityDefTrait::from_trait(code, state_name.clone()).expect("Failed to parse capability trait");
         let output = def.generate_client_impl().unwrap();
 
         let expected = quote! {
@@ -624,216 +457,14 @@ mod tests {
     #[test]
     fn test_no_client_impl_generated_if_no_client_type() {
         let code = parse2(quote! {
-            #[capability_provider(MyState)]
             trait PureInterface {
                 fn do_thing();
             }
         }).unwrap();
+        let state_name = format_ident!("MyState");
 
-        let def = CapabilityDefTrait::from_trait(code).expect("Failed to parse capability trait");
+        let def = CapabilityDefTrait::from_trait(code, state_name).expect("Failed to parse capability trait");
         let output = def.generate_client_impl().unwrap();
         assert!(output.is_empty());
-    }
-
-    #[test]
-    fn test_from_impl_parsing() {
-        let code = parse2(quote! {
-            impl MyTrait for MyState {
-                type Client = MyClient;
-                type Error = MyError;
-
-                fn new_client(&self, client: &MyClient) -> Result<(), Self::Error> {
-                    Ok(())
-                }
-
-                fn do_thing(&self, client: &MyClient) -> Result<u32, Self::Error> {
-                    Ok(42)
-                }
-            }
-        }).unwrap();
-
-        let def = CapabilityDefTrait::from_impl(&code).expect("Failed to parse impl");
-
-        // Verify extracted names
-        assert_eq!(def.trait_name.to_string(), "MyTrait");
-        assert_eq!(def.state_name.to_string(), "MyState");
-
-        // Verify Client Implementation Generation is forbidden
-        let client_impl_result = def.generate_client_impl();
-        assert_eq!(
-            client_impl_result.unwrap_err().to_string(),
-            "Unable to generate a client definition from an impl."
-        );
-
-        // Verify that Trait Definition generation is explicitly forbidden for Impl inputs
-        let trait_gen_result = def.generate_trait_definition();
-        assert!(
-            trait_gen_result.is_err(),
-            "Should not be able to generate a trait definition from an impl block"
-        );
-        assert_eq!(
-            trait_gen_result.unwrap_err().to_string(),
-            "Unable to generate a trait definition from an impl."
-        );
-    }
-
-    #[test]
-    fn test_trait_generation_consistency_between_source_and_impl() {
-        let trait_code = parse2(quote! {
-            #[capability_provider(PostgresDriver)]
-            trait Database {
-                type Client = DbClient;
-                type Error = DbError;
-
-                fn connect(url: String) -> DbClient {
-                    DbClient { url }
-                }
-
-                fn query(sql: String) -> Result<String, DbError>;
-                async fn execute(sql: String) -> Result<u64, DbError>;
-            }
-        }).unwrap();
-
-        let impl_code = parse2(quote! {
-            impl Database for PostgresDriver {
-                type Client = DbClient;
-                type Error = DbError;
-
-                fn new_client(&self, client: &DbClient) -> Result<(), DbError> {
-                    Ok(())
-                }
-
-                fn query(&self, client: &DbClient, sql: String) -> Result<String, DbError> {
-                    Ok("row".to_string())
-                }
-
-                async fn execute(&self, client: &DbClient, sql: String) -> Result<u64, DbError> {
-                    Ok(1)
-                }
-            }
-        }).unwrap();
-
-        let def_from_trait =
-            CapabilityDefTrait::from_trait(trait_code).expect("Failed to parse trait");
-        let trait_output = def_from_trait
-            .generate_trait_definition()
-            .expect("Failed to generate definition from trait");
-
-        let mut def_from_impl =
-            CapabilityDefTrait::from_impl(&impl_code).expect("Failed to parse impl");
-
-        // HACK: Force from_impl flag to false to bypass the guard for this specific comparison test
-        def_from_impl.from_impl = false;
-
-        let impl_output = def_from_impl
-            .generate_trait_definition()
-            .expect("Failed to generate definition from impl");
-
-        // Verify they are identical
-        assert_code_eq_token(&trait_output, &impl_output);
-
-        // Verify the content is what we expect
-        let expected = r#"
-            pub trait Database {
-                type Client = DbClient;
-                type Error = DbError;
-
-                fn new_client(&self, client: &Self::Client) -> Result<(), DbError>;
-
-                fn query(&self, client: &Self::Client, sql: String) -> Result<String, DbError>;
-                async fn execute(&self, client: &Self::Client, sql: String) -> Result<u64, DbError>;
-            }
-        "#;
-        assert_code_eq(&trait_output, expected);
-
-        // Test FFI generation from both sources
-        let ffis_from_trait = def_from_trait.capability_ffis();
-        let ffis_from_impl = def_from_impl.capability_ffis();
-        
-        assert_eq!(ffis_from_trait.len(), 3, "Trait should have 3 FFIs: 1 constructor + 2 methods");
-        assert_eq!(ffis_from_impl.len(), 3, "Impl should have 3 FFIs: 1 constructor + 2 methods");
-        
-        // Verify FFI names match between trait and impl
-        for (trait_ffi, impl_ffi) in ffis_from_trait.iter().zip(ffis_from_impl.iter()) {
-            assert_eq!(trait_ffi.library.to_string(), impl_ffi.library.to_string());
-            assert_eq!(trait_ffi.fn_name.to_string(), impl_ffi.fn_name.to_string());
-            assert_eq!(trait_ffi.fn_ffi_name.to_string(), impl_ffi.fn_ffi_name.to_string());
-            assert_eq!(trait_ffi.fn_wasm_name.to_string(), impl_ffi.fn_wasm_name.to_string());
-            assert_eq!(trait_ffi.is_async, impl_ffi.is_async);
-        }
-    }
-
-    #[test]
-    fn test_trait_generation_consistency_between_source_and_impl_no_client() {
-        let trait_code = parse2(quote! {
-            #[capability_provider(PostgresDriver)]
-            trait Database {
-                type Error = DbError;
-
-                fn query(sql: String) -> Result<String, DbError>;
-                async fn execute(sql: String) -> Result<u64, DbError>;
-            }
-        }).unwrap();
-
-        let impl_code = parse2(quote! {
-            impl Database for PostgresDriver {
-                type Error = DbError;
-
-                fn query(&self, sql: String) -> Result<String, DbError> {
-                    Ok("row".to_string())
-                }
-
-                async fn execute(&self, sql: String) -> Result<u64, DbError> {
-                    Ok(1)
-                }
-            }
-        }).unwrap();
-
-        let def_from_trait =
-            CapabilityDefTrait::from_trait(trait_code).expect("Failed to parse trait");
-        let trait_output = def_from_trait
-            .generate_trait_definition()
-            .expect("Failed to generate definition from trait");
-        let mut def_from_impl =
-            CapabilityDefTrait::from_impl(&impl_code).expect("Failed to parse impl");
-
-        // HACK: Force from_impl flag to false to bypass the guard for this specific comparison test
-        def_from_impl.from_impl = false;
-
-        let impl_output = def_from_impl
-            .generate_trait_definition()
-            .expect("Failed to generate definition from impl");
-
-        assert_code_eq_token(&trait_output, &impl_output);
-
-        let expected = r#"
-            pub trait Database {
-                type Error = DbError;
-                fn query(&self, sql: String) -> Result<String, DbError>;
-                async fn execute(&self, sql: String) -> Result<u64, DbError>;
-            }
-        "#;
-        assert_code_eq(&trait_output, expected);
-
-        // Test FFI generation (no constructor since no Client type)
-        let ffis_from_trait = def_from_trait.capability_ffis();
-        let ffis_from_impl = def_from_impl.capability_ffis();
-        
-        // Without a Client type, we still get a constructor FFI (for consistency)
-        // but it's a no-op constructor
-        assert_eq!(ffis_from_trait.len(), 2, "Should have 3 FFIs: 0 constructor + 2 methods");
-        assert_eq!(ffis_from_impl.len(), 2, "Should have 3 FFIs: 0 constructor + 2 methods");
-        
-        // Verify FFI names match between trait and impl
-        for (trait_ffi, impl_ffi) in ffis_from_trait.iter().zip(ffis_from_impl.iter()) {
-            assert_eq!(trait_ffi.library.to_string(), impl_ffi.library.to_string());
-            assert_eq!(trait_ffi.fn_name.to_string(), impl_ffi.fn_name.to_string());
-            assert_eq!(trait_ffi.is_async, impl_ffi.is_async);
-        }
-        
-        // Verify method FFIs
-        assert_eq!(ffis_from_trait[0].library.to_string(), "__database__postgres_driver__query");
-        assert_eq!(ffis_from_trait[1].library.to_string(), "__database__postgres_driver__execute");
-        assert!(ffis_from_trait[1].is_async);
     }
 }

@@ -13,14 +13,14 @@ use crate::utils::type_to_return;
 pub struct ClientConstructor {
     pub sig: syn::Signature,
     pub block: syn::Block,
-    pub client_name: String,
+    pub client: Ident,
     pub error_type: Option<Type>,
 }
 
 impl ClientConstructor {
     pub fn new(
         method: &TraitItemFn,
-        explicit_client_type: &Type,
+        explicit_client_type: &Ident,
         explicit_error_type: Option<&Type>,
     ) -> syn::Result<Self> {
         let sig = &method.sig;
@@ -72,17 +72,10 @@ impl ClientConstructor {
             ));
         }
 
-        // 5: Get the client name
-        let client_name = if let Type::Path(type_path) = explicit_client_type {
-            type_path.path.segments.last().unwrap().ident.to_string()
-        } else {
-            quote!(#explicit_client_type).to_string()
-        };
-
         Ok(Self {
             sig: sig.clone(),
             block,
-            client_name,
+            client: explicit_client_type.clone(),
             error_type: explicit_error_type.cloned(),
         })
     }
@@ -95,8 +88,8 @@ impl ClientConstructor {
         let mut modified_block = self.block.clone();
 
         // 2. Initialize visitor with the specific client name
-        let mut injector = ConfigBufInjector {
-            target_ident: self.client_name.clone(),
+        let mut injector: ConfigBufInjector = ConfigBufInjector {
+            target_ident: self.client.to_string(),
         };
 
         // 3. Run the visitor (Injects __config_buf)
@@ -236,7 +229,7 @@ mod tests {
         error_type_str: Option<&str>,
     ) -> ClientConstructor {
         let method: TraitItemFn = syn::parse2(func_code).expect("Failed to parse fn");
-        let client_type: Type = syn::parse_str(client_type_str).expect("Failed to parse type");
+        let client_type: Ident = format_ident!("{}", client_type_str);
         let error_type: Option<Type> =
             error_type_str.map(|s| syn::parse_str(s).expect("Failed to parse error"));
 
@@ -356,7 +349,7 @@ mod tests {
             }
         };
         let method: TraitItemFn = syn::parse2(code).unwrap();
-        let client_type: Type = syn::parse_str("MyClient").unwrap();
+        let client_type: Ident = format_ident!("MyClient");
 
         let res = ClientConstructor::new(&method, &client_type, None);
         assert!(res.is_err());
