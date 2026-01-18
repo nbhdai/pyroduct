@@ -38,15 +38,23 @@ impl ClassIdent {
 
     /// Library identifier for a method (e.g., __my_trait__my_state__method_name)
     pub fn class_name_static(&self) -> Ident {
-        let trait_snake = AsSnakeCase(self.trait_tn.to_string()).to_string().to_uppercase();
-        let state_snake = AsSnakeCase(self.state_tn.to_string()).to_string().to_uppercase();
+        let trait_snake = AsSnakeCase(self.trait_tn.to_string())
+            .to_string()
+            .to_uppercase();
+        let state_snake = AsSnakeCase(self.state_tn.to_string())
+            .to_string()
+            .to_uppercase();
         format_ident!("__{}__{}", trait_snake, state_snake)
     }
 
     /// Library identifier for a method (e.g., __my_trait__my_state__method_name)
     pub fn trace_name_static(&self, name: &Ident) -> Ident {
-        let trait_snake = AsSnakeCase(self.trait_tn.to_string()).to_string().to_uppercase();
-        let state_snake = AsSnakeCase(self.state_tn.to_string()).to_string().to_uppercase();
+        let trait_snake = AsSnakeCase(self.trait_tn.to_string())
+            .to_string()
+            .to_uppercase();
+        let state_snake = AsSnakeCase(self.state_tn.to_string())
+            .to_string()
+            .to_uppercase();
         let snake = AsSnakeCase(name.to_string()).to_string().to_uppercase();
         format_ident!("__{}__{}__{}", trait_snake, state_snake, snake)
     }
@@ -108,15 +116,23 @@ impl ClassIdent {
 
     /// Static exports array name (e.g., __MY_TRAIT__MY_STATE__EXPORTS)
     pub fn exports_array_name(&self) -> Ident {
-        let trait_upper = AsSnakeCase(self.trait_tn.to_string()).to_string().to_uppercase();
-        let state_upper = AsSnakeCase(self.state_tn.to_string()).to_string().to_uppercase();
+        let trait_upper = AsSnakeCase(self.trait_tn.to_string())
+            .to_string()
+            .to_uppercase();
+        let state_upper = AsSnakeCase(self.state_tn.to_string())
+            .to_string()
+            .to_uppercase();
         format_ident!("__{}__{}__EXPORTS", trait_upper, state_upper)
     }
 
     /// PluginExports struct name (e.g., __MY_TRAIT__MY_STATE__PLUGIN_EXPORTS)
     pub fn plugin_exports_name(&self) -> Ident {
-        let trait_upper = AsSnakeCase(self.trait_tn.to_string()).to_string().to_uppercase();
-        let state_upper = AsSnakeCase(self.state_tn.to_string()).to_string().to_uppercase();
+        let trait_upper = AsSnakeCase(self.trait_tn.to_string())
+            .to_string()
+            .to_uppercase();
+        let state_upper = AsSnakeCase(self.state_tn.to_string())
+            .to_string()
+            .to_uppercase();
         format_ident!("__{}__{}__PLUGIN_EXPORTS", trait_upper, state_upper)
     }
 }

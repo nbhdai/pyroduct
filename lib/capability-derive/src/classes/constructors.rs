@@ -3,9 +3,7 @@ use std::rc::Rc;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::visit_mut::{self, VisitMut};
-use syn::{
-    Error, ExprStruct, FnArg, Member, Path, ReturnType, TraitItemFn, parse_quote, parse2,
-};
+use syn::{Error, ExprStruct, FnArg, Ident, Member, Path, ReturnType, TraitItemFn, parse_quote, parse2};
 
 use crate::ffi::CapabilityFuncFFI;
 use crate::paths::ClassIdent;
@@ -19,10 +17,7 @@ pub struct ClientConstructor {
 }
 
 impl ClientConstructor {
-    pub fn new(
-        method: &TraitItemFn,
-        class: &Rc<ClassIdent>,
-    ) -> syn::Result<Self> {
+    pub fn new(method: &TraitItemFn, class: &Rc<ClassIdent>) -> syn::Result<Self> {
         let sig = &method.sig;
 
         // 1. Check for Body (Must be a "full function")
@@ -80,7 +75,7 @@ impl ClientConstructor {
         })
     }
 
-    pub fn client_method_generation(&self) -> TokenStream {
+    pub fn client_method_generation(&self, module: Option<&Ident>) -> TokenStream {
         let sig = &self.sig;
         let name = &sig.ident;
 
@@ -98,10 +93,7 @@ impl ClientConstructor {
         // 4. Build FFI Metadata
         // Determine Final Return Type
 
-        let ffi = client_constructor_ffi_meta(
-            &self.class,
-            self.sig.asyncness.is_some(),
-        );
+        let ffi = client_constructor_ffi_meta(&self.class, self.sig.asyncness.is_some());
 
         // 5. Generate the implementation
         // We reconstruct the signature because the return type might change.
@@ -110,7 +102,7 @@ impl ClientConstructor {
         let where_clause = &sig.generics.where_clause;
         let final_return_type = &ffi.return_type;
 
-        let wasm_call = ffi.generate_wasm_call();
+        let wasm_call = ffi.generate_wasm_call(module);
 
         let logic = quote! {
             let mut new_self = (|| #modified_block )();
@@ -137,10 +129,7 @@ impl ClientConstructor {
 
 /// Helper to construct the CapabilityFuncFFI configuration for constructors.
 /// Encapsulates naming conventions and return type logic.
-pub fn client_constructor_ffi_meta(
-    class: &Rc<ClassIdent>,
-    is_async: bool,
-) -> CapabilityFuncFFI {
+pub fn client_constructor_ffi_meta(class: &Rc<ClassIdent>, is_async: bool) -> CapabilityFuncFFI {
     let return_type: ReturnType = if let Some(err_type) = &class.error_tn {
         type_to_return(&parse2(quote!(Result<Self, #err_type>)).expect("This really should parse"))
     } else {
@@ -215,11 +204,10 @@ mod tests {
         func_code: TokenStream,
         error_type_str: Option<&str>,
     ) -> ClientConstructor {
-        
         let method: TraitItemFn = syn::parse2(func_code).expect("Failed to parse fn");
         let error_type: Option<Type> =
             error_type_str.map(|s| syn::parse_str(s).expect("Failed to parse error"));
-        
+
         let class = Rc::new(ClassIdent {
             trait_tn: format_ident!("MyTrait"),
             state_tn: format_ident!("MyServer"),
@@ -227,8 +215,7 @@ mod tests {
             error_tn: error_type,
         });
 
-        ClientConstructor::new(&method, &class)
-            .expect("Constructor creation failed")
+        ClientConstructor::new(&method, &class).expect("Constructor creation failed")
     }
 
     #[test]
@@ -244,13 +231,10 @@ mod tests {
         let ctor = create_constructor(code, None);
 
         // 3. Generate Expected FFI Call
-        let wasm_call = client_constructor_ffi_meta(
-            &ctor.class,
-            false,
-        ).generate_wasm_call();
+        let wasm_call = client_constructor_ffi_meta(&ctor.class, false).generate_wasm_call(None);
 
         // 4. Generate
-        let output = ctor.client_method_generation();
+        let output = ctor.client_method_generation(None);
 
         // 5. Expected Output
         let expected = quote! {
@@ -265,7 +249,7 @@ mod tests {
                 new_self.__config_buf = ::rkyv::to_bytes::<_, 256>(&new_self)
                     .expect("Failed to serialize config")
                     .into_vec();
-                
+
                 let ffi_result = #wasm_call;
 
                 match ffi_result {
@@ -291,13 +275,10 @@ mod tests {
         let ctor = create_constructor(code, Some("MyError"));
 
         // 3. Generate Expected FFI Call
-        let wasm_call = client_constructor_ffi_meta(
-            &ctor.class,
-            false,
-        ).generate_wasm_call();
+        let wasm_call = client_constructor_ffi_meta(&ctor.class, false).generate_wasm_call(None);
 
         // 4. Generate
-        let output = ctor.client_method_generation();
+        let output = ctor.client_method_generation(None);
 
         // 5. Expected Output
         // Note: The signature returns Result<Self, MyError>
@@ -312,7 +293,7 @@ mod tests {
                 new_self.__config_buf = ::rkyv::to_bytes::<_, 256>(&new_self)
                     .expect("Failed to serialize config")
                     .into_vec();
-                
+
                 let ffi_result = #wasm_call;
 
                 match ffi_result {
@@ -366,12 +347,9 @@ mod tests {
         let ctor = create_constructor(code, None);
 
         // Generate FFI call for expectation
-        let wasm_call = client_constructor_ffi_meta(
-            &ctor.class,
-            false,
-        ).generate_wasm_call();
+        let wasm_call = client_constructor_ffi_meta(&ctor.class, false).generate_wasm_call(None);
 
-        let output = ctor.client_method_generation();
+        let output = ctor.client_method_generation(None);
 
         let expected = quote! {
             pub fn build(x: usize, y: usize) -> Self {
@@ -388,7 +366,7 @@ mod tests {
                 new_self.__config_buf = ::rkyv::to_bytes::<_, 256>(&new_self)
                     .expect("Failed to serialize config")
                     .into_vec();
-                
+
                 let ffi_result = #wasm_call;
 
                 match ffi_result {

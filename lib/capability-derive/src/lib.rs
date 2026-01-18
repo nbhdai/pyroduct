@@ -9,19 +9,20 @@
 //! 3. **Client state only** - `#[capability_client]` struct + `#[capability(stateless)]` trait
 //! 4. **Both states** - `#[capability_client]` struct + `#[capability]` trait + `#[capability_server]` struct
 
+use proc_macro2::TokenStream;
+use syn::parse::Parse;
+
+pub(crate) mod capability;
 pub(crate) mod classes;
 pub(crate) mod ffi;
-pub(crate) mod capability;
 pub(crate) mod function;
-pub(crate) mod utils;
 pub(crate) mod paths;
+pub(crate) mod utils;
 
-// #[proc_macro_attribute]
-// pub fn capability(_attr: TokenStream, item: TokenStream) -> TokenStream {
-//     capability_export::expand(item.into())
-//         .unwrap_or_else(|e| e.to_compile_error())
-//         .into()
-// }
+#[proc_macro_attribute]
+pub fn capability(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    capability::Capability::parse(item)?;
+}
 
 #[cfg(test)]
 pub mod fmt {
@@ -44,8 +45,8 @@ pub mod fmt {
             .expect("Generated tokens are not valid Rust code (syn::File)");
 
         // 2. Parse the expected string into a syn::File
-        let expected_file: syn::File =
-            syn::parse2(expected.clone()).expect("Expected string is not valid Rust code (syn::File)");
+        let expected_file: syn::File = syn::parse2(expected.clone())
+            .expect("Expected string is not valid Rust code (syn::File)");
 
         // 3. Unparse both using prettyplease to normalize formatting
         let actual_str = prettyplease::unparse(&actual_file);

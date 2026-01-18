@@ -1,7 +1,7 @@
-use std::rc::Rc;
-use heck::{AsUpperCamelCase, AsSnakeCase};
+use heck::{AsSnakeCase, AsUpperCamelCase};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+use std::rc::Rc;
 use syn::{Ident, ReturnType, Type, Visibility};
 
 use crate::paths::ClassIdent;
@@ -10,9 +10,7 @@ use crate::utils::return_to_type;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputParams {
     One(Ident, Type),
-    Many {
-        params: Vec<(Ident, Type)>,
-    },
+    Many { params: Vec<(Ident, Type)> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,7 +47,10 @@ impl CapabilityFuncFFI {
         if let Some(class) = &self.class {
             class.ffi_name(&self.fn_name)
         } else {
-            format_ident!("__{}__ffi", AsSnakeCase(self.fn_name.to_string()).to_string())
+            format_ident!(
+                "__{}__ffi",
+                AsSnakeCase(self.fn_name.to_string()).to_string()
+            )
         }
     }
 
@@ -58,19 +59,23 @@ impl CapabilityFuncFFI {
         if let Some(class) = &self.class {
             class.wasm_name(&self.fn_name)
         } else {
-            format_ident!("__{}__wasm", AsSnakeCase(self.fn_name.to_string()).to_string())
+            format_ident!(
+                "__{}__wasm",
+                AsSnakeCase(self.fn_name.to_string()).to_string()
+            )
         }
     }
 
     /// Get the input struct name (if multiple parameters)
     pub fn input_struct_name(&self) -> Option<Ident> {
         match (&self.input, &self.class) {
-            (Some(InputParams::Many { .. }), None) => {
-                Some(format_ident!("__{}__Input", AsUpperCamelCase(self.fn_name.to_string()).to_string()))
-            },
+            (Some(InputParams::Many { .. }), None) => Some(format_ident!(
+                "__{}__Input",
+                AsUpperCamelCase(self.fn_name.to_string()).to_string()
+            )),
             (Some(InputParams::Many { .. }), Some(class)) => {
                 Some(class.input_struct(&self.fn_name))
-            },
+            }
             (_, _) => None,
         }
     }
@@ -82,12 +87,11 @@ impl CapabilityFuncFFI {
 
     /// Generate the input struct if needed
     pub fn generate_input_struct(&self) -> TokenStream {
-        if let (Some(InputParams::Many {
-            params,
-        }), Some(input_struct_name)) = (&self.input, self.input_struct_name())
+        if let (Some(InputParams::Many { params }), Some(input_struct_name)) =
+            (&self.input, self.input_struct_name())
         {
             let fields: Vec<_> = params.iter().map(|(n, t)| quote! { pub #n: #t }).collect();
-            
+
             quote! {
                 #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
                 #[rkyv(compare(PartialEq), derive(Debug))]
@@ -156,7 +160,7 @@ impl CapabilityFuncFFI {
     }
 
     /// Generate the client-side WASM wrapper
-    pub fn generate_wasm_call(&self) -> TokenStream {
+    pub fn generate_wasm_call(&self, module: Option<&Ident>) -> TokenStream {
         let trace_name = self.trace_name().to_string();
         let fn_wasm_name = self.fn_wasm_name();
         let return_type = return_to_type(&self.return_type);
@@ -170,6 +174,11 @@ impl CapabilityFuncFFI {
             (quote!(#client_tn), quote!(Some(client)))
         } else {
             (quote!(()), quote!(None))
+        };
+        let module_tn = if let Some(module) = module {
+            quote!(#module::)
+        } else {
+            quote!()
         };
 
         quote! {
@@ -187,7 +196,7 @@ impl CapabilityFuncFFI {
                 input_ptr: *const u8,
                 input_len: usize| {
                     unsafe {
-                        #fn_wasm_name(client_state_ptr, client_state_len, input_ptr, input_len)
+                        #module_tn #fn_wasm_name(client_state_ptr, client_state_len, input_ptr, input_len)
                     }
                 },
             )
@@ -231,18 +240,15 @@ impl CapabilityFuncFFI {
             let client_tn = &class.client_tn;
             generics.push(quote!(#state_tn));
             generics.push(quote!(#client_tn));
-
         }
 
         // Input type (I)
         match (&self.input, self.input_struct_name()) {
             (Some(InputParams::One(_, ty)), _) => generics.push(quote!(#ty)),
-            (Some(InputParams::Many {
-                ..
-            }), Some(input_struct_name)) => generics.push(quote!(#input_struct_name)),
-            (Some(InputParams::Many {
-                ..
-            }), None) => unreachable!(),
+            (Some(InputParams::Many { .. }), Some(input_struct_name)) => {
+                generics.push(quote!(#input_struct_name))
+            }
+            (Some(InputParams::Many { .. }), None) => unreachable!(),
             (None, _) => {}
         }
 
@@ -317,9 +323,7 @@ impl CapabilityFuncFFI {
             (Some(InputParams::One(param_name, param_ty)), None) => {
                 (quote!(#param_ty), quote!(Some(&#param_name)))
             }
-            (Some(InputParams::Many {
-                params,
-            }), Some(input_struct_name)) => {
+            (Some(InputParams::Many { params }), Some(input_struct_name)) => {
                 let args = params.iter().map(|(n, _)| quote!(#n));
                 (
                     quote!(#input_struct_name),
@@ -380,7 +384,7 @@ mod tests {
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
-        let module_tokens = ffi.generate_wasm_call();
+        let module_tokens = ffi.generate_wasm_call(None);
         let module_tokens = quote! {
             fn func() {
                 #module_tokens
@@ -454,7 +458,7 @@ mod tests {
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
-        let module_tokens = ffi.generate_wasm_call();
+        let module_tokens = ffi.generate_wasm_call(None);
         let module_tokens = quote! {
             fn func() {
                 #module_tokens
@@ -533,7 +537,7 @@ mod tests {
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
-        let module_tokens = ffi.generate_wasm_call();
+        let module_tokens = ffi.generate_wasm_call(Some(&format_ident!("wasm")));
         let module_tokens = quote! {
             fn func() {
                 #module_tokens
@@ -593,7 +597,7 @@ mod tests {
                     input_ptr: *const u8,
                     input_len: usize| {
                         unsafe {
-                            __test_sync_multi__wasm(client_state_ptr, client_state_len, input_ptr, input_len)
+                            wasm::__test_sync_multi__wasm(client_state_ptr, client_state_len, input_ptr, input_len)
                         }
                     },
                 )
@@ -613,7 +617,7 @@ mod tests {
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
-        let module_tokens = ffi.generate_wasm_call();
+        let module_tokens = ffi.generate_wasm_call(None);
         let module_tokens = quote! {
             fn func() {
                 #module_tokens
@@ -688,7 +692,7 @@ mod tests {
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
-        let module_tokens = ffi.generate_wasm_call();
+        let module_tokens = ffi.generate_wasm_call(None);
         let module_tokens = quote! {
             fn func() {
                 #module_tokens
@@ -767,7 +771,7 @@ mod tests {
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
-        let module_tokens = ffi.generate_wasm_call();
+        let module_tokens = ffi.generate_wasm_call(None);
         let module_tokens = quote! {
             fn func() {
                 #module_tokens

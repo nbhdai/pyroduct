@@ -4,10 +4,14 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{
     Error, FnArg, GenericArgument, Ident, PathArguments, ReturnType, TraitItemFn, Type,
-    parse_quote, parse2, 
+    parse_quote, parse2,
 };
 
-use crate::{ffi::{CapabilityFuncFFI, InputParams}, paths::ClassIdent, utils::{extract_ident_ignoring_ref, is_self_ref_or_type}};
+use crate::{
+    ffi::{CapabilityFuncFFI, InputParams},
+    paths::ClassIdent,
+    utils::{extract_ident_ignoring_ref, is_self_ref_or_type},
+};
 
 /// Represents a validated method within the Capability trait.
 #[derive(Debug, Clone, PartialEq)]
@@ -21,10 +25,7 @@ pub struct CapabilityMethod {
 }
 
 impl CapabilityMethod {
-    pub fn from_trait(
-        method: TraitItemFn,
-        class: &Rc<ClassIdent>,
-    ) -> syn::Result<Self> {
+    pub fn from_trait(method: TraitItemFn, class: &Rc<ClassIdent>) -> syn::Result<Self> {
         let sig = &method.sig;
 
         // --------------------------------------------------------
@@ -54,7 +55,10 @@ impl CapabilityMethod {
             }
 
             // Check for 'Client' return
-            if quote!(#ty).to_string().contains(&class.client_tn.to_string()) {
+            if quote!(#ty)
+                .to_string()
+                .contains(&class.client_tn.to_string())
+            {
                 return Err(Error::new_spanned(
                     ty,
                     "Capability methods cannot return the defined 'Client' type.",
@@ -160,9 +164,7 @@ impl CapabilityMethod {
             Some(InputParams::One(n.clone(), t.clone()))
         } else {
             let params = self.inputs.clone();
-            Some(InputParams::Many {
-                params,
-            })
+            Some(InputParams::Many { params })
         };
 
         // 4. Construct Struct
@@ -182,7 +184,7 @@ impl CapabilityMethod {
     ///
     /// # Arguments
     /// * `trait_name` - The name of the trait, used to generate the library path `__trait_method`.
-    pub fn client_method_generation(&self) -> TokenStream {
+    pub fn client_method_generation(&self, module: Option<&Ident>) -> TokenStream {
         let name = &self.name;
         let attrs = &self.attrs;
 
@@ -203,7 +205,7 @@ impl CapabilityMethod {
         let struct_def = ffi.generate_input_struct();
 
         // This returns the `call_from_wasm` block.
-        let body_delegation = ffi.generate_wasm_call();
+        let body_delegation = ffi.generate_wasm_call(module);
 
         quote! {
             #(#attrs)*
@@ -222,35 +224,39 @@ impl CapabilityMethod {
 pub fn transform_return_type(output: &ReturnType, target_error: &Type) -> syn::Result<ReturnType> {
     match output {
         // Handle cases where no return type is specified (e.g., fn logic())
-        ReturnType::Default => {
-            Err(Error::new_spanned(
-                output,
-                format!("Method must return Result<T, {}> or Result<T, Self::Error>.", quote!(#target_error).to_string()),
-            ))
-        }
+        ReturnType::Default => Err(Error::new_spanned(
+            output,
+            format!(
+                "Method must return Result<T, {}> or Result<T, Self::Error>.",
+                quote!(#target_error).to_string()
+            ),
+        )),
         ReturnType::Type(arrow, ty) => {
             // 1. Extract the inner T and E from Result<T, E>
-            let (ok_type, err_type) = extract_result_parts(ty)
-                .ok_or_else(|| Error::new_spanned(
+            let (ok_type, err_type) = extract_result_parts(ty).ok_or_else(|| {
+                Error::new_spanned(
                     ty,
-                    format!("Method must return Result<T, {}> or Result<T, Self::Error>.", quote!(#target_error).to_string()),
-                ))?;
-            
+                    format!(
+                        "Method must return Result<T, {}> or Result<T, Self::Error>.",
+                        quote!(#target_error).to_string()
+                    ),
+                )
+            })?;
+
             // 2. Normalize types to strings for comparison
             let actual_err_str = quote!(#err_type).to_string().replace(" ", "");
             let target_err_str = quote!(#target_error).to_string().replace(" ", "");
             let self_err_str = "Self::Error";
-            
+
             // 3. Validation Logic
             // We allow the change if it's already the target error or if it's "Self::Error"
             if actual_err_str != target_err_str && actual_err_str != self_err_str {
                 return Err(Error::new_spanned(
                     err_type,
                     format!(
-                        "Invalid error type. Expected '{}' or 'Self::Error', found '{}'.", 
-                        target_err_str, 
-                        actual_err_str
-                    )
+                        "Invalid error type. Expected '{}' or 'Self::Error', found '{}'.",
+                        target_err_str, actual_err_str
+                    ),
                 ));
             }
 
@@ -269,15 +275,23 @@ pub fn transform_return_type(output: &ReturnType, target_error: &Type) -> syn::R
 fn extract_result_parts(ty: &Type) -> Option<(&Type, &Type)> {
     if let Type::Path(tp) = ty {
         if let Some(segment) = tp.path.segments.last() {
-             if segment.ident == "Result" {
-                 if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                     if args.args.len() == 2 {
-                         let t = if let GenericArgument::Type(ty) = &args.args[0] { ty } else { return None; };
-                         let e = if let GenericArgument::Type(ty) = &args.args[1] { ty } else { return None; };
-                         return Some((t, e));
-                     }
-                 }
-             }
+            if segment.ident == "Result" {
+                if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if args.args.len() == 2 {
+                        let t = if let GenericArgument::Type(ty) = &args.args[0] {
+                            ty
+                        } else {
+                            return None;
+                        };
+                        let e = if let GenericArgument::Type(ty) = &args.args[1] {
+                            ty
+                        } else {
+                            return None;
+                        };
+                        return Some((t, e));
+                    }
+                }
+            }
         }
     }
     None
@@ -298,7 +312,7 @@ mod tests {
 
         let error_type: Option<Type> =
             error_type_str.map(|s| syn::parse_str(s).expect("Failed to parse error"));
-        
+
         let class = Rc::new(ClassIdent {
             trait_tn: format_ident!("MyTrait"),
             state_tn: format_ident!("MyServer"),
@@ -320,9 +334,9 @@ mod tests {
         let method = create_method_trait(code, None).unwrap();
         let method_ffi = method.build_ffi_meta();
         let struct_tokens = method_ffi.generate_input_struct();
-        let wasm_call = method_ffi.generate_wasm_call();
+        let wasm_call = method_ffi.generate_wasm_call(None);
         // 3. Generate
-        let output = method.client_method_generation();
+        let output = method.client_method_generation(None);
 
         // 4. Expected
         let expected = quote! {
@@ -346,9 +360,9 @@ mod tests {
         let method = create_method_trait(code, Some("MyError")).unwrap();
         let method_ffi = method.build_ffi_meta();
         let struct_tokens = method_ffi.generate_input_struct();
-        let wasm_call = method_ffi.generate_wasm_call();
+        let wasm_call = method_ffi.generate_wasm_call(None);
         // 3. Generate
-        let output = method.client_method_generation();
+        let output = method.client_method_generation(None);
 
         // 4. Expected
         let expected = quote! {
@@ -373,9 +387,9 @@ mod tests {
 
         let method_ffi = method.build_ffi_meta();
         let struct_tokens = method_ffi.generate_input_struct();
-        let wasm_call = method_ffi.generate_wasm_call();
+        let wasm_call = method_ffi.generate_wasm_call(None);
         // 3. Generate
-        let output = method.client_method_generation();
+        let output = method.client_method_generation(None);
 
         // 4. Expected
         let expected = quote! {
@@ -399,7 +413,6 @@ mod tests {
             res.unwrap_err().to_string(),
             "Capability methods cannot take variant of 'self', or 'Self'"
         );
-
 
         let code_ret_client = quote! {
             fn make_client(&self) -> MyClient;
@@ -428,10 +441,7 @@ mod tests {
             fn process(c: f32) -> u32;
         };
         let res = create_method_trait(code_arg_client, Some("MyError"));
-        assert!(
-            res.is_err(),
-            "Should have rejected a non result return"
-        );
+        assert!(res.is_err(), "Should have rejected a non result return");
         assert_eq!(
             res.unwrap_err().to_string(),
             "Method must return Result<T, MyError> or Result<T, Self::Error>."

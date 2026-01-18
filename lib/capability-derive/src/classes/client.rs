@@ -4,7 +4,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::punctuated::Punctuated;
 use syn::{
-    Attribute, Fields, FieldsNamed, Ident, ItemStruct, Path, Result, Token, Visibility, parse_quote
+    Attribute, Fields, FieldsNamed, Ident, ItemStruct, Path, Result, Token, Visibility, parse_quote,
 };
 
 #[derive(Debug, Clone)]
@@ -179,8 +179,16 @@ impl CapClient {
 
                     for path in paths {
                         let is_debug = path.is_ident("Debug")
-                            || (path.segments.last().map(|s| s.ident == "Debug").unwrap_or(false)
-                                && path.segments.first().map(|s| s.ident == "std" || s.ident == "core").unwrap_or(false));
+                            || (path
+                                .segments
+                                .last()
+                                .map(|s| s.ident == "Debug")
+                                .unwrap_or(false)
+                                && path
+                                    .segments
+                                    .first()
+                                    .map(|s| s.ident == "std" || s.ident == "core")
+                                    .unwrap_or(false));
 
                         if is_debug {
                             found_debug = true;
@@ -312,7 +320,7 @@ mod tests {
         let expected = quote! {
             #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
             #[rkyv(compare(PartialEq), derive(Debug))]
-            #[derive(Clone)] 
+            #[derive(Clone)]
             pub struct MyDebugClient {
                 pub name: String,
                 #[rkyv(with = rkyv::with::Skip)]

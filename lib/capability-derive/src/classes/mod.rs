@@ -1,6 +1,6 @@
 pub mod client;
 pub mod constructors;
-pub mod state;
-pub mod methods;
-pub mod export;
 pub mod definition;
+pub mod export;
+pub mod methods;
+pub mod state;

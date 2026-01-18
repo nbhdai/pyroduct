@@ -2,7 +2,7 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{FnArg, ItemFn, Result};
+use syn::{FnArg, Ident, ItemFn, Result};
 
 use crate::ffi::{CapabilityFuncFFI, InputParams};
 use crate::utils::{get_param_name, get_param_type};
@@ -40,11 +40,7 @@ impl CapFn {
                 let (name, ty) = params.into_iter().next().unwrap();
                 Some(InputParams::One(name, ty))
             }
-            _ => {
-                Some(InputParams::Many {
-                    params,
-                })
-            }
+            _ => Some(InputParams::Many { params }),
         }
     }
 
@@ -60,8 +56,12 @@ impl CapFn {
         }
     }
 
+    pub fn generate_capability_function(&self) -> &ItemFn {
+        &self.input
+    }
+
     /// Generate the client-side WASM wrapper
-    pub fn generate_function(&self) -> TokenStream {
+    pub fn generate_module_function(&self, module: Option<&Ident>) -> TokenStream {
         let ffi = self.to_ffi();
 
         let fn_name = &ffi.fn_name;
@@ -83,7 +83,7 @@ impl CapFn {
             }
         }
         let struct_component = ffi.generate_input_struct();
-        let wasm_component = ffi.generate_wasm_call();
+        let wasm_component = ffi.generate_wasm_call(module);
 
         quote! {
             #[cfg(feature = "module")]
@@ -98,7 +98,7 @@ impl CapFn {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quote::quote;
+    use quote::{format_ident, quote};
     use syn::parse2;
 
     #[tracing_test::traced_test]
@@ -111,13 +111,12 @@ mod tests {
         };
 
         let item = parse2(item).expect("error");
-        let parsed = CapFn::new(item)
-            .expect("Expansion failed");
+        let parsed = CapFn::new(item).expect("Expansion failed");
         let ffi = parsed.to_ffi();
         let call_struct = ffi.generate_input_struct();
-        let wasm_call = ffi.generate_wasm_call();
-        
-        let result = parsed.generate_function();
+        let wasm_call = ffi.generate_wasm_call(None);
+
+        let result = parsed.generate_module_function(None);
 
         let expected = quote! {
             #[cfg(feature = "module")]
@@ -140,13 +139,12 @@ mod tests {
         };
 
         let item = parse2(item).expect("error");
-        let parsed = CapFn::new(item)
-            .expect("Expansion failed");
+        let parsed = CapFn::new(item).expect("Expansion failed");
         let ffi = parsed.to_ffi();
         let call_struct = ffi.generate_input_struct();
-        let wasm_call = ffi.generate_wasm_call();
-        
-        let result = parsed.generate_function();
+        let wasm_call = ffi.generate_wasm_call(None);
+
+        let result = parsed.generate_module_function(None);
 
         let expected = quote! {
             #[cfg(feature = "module")]
@@ -169,13 +167,12 @@ mod tests {
         };
 
         let item = parse2(item).expect("error");
-        let parsed = CapFn::new(item)
-            .expect("Expansion failed");
+        let parsed = CapFn::new(item).expect("Expansion failed");
         let ffi = parsed.to_ffi();
         let call_struct = ffi.generate_input_struct();
-        let wasm_call = ffi.generate_wasm_call();
-        
-        let result = parsed.generate_function();
+        let wasm_call = ffi.generate_wasm_call(Some(&format_ident!("wasm")));
+
+        let result = parsed.generate_module_function(Some(&format_ident!("wasm")));
 
         let expected = quote! {
             #[cfg(feature = "module")]

@@ -1,10 +1,13 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Attribute, Error, FnArg, Ident, ItemImpl, Pat, PathArguments, Result, ReturnType, Type, parse2, token::RArrow};
+use syn::{
+    Attribute, Error, FnArg, Ident, ItemImpl, Pat, PathArguments, Result, ReturnType, Type, parse2,
+    token::RArrow,
+};
 
 pub fn type_to_return(arg: &Type) -> ReturnType {
     ReturnType::Type(RArrow::default(), Box::new(arg.clone()))
-} 
+}
 
 pub fn return_to_type(arg: &ReturnType) -> Type {
     match arg {
@@ -35,15 +38,17 @@ pub fn get_param_type(arg: &FnArg) -> Option<&Type> {
     }
 }
 
-
 pub fn compare_types(a: &Type, b: &Type) -> bool {
     match (a, b) {
         (Type::Path(p1), Type::Path(p2)) => {
             // Compare paths segment by segment, ignoring spans
-            p1.path.segments.len() == p2.path.segments.len() &&
-            p1.path.segments.iter().zip(p2.path.segments.iter()).all(|(s1, s2)| {
-                s1.ident == s2.ident && s1.arguments == s2.arguments
-            })
+            p1.path.segments.len() == p2.path.segments.len()
+                && p1
+                    .path
+                    .segments
+                    .iter()
+                    .zip(p2.path.segments.iter())
+                    .all(|(s1, s2)| s1.ident == s2.ident && s1.arguments == s2.arguments)
         }
         // Fallback for non-path types
         _ => quote!(#a).to_string() == quote!(#b).to_string(),
@@ -69,7 +74,6 @@ pub fn is_self_ref_or_type(input: &FnArg) -> bool {
         }
     }
 }
-
 
 pub fn has_attr(attrs: &[Attribute], name: &str) -> bool {
     attrs.iter().any(|attr| attr.path().is_ident(name))
@@ -131,7 +135,6 @@ pub fn extract_simple_self_type(input: &ItemImpl) -> Result<Ident> {
     match &*input.self_ty {
         // We only accept Type::Path (e.g., "MyStruct", "std::vec::Vec")
         Type::Path(type_path) => {
-            
             // 2. Reject Qualified Self
             // Blocks: <MyStruct as SomeTrait>::AssocType
             if type_path.qself.is_some() {
@@ -164,7 +167,7 @@ pub fn extract_simple_self_type(input: &ItemImpl) -> Result<Ident> {
 
             Ok(segment.ident.clone())
         }
-        
+
         // 5. Reject all other types (References, Pointers, Arrays, Tuples, etc.)
         // Blocks: &State, [State], (State, Other)
         _ => Err(Error::new_spanned(
@@ -173,7 +176,6 @@ pub fn extract_simple_self_type(input: &ItemImpl) -> Result<Ident> {
         )),
     }
 }
-
 
 pub fn extract_ident_from_type(ty: &Type) -> Result<Ident> {
     match ty {
@@ -211,7 +213,7 @@ pub fn extract_ident_from_type(ty: &Type) -> Result<Ident> {
 
             Ok(segment.ident.clone())
         }
-        
+
         // 4. Reject all other types (References, Pointers, Arrays, Tuples, etc.)
         _ => Err(Error::new_spanned(
             ty,

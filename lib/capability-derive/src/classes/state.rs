@@ -103,12 +103,12 @@ impl CapServer {
         )
     }
 
-    pub fn generate_init_fn(&self) -> TokenStream  {
+    pub fn generate_init_fn(&self) -> TokenStream {
         let struct_name = self.struct_name.clone();
         let config_type = &self.attrs.config;
         let init_trait_name = &self.init_trait_name;
         let init_ffi_name = self.export_init_ident();
-        
+
         if self.attrs.is_async {
             let ffi_func = quote! {
                 #[unsafe(no_mangle)]
@@ -148,7 +148,7 @@ impl CapServer {
 
     pub fn generate_init_export(&self) -> TokenStream {
         let init_ffi_name = self.export_init_ident();
-        
+
         if self.attrs.is_async {
             quote!(::pyroduct::capability_host::ffi::PluginInitFn::Async(#init_ffi_name))
         } else {
@@ -233,7 +233,7 @@ mod tests {
     use super::*;
     use quote::quote;
     use syn::parse2;
-#[tracing_test::traced_test]
+    #[tracing_test::traced_test]
     #[test]
     fn test_sync_server_init_trait() {
         let attr = quote! { service = Greeter, config = GreeterConfig };

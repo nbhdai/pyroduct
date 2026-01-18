@@ -6,20 +6,19 @@
 
 use std::collections::HashMap;
 
-use quote::format_ident;
+use proc_macro2::TokenStream;
+use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
-use syn::{
-    Error, Ident, Item, ItemImpl, ItemStruct, ItemTrait, LitStr, Result, Token
-};
+use syn::{Error, Ident, Item, ItemImpl, ItemStruct, ItemTrait, LitStr, Result, Token};
 
-use crate::classes::{state::CapServer, definition::CapabilityDefTrait, client::CapClient, export::CapabilityService};
+use crate::classes::{
+    client::CapClient, definition::CapabilityDefTrait, export::CapabilityService, state::CapServer,
+};
 use crate::function::CapFn;
 use crate::utils::{extract_ident_ignoring_ref, extract_simple_trait_ident, has_attr, remove_attr};
 
-
-
 /// Parsed content from the capability! macro
-pub struct CapabilityModule {
+pub struct Capability {
     /// Environment/module name (e.g., "http_client")
     pub env: Ident,
     /// env string literal for usage in code
@@ -33,7 +32,7 @@ pub struct CapabilityModule {
     pub other_items: Vec<Item>,
 }
 
-impl Parse for CapabilityModule {
+impl Parse for Capability {
     fn parse(input: ParseStream) -> Result<Self> {
         // 1. Parse Metadata: env = "..."
         let _env_key: Ident = input.parse()?; // "env"
@@ -56,12 +55,12 @@ impl Parse for CapabilityModule {
         let mut parsed_impls: Vec<ItemImpl> = Vec::new();
         let mut parsed_functions: Vec<CapFn> = Vec::new();
         let mut parsed_traits: HashMap<Ident, ItemTrait> = HashMap::new();
-        
+
         // ==============================================================================
         // Pass 1: Implementations and Functions
         // ==============================================================================
         let mut remaining_items = Vec::new();
-        
+
         for item in all_items {
             match item {
                 // impl Trait for Server
@@ -117,31 +116,43 @@ impl Parse for CapabilityModule {
         for impl_item in parsed_impls {
             // A. Identify Server
             let struct_name = extract_ident_ignoring_ref(&*impl_item.self_ty).ok_or({
-                Error::new_spanned(&impl_item.self_ty, "Unable to parse the server, should be a simple ident")
+                Error::new_spanned(
+                    &impl_item.self_ty,
+                    "Unable to parse the server, should be a simple ident",
+                )
             })?;
             let trait_name = extract_simple_trait_ident(&impl_item)?;
             let trait_def = if let Some(capability_trait) = parsed_traits.remove(&trait_name) {
                 CapabilityDefTrait::from_trait(capability_trait, struct_name.clone())?
             } else {
-                return Err(Error::new_spanned(impl_item, "Cannot parse the associated server"));
+                return Err(Error::new_spanned(
+                    impl_item,
+                    "Cannot parse the associated server",
+                ));
             };
-
 
             let server = if let Some(mut server) = parsed_servers.remove(&struct_name) {
                 let attr = remove_attr(&mut server.attrs, "capability_server");
                 CapServer::new(attr, server)?
             } else {
                 // Impl exists but no matching #[capability_server] found in this block.
-                return Err(Error::new_spanned(impl_item, "Cannot find the associated server"));
+                return Err(Error::new_spanned(
+                    impl_item,
+                    "Cannot find the associated server",
+                ));
             };
 
             // Resolve Client (based on type defined in Trait)
-            let client_def = if let Some(mut client) = parsed_clients.remove(&trait_def.ident.client_tn) {
-                remove_attr(&mut client.attrs, "capability_client");
-                CapClient::new(client)?
-            } else {
-                return Err(Error::new_spanned(impl_item, "Cannot find the associated client"));
-            };
+            let client_def =
+                if let Some(mut client) = parsed_clients.remove(&trait_def.ident.client_tn) {
+                    remove_attr(&mut client.attrs, "capability_client");
+                    CapClient::new(client)?
+                } else {
+                    return Err(Error::new_spanned(
+                        impl_item,
+                        "Cannot find the associated client",
+                    ));
+                };
 
             services.push(CapabilityService {
                 struct_def: server,
@@ -149,8 +160,6 @@ impl Parse for CapabilityModule {
                 orig_impl: impl_item,
                 client: client_def,
             });
-
-            
         }
 
         // ==============================================================================
@@ -158,7 +167,7 @@ impl Parse for CapabilityModule {
         // ==============================================================================
         // Any servers or clients that were defined but not linked to an implementation
         // are returned to the `other_items` list as standard structs (attributes removed).
-        
+
         for (_, mut server) in parsed_servers {
             remove_attr(&mut server.attrs, "capability_server");
             other_items.push(Item::Struct(server));
@@ -169,13 +178,80 @@ impl Parse for CapabilityModule {
             other_items.push(Item::Struct(client));
         }
 
-        Ok(CapabilityModule {
+        Ok(Capability {
             env,
             env_str,
             services,
             functions: parsed_functions,
             other_items,
         })
+    }
+}
+
+impl Capability {
+    pub fn module_component(&self) -> TokenStream {
+        let wasm_mod = format_ident!("wasm");
+        let functions = self.functions.iter().map(|f| f.generate_module_function(Some(&wasm_mod))).collect::<Vec<_>>();
+        let clients = self.services.iter().map(|c| c.generate_module_client(Some(&wasm_mod))).collect::<Vec<_>>();
+
+        quote! {
+            #(#functions)*
+            #(#clients)*
+        }
+    }
+    pub fn wasm_calls_component(&self, env_name: &str) -> TokenStream {
+        let functions = self.functions.iter().map(|f| f.to_ffi().generate_client_wasm()).collect::<Vec<_>>();
+        let class_clients = self.services.iter().map(|c| c.generate_wasm_imports().into_iter()).flatten().collect::<Vec<_>>();
+        quote! {
+            #[link(wasm_import_module = #env_name)]
+            unsafe extern "C" {
+                #(#functions)*
+                #(#class_clients)*
+            }
+        }
+    }
+    pub fn capability_component(&self) -> TokenStream {
+        let functions = self.functions.iter().map(|f| f.generate_capability_function()).collect::<Vec<_>>();
+
+        let class_state = self.services.iter().map(|c| c.generate_capability_state()).collect::<Vec<_>>();
+        let original = self.services.iter().map(|c| c.orig_impl()).collect::<Vec<_>>();
+
+        quote! {
+            #(#functions)*
+            #(#class_state)*
+            #(#original)*
+        }
+    }
+
+    pub fn ffi_component(&self) -> TokenStream {
+        let functions = self.functions.iter().map(|f| f.to_ffi().generate_capability_ffi()).collect::<Vec<_>>();
+
+        let class_functions = self.services.iter().map(|c| c.generate_ffi_functions()).collect::<Vec<_>>();
+        let class_export = self.services.iter().map(|c| c.generate_ffi_exports()).collect::<Vec<_>>();
+
+        quote! {
+            #(#functions)*
+            #(#class_functions)*
+            #(#class_export)*
+        }
+    }
+
+    pub fn everything(&self) -> TokenStream {
+        let module_component = self.module_component();
+        let wasm_calls_component = self.wasm_calls_component(&self.env_str);
+        let capability_component = self.capability_component();
+        let ffi_component = self.ffi_component();
+
+        quote! {
+            #module_component
+            pub mod wasm {
+                #wasm_calls_component
+            }
+            pub mod capability {
+                #capability_component
+                #ffi_component
+            }
+        }
     }
 }
 
@@ -231,10 +307,14 @@ mod tests {
             }
         };
 
-        let module: CapabilityModule = parse2(input).expect("Failed to parse module");
+        let module: Capability = parse2(input).expect("Failed to parse module");
 
         assert_eq!(module.env.to_string(), "test_env");
-        assert_eq!(module.services.len(), 1, "Should resolve exactly one service");
+        assert_eq!(
+            module.services.len(),
+            1,
+            "Should resolve exactly one service"
+        );
         assert_eq!(module.functions.len(), 0);
 
         // Check Service Resolution details
@@ -288,7 +368,7 @@ mod tests {
             }
         };
 
-        let module: CapabilityModule = parse2(input).expect("Failed to parse");
+        let module: Capability = parse2(input).expect("Failed to parse");
 
         // 1. Verify the used service was resolved
         assert_eq!(module.services.len(), 1);
@@ -324,7 +404,7 @@ mod tests {
     fn test_standalone_functions_pass_1() {
         let input = quote! {
             env = "func_env",
-            
+
             #[capability]
             fn standalone_one() {}
 
@@ -332,7 +412,7 @@ mod tests {
             fn standalone_two(x: u32) -> u32 { x }
         };
 
-        let module: CapabilityModule = parse2(input).expect("Failed to parse");
+        let module: Capability = parse2(input).expect("Failed to parse");
         assert_eq!(module.functions.len(), 2);
         assert_eq!(module.services.len(), 0);
     }
@@ -344,7 +424,7 @@ mod tests {
             struct PlainStruct;
             fn plain_fn() {}
         };
-        let module: CapabilityModule = parse2(input).expect("Failed to parse");
+        let module: Capability = parse2(input).expect("Failed to parse");
 
         assert_eq!(module.services.len(), 0);
         assert_eq!(module.functions.len(), 0);
