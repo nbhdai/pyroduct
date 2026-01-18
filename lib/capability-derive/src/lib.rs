@@ -9,8 +9,7 @@
 //! 3. **Client state only** - `#[capability_client]` struct + `#[capability(stateless)]` trait
 //! 4. **Both states** - `#[capability_client]` struct + `#[capability]` trait + `#[capability_server]` struct
 
-use proc_macro2::TokenStream;
-use syn::parse::Parse;
+use proc_macro::TokenStream;
 
 pub(crate) mod capability;
 pub(crate) mod classes;
@@ -19,9 +18,10 @@ pub(crate) mod function;
 pub(crate) mod paths;
 pub(crate) mod utils;
 
-#[proc_macro_attribute]
-pub fn capability(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    capability::Capability::parse(item)?;
+#[proc_macro]
+pub fn capability(item: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(item as capability::Capability);
+    input.everything().into()
 }
 
 #[cfg(test)]

@@ -2,10 +2,10 @@ use std::rc::Rc;
 
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
-use syn::punctuated::Punctuated;
+
 use syn::{
-    Ident, ImplItemConst, ImplItemType, ItemTrait, ReturnType, TraitItem, TraitItemConst,
-    TraitItemType, Type,
+    Ident, ItemTrait, ReturnType, TraitItem,
+    Type,
 };
 
 use super::constructors::{ClientConstructor, client_constructor_ffi_meta};
@@ -208,36 +208,6 @@ impl CapabilityDefTrait {
         capability_ffis.extend(self.methods.iter().map(|m| m.build_ffi_meta()));
         capability_ffis
     }
-}
-
-// --- Converters: ImplItem -> TraitItem ---
-
-fn impl_type_to_trait_type(impl_ty: &ImplItemType) -> TraitItem {
-    TraitItem::Type(TraitItemType {
-        attrs: impl_ty.attrs.clone(),
-        type_token: impl_ty.type_token,
-        ident: impl_ty.ident.clone(),
-        generics: impl_ty.generics.clone(),
-        colon_token: None,
-        bounds: Punctuated::new(),
-        // Map assignment (= Type) to Default (= Type)
-        default: Some((impl_ty.eq_token, impl_ty.ty.clone())),
-        semi_token: impl_ty.semi_token,
-    })
-}
-
-fn impl_const_to_trait_const(impl_c: &ImplItemConst) -> TraitItem {
-    TraitItem::Const(TraitItemConst {
-        attrs: impl_c.attrs.clone(),
-        const_token: impl_c.const_token,
-        ident: impl_c.ident.clone(),
-        colon_token: impl_c.colon_token,
-        ty: impl_c.ty.clone(),
-        // Map assignment (= Expr) to Default (= Expr)
-        default: Some((impl_c.eq_token, impl_c.expr.clone())),
-        semi_token: impl_c.semi_token,
-        generics: impl_c.generics.clone(),
-    })
 }
 
 #[cfg(test)]

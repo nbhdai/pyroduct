@@ -19,8 +19,6 @@ use crate::utils::{extract_ident_ignoring_ref, extract_simple_trait_ident, has_a
 
 /// Parsed content from the capability! macro
 pub struct Capability {
-    /// Environment/module name (e.g., "http_client")
-    pub env: Ident,
     /// env string literal for usage in code
     pub env_str: String,
 
@@ -39,7 +37,6 @@ impl Parse for Capability {
         let _: Token![=] = input.parse()?;
         let env_lit: LitStr = input.parse()?;
         let env_str = env_lit.value();
-        let env = format_ident!("{}", env_str);
 
         if input.peek(Token![,]) {
             let _: Token![,] = input.parse()?;
@@ -93,13 +90,12 @@ impl Parse for Capability {
         for item in remaining_items {
             match item {
                 // #[capability_client]
-                Item::Struct(mut s) if has_attr(&s.attrs, "capability_client") => {
-                    remove_attr(&mut s.attrs, "capability_client");
+                Item::Struct(s) if has_attr(&s.attrs, "capability_client") => {
                     let ident = s.ident.clone();
                     parsed_clients.insert(ident, s);
                 }
                 // #[capability_server]
-                Item::Struct(mut s) if has_attr(&s.attrs, "capability_server") => {
+                Item::Struct(s) if has_attr(&s.attrs, "capability_server") => {
                     let ident = s.ident.clone();
                     parsed_servers.insert(ident, s);
                 }
@@ -179,7 +175,6 @@ impl Parse for Capability {
         }
 
         Ok(Capability {
-            env,
             env_str,
             services,
             functions: parsed_functions,
@@ -214,12 +209,14 @@ impl Capability {
         let functions = self.functions.iter().map(|f| f.generate_capability_function()).collect::<Vec<_>>();
 
         let class_state = self.services.iter().map(|c| c.generate_capability_state()).collect::<Vec<_>>();
-        let original = self.services.iter().map(|c| c.orig_impl()).collect::<Vec<_>>();
+        let expanded_traits = self.services.iter().map(|c| c.trait_def.generate_trait_definition()).collect::<Vec<_>>();
+        let trait_impls = self.services.iter().map(|c| c.orig_impl()).collect::<Vec<_>>();
 
         quote! {
             #(#functions)*
             #(#class_state)*
-            #(#original)*
+            #(#expanded_traits)*
+            #(#trait_impls)*
         }
     }
 
@@ -241,7 +238,7 @@ impl Capability {
         let wasm_calls_component = self.wasm_calls_component(&self.env_str);
         let capability_component = self.capability_component();
         let ffi_component = self.ffi_component();
-
+        let others = &self.other_items;
         quote! {
             #module_component
             pub mod wasm {
@@ -249,6 +246,7 @@ impl Capability {
             }
             pub mod capability {
                 #capability_component
+                #(#others)*
                 #ffi_component
             }
         }
@@ -309,7 +307,7 @@ mod tests {
 
         let module: Capability = parse2(input).expect("Failed to parse module");
 
-        assert_eq!(module.env.to_string(), "test_env");
+        assert_eq!(module.env_str, "test_env");
         assert_eq!(
             module.services.len(),
             1,

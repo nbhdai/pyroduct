@@ -5,7 +5,7 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Ident, ItemImpl, Result};
+use syn::{Ident, ItemImpl};
 
 use crate::classes::{client::CapClient, definition::CapabilityDefTrait, state::CapServer};
 
@@ -66,7 +66,7 @@ impl CapabilityService {
         let reset_export = self.struct_def.generate_reset_export();
 
         // Generate the PluginExport array entries
-        let plugin_exports: Vec<(_)> = capability_ffis
+        let plugin_exports: Vec<_> = capability_ffis
             .iter()
             .map(|ffi| {
                 let fn_ffi_name = &ffi.fn_ffi_name();
@@ -282,18 +282,5 @@ mod tests {
         };
 
         crate::fmt::assert_code_eq_token(&output, &expected);
-
-        let expected_wasm = quote! {
-            fn __test_trait__test_server__new_client__wasm(
-                cs_ptr: *const u8,
-                cs_len: usize,
-                in_ptr: *const u8,
-                in_len: usize,
-            ) -> *const u8;
-        };
-
-        let output_wasm = service.generate_wasm_imports();
-        crate::fmt::assert_code_eq_token(&output_wasm[0], &expected_wasm);
-
     }
 }

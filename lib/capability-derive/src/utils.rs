@@ -38,23 +38,6 @@ pub fn get_param_type(arg: &FnArg) -> Option<&Type> {
     }
 }
 
-pub fn compare_types(a: &Type, b: &Type) -> bool {
-    match (a, b) {
-        (Type::Path(p1), Type::Path(p2)) => {
-            // Compare paths segment by segment, ignoring spans
-            p1.path.segments.len() == p2.path.segments.len()
-                && p1
-                    .path
-                    .segments
-                    .iter()
-                    .zip(p2.path.segments.iter())
-                    .all(|(s1, s2)| s1.ident == s2.ident && s1.arguments == s2.arguments)
-        }
-        // Fallback for non-path types
-        _ => quote!(#a).to_string() == quote!(#b).to_string(),
-    }
-}
-
 pub fn is_self_ref_or_type(input: &FnArg) -> bool {
     match input {
         FnArg::Receiver(_) => true,
@@ -128,53 +111,6 @@ pub fn extract_simple_trait_ident(input: &ItemImpl) -> Result<Ident> {
 
     // 4. Return the Ident
     Ok(segment.ident.clone())
-}
-
-pub fn extract_simple_self_type(input: &ItemImpl) -> Result<Ident> {
-    // 1. Inspect the Box<Type>
-    match &*input.self_ty {
-        // We only accept Type::Path (e.g., "MyStruct", "std::vec::Vec")
-        Type::Path(type_path) => {
-            // 2. Reject Qualified Self
-            // Blocks: <MyStruct as SomeTrait>::AssocType
-            if type_path.qself.is_some() {
-                return Err(Error::new_spanned(
-                    type_path,
-                    "Type must be a simple identifier, not a qualified path.",
-                ));
-            }
-
-            // 3. Enforce "1 word" rule (No module path)
-            // Blocks: crate::MyStruct
-            if type_path.path.segments.len() != 1 {
-                return Err(Error::new_spanned(
-                    &type_path.path,
-                    "Type must be a simple identifier, not a path (e.g., use 'State', not 'crate::State').",
-                ));
-            }
-
-            // Safe to unwrap because len == 1
-            let segment = type_path.path.segments.first().unwrap();
-
-            // 4. Enforce no generics
-            // Blocks: MyStruct<T>
-            if !matches!(segment.arguments, PathArguments::None) {
-                return Err(Error::new_spanned(
-                    &type_path.path,
-                    "Type must not have generic parameters (e.g., use 'State', not 'State<T>').",
-                ));
-            }
-
-            Ok(segment.ident.clone())
-        }
-
-        // 5. Reject all other types (References, Pointers, Arrays, Tuples, etc.)
-        // Blocks: &State, [State], (State, Other)
-        _ => Err(Error::new_spanned(
-            &input.self_ty,
-            "Type must be a simple struct identifier (e.g., impl Trait for State). References, tuples, or arrays are not allowed.",
-        )),
-    }
 }
 
 pub fn extract_ident_from_type(ty: &Type) -> Result<Ident> {
