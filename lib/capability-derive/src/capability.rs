@@ -6,14 +6,13 @@
 
 use std::collections::HashMap;
 
-use quote::{format_ident, quote};
+use quote::format_ident;
 use syn::parse::{Parse, ParseStream};
 use syn::{
-    Error, Ident, Item, ItemImpl, ItemTrait, LitStr, Result, Token,
+    Error, Ident, Item, ItemImpl, ItemStruct, ItemTrait, LitStr, Result, Token
 };
 
 use crate::classes::{state::CapServer, definition::CapabilityDefTrait, client::CapClient, export::CapabilityService};
-use crate::ffi::CapabilityFuncFFI;
 use crate::function::CapFn;
 use crate::utils::{extract_ident_ignoring_ref, extract_simple_trait_ident, has_attr, remove_attr};
 
@@ -89,22 +88,21 @@ impl Parse for CapabilityModule {
         // ==============================================================================
         // Pass 2: Servers, Clients, and Implementations
         // ==============================================================================
-        let mut parsed_servers: HashMap<Ident, CapServer> = HashMap::new();
-        let mut parsed_clients: HashMap<Ident, CapClient> = HashMap::new();
+        let mut parsed_servers: HashMap<Ident, ItemStruct> = HashMap::new();
+        let mut parsed_clients: HashMap<Ident, ItemStruct> = HashMap::new();
         let mut other_items = Vec::new();
         for item in remaining_items {
             match item {
                 // #[capability_client]
                 Item::Struct(mut s) if has_attr(&s.attrs, "capability_client") => {
                     remove_attr(&mut s.attrs, "capability_client");
-                    let client = CapClient::new(s)?;
-                    parsed_clients.insert(client.ident.clone(), client);
+                    let ident = s.ident.clone();
+                    parsed_clients.insert(ident, s);
                 }
                 // #[capability_server]
                 Item::Struct(mut s) if has_attr(&s.attrs, "capability_server") => {
-                    let attr = remove_attr(&mut s.attrs, "capability_server");
-                    let server = CapServer::new(attr, s)?;
-                    parsed_servers.insert(server.struct_name.clone(), server);
+                    let ident = s.ident.clone();
+                    parsed_servers.insert(ident, s);
                 }
                 // Pass-through
                 other => other_items.push(other),
@@ -129,16 +127,18 @@ impl Parse for CapabilityModule {
             };
 
 
-            let server = if let Some(server) = parsed_servers.remove(&struct_name) {
-                server
+            let server = if let Some(mut server) = parsed_servers.remove(&struct_name) {
+                let attr = remove_attr(&mut server.attrs, "capability_server");
+                CapServer::new(attr, server)?
             } else {
                 // Impl exists but no matching #[capability_server] found in this block.
                 return Err(Error::new_spanned(impl_item, "Cannot find the associated server"));
             };
 
             // Resolve Client (based on type defined in Trait)
-            let client_def = if let Some(c) = parsed_clients.remove(&trait_def.client_name) {
-                c
+            let client_def = if let Some(mut client) = parsed_clients.remove(&trait_def.ident.client_tn) {
+                remove_attr(&mut client.attrs, "capability_client");
+                CapClient::new(client)?
             } else {
                 return Err(Error::new_spanned(impl_item, "Cannot find the associated client"));
             };
@@ -159,13 +159,15 @@ impl Parse for CapabilityModule {
         // Any servers or clients that were defined but not linked to an implementation
         // are returned to the `other_items` list as standard structs (attributes removed).
         
-        // for (_, server) in parsed_servers {
-        //     other_items.push(Item::Struct(server.input));
-        // }
+        for (_, mut server) in parsed_servers {
+            remove_attr(&mut server.attrs, "capability_server");
+            other_items.push(Item::Struct(server));
+        }
 
-        // for (_, client) in parsed_clients {
-        //     other_items.push(Item::Struct(client.input));
-        // }
+        for (_, mut client) in parsed_clients {
+            remove_attr(&mut client.attrs, "capability_client");
+            other_items.push(Item::Struct(client));
+        }
 
         Ok(CapabilityModule {
             env,
@@ -204,7 +206,7 @@ mod tests {
             env = "test_env",
 
             #[capability_client]
-            struct MyClient { val: u32 }
+            pub struct MyClient { val: u32 }
 
             #[capability_server(config = MyServer)]
             struct MyServer { internal: i32 }
@@ -238,7 +240,7 @@ mod tests {
         // Check Service Resolution details
         let service = &module.services[0];
         assert_eq!(service.struct_def.struct_name.to_string(), "MyServer");
-        assert_eq!(service.trait_def.trait_name.to_string(), "MyTrait");
+        assert_eq!(service.trait_def.ident.trait_tn.to_string(), "MyTrait");
 
         // Verify used items are removed from other_items
         assert_eq!(count_structs_in_other(&module.other_items, "MyClient"), 0);
@@ -255,15 +257,15 @@ mod tests {
 
             // --- Used Pair ---
             #[capability_client]
-            struct UsedClient { a: u32 }
+            pub struct UsedClient { a: u32 }
 
             #[capability_server(config = UsedConfig)]
             struct UsedServer { b: i32 }
 
             // --- Unused Pair ---
-            struct UnusedConfig { a: i32 }
+            pub struct UnusedConfig { a: i32 }
             #[capability_client]
-            struct UnusedClient { c: u32 }
+            pub struct UnusedClient { c: u32 }
             #[capability_server(config = UnusedConfig)]
             struct UnusedServer { d: i32 }
 

@@ -1,30 +1,29 @@
-use heck::AsSnakeCase;
+use std::rc::Rc;
+
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::{
     Error, FnArg, GenericArgument, Ident, PathArguments, ReturnType, TraitItemFn, Type,
-    parse_quote, parse2,
+    parse_quote, parse2, 
 };
 
-use crate::{ffi::{CapabilityFuncFFI, InputParams}, utils::{extract_ident_ignoring_ref, is_self_ref_or_type}};
+use crate::{ffi::{CapabilityFuncFFI, InputParams}, paths::ClassIdent, utils::{extract_ident_ignoring_ref, is_self_ref_or_type}};
 
 /// Represents a validated method within the Capability trait.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CapabilityMethod {
     pub name: Ident,
+    pub class: Rc<ClassIdent>,
     pub inputs: Vec<(Ident, Type)>,
     pub output: ReturnType,
     pub original_sig: syn::Signature,
     pub attrs: Vec<syn::Attribute>,
-    pub client: Ident,
-    pub error_type: Option<Type>,
 }
 
 impl CapabilityMethod {
     pub fn from_trait(
         method: TraitItemFn,
-        client: &Ident,
-        explicit_error_type: Option<&Type>, // Passed in as requested, even if unused for current validation rules
+        class: &Rc<ClassIdent>,
     ) -> syn::Result<Self> {
         let sig = &method.sig;
 
@@ -55,7 +54,7 @@ impl CapabilityMethod {
             }
 
             // Check for 'Client' return
-            if quote!(#ty).to_string().contains(&client.to_string()) {
+            if quote!(#ty).to_string().contains(&class.client_tn.to_string()) {
                 return Err(Error::new_spanned(
                     ty,
                     "Capability methods cannot return the defined 'Client' type.",
@@ -72,7 +71,7 @@ impl CapabilityMethod {
             if let FnArg::Typed(pat_type) = input {
                 let input_type = pat_type.ty.as_ref();
                 if let Some(input_ident) = extract_ident_ignoring_ref(input_type) {
-                    if input_ident == client {
+                    if input_ident == &class.client_tn {
                         return Err(Error::new_spanned(
                             &pat_type.pat,
                             "Trait methods of a capability cannot accept a Client",
@@ -97,7 +96,7 @@ impl CapabilityMethod {
         // --------------------------------------------------------
         // Rule 5: Strict Error Type Enforcement
         // --------------------------------------------------------
-        let output = if let Some(expected_error) = explicit_error_type {
+        let output = if let Some(expected_error) = &class.error_tn {
             transform_return_type(&sig.output, expected_error)?
         } else {
             sig.output.clone()
@@ -105,12 +104,11 @@ impl CapabilityMethod {
 
         Ok(Self {
             name: sig.ident.clone(),
+            class: class.clone(),
             inputs: clean_inputs,
             output,
             original_sig: sig.clone(),
             attrs: method.attrs,
-            client: client.clone(),
-            error_type: explicit_error_type.cloned(),
         })
     }
 
@@ -123,7 +121,7 @@ impl CapabilityMethod {
     pub fn trait_method_generation(&self) -> TokenStream {
         let name = &self.name;
         let attrs = &self.attrs;
-        let client = &self.client;
+        let client = &self.class.client_tn;
 
         let mut args_tokens = Vec::new();
 
@@ -151,14 +149,8 @@ impl CapabilityMethod {
     /// Helper to construct the CapabilityFuncFFI configuration.
     /// Encapsulates all logic regarding return type calculation, client ID extraction,
     /// and input parameter wrapping.
-    pub fn build_ffi_meta(&self, trait_name: &Ident, state_name: &Ident) -> CapabilityFuncFFI {
+    pub fn build_ffi_meta(&self) -> CapabilityFuncFFI {
         let name = &self.name;
-
-        // 2. Determine Client Identity
-        // If client is set, we extract the ident (e.g. "MyClient").
-        // CapabilityFuncFFI expects Option<Ident>.
-        let client_ident = self.client.clone();
-        let ident_root = format_ident!("__{}__{}__{}", AsSnakeCase(trait_name.to_string()).to_string(), AsSnakeCase(state_name.to_string()).to_string(), AsSnakeCase(name.to_string()).to_string());
 
         // 3. Determine Input Parameters
         let input_params = if self.inputs.is_empty() {
@@ -168,27 +160,19 @@ impl CapabilityMethod {
             Some(InputParams::One(n.clone(), t.clone()))
         } else {
             let params = self.inputs.clone();
-            let struct_name = format_ident!("{}__Input", ident_root);
             Some(InputParams::Many {
                 params,
-                input_struct_name: struct_name,
             })
         };
 
         // 4. Construct Struct
         CapabilityFuncFFI {
-            // Library path: __user_trait__struct_name__method_name
-            library: ident_root.clone(),
+            class: Some(self.class.clone()),
             fn_name: name.clone(),
-            // These names are primarily used for host-side generation, but required by struct
-            fn_ffi_name: format_ident!("{}__ffi", ident_root),
-            fn_wasm_name: format_ident!("{}__wasm", ident_root),
             vis: syn::Visibility::Public(parse_quote!(pub)),
             is_async: self.original_sig.asyncness.is_some(),
             return_type: self.output.clone(),
             input: input_params,
-            client: Some(client_ident),
-            server: Some(state_name.clone()),
         }
     }
 
@@ -198,7 +182,7 @@ impl CapabilityMethod {
     ///
     /// # Arguments
     /// * `trait_name` - The name of the trait, used to generate the library path `__trait_method`.
-    pub fn client_method_generation(&self, trait_name: &Ident, state_name: &Ident) -> TokenStream {
+    pub fn client_method_generation(&self) -> TokenStream {
         let name = &self.name;
         let attrs = &self.attrs;
 
@@ -209,7 +193,7 @@ impl CapabilityMethod {
         }
 
         // 3. Build FFI Metadata
-        let ffi = self.build_ffi_meta(trait_name, state_name);
+        let ffi = self.build_ffi_meta();
 
         // 4. Prepare Return Type for Signature
         let return_tokens = &ffi.return_type;
@@ -302,22 +286,27 @@ fn extract_result_parts(ty: &Type) -> Option<(&Type, &Type)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quote::format_ident;
     use syn::{TraitItemFn, Type};
 
     /// Helper to create a CapabilityMethod from a raw function signature string.
     fn create_method_trait(
         sig_code: TokenStream,
-        client_str: &str,
         error_type_str: Option<&str>,
-    ) -> CapabilityMethod {
+    ) -> syn::Result<CapabilityMethod> {
         let method: TraitItemFn = syn::parse2(sig_code).expect("Failed to parse method signature");
 
-        let client: Ident = format_ident!("{client_str}");
         let error_type: Option<Type> =
-            error_type_str.map(|s| syn::parse_str(s).expect("Failed to parse error type"));
+            error_type_str.map(|s| syn::parse_str(s).expect("Failed to parse error"));
+        
+        let class = Rc::new(ClassIdent {
+            trait_tn: format_ident!("MyTrait"),
+            state_tn: format_ident!("MyServer"),
+            client_tn: format_ident!("MyClient"),
+            error_tn: error_type,
+        });
 
-        CapabilityMethod::from_trait(method, &client, error_type.as_ref())
-            .expect("CapabilityMethod validation failed")
+        CapabilityMethod::from_trait(method, &class)
     }
 
     #[test]
@@ -328,14 +317,12 @@ mod tests {
         };
 
         // 2. Parse and process
-        let method = create_method_trait(code, "MyClient", None);
-        let state_name = format_ident!("MyState");
-        let trait_name = format_ident!("MyTrait");
-        let method_ffi = method.build_ffi_meta(&trait_name, &state_name);
+        let method = create_method_trait(code, None).unwrap();
+        let method_ffi = method.build_ffi_meta();
         let struct_tokens = method_ffi.generate_input_struct();
         let wasm_call = method_ffi.generate_wasm_call();
         // 3. Generate
-        let output = method.client_method_generation(&trait_name, &state_name);
+        let output = method.client_method_generation();
 
         // 4. Expected
         let expected = quote! {
@@ -356,14 +343,12 @@ mod tests {
         };
 
         // 2. Parse with an Error type defined
-        let method = create_method_trait(code, "MyClient", Some("MyError"));
-        let state_name = format_ident!("MyState");
-        let trait_name = format_ident!("MyTrait");
-        let method_ffi = method.build_ffi_meta(&trait_name, &state_name);
+        let method = create_method_trait(code, Some("MyError")).unwrap();
+        let method_ffi = method.build_ffi_meta();
         let struct_tokens = method_ffi.generate_input_struct();
         let wasm_call = method_ffi.generate_wasm_call();
         // 3. Generate
-        let output = method.client_method_generation(&trait_name, &state_name);
+        let output = method.client_method_generation();
 
         // 4. Expected
         let expected = quote! {
@@ -384,15 +369,13 @@ mod tests {
         };
 
         // 2. Parse
-        let method = create_method_trait(code, "MyClient", None);
-        let state_name = format_ident!("MyState");
-        let trait_name = format_ident!("MyTrait");
+        let method = create_method_trait(code, None).unwrap();
 
-        let method_ffi = method.build_ffi_meta(&trait_name, &state_name);
+        let method_ffi = method.build_ffi_meta();
         let struct_tokens = method_ffi.generate_input_struct();
         let wasm_call = method_ffi.generate_wasm_call();
         // 3. Generate
-        let output = method.client_method_generation(&trait_name, &state_name);
+        let output = method.client_method_generation();
 
         // 4. Expected
         let expected = quote! {
@@ -407,11 +390,10 @@ mod tests {
 
     #[test]
     fn test_validation_rejects_forbidden_patterns() {
-        let client = "MyClient";
         let code = quote! {
             fn invalid(other: &Self) -> ();
         };
-        let res = create_method_result(code, client, None);
+        let res = create_method_trait(code, None);
         assert!(res.is_err(), "Capability methods cannot take self");
         assert_eq!(
             res.unwrap_err().to_string(),
@@ -422,7 +404,7 @@ mod tests {
         let code_ret_client = quote! {
             fn make_client(&self) -> MyClient;
         };
-        let res = create_method_result(code_ret_client, client, None);
+        let res = create_method_trait(code_ret_client, None);
         assert!(res.is_err(), "Should have rejected returning Client type");
         assert_eq!(
             res.unwrap_err().to_string(),
@@ -432,7 +414,7 @@ mod tests {
         let code_arg_client = quote! {
             fn process(c: MyClient);
         };
-        let res = create_method_result(code_arg_client, client, None);
+        let res = create_method_trait(code_arg_client, None);
         assert!(
             res.is_err(),
             "Should have rejected accepting Client type argument"
@@ -445,7 +427,7 @@ mod tests {
         let code_arg_client = quote! {
             fn process(c: f32) -> u32;
         };
-        let res = create_method_result(code_arg_client, client, Some("MyError"));
+        let res = create_method_trait(code_arg_client, Some("MyError"));
         assert!(
             res.is_err(),
             "Should have rejected a non result return"
@@ -454,77 +436,5 @@ mod tests {
             res.unwrap_err().to_string(),
             "Method must return Result<T, MyError> or Result<T, Self::Error>."
         );
-    }
-
-    fn create_method_result(
-        sig_code: TokenStream,
-        client_str: &str,
-        error_type_str: Option<&str>,
-    ) -> syn::Result<CapabilityMethod> {
-        let method: TraitItemFn = syn::parse2(sig_code).unwrap();
-        let client: Ident = format_ident!("{client_str}");
-        let error_type: Option<Type> = error_type_str.map(|s| syn::parse_str(s).unwrap());
-
-        CapabilityMethod::from_trait(method, &client, error_type.as_ref())
-    }
-
-    #[test]
-    fn test_ffi_generation_sync() {
-        // 1. Define sync method with one input
-        let code = quote! {
-            fn sync_op(val: u32) -> bool;
-        };
-        let method = create_method_trait(code, "MyClient", None);
-        let trait_name = format_ident!("MyTrait");
-        let state_name = format_ident!("MyState");
-
-        // 2. Generate FFI export
-        let output = method.build_ffi_meta(&trait_name, &state_name);
-
-        let expected = CapabilityFuncFFI {
-            library: format_ident!("__my_trait__my_state__sync_op"),
-            fn_name: format_ident!("sync_op"), // The actual method name
-            fn_ffi_name: format_ident!("__my_trait__my_state__sync_op__ffi"),
-            fn_wasm_name: format_ident!("__my_trait__my_state__sync_op__wasm"),
-            vis: syn::Visibility::Public(parse_quote!(pub)),
-            is_async: false,
-            return_type: parse_quote!(-> bool), 
-            input: Some(InputParams::One(format_ident!("val"), parse_quote!(u32))),
-            client: Some(format_ident!("MyClient")),
-            server: Some(format_ident!("MyState")),
-        };
-
-        // 3. Verify that the struct fields match expectation
-        assert_eq!(&output, &expected);
-    }
-
-    #[test]
-    fn test_ffi_generation_async() {
-        // 1. Define async method with one input
-        let code = quote! {
-            async fn async_op(data: String) -> u64;
-        };
-        let method = create_method_trait(code, "MyClient", None);
-        let state_name = format_ident!("MyState");
-        let trait_name = format_ident!("MyTrait");
-
-        // 2. Generate FFI export
-        let output = method.build_ffi_meta(&trait_name, &state_name);
-
-        let expected = CapabilityFuncFFI {
-            library: format_ident!("__my_trait__my_state__async_op"),
-            fn_name: format_ident!("async_op"),
-            fn_ffi_name: format_ident!("__my_trait__my_state__async_op__ffi"),
-            fn_wasm_name: format_ident!("__my_trait__my_state__async_op__wasm"),
-            vis: syn::Visibility::Public(parse_quote!(pub)),
-            is_async: true,
-            return_type: parse_quote!(-> u64),
-            input: Some(InputParams::One(format_ident!("data"), parse_quote!(String))),
-            client: Some(format_ident!("MyClient")),
-            server: Some(format_ident!("MyState")),
-        };
-
-        // 3. Verify that the struct fields match expectation
-        assert_eq!(&output, &expected);
     }
 }

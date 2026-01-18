@@ -9,13 +9,12 @@
 //! 3. **Client state only** - `#[capability_client]` struct + `#[capability(stateless)]` trait
 //! 4. **Both states** - `#[capability_client]` struct + `#[capability]` trait + `#[capability_server]` struct
 
-use proc_macro::TokenStream;
-
 pub(crate) mod classes;
 pub(crate) mod ffi;
 pub(crate) mod capability;
 pub(crate) mod function;
 pub(crate) mod utils;
+pub(crate) mod paths;
 
 // #[proc_macro_attribute]
 // pub fn capability(_attr: TokenStream, item: TokenStream) -> TokenStream {

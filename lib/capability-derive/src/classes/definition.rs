@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::punctuated::Punctuated;
@@ -10,6 +12,7 @@ use super::constructors::{ClientConstructor, client_constructor_ffi_meta};
 use super::methods::CapabilityMethod;
 
 use crate::ffi::CapabilityFuncFFI;
+use crate::paths::ClassIdent;
 use crate::utils::extract_ident_from_type;
 
 // ==============================================================================
@@ -39,25 +42,22 @@ use crate::utils::extract_ident_from_type;
 ///     corresponding `Server` state instance.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CapabilityDefTrait {
-    pub trait_name: Ident,
-    pub state_name: Ident,
-    pub client_name: Ident,
+    pub ident: Rc<ClassIdent>,
     pub original_attrs: Vec<syn::Attribute>,
     pub generics: syn::Generics,
     pub methods: Vec<CapabilityMethod>,
     pub constructors: Vec<ClientConstructor>,
     pub other_items: Vec<TraitItem>,
-    pub explicit_error_type: Option<Type>,
 }
 
 impl CapabilityDefTrait {
     /// Ingests a Trait Definition (original logic).
-    pub fn from_trait(input: ItemTrait, state_name: Ident) -> syn::Result<Self> {
-        let trait_name = input.ident.clone();
+    pub fn from_trait(input: ItemTrait, state_tn: Ident) -> syn::Result<Self> {
+        let trait_tn = input.ident.clone();
         let mut methods = Vec::new();
         let mut constructors = Vec::new();
         let mut other_items = Vec::new();
-        let mut explicit_error_type: Option<Type> = None;
+        let mut error_tn: Option<Type> = None;
         let mut explicit_client_type = None;
 
         // 1. First Pass: Collect types and items.
@@ -65,7 +65,7 @@ impl CapabilityDefTrait {
             match item {
                 TraitItem::Type(ty) if ty.ident == "Error" => {
                     if let Some((_, error_type)) = &ty.default {
-                        explicit_error_type = Some(error_type.clone());
+                        error_tn = Some(error_type.clone());
                         other_items.push(item.clone());
                     } else {
                         return Err(syn::Error::new_spanned(
@@ -92,7 +92,7 @@ impl CapabilityDefTrait {
             }
         }
 
-        let client_name = if let Some(explicit_client_type) = explicit_client_type {
+        let client_tn = if let Some(explicit_client_type) = explicit_client_type {
             explicit_client_type
         } else {
             return Err(syn::Error::new_spanned(
@@ -101,11 +101,19 @@ impl CapabilityDefTrait {
             ));
         };
 
+        let ident = Rc::new(ClassIdent {
+            trait_tn,
+            state_tn,
+            client_tn,
+            error_tn,
+        });
+
         // 2. Second Pass: Method Verification and Collection
         for item in &input.items {
             if let TraitItem::Fn(method) = item {
                 let is_constructor = if let ReturnType::Type(_, ty) = &method.sig.output {
                     let ty_str = quote!(#ty).to_string();
+                    let client_name = &ident.client_tn;
                     let client_str = quote!(#client_name).to_string();
                     ty_str == client_str || ty_str == "Self :: Client"
                 } else {
@@ -114,13 +122,12 @@ impl CapabilityDefTrait {
 
                 if is_constructor {
                     let ctor =
-                        ClientConstructor::new(method, &client_name, explicit_error_type.as_ref())?;
+                        ClientConstructor::new(method, &ident)?;
                     constructors.push(ctor);
                 } else {
                     let cap_method = CapabilityMethod::from_trait(
                         method.clone(),
-                        &client_name,
-                        explicit_error_type.as_ref(),
+                        &ident,
                     )?;
                     methods.push(cap_method);
                 }
@@ -137,21 +144,18 @@ impl CapabilityDefTrait {
         }
 
         Ok(Self {
+            ident,
             original_attrs: input.attrs.clone(),
             generics: input.generics,
             methods,
-            trait_name,
-            state_name,
-            client_name,
             constructors,
             other_items,
-            explicit_error_type,
         })
     }
 
     /// Generates the final TokenStream for the Trait definition.
     pub fn generate_trait_definition(&self) -> TokenStream {
-        let trait_name = &self.trait_name;
+        let trait_name = &self.ident.trait_tn;
         let attrs = &self.original_attrs;
         let generics = &self.generics;
         let other_items = &self.other_items;
@@ -170,8 +174,8 @@ impl CapabilityDefTrait {
 
     /// Helper to determine the signature of `new_client`
     fn generate_new_client_signature(&self) -> TokenStream {
-        let client_name = &self.client_name;
-        if let Some(error) = &self.explicit_error_type {
+        let client_name = &self.ident.client_tn;
+        if let Some(error) = &self.ident.error_tn {
             quote! {
                 fn new_client(&self, client: &#client_name) -> Result<(), #error>;
             }
@@ -184,21 +188,20 @@ impl CapabilityDefTrait {
 
     /// Generates the `impl ClientType { ... }` block.
     pub fn generate_client_impl(&self) -> TokenStream {
-        let client_name = &self.client_name;
+        let client_name = &self.ident.client_tn;
 
 
         let (impl_generics, _, where_clause) = self.generics.split_for_impl();
-        let trait_name = &self.trait_name;
 
         let capability_methods = self
             .methods
             .iter()
-            .map(|m| m.client_method_generation(trait_name, &self.state_name));
+            .map(|m| m.client_method_generation());
 
         let constructors = self
             .constructors
             .iter()
-            .map(|c| c.client_method_generation(trait_name, &self.state_name));
+            .map(|c| c.client_method_generation());
 
         quote! {
             impl #impl_generics #client_name #where_clause {
@@ -210,12 +213,9 @@ impl CapabilityDefTrait {
     }
 
     pub fn capability_ffis(&self) -> Vec<CapabilityFuncFFI> {
-        let trait_name = &self.trait_name;
         let mut capability_ffis = Vec::with_capacity(self.methods.len() + 1);
         let constructor_ffi = client_constructor_ffi_meta(
-            trait_name,
-            &self.state_name,
-            self.explicit_error_type.as_ref(),
+            &self.ident,
             false,
         );
         capability_ffis.push(constructor_ffi);
@@ -223,7 +223,7 @@ impl CapabilityDefTrait {
         capability_ffis.extend(self
             .methods
             .iter()
-            .map(|m| m.build_ffi_meta(trait_name, &self.state_name)));
+            .map(|m| m.build_ffi_meta()));
         capability_ffis
     }
 }
@@ -267,6 +267,14 @@ mod tests {
 
     #[test]
     fn test_generate_client_impl_integration() {
+        let state_name = format_ident!("MyState");
+        let expected_class = Rc::new(ClassIdent {
+            trait_tn: format_ident!("MyTrait"),
+            state_tn: format_ident!("MyState"),
+            client_tn: format_ident!("MyClient"),
+            error_tn: None,
+        });
+
         let code = parse2(quote! {
             trait MyTrait {
                 type Client = MyClient;
@@ -288,15 +296,12 @@ mod tests {
         let method = parse2(quote! {
             fn get_info() -> u32;
         }).unwrap();
-        let client_name = syn::parse_str("MyClient").unwrap();
-        let state_name = format_ident!("MyState");
-        let trait_name = format_ident!("MyTrait");
 
-        let expected_constructor = ClientConstructor::new(&constructor, &client_name, None).unwrap();
-        let expected_method = CapabilityMethod::from_trait(method, &client_name, None).unwrap();
+        let expected_constructor = ClientConstructor::new(&constructor, &expected_class).unwrap();
+        let expected_method = CapabilityMethod::from_trait(method, &expected_class).unwrap();
 
-        let expected_constructor = expected_constructor.client_method_generation(&trait_name, &state_name);
-        let expected_method = expected_method.client_method_generation(&trait_name, &state_name);
+        let expected_constructor = expected_constructor.client_method_generation();
+        let expected_method = expected_method.client_method_generation();
 
         let def = CapabilityDefTrait::from_trait(code, state_name.clone()).expect("Failed to parse capability trait");
         let output = def.generate_client_impl();
@@ -315,20 +320,24 @@ mod tests {
         assert_eq!(ffis.len(), 2, "Should have 2 FFIs: 1 constructor + 1 method");
         
         // Verify constructor FFI
-        assert_eq!(ffis[0].library.to_string(), "__my_trait__my_state__new_client");
+        assert_eq!(ffis[0].class.as_ref(), Some(&expected_class));
         assert_eq!(ffis[0].fn_name.to_string(), "new_client");
-        assert_eq!(ffis[0].fn_ffi_name.to_string(), "__my_trait__my_state__new_client__ffi");
-        assert_eq!(ffis[0].fn_wasm_name.to_string(), "__my_trait__my_state__new_client__wasm");
         
         // Verify method FFI
-        assert_eq!(ffis[1].library.to_string(), "__my_trait__my_state__get_info");
+        assert_eq!(ffis[1].class.as_ref(), Some(&expected_class));
         assert_eq!(ffis[1].fn_name.to_string(), "get_info");
-        assert_eq!(ffis[1].fn_ffi_name.to_string(), "__my_trait__my_state__get_info__ffi");
-        assert_eq!(ffis[1].fn_wasm_name.to_string(), "__my_trait__my_state__get_info__wasm");
     }
 
     #[test]
     fn test_generate_client_impl_with_error_and_input_structs() {
+        let state_name = format_ident!("MyState");
+        let expected_class = Rc::new(ClassIdent {
+            trait_tn: format_ident!("AdvancedTrait"),
+            state_tn: format_ident!("MyState"),
+            client_tn: format_ident!("AdvancedClient"),
+            error_tn: Some(syn::parse_str("MyError").unwrap()),
+        });
+
         let code = parse2(quote! {
             trait AdvancedTrait {
                 type Client = AdvancedClient;
@@ -366,20 +375,15 @@ mod tests {
             fn sync_op(level: u8) -> Result<bool, MyError>;
         }).unwrap();
 
-        let client_name = format_ident!("AdvancedClient");
-        let error_name: Type = syn::parse_str("MyError").unwrap();
-        let state_name = format_ident!("MyState");
-        let trait_name = format_ident!("AdvancedTrait");
+        let expected_constructor = ClientConstructor::new(&constructor, &expected_class).unwrap();
+        let expected_constructor_2 = ClientConstructor::new(&constructor_2, &expected_class).unwrap();
+        let expected_method = CapabilityMethod::from_trait(method, &expected_class).unwrap();
+        let expected_method_2 = CapabilityMethod::from_trait(method_2, &expected_class).unwrap();
 
-        let expected_constructor = ClientConstructor::new(&constructor, &client_name, Some(&error_name)).unwrap();
-        let expected_constructor_2 = ClientConstructor::new(&constructor_2, &client_name, Some(&error_name)).unwrap();
-        let expected_method = CapabilityMethod::from_trait(method, &client_name, Some(&error_name)).unwrap();
-        let expected_method_2 = CapabilityMethod::from_trait(method_2, &client_name, Some(&error_name)).unwrap();
-
-        let expected_constructor = expected_constructor.client_method_generation(&trait_name, &state_name);
-        let expected_constructor_2 = expected_constructor_2.client_method_generation(&trait_name, &state_name);
-        let expected_method = expected_method.client_method_generation(&trait_name, &state_name);
-        let expected_method_2 = expected_method_2.client_method_generation(&trait_name, &state_name);
+        let expected_constructor = expected_constructor.client_method_generation();
+        let expected_constructor_2 = expected_constructor_2.client_method_generation();
+        let expected_method = expected_method.client_method_generation();
+        let expected_method_2 = expected_method_2.client_method_generation();
 
         let def = CapabilityDefTrait::from_trait(code, state_name.clone()).expect("Failed to parse capability trait");
         let output = def.generate_client_impl();
@@ -400,16 +404,12 @@ mod tests {
         assert_eq!(ffis.len(), 3, "Should have 2 FFIs: 1 constructor + 2 methods");
         
         // Verify constructor FFI
-        assert_eq!(ffis[0].library.to_string(), "__advanced_trait__my_state__new_client");
+        assert_eq!(ffis[0].class.as_ref(), Some(&expected_class));
         assert_eq!(ffis[0].fn_name.to_string(), "new_client");
-        assert_eq!(ffis[0].fn_ffi_name.to_string(), "__advanced_trait__my_state__new_client__ffi");
-        assert_eq!(ffis[0].fn_wasm_name.to_string(), "__advanced_trait__my_state__new_client__wasm");
         
         // Verify method FFI
-        assert_eq!(ffis[1].library.to_string(), "__advanced_trait__my_state__process");
+        assert_eq!(ffis[1].class.as_ref(), Some(&expected_class));
         assert_eq!(ffis[1].fn_name.to_string(), "process");
-        assert_eq!(ffis[1].fn_ffi_name.to_string(), "__advanced_trait__my_state__process__ffi");
-        assert_eq!(ffis[1].fn_wasm_name.to_string(), "__advanced_trait__my_state__process__wasm");
 
         let server_trait = def.generate_trait_definition();
         let expected_trait = quote! {

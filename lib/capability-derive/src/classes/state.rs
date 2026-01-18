@@ -273,7 +273,7 @@ mod tests {
 
         let expected = quote! {
             #[unsafe(no_mangle)]
-            pub extern "C" fn __greeter_server_ffi_init(
+            pub extern "C" fn __greeter_server__ffi_init(
                 config_ptr: *const u8,
                 config_len: usize
             ) -> ::pyroduct::capability_host::ffi::FfiInitResult {
@@ -306,7 +306,7 @@ mod tests {
 
         let expected = quote! {
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __greeter_server_ffi_drop(state: *mut std::ffi::c_void) {
+            pub unsafe extern "C" fn __greeter_server__ffi_drop(state: *mut std::ffi::c_void) {
                 if !state.is_null() {
                     drop(unsafe { Box::from_raw(state as *mut GreeterServer) });
                 }
@@ -332,7 +332,7 @@ mod tests {
 
         let expected = quote! {
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __greeter_server_ffi_reset(
+            pub unsafe extern "C" fn __greeter_server__ffi_reset(
                 state: *mut std::ffi::c_void
             ) -> ::pyroduct::capability_host::ffi::FfiResult {
                 ::pyroduct::capability::safe_lifecycle::execute_safe_reset::<GreeterServer, _>(
@@ -385,7 +385,7 @@ mod tests {
 
         let expected = quote! {
             #[unsafe(no_mangle)]
-            pub extern "C" fn __greeter_server_ffi_init<'a>(
+            pub extern "C" fn __greeter_server__ffi_init<'a>(
                 config_ptr: *const u8,
                 config_len: usize
             ) -> ::pyroduct::capability_host::ffi::FfiBorrowedFutureObjectResult<'a> {
@@ -418,7 +418,7 @@ mod tests {
 
         let expected = quote! {
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __greeter_server_ffi_drop(state: *mut std::ffi::c_void) {
+            pub unsafe extern "C" fn __greeter_server__ffi_drop(state: *mut std::ffi::c_void) {
                 if !state.is_null() {
                     drop(unsafe { Box::from_raw(state as *mut GreeterServer) });
                 }
@@ -444,7 +444,7 @@ mod tests {
 
         let expected = quote! {
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __greeter_server_ffi_reset<'a>(
+            pub unsafe extern "C" fn __greeter_server__ffi_reset<'a>(
                 state: *mut std::ffi::c_void
             ) -> ::pyroduct::capability_host::ffi::FfiBorrowedFutureResult<'a> {
                 ::pyroduct::capability::safe_lifecycle::execute_safe_async_reset::<GreeterServer, _, _>(

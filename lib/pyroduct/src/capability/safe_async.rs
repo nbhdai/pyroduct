@@ -106,39 +106,6 @@ where
 }
 
 /// Complete call with state, client, and input
-pub fn si_call<'a, S, I, O, F, Fut>(
-    _client_state_ptr: *const u8,
-    _client_state_len: usize,
-    input_ptr: *const u8,
-    input_len: usize,
-    host_state_ptr: *mut std::ffi::c_void,
-    func: F,
-) -> FfiBorrowedFutureResult<'a>
-where
-    S: Send + 'a,
-    I: Archive + Send + 'a,
-    for<'b> <I as Archive>::Archived:
-        CheckBytes<Strategy<Validator<ArchiveValidator<'b>, SharedValidator>, rancor::Error>>,
-    for<'b> <I as Archive>::Archived: Deserialize<I, Strategy<Pool, rkyv::rancor::Error>>,
-    O: Archive + std::panic::RefUnwindSafe + Send + 'static,
-    for<'c> O:
-        Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'c>, Share>, rkyv::rancor::Error>>,
-    F: FnOnce(&'a mut S, I) -> Fut + Send + 'a,
-    Fut: std::future::Future<Output = O> + Send + 'a,
-{
-    let state = match unsafe { safe_io::get_capability_state::<'a, S>(host_state_ptr) } {
-        Ok(state) => state,
-        Err(error) => return error.into(),
-    };
-
-    let input: I = match unsafe { safe_io::get_input::<I>(input_ptr, input_len) } {
-        Ok(input) => input,
-        Err(error) => return error.into(),
-    };
-    execute_safe_async((func)(state, input))
-}
-
-/// Complete call with state, client, and input
 pub fn sc_call<'a, S, C, O, F, Fut>(
     client_state_ptr: *const u8,
     client_state_len: usize,
@@ -169,70 +136,6 @@ where
         Err(error) => return error.into(),
     };
     execute_safe_async((func)(state, client))
-}
-
-/// Complete call with state, client, and input
-pub fn ci_call<'a, C, I, O, F, Fut>(
-    client_state_ptr: *const u8,
-    client_state_len: usize,
-    input_ptr: *const u8,
-    input_len: usize,
-    _host_state_ptr: *mut std::ffi::c_void,
-    func: F,
-) -> FfiBorrowedFutureResult<'a>
-where
-    C: Archive + Send + 'a,
-    for<'b> <C as Archive>::Archived:
-        CheckBytes<Strategy<Validator<ArchiveValidator<'b>, SharedValidator>, rancor::Error>>,
-    for<'b> <C as Archive>::Archived: Deserialize<C, Strategy<Pool, rkyv::rancor::Error>>,
-    I: Archive + Send + 'a,
-    for<'b> <I as Archive>::Archived:
-        CheckBytes<Strategy<Validator<ArchiveValidator<'b>, SharedValidator>, rancor::Error>>,
-    for<'b> <I as Archive>::Archived: Deserialize<I, Strategy<Pool, rkyv::rancor::Error>>,
-    O: Archive + std::panic::RefUnwindSafe + Send + 'static,
-    for<'c> O:
-        Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'c>, Share>, rkyv::rancor::Error>>,
-    F: FnOnce(C, I) -> Fut + Send + 'a,
-    Fut: std::future::Future<Output = O> + Send + 'a,
-{
-    let client: C = match unsafe { safe_io::get_input::<C>(client_state_ptr, client_state_len) } {
-        Ok(client) => client,
-        Err(error) => return error.into(),
-    };
-
-    let input: I = match unsafe { safe_io::get_input::<I>(input_ptr, input_len) } {
-        Ok(input) => input,
-        Err(error) => return error.into(),
-    };
-
-    execute_safe_async((func)(client, input))
-}
-
-/// Complete call with state, client, and input
-pub fn c_call<'a, C, O, F, Fut>(
-    client_state_ptr: *const u8,
-    client_state_len: usize,
-    _input_ptr: *const u8,
-    _input_len: usize,
-    _host_state_ptr: *mut std::ffi::c_void,
-    func: F,
-) -> FfiBorrowedFutureResult<'a>
-where
-    C: Archive + Send + 'a,
-    for<'b> <C as Archive>::Archived:
-        CheckBytes<Strategy<Validator<ArchiveValidator<'b>, SharedValidator>, rancor::Error>>,
-    for<'b> <C as Archive>::Archived: Deserialize<C, Strategy<Pool, rkyv::rancor::Error>>,
-    O: Archive + std::panic::RefUnwindSafe + Send + 'static,
-    for<'c> O:
-        Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'c>, Share>, rkyv::rancor::Error>>,
-    F: FnOnce(C) -> Fut + Send + 'a,
-    Fut: std::future::Future<Output = O> + Send + 'a,
-{
-    let client: C = match unsafe { safe_io::get_input::<C>(client_state_ptr, client_state_len) } {
-        Ok(client) => client,
-        Err(error) => return error.into(),
-    };
-    execute_safe_async((func)(client))
 }
 
 /// Complete call with state, client, and input

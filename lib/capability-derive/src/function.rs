@@ -1,9 +1,8 @@
 //! #[capability_function] - Marks a standalone function as a capability (Pattern 1)
 
-use heck::AsSnakeCase;
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
-use syn::{FnArg, Ident, ItemFn, Result};
+use quote::quote;
+use syn::{FnArg, ItemFn, Result};
 
 use crate::ffi::{CapabilityFuncFFI, InputParams};
 use crate::utils::{get_param_name, get_param_type};
@@ -42,44 +41,28 @@ impl CapFn {
                 Some(InputParams::One(name, ty))
             }
             _ => {
-                let input_struct_name = format_ident!("__{}_Input", self.input.sig.ident);
                 Some(InputParams::Many {
                     params,
-                    input_struct_name,
                 })
             }
         }
     }
 
     /// Creates a CapabilityFuncFFI with no client or state (standalone function)
-    pub fn to_ffi(&self, library: &Ident) -> CapabilityFuncFFI {
+    pub fn to_ffi(&self) -> CapabilityFuncFFI {
         CapabilityFuncFFI {
-            library: format_ident!(
-                "__{}__{}__func",
-                AsSnakeCase(library.to_string()).to_string(),
-                AsSnakeCase(self.input.sig.ident.to_string()).to_string()
-            ),
+            class: None,
             fn_name: self.input.sig.ident.clone(),
-            fn_ffi_name: format_ident!(
-                "__{}_ffi",
-                AsSnakeCase(self.input.sig.ident.to_string()).to_string()
-            ),
-            fn_wasm_name: format_ident!(
-                "__{}_wasm",
-                AsSnakeCase(self.input.sig.ident.to_string()).to_string()
-            ),
             vis: self.input.vis.clone(),
             is_async: self.input.sig.asyncness.is_some(),
             return_type: self.input.sig.output.clone(),
             input: self.input(),
-            client: None, // No client for standalone functions
-            server: None, // No server for standalone functions
         }
     }
 
     /// Generate the client-side WASM wrapper
-    pub fn generate_function(&self, library: &Ident) -> TokenStream {
-        let ffi = self.to_ffi(library);
+    pub fn generate_function(&self) -> TokenStream {
+        let ffi = self.to_ffi();
 
         let fn_name = &ffi.fn_name;
         let vis = &ffi.vis;
@@ -127,15 +110,14 @@ mod tests {
             }
         };
 
-        let lib_name = format_ident!("MyLib");
         let item = parse2(item).expect("error");
         let parsed = CapFn::new(item)
             .expect("Expansion failed");
-        let ffi = parsed.to_ffi(&lib_name);
+        let ffi = parsed.to_ffi();
         let call_struct = ffi.generate_input_struct();
         let wasm_call = ffi.generate_wasm_call();
         
-        let result = parsed.generate_function(&lib_name);
+        let result = parsed.generate_function();
 
         let expected = quote! {
             #[cfg(feature = "module")]
@@ -157,15 +139,14 @@ mod tests {
             }
         };
 
-        let lib_name = format_ident!("MyLib");
         let item = parse2(item).expect("error");
         let parsed = CapFn::new(item)
             .expect("Expansion failed");
-        let ffi = parsed.to_ffi(&lib_name);
+        let ffi = parsed.to_ffi();
         let call_struct = ffi.generate_input_struct();
         let wasm_call = ffi.generate_wasm_call();
         
-        let result = parsed.generate_function(&lib_name);
+        let result = parsed.generate_function();
 
         let expected = quote! {
             #[cfg(feature = "module")]
@@ -187,15 +168,14 @@ mod tests {
             }
         };
 
-        let lib_name = format_ident!("MyLib");
         let item = parse2(item).expect("error");
         let parsed = CapFn::new(item)
             .expect("Expansion failed");
-        let ffi = parsed.to_ffi(&lib_name);
+        let ffi = parsed.to_ffi();
         let call_struct = ffi.generate_input_struct();
         let wasm_call = ffi.generate_wasm_call();
         
-        let result = parsed.generate_function(&lib_name);
+        let result = parsed.generate_function();
 
         let expected = quote! {
             #[cfg(feature = "module")]

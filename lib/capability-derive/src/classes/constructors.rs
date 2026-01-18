@@ -1,27 +1,27 @@
-use heck::AsSnakeCase;
+use std::rc::Rc;
+
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::visit_mut::{self, VisitMut};
 use syn::{
-    Error, ExprStruct, FnArg, Ident, Member, Path, ReturnType, TraitItemFn, Type, parse_quote, parse2,
+    Error, ExprStruct, FnArg, Member, Path, ReturnType, TraitItemFn, parse_quote, parse2,
 };
 
 use crate::ffi::CapabilityFuncFFI;
+use crate::paths::ClassIdent;
 use crate::utils::type_to_return;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientConstructor {
     pub sig: syn::Signature,
     pub block: syn::Block,
-    pub client: Ident,
-    pub error_type: Option<Type>,
+    pub class: Rc<ClassIdent>,
 }
 
 impl ClientConstructor {
     pub fn new(
         method: &TraitItemFn,
-        explicit_client_type: &Ident,
-        explicit_error_type: Option<&Type>,
+        class: &Rc<ClassIdent>,
     ) -> syn::Result<Self> {
         let sig = &method.sig;
 
@@ -45,12 +45,13 @@ impl ClientConstructor {
                 ));
             }
         }
+        let client = &class.client_tn;
 
         // 3. STRICT Validation of Return Type
         // The ORIGINAL function must ALWAYS return the ClientType (not a Result).
         if let ReturnType::Type(_, ty) = &sig.output {
             let ty_str = quote!(#ty).to_string();
-            let client_str = quote!(#explicit_client_type).to_string();
+            let client_str = quote!(#client).to_string();
 
             // Allow explicit type (MyClient) OR generic alias (Self::Client)
             let is_valid_return =
@@ -75,12 +76,11 @@ impl ClientConstructor {
         Ok(Self {
             sig: sig.clone(),
             block,
-            client: explicit_client_type.clone(),
-            error_type: explicit_error_type.cloned(),
+            class: class.clone(),
         })
     }
 
-    pub fn client_method_generation(&self, trait_name: &Ident, state_name: &Ident) -> TokenStream {
+    pub fn client_method_generation(&self) -> TokenStream {
         let sig = &self.sig;
         let name = &sig.ident;
 
@@ -89,7 +89,7 @@ impl ClientConstructor {
 
         // 2. Initialize visitor with the specific client name
         let mut injector: ConfigBufInjector = ConfigBufInjector {
-            target_ident: self.client.to_string(),
+            target_ident: self.class.client_tn.to_string(),
         };
 
         // 3. Run the visitor (Injects __config_buf)
@@ -99,9 +99,7 @@ impl ClientConstructor {
         // Determine Final Return Type
 
         let ffi = client_constructor_ffi_meta(
-            trait_name,
-            &state_name,
-            self.error_type.as_ref(),
+            &self.class,
             self.sig.asyncness.is_some(),
         );
 
@@ -140,29 +138,21 @@ impl ClientConstructor {
 /// Helper to construct the CapabilityFuncFFI configuration for constructors.
 /// Encapsulates naming conventions and return type logic.
 pub fn client_constructor_ffi_meta(
-    trait_name: &Ident,
-    state_name: &Ident,
-    error_type: Option<&Type>,
+    class: &Rc<ClassIdent>,
     is_async: bool,
 ) -> CapabilityFuncFFI {
-    let return_type: ReturnType = if let Some(err_type) = error_type {
+    let return_type: ReturnType = if let Some(err_type) = &class.error_tn {
         type_to_return(&parse2(quote!(Result<Self, #err_type>)).expect("This really should parse"))
     } else {
         type_to_return(&parse2(quote!(Self)).expect("This really should parse"))
     };
     CapabilityFuncFFI {
-        // Updated Path: __{trait}_{state}_new_client
-        library: format_ident!("__{}__{}__new_client", AsSnakeCase(trait_name.to_string()).to_string(), AsSnakeCase(state_name.to_string()).to_string()),
+        class: Some(class.clone()),
         fn_name: format_ident!("new_client"),
-        // Host/Wasm names aligned with library path
-        fn_ffi_name: format_ident!("__{}__{}__new_client__ffi", AsSnakeCase(trait_name.to_string()).to_string(), AsSnakeCase(state_name.to_string()).to_string()),
-        fn_wasm_name: format_ident!("__{}__{}__new_client__wasm", AsSnakeCase(trait_name.to_string()).to_string(), AsSnakeCase(state_name.to_string()).to_string()),
         vis: syn::Visibility::Public(parse_quote!(pub)),
         is_async,
         return_type,
         input: None,
-        client: Some(format_ident!("Self")),
-        server: Some(state_name.clone()),
     }
 }
 
@@ -223,15 +213,21 @@ mod tests {
     /// Helper to create a ClientConstructor from raw code
     fn create_constructor(
         func_code: TokenStream,
-        client_type_str: &str,
         error_type_str: Option<&str>,
     ) -> ClientConstructor {
+        
         let method: TraitItemFn = syn::parse2(func_code).expect("Failed to parse fn");
-        let client_type: Ident = format_ident!("{}", client_type_str);
         let error_type: Option<Type> =
             error_type_str.map(|s| syn::parse_str(s).expect("Failed to parse error"));
+        
+        let class = Rc::new(ClassIdent {
+            trait_tn: format_ident!("MyTrait"),
+            state_tn: format_ident!("MyServer"),
+            client_tn: format_ident!("MyClient"),
+            error_tn: error_type,
+        });
 
-        ClientConstructor::new(&method, &client_type, error_type.as_ref())
+        ClientConstructor::new(&method, &class)
             .expect("Constructor creation failed")
     }
 
@@ -245,20 +241,16 @@ mod tests {
         };
 
         // 2. Parse
-        let ctor = create_constructor(code, "MyClient", None);
-        let trait_name = format_ident!("MyTrait");
-        let state_name = format_ident!("MyState");
+        let ctor = create_constructor(code, None);
 
         // 3. Generate Expected FFI Call
         let wasm_call = client_constructor_ffi_meta(
-            &trait_name,
-            &state_name,
-            None,
+            &ctor.class,
             false,
         ).generate_wasm_call();
 
         // 4. Generate
-        let output = ctor.client_method_generation(&trait_name, &state_name);
+        let output = ctor.client_method_generation();
 
         // 5. Expected Output
         let expected = quote! {
@@ -296,21 +288,16 @@ mod tests {
         };
 
         // 2. Parse
-        let ctor = create_constructor(code, "MyClient", Some("MyError"));
-        let trait_name = format_ident!("MyTrait");
-        let state_name = format_ident!("MyState");
+        let ctor = create_constructor(code, Some("MyError"));
 
         // 3. Generate Expected FFI Call
-        let error_type: Type = parse_quote!(MyError);
         let wasm_call = client_constructor_ffi_meta(
-            &trait_name,
-            &state_name,
-            Some(&error_type),
+            &ctor.class,
             false,
         ).generate_wasm_call();
 
         // 4. Generate
-        let output = ctor.client_method_generation(&trait_name, &state_name);
+        let output = ctor.client_method_generation();
 
         // 5. Expected Output
         // Note: The signature returns Result<Self, MyError>
@@ -347,9 +334,14 @@ mod tests {
             }
         };
         let method: TraitItemFn = syn::parse2(code).unwrap();
-        let client_type: Ident = format_ident!("MyClient");
+        let class = Rc::new(ClassIdent {
+            trait_tn: format_ident!("MyTrait"),
+            state_tn: format_ident!("MyServer"),
+            client_tn: format_ident!("MyClient"),
+            error_tn: None,
+        });
 
-        let res = ClientConstructor::new(&method, &client_type, None);
+        let res = ClientConstructor::new(&method, &class);
         assert!(res.is_err());
         assert!(
             res.unwrap_err()
@@ -371,19 +363,15 @@ mod tests {
             }
         };
 
-        let ctor = create_constructor(code, "MyClient", None);
-        let trait_name = format_ident!("MyTrait");
-        let state_name = format_ident!("MyState");
+        let ctor = create_constructor(code, None);
 
         // Generate FFI call for expectation
         let wasm_call = client_constructor_ffi_meta(
-            &trait_name,
-            &state_name,
-            None,
+            &ctor.class,
             false,
         ).generate_wasm_call();
 
-        let output = ctor.client_method_generation(&trait_name, &state_name);
+        let output = ctor.client_method_generation();
 
         let expected = quote! {
             pub fn build(x: usize, y: usize) -> Self {
