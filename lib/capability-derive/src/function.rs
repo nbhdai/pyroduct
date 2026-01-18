@@ -78,7 +78,7 @@ impl CapFn {
     }
 
     /// Generate the client-side WASM wrapper
-    pub fn generate_module_function(&self, library: &Ident) -> TokenStream {
+    pub fn generate_function(&self, library: &Ident) -> TokenStream {
         let ffi = self.to_ffi(library);
 
         let fn_name = &ffi.fn_name;
@@ -100,7 +100,7 @@ impl CapFn {
             }
         }
         let struct_component = ffi.generate_input_struct();
-        let wasm_component = ffi.generate_module_function();
+        let wasm_component = ffi.generate_wasm_call();
 
         quote! {
             #[cfg(feature = "module")]
@@ -133,9 +133,9 @@ mod tests {
             .expect("Expansion failed");
         let ffi = parsed.to_ffi(&lib_name);
         let call_struct = ffi.generate_input_struct();
-        let wasm_call = ffi.generate_module_function();
+        let wasm_call = ffi.generate_wasm_call();
         
-        let result = parsed.generate_module_function(&lib_name);
+        let result = parsed.generate_function(&lib_name);
 
         let expected = quote! {
             #[cfg(feature = "module")]
@@ -163,9 +163,9 @@ mod tests {
             .expect("Expansion failed");
         let ffi = parsed.to_ffi(&lib_name);
         let call_struct = ffi.generate_input_struct();
-        let wasm_call = ffi.generate_module_function();
+        let wasm_call = ffi.generate_wasm_call();
         
-        let result = parsed.generate_module_function(&lib_name);
+        let result = parsed.generate_function(&lib_name);
 
         let expected = quote! {
             #[cfg(feature = "module")]
@@ -193,9 +193,9 @@ mod tests {
             .expect("Expansion failed");
         let ffi = parsed.to_ffi(&lib_name);
         let call_struct = ffi.generate_input_struct();
-        let wasm_call = ffi.generate_module_function();
+        let wasm_call = ffi.generate_wasm_call();
         
-        let result = parsed.generate_module_function(&lib_name);
+        let result = parsed.generate_function(&lib_name);
 
         let expected = quote! {
             #[cfg(feature = "module")]

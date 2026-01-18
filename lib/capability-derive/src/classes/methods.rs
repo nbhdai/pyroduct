@@ -2,7 +2,7 @@ use heck::AsSnakeCase;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    Error, FnArg, GenericArgument, Ident, ImplItemFn, PathArguments, ReturnType, TraitItemFn, Type,
+    Error, FnArg, GenericArgument, Ident, PathArguments, ReturnType, TraitItemFn, Type,
     parse_quote, parse2,
 };
 
@@ -219,7 +219,7 @@ impl CapabilityMethod {
         let struct_def = ffi.generate_input_struct();
 
         // This returns the `call_from_wasm` block.
-        let body_delegation = ffi.generate_module_function();
+        let body_delegation = ffi.generate_wasm_call();
 
         quote! {
             #(#attrs)*
@@ -333,7 +333,7 @@ mod tests {
         let trait_name = format_ident!("MyTrait");
         let method_ffi = method.build_ffi_meta(&trait_name, &state_name);
         let struct_tokens = method_ffi.generate_input_struct();
-        let wasm_call = method_ffi.generate_module_function();
+        let wasm_call = method_ffi.generate_wasm_call();
         // 3. Generate
         let output = method.client_method_generation(&trait_name, &state_name);
 
@@ -361,7 +361,7 @@ mod tests {
         let trait_name = format_ident!("MyTrait");
         let method_ffi = method.build_ffi_meta(&trait_name, &state_name);
         let struct_tokens = method_ffi.generate_input_struct();
-        let wasm_call = method_ffi.generate_module_function();
+        let wasm_call = method_ffi.generate_wasm_call();
         // 3. Generate
         let output = method.client_method_generation(&trait_name, &state_name);
 
@@ -390,7 +390,7 @@ mod tests {
 
         let method_ffi = method.build_ffi_meta(&trait_name, &state_name);
         let struct_tokens = method_ffi.generate_input_struct();
-        let wasm_call = method_ffi.generate_module_function();
+        let wasm_call = method_ffi.generate_wasm_call();
         // 3. Generate
         let output = method.client_method_generation(&trait_name, &state_name);
 

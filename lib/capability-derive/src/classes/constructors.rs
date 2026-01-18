@@ -112,7 +112,7 @@ impl ClientConstructor {
         let where_clause = &sig.generics.where_clause;
         let final_return_type = &ffi.return_type;
 
-        let wasm_call = ffi.generate_module_function();
+        let wasm_call = ffi.generate_wasm_call();
 
         let logic = quote! {
             let mut new_self = (|| #modified_block )();
@@ -255,7 +255,7 @@ mod tests {
             &state_name,
             None,
             false,
-        ).generate_module_function();
+        ).generate_wasm_call();
 
         // 4. Generate
         let output = ctor.client_method_generation(&trait_name, &state_name);
@@ -307,7 +307,7 @@ mod tests {
             &state_name,
             Some(&error_type),
             false,
-        ).generate_module_function();
+        ).generate_wasm_call();
 
         // 4. Generate
         let output = ctor.client_method_generation(&trait_name, &state_name);
@@ -381,7 +381,7 @@ mod tests {
             &state_name,
             None,
             false,
-        ).generate_module_function();
+        ).generate_wasm_call();
 
         let output = ctor.client_method_generation(&trait_name, &state_name);
 

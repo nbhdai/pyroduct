@@ -110,8 +110,34 @@ impl CapabilityFuncFFI {
         }
     }
 
+    pub fn export_vtable(&self) -> TokenStream {
+        let library_str = format_ident!("{}", self.library.to_string().to_uppercase());
+        let fn_name_str = format_ident!("{}", self.fn_name.to_string().to_uppercase());
+
+        let fn_name = &self.fn_name;
+        let func_variant = if self.is_async {
+            quote! {
+                ::pyroduct::capability_host::ffi::PluginFunction::Async(#fn_name)
+            }
+        } else {
+            quote! {
+                ::pyroduct::capability_host::ffi::PluginFunction::Sync(#fn_name)
+            }
+        };
+
+        quote! {
+            ::pyroduct::capability_host::ffi::PluginExport {
+                module: #library_str.as_ptr(),
+                module_len: #library_str.len(),
+                name: #fn_name_str.as_ptr(),
+                name_len: #fn_name_str.len(),
+                func: #func_variant,
+            }
+        }
+    }
+
     /// Generate the client-side WASM wrapper
-    pub fn generate_module_function(&self) -> TokenStream {
+    pub fn generate_wasm_call(&self) -> TokenStream {
         // let fn_name = &self.fn_name;
         // let vis = &self.vis;
         // let fn_ffi_name = &self.fn_ffi_name; // Not used in client wrapper directly
@@ -169,7 +195,7 @@ impl CapabilityFuncFFI {
         }
     }
 
-    pub fn generate_client_wasm(&self) -> TokenStream {
+    pub fn generate_wasm_function(&self) -> TokenStream {
         let fn_wasm_name = &self.fn_wasm_name;
         quote! {
             fn #fn_wasm_name(
@@ -357,7 +383,7 @@ mod tests {
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
-        let module_tokens = ffi.generate_module_function();
+        let module_tokens = ffi.generate_wasm_call();
         let module_tokens = quote! {
             fn func() {
                 #module_tokens
@@ -431,7 +457,7 @@ mod tests {
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
-        let module_tokens = ffi.generate_module_function();
+        let module_tokens = ffi.generate_wasm_call();
         let module_tokens = quote! {
             fn func() {
                 #module_tokens
@@ -511,7 +537,7 @@ mod tests {
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
-        let module_tokens = ffi.generate_module_function();
+        let module_tokens = ffi.generate_wasm_call();
         let module_tokens = quote! {
             fn func() {
                 #module_tokens
@@ -592,7 +618,7 @@ mod tests {
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
-        let module_tokens = ffi.generate_module_function();
+        let module_tokens = ffi.generate_wasm_call();
         let module_tokens = quote! {
             fn func() {
                 #module_tokens
@@ -667,7 +693,7 @@ mod tests {
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
-        let module_tokens = ffi.generate_module_function();
+        let module_tokens = ffi.generate_wasm_call();
         let module_tokens = quote! {
             fn func() {
                 #module_tokens
@@ -747,7 +773,7 @@ mod tests {
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
-        let module_tokens = ffi.generate_module_function();
+        let module_tokens = ffi.generate_wasm_call();
         let module_tokens = quote! {
             fn func() {
                 #module_tokens
@@ -830,7 +856,7 @@ mod tests {
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
-        let module_tokens = ffi.generate_module_function();
+        let module_tokens = ffi.generate_wasm_call();
         let module_tokens = quote! {
             fn func() {
                 #module_tokens
@@ -908,7 +934,7 @@ mod tests {
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
-        let module_tokens = ffi.generate_module_function();
+        let module_tokens = ffi.generate_wasm_call();
         let module_tokens = quote! {
             fn func() {
                 #module_tokens
@@ -985,7 +1011,7 @@ mod tests {
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
-        let module_tokens = ffi.generate_module_function();
+        let module_tokens = ffi.generate_wasm_call();
         let module_tokens = quote! {
             fn func() {
                 #module_tokens
@@ -1062,7 +1088,7 @@ mod tests {
 
         let struct_tokens = ffi.generate_input_struct();
         let capability_tokens = ffi.generate_capability_ffi();
-        let module_tokens = ffi.generate_module_function();
+        let module_tokens = ffi.generate_wasm_call();
         let module_tokens = quote! {
             fn func() {
                 #module_tokens

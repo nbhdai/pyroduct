@@ -96,14 +96,19 @@ impl CapServer {
         }
     }
 
-    pub fn generate_init_fn(&self) -> (TokenStream, TokenStream) {
+    fn export_init_ident(&self) -> Ident {
+        format_ident!(
+            "__{}__ffi_init",
+            &AsSnakeCase(self.input.ident.to_string()).to_string()
+        )
+    }
+
+    pub fn generate_init_fn(&self) -> TokenStream  {
         let struct_name = self.struct_name.clone();
         let config_type = &self.attrs.config;
         let init_trait_name = &self.init_trait_name;
-        let init_ffi_name = format_ident!(
-            "__{}_ffi_init",
-            &AsSnakeCase(self.input.ident.to_string()).to_string()
-        );
+        let init_ffi_name = self.export_init_ident();
+        
         if self.attrs.is_async {
             let ffi_func = quote! {
                 #[unsafe(no_mangle)]
@@ -120,9 +125,7 @@ impl CapServer {
                     }
                 }
             };
-            let ffi_export =
-                quote!(::pyroduct::capability_host::ffi::PluginInitFn::Async(#init_ffi_name));
-            (ffi_func, ffi_export)
+            ffi_func
         } else {
             let ffi_func = quote! {
                 #[unsafe(no_mangle)]
@@ -139,18 +142,30 @@ impl CapServer {
                     }
                 }
             };
-            let ffi_export =
-                quote!(::pyroduct::capability_host::ffi::PluginInitFn::Sync(#init_ffi_name));
-            (ffi_func, ffi_export)
+            ffi_func
         }
     }
 
-    pub fn generate_drop_fn(&self) -> (TokenStream, TokenStream) {
-        let struct_name = self.struct_name.clone();
-        let drop_ffi_name = format_ident!(
-            "__{}_ffi_drop",
+    pub fn generate_init_export(&self) -> TokenStream {
+        let init_ffi_name = self.export_init_ident();
+        
+        if self.attrs.is_async {
+            quote!(::pyroduct::capability_host::ffi::PluginInitFn::Async(#init_ffi_name))
+        } else {
+            quote!(::pyroduct::capability_host::ffi::PluginInitFn::Sync(#init_ffi_name))
+        }
+    }
+
+    fn export_drop_ident(&self) -> Ident {
+        format_ident!(
+            "__{}__ffi_drop",
             &AsSnakeCase(self.input.ident.to_string()).to_string()
-        );
+        )
+    }
+
+    pub fn generate_drop_fn(&self) -> TokenStream {
+        let struct_name = self.struct_name.clone();
+        let drop_ffi_name = self.export_drop_ident();
         let ffi_func = quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn #drop_ffi_name(state: *mut std::ffi::c_void) {
@@ -159,18 +174,25 @@ impl CapServer {
                 }
             }
         };
-        let ffi_export =
-            quote!(::pyroduct::capability_host::ffi::PluginDropFn::Sync(#drop_ffi_name));
-        (ffi_func, ffi_export)
+        ffi_func
     }
 
-    pub fn generate_reset_fn(&self) -> (TokenStream, TokenStream) {
+    pub fn generate_drop_export(&self) -> TokenStream {
+        let drop_ffi_name = self.export_drop_ident();
+        quote!(::pyroduct::capability_host::ffi::PluginDropFn::Sync(#drop_ffi_name))
+    }
+
+    fn export_reset_ident(&self) -> Ident {
+        format_ident!(
+            "__{}__ffi_reset",
+            &AsSnakeCase(self.input.ident.to_string()).to_string()
+        )
+    }
+
+    pub fn generate_reset_fn(&self) -> TokenStream {
         let struct_name = self.struct_name.clone();
         let init_trait_name = &self.init_trait_name;
-        let reset_ffi_name = format_ident!(
-            "__{}_ffi_reset",
-            &AsSnakeCase(self.input.ident.to_string()).to_string()
-        );
+        let reset_ffi_name = self.export_reset_ident();
         if self.attrs.is_async {
             let ffi_func = quote! {
                 #[unsafe(no_mangle)]
@@ -181,9 +203,7 @@ impl CapServer {
                     )
                 }
             };
-            let ffi_export =
-                quote!(::pyroduct::capability_host::ffi::PluginResetFn::Async(#reset_ffi_name));
-            (ffi_func, ffi_export)
+            ffi_func
         } else {
             let ffi_func = quote! {
                 #[unsafe(no_mangle)]
@@ -194,9 +214,16 @@ impl CapServer {
                     )
                 }
             };
-            let ffi_export =
-                quote!(::pyroduct::capability_host::ffi::PluginResetFn::Sync(#reset_ffi_name));
-            (ffi_func, ffi_export)
+            ffi_func
+        }
+    }
+
+    pub fn generate_reset_export(&self) -> TokenStream {
+        let reset_ffi_name = self.export_reset_ident();
+        if self.attrs.is_async {
+            quote!(::pyroduct::capability_host::ffi::PluginResetFn::Async(#reset_ffi_name))
+        } else {
+            quote!(::pyroduct::capability_host::ffi::PluginResetFn::Sync(#reset_ffi_name))
         }
     }
 }
@@ -242,7 +269,7 @@ mod tests {
 
         let item = parse2(item).expect("error");
         let server = CapServer::new(attr, item).expect("Expansion failed");
-        let (result, _export) = server.generate_init_fn();
+        let result = server.generate_init_fn();
 
         let expected = quote! {
             #[unsafe(no_mangle)]
@@ -275,7 +302,7 @@ mod tests {
 
         let item = parse2(item).expect("error");
         let server = CapServer::new(attr, item).expect("Expansion failed");
-        let (result, _export) = server.generate_drop_fn();
+        let result = server.generate_drop_fn();
 
         let expected = quote! {
             #[unsafe(no_mangle)]
@@ -301,7 +328,7 @@ mod tests {
 
         let item = parse2(item).expect("error");
         let server = CapServer::new(attr, item).expect("Expansion failed");
-        let (result, _export) = server.generate_reset_fn();
+        let result = server.generate_reset_fn();
 
         let expected = quote! {
             #[unsafe(no_mangle)]
@@ -354,7 +381,7 @@ mod tests {
 
         let item = parse2(item).expect("error");
         let server = CapServer::new(attr, item).expect("Expansion failed");
-        let (result, _export) = server.generate_init_fn();
+        let result = server.generate_init_fn();
 
         let expected = quote! {
             #[unsafe(no_mangle)]
@@ -387,7 +414,7 @@ mod tests {
 
         let item = parse2(item).expect("error");
         let server = CapServer::new(attr, item).expect("Expansion failed");
-        let (result, _export) = server.generate_drop_fn();
+        let result = server.generate_drop_fn();
 
         let expected = quote! {
             #[unsafe(no_mangle)]
@@ -413,7 +440,7 @@ mod tests {
 
         let item = parse2(item).expect("error");
         let server = CapServer::new(attr, item).expect("Expansion failed");
-        let (result, _export) = server.generate_reset_fn();
+        let result = server.generate_reset_fn();
 
         let expected = quote! {
             #[unsafe(no_mangle)]
