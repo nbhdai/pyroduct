@@ -39,7 +39,7 @@ impl CapabilityFuncFFI {
         if let Some(class) = &self.class {
             class.trace_name_static(&self.fn_name)
         } else {
-            format_ident!("__{}", self.fn_name.to_string())
+            format_ident!("__{}", AsSnakeCase(self.fn_name.to_string()).to_string().to_uppercase())
         }
     }
 
@@ -237,7 +237,7 @@ impl CapabilityFuncFFI {
     pub fn generate_client_wasm(&self) -> TokenStream {
         let fn_wasm_name = self.fn_wasm_name();
         quote! {
-            fn #fn_wasm_name(
+            pub fn #fn_wasm_name(
                 cs_ptr: *const u8,
                 cs_len: usize,
                 in_ptr: *const u8,

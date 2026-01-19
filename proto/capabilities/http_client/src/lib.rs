@@ -199,10 +199,10 @@ pub mod __http_ffi {
         log_callback: ::pyroduct::capability_host::ffi::LogCallback,
     ) -> ::pyroduct::capability_host::ffi::PluginExports<'a> {
         ::pyroduct::capability::init_logging(id, log_callback);
-        static CLASS: &'static str = "env";
-        static FUNC_1: &'static str = "host_http_get";
-        static FUNC_2: &'static str = "host_http_post";
-        static EXPORTS: [::pyroduct::capability_host::ffi::PluginExport;2] = [
+        const CLASS: &'static str = "env";
+        const FUNC_1: &'static str = "host_http_get";
+        const FUNC_2: &'static str = "host_http_post";
+        const EXPORTS: [::pyroduct::capability_host::ffi::PluginExport;2] = [
             ::pyroduct::capability_host::ffi::PluginExport {
                 module: CLASS.as_ptr(),
                 module_len: CLASS.len(),

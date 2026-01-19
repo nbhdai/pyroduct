@@ -222,8 +222,17 @@ impl Capability {
     }
 
     pub fn ffi_component(&self) -> TokenStream {
-        let functions = self.functions.iter().map(|f| f.to_ffi().generate_capability_ffi()).collect::<Vec<_>>();
-        let functions_export = self.functions.iter().map(|f| f.to_ffi().generate_vtable_entry()).collect::<Vec<_>>();
+        let function_ffi = self.functions.iter().map(|f| f.to_ffi()).collect::<Vec<_>>();
+        let functions = function_ffi.iter().map(|f| f.generate_capability_ffi()).collect::<Vec<_>>();
+        let functions_export = function_ffi.iter().map(|f| f.generate_vtable_entry()).collect::<Vec<_>>();
+        let function_names = function_ffi.iter().map(|f| {
+            let ident = f.trace_name_static(); 
+            let s = f.trace_name().to_string(); 
+            quote! {
+                const #ident: &'static str = #s;
+            }
+        }).collect::<Vec<_>>();
+
         let functions_len = functions.len();
         let class_functions = self.services.iter().map(|c| c.generate_ffi_functions()).collect::<Vec<_>>();
         let class_export_names = self.services.iter().map(|c| c.export_name()).collect::<Vec<_>>();
@@ -232,12 +241,13 @@ impl Capability {
 
         quote! {
             #(#functions)*
-            static __FUNCTIONS: [::pyroduct::capability_host::ffi::FunctionExport;#functions_len]  = [#(#functions_export),*];
+            const __FUNCTIONS: [::pyroduct::capability_host::ffi::FunctionExport;#functions_len]  = [#(#functions_export),*];
             #(#class_functions)*
+            #(#function_names)*
             #(#class_functions_export)*
-            static __CLASSES: [::pyroduct::capability_host::ffi::ClassExport;#classes_len]  = [#(#class_export_names),*];
+            const __CLASSES: [::pyroduct::capability_host::ffi::ClassExport;#classes_len]  = [#(#class_export_names),*];
 
-            static __EXPORTS: CapabilityExports = CapabilityExports {
+            const __EXPORTS: CapabilityExports = CapabilityExports {
                 classes: __CLASSES.as_ptr(),
                 len_classes: #classes_len,
                 functions: __FUNCTIONS.as_ptr(),
@@ -256,11 +266,11 @@ impl Capability {
         let name = self.env_str.as_ref();
         quote! {
             #module_component
-            mod __wasm {
+            pub mod __wasm {
                 use super::*;
                 #wasm_calls_component
             }
-            mod __capability {
+            pub mod __capability {
                 use super::*;
                 static __CAPABILITY_NAME: &'static str = #name;
                 #capability_component
@@ -297,6 +307,11 @@ mod tests {
         let input = quote! {
             env = "test_env",
 
+            #[capability]
+            fn check_thing(foo: f32) -> Result<f64, String> {
+                Err("Mock Error!".to_string())
+            }
+
             #[capability_client]
             pub struct MyClient { val: u32 }
 
@@ -318,8 +333,8 @@ mod tests {
             #[capability]
             impl MyTrait for MyServer {
                 type Client = MyClient;
-                fn new_client(&self, c: &MyClient)  { Ok(()) }
-                fn do_thing(&self, c: &MyClient) -> bool { Ok(true) }
+                fn new_client(&self, c: &MyClient)  { () }
+                fn do_thing(&self, c: &MyClient) -> bool { true }
             }
         };
 
@@ -332,7 +347,7 @@ mod tests {
             1,
             "Should resolve exactly one service"
         );
-        assert_eq!(module.functions.len(), 0);
+        assert_eq!(module.functions.len(), 1);
 
         // Check Service Resolution details
         let service = &module.services[0];

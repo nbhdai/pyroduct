@@ -80,7 +80,7 @@ impl CapabilityService {
                 let fn_ffi_name = ffi.trace_name().to_string();
                 let fn_name_static = ffi.trace_name_static();
                 quote! {
-                    static #fn_name_static: &'static str = #fn_ffi_name;
+                    const #fn_name_static: &'static str = #fn_ffi_name;
                 }
             })
             .collect();
@@ -97,12 +97,12 @@ impl CapabilityService {
             #(#plugin_static_str)*
 
             // Generate the static export array
-            static #exports_array_name: [::pyroduct::capability_host::ffi::FunctionExport; #num_exports] = [
+            const #exports_array_name: [::pyroduct::capability_host::ffi::FunctionExport; #num_exports] = [
                 #(#plugin_exports),*
             ];
 
             // Generate the PluginExports struct
-            pub static #plugin_exports_name: ::pyroduct::capability_host::ffi::ClassExport = ::pyroduct::capability_host::ffi::ClassExport {
+            const #plugin_exports_name: ::pyroduct::capability_host::ffi::ClassExport = ::pyroduct::capability_host::ffi::ClassExport {
                 ptr: #exports_array_name.as_ptr(),
                 init: #init_export,
                 drop: #drop_export,

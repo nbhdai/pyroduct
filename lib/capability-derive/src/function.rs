@@ -91,7 +91,6 @@ impl CapFn {
         let wasm_component = ffi.generate_wasm_call(module);
 
         quote! {
-            #[cfg(feature = "module")]
             #vis fn #fn_name(#(#fn_params),*) #return_type {
                 #struct_component
                 #wasm_component
@@ -124,7 +123,6 @@ mod tests {
         let result = parsed.generate_module_function(None);
 
         let expected = quote! {
-            #[cfg(feature = "module")]
             pub fn get_count() -> u32 {
                 #call_struct
                 #wasm_call
@@ -152,7 +150,6 @@ mod tests {
         let result = parsed.generate_module_function(None);
 
         let expected = quote! {
-            #[cfg(feature = "module")]
             fn fetch_data(url: String) -> String {
                 #call_struct
                 #wasm_call
@@ -180,7 +177,6 @@ mod tests {
         let result = parsed.generate_module_function(Some(&format_ident!("wasm")));
 
         let expected = quote! {
-            #[cfg(feature = "module")]
             pub fn add(a: u32, b: u32) -> u32 {
                 #call_struct
                 #wasm_call
