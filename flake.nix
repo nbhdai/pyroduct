@@ -27,7 +27,7 @@
         ];
         nightlyToolchain = with fenix.packages.${system}; combine [
           latest.toolchain
-          targets.x86_64-unknown-linux-gnu.latest.rust-std
+          # targets.x86_64-unknown-linux-gnu.latest.rust-std
           targets.wasm32-unknown-unknown.latest.rust-std
         ];
 

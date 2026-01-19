@@ -9,7 +9,7 @@ use tracing::{Span, error, info};
 use wasmtime::{Caller, Linker};
 
 use crate::capability_host::ffi::{
-    AsyncPluginProcessFn, PluginDropFn, PluginExport, PluginFunction, PluginInitFn, PluginRegisterFn, PluginResetFn, SyncPluginProcessFn
+    AsyncFn, ClassDropFn, FunctionExport, Function, ClassInitFn, CapabilityRegisterFn, ClassResetFn, SyncFn
 };
 use crate::errors::{FfiError, PyroductError};
 use crate::host::ffi_bridge::{
@@ -21,7 +21,7 @@ type WasmArgs = (i32, i32, i32, i32); // (wasm_state_ptr, wasm_state_len, ptr, l
 
 pub struct StatePtr {
     ptr: *mut c_void,
-    destroy_fn: PluginDropFn,
+    destroy_fn: ClassDropFn,
 }
 
 unsafe impl Send for StatePtr {}
@@ -29,14 +29,14 @@ unsafe impl Send for StatePtr {}
 impl Drop for StatePtr {
     fn drop(&mut self) {
         match self.destroy_fn {
-            PluginDropFn::Sync(destroy_fn) => {
+            ClassDropFn::Sync(destroy_fn) => {
                 if !self.ptr.is_null() {
                     unsafe { (destroy_fn)(self.ptr) }
                 } else {
                     tracing::error!("Drop function exists, but state pointer is null");
                 }
             }
-            PluginDropFn::Null => {
+            ClassDropFn::Null => {
                 if !self.ptr.is_null() {
                     tracing::error!("Drop function does not exist, and pointer is non-null");
                 }
@@ -230,7 +230,7 @@ trait CapabilityExt: Capability {
     async fn process_sync_call(
         &self,
         mut caller: Caller<'_, HarnessState>,
-        raw_fn: SyncPluginProcessFn,
+        raw_fn: SyncFn,
         args: WasmArgs,
         cap_index: usize,
         wasm_name: String,
@@ -288,7 +288,7 @@ trait CapabilityExt: Capability {
     async fn process_async_call(
         &self,
         mut caller: Caller<'_, HarnessState>,
-        raw_fn: AsyncPluginProcessFn<'static>,
+        raw_fn: AsyncFn<'static>,
         args: WasmArgs,
         cap_index: usize,
         wasm_name: String,
@@ -363,7 +363,7 @@ impl Capabilities {
                 let wasm_path = self.wasm_path.clone();
 
                 match func_enum {
-                    PluginFunction::Sync(raw_fn) => {
+                    Function::Sync(raw_fn) => {
                         linker.func_wrap_async(
                             &mod_name,
                             &func_name,
@@ -386,7 +386,7 @@ impl Capabilities {
                             },
                         ).expect("Failed to link sync function");
                     }
-                    PluginFunction::Async(raw_fn) => {
+                    Function::Async(raw_fn) => {
                         linker.func_wrap_async(
                             &mod_name,
                             &func_name,
@@ -428,13 +428,13 @@ impl Capabilities {
 pub enum CapabilityInit<'a> {
     Sync {
         state: Option<*mut c_void>,
-        destroy_fn: PluginDropFn,
+        destroy_fn: ClassDropFn,
     },
     Async {
         config_bytes: Vec<u8>,
         #[pin]
         future: AsyncInitFuture<'a>,
-        destroy_fn: PluginDropFn,
+        destroy_fn: ClassDropFn,
     },
     Null,
 }
@@ -470,7 +470,7 @@ impl<'a> Future for CapabilityInit<'a> {
             },
             CapInit::Null => std::task::Poll::Ready(Ok(StatePtr {
                 ptr: ptr::null_mut(),
-                destroy_fn: PluginDropFn::Null,
+                destroy_fn: ClassDropFn::Null,
             })),
         }
     }
@@ -508,7 +508,7 @@ impl<'a> Future for CapabilityReset<'a> {
 
 pub trait Capability: Send + Sync {
     fn init(&self, config: &Option<&serde_json::Value>) -> PyroductResult<CapabilityInit<'static>>;
-    fn imports(&self) -> Vec<(String, String, PluginFunction<'static>)>;
+    fn imports(&self) -> Vec<(String, String, Function<'static>)>;
     fn reset(&self, state: &mut StatePtr) -> CapabilityReset<'static>;
 
     fn path(&self) -> Option<&Path>;
@@ -520,10 +520,10 @@ pub struct DynamicCapability {
     path: PathBuf,
     #[allow(dead_code)]
     library: Arc<Library>,
-    imports: Vec<(String, String, PluginFunction<'static>)>,
-    init_fn: PluginInitFn<'static>,
-    reset_fn: PluginResetFn<'static>,
-    destroy_fn: PluginDropFn,
+    imports: Vec<(String, String, Function<'static>)>,
+    init_fn: ClassInitFn<'static>,
+    reset_fn: ClassResetFn<'static>,
+    destroy_fn: ClassDropFn,
 }
 
 static LOG_CALLBACK_SPAN: RwLock<Vec<Span>> = RwLock::new(Vec::new());
@@ -561,7 +561,7 @@ impl DynamicCapability {
             let span_id = all_spans.len() as u64;
             all_spans.push(capability_span);
 
-            let manifest_fn: Symbol<PluginRegisterFn> =
+            let manifest_fn: Symbol<CapabilityRegisterFn> =
                 library.get(b"plugin_manifest").map_err(|e| {
                     PyroductError::from_capability_linking(
                         name.clone(),
@@ -571,8 +571,8 @@ impl DynamicCapability {
                 })?;
 
             let export = manifest_fn(span_id, log_callback);
-            let exports: *mut [PluginExport<'static>] = ptr::slice_from_raw_parts(export.ptr, export.len) as *mut _;
-            let exports: Box<[PluginExport<'static>]> = unsafe { Box::from_raw(exports) };
+            let exports: *mut [FunctionExport<'static>] = ptr::slice_from_raw_parts(export.ptr, export.len) as *mut _;
+            let exports: Box<[FunctionExport<'static>]> = unsafe { Box::from_raw(exports) };
 
             let mut imports = Vec::new();
             for export in exports {
@@ -589,15 +589,15 @@ impl DynamicCapability {
                         .to_string();
 
                 let func =
-                    std::mem::transmute::<PluginFunction<'_>, PluginFunction<'static>>(export.func);
+                    std::mem::transmute::<Function<'_>, Function<'static>>(export.func);
 
                 imports.push((mod_name, func_name, func));
             }
 
             let init_fn =
-                std::mem::transmute::<PluginInitFn<'_>, PluginInitFn<'static>>(export.init);
+                std::mem::transmute::<ClassInitFn<'_>, ClassInitFn<'static>>(export.init);
             let reset_fn =
-                std::mem::transmute::<PluginResetFn<'_>, PluginResetFn<'static>>(export.reset);
+                std::mem::transmute::<ClassResetFn<'_>, ClassResetFn<'static>>(export.reset);
 
             Ok(Self {
                 name,
@@ -623,7 +623,7 @@ impl Capability for DynamicCapability {
         };
 
         let capability_init = match self.init_fn {
-            PluginInitFn::Sync(func) => {
+            ClassInitFn::Sync(func) => {
                 let res = unsafe { func(config_ptr, config_len) };
                 let state = unsafe {
                     InitResultBridge::from_ffi(res, self.name.clone(), self.path.clone())?
@@ -633,7 +633,7 @@ impl Capability for DynamicCapability {
                     destroy_fn: self.destroy_fn,
                 }
             }
-            PluginInitFn::Async(func) => {
+            ClassInitFn::Async(func) => {
                 let fut_res = unsafe { func(config_ptr, config_len) };
                 let future = AsyncInitFuture::new(fut_res, self.name.clone(), self.path.clone());
                 let future: AsyncInitFuture<'static> = unsafe { std::mem::transmute(future) };
@@ -644,19 +644,19 @@ impl Capability for DynamicCapability {
                     destroy_fn: self.destroy_fn,
                 }
             }
-            PluginInitFn::Null => CapabilityInit::Null,
+            ClassInitFn::Null => CapabilityInit::Null,
         };
 
         Ok(capability_init)
     }
 
-    fn imports(&self) -> Vec<(String, String, PluginFunction<'static>)> {
+    fn imports(&self) -> Vec<(String, String, Function<'static>)> {
         unsafe { std::mem::transmute(self.imports.clone()) }
     }
 
     fn reset(&self, state: &mut StatePtr) -> CapabilityReset<'static> {
         match self.reset_fn {
-            PluginResetFn::Sync(func) => {
+            ClassResetFn::Sync(func) => {
                 let res = unsafe { func(state.ptr) };
                 CapabilityReset::SyncOrNull(Some(unsafe {
                     ExecutionResultBridge::expected_null_from_ffi(
@@ -666,13 +666,13 @@ impl Capability for DynamicCapability {
                     )
                 }))
             }
-            PluginResetFn::Async(func) => {
+            ClassResetFn::Async(func) => {
                 let fut = unsafe { func(state.ptr) };
                 let future = AsyncExecFuture::new(fut, self.name.clone(), self.path.clone());
                 let future: AsyncExecFuture<'static> = unsafe { std::mem::transmute(future) };
                 CapabilityReset::Async(future)
             }
-            PluginResetFn::Null => CapabilityReset::SyncOrNull(Some(Ok(()))),
+            ClassResetFn::Null => CapabilityReset::SyncOrNull(Some(Ok(()))),
         }
     }
 

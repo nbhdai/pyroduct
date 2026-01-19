@@ -1,7 +1,7 @@
 {
-  "rust-analyzer.check.targets": [
-    "x86_64-unknown-linux-gnu",
-    "wasm32-unknown-unknown",
-  ],
+  "rust-analyzer.check.allTargets": true,
   "rust-analyzer.check.features": "all",
+  "rust-analyzer.server.extraEnv": {
+    "RUST_ANALYZER_SLOW_OP_THRESHOLD": "500"
+  },
 }

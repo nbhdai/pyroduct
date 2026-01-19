@@ -122,7 +122,7 @@ where
             make_error_output(FfiError::NullPointer(Phase::Init)).output,
         ));
     }
-    if config_len != 0 {
+    if config_len == 0 {
         return FfiBorrowedFutureObjectResult::EarlyError(FfiInitResult::err(
             make_error_output(FfiError::ZeroLength(Phase::Init)).output,
         ));

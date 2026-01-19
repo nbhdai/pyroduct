@@ -73,9 +73,6 @@ pub enum FfiBorrowedFutureObjectResult<'a> {
 
 // --- Function Typedefs ---
 
-pub type ClassRegisterFn<'a> =
-    unsafe extern "C" fn(Class_id: u64, log_callback: LogCallback) -> ClassExport<'a>;
-
 pub type AsyncFn<'a> = unsafe extern "C" fn(
     *const u8,
     usize,
@@ -188,3 +185,6 @@ pub struct CapabilityExports<'a> {
     pub functions: *mut FunctionExport<'a>,
     pub len_functions: usize,
 }
+
+pub type CapabilityRegisterFn<'a> =
+    unsafe extern "C" fn(class_id: u64, log_callback: LogCallback) -> CapabilityExports<'a>;
