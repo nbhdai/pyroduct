@@ -1,5 +1,7 @@
 //! #[capability_function] - Marks a standalone function as a capability (Pattern 1)
 
+use std::rc::Rc;
+
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{FnArg, Ident, ItemFn, Result};
@@ -9,12 +11,13 @@ use crate::utils::{get_param_name, get_param_type};
 
 #[derive(Debug, Clone)]
 pub(crate) struct CapFn {
+    pub capability_name: Rc<str>,
     pub input: ItemFn,
 }
 
 impl CapFn {
-    pub fn new(input: ItemFn) -> Result<Self> {
-        Ok(CapFn { input })
+    pub fn new(input: ItemFn, capability_name: &Rc<str>) -> Result<Self> {
+        Ok(CapFn { input, capability_name: capability_name.clone() })
     }
 
     pub fn input(&self) -> Option<InputParams> {
@@ -47,6 +50,7 @@ impl CapFn {
     /// Creates a CapabilityFuncFFI with no client or state (standalone function)
     pub fn to_ffi(&self) -> CapabilityFuncFFI {
         CapabilityFuncFFI {
+            capability_name: self.capability_name.clone(),
             class: None,
             constructor: false,
             fn_name: self.input.sig.ident.clone(),
@@ -112,7 +116,7 @@ mod tests {
         };
 
         let item = parse2(item).expect("error");
-        let parsed = CapFn::new(item).expect("Expansion failed");
+        let parsed = CapFn::new(item, &"cap".into()).expect("Expansion failed");
         let ffi = parsed.to_ffi();
         let call_struct = ffi.generate_input_struct();
         let wasm_call = ffi.generate_wasm_call(None);
@@ -140,7 +144,7 @@ mod tests {
         };
 
         let item = parse2(item).expect("error");
-        let parsed = CapFn::new(item).expect("Expansion failed");
+        let parsed = CapFn::new(item, &"cap".into()).expect("Expansion failed");
         let ffi = parsed.to_ffi();
         let call_struct = ffi.generate_input_struct();
         let wasm_call = ffi.generate_wasm_call(None);
@@ -168,7 +172,7 @@ mod tests {
         };
 
         let item = parse2(item).expect("error");
-        let parsed = CapFn::new(item).expect("Expansion failed");
+        let parsed = CapFn::new(item, &"cap".into()).expect("Expansion failed");
         let ffi = parsed.to_ffi();
         let call_struct = ffi.generate_input_struct();
         let wasm_call = ffi.generate_wasm_call(Some(&format_ident!("wasm")));

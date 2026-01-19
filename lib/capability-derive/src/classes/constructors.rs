@@ -11,13 +11,14 @@ use crate::utils::type_to_return;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientConstructor {
+    pub capability_name: Rc<str>,
     pub sig: syn::Signature,
     pub block: syn::Block,
     pub class: Rc<ClassIdent>,
 }
 
 impl ClientConstructor {
-    pub fn new(method: &TraitItemFn, class: &Rc<ClassIdent>) -> syn::Result<Self> {
+    pub fn new(method: &TraitItemFn, class: &Rc<ClassIdent>, capability_name: &Rc<str>) -> syn::Result<Self> {
         let sig = &method.sig;
 
         // 1. Check for Body (Must be a "full function")
@@ -69,6 +70,7 @@ impl ClientConstructor {
         }
 
         Ok(Self {
+            capability_name: capability_name.clone(),
             sig: sig.clone(),
             block,
             class: class.clone(),
@@ -93,7 +95,7 @@ impl ClientConstructor {
         // 4. Build FFI Metadata
         // Determine Final Return Type
 
-        let ffi = client_constructor_ffi_meta(&self.class, self.sig.asyncness.is_some());
+        let ffi = client_constructor_ffi_meta(&self.class, self.sig.asyncness.is_some(), &self.capability_name);
 
         // 5. Generate the implementation
         // We reconstruct the signature because the return type might change.
@@ -103,6 +105,19 @@ impl ClientConstructor {
         let final_return_type = &ffi.return_type;
 
         let wasm_call = ffi.generate_wasm_call(module);
+        let result_handle = if self.class.error_tn.is_some() {
+            quote! {
+                let ffi_result = #wasm_call;
+                match ffi_result {
+                        Ok(_) => Ok(new_self),
+                        Err(e) => Err(e.into()),
+                    }
+            }
+        } else {
+            quote! {
+                #wasm_call
+            }
+        };
 
         let logic = quote! {
             let mut new_self = (|| #modified_block )();
@@ -111,12 +126,8 @@ impl ClientConstructor {
                 .expect("Failed to serialize config")
                 .into_vec();
 
-            let ffi_result = #wasm_call;
 
-            match ffi_result {
-                Ok(_) => Ok(new_self),
-                Err(e) => Err(e.into()),
-            }
+            #result_handle
         };
 
         quote! {
@@ -129,13 +140,14 @@ impl ClientConstructor {
 
 /// Helper to construct the CapabilityFuncFFI configuration for constructors.
 /// Encapsulates naming conventions and return type logic.
-pub fn client_constructor_ffi_meta(class: &Rc<ClassIdent>, is_async: bool) -> CapabilityFuncFFI {
+pub fn client_constructor_ffi_meta(class: &Rc<ClassIdent>, is_async: bool, capability_name: &Rc<str>) -> CapabilityFuncFFI {
     let return_type: ReturnType = if let Some(err_type) = &class.error_tn {
         type_to_return(&parse2(quote!(Result<(), #err_type>)).expect("This really should parse"))
     } else {
         type_to_return(&parse2(quote!(())).expect("This really should parse"))
     };
     CapabilityFuncFFI {
+        capability_name: capability_name.clone(),
         class: Some(class.clone()),
         constructor: true,
         fn_name: format_ident!("new_client"),
@@ -216,7 +228,7 @@ mod tests {
             error_tn: error_type,
         });
 
-        ClientConstructor::new(&method, &class).expect("Constructor creation failed")
+        ClientConstructor::new(&method, &class, &"cap".into()).expect("Constructor creation failed")
     }
 
     #[test]
@@ -232,7 +244,7 @@ mod tests {
         let ctor = create_constructor(code, None);
 
         // 3. Generate Expected FFI Call
-        let wasm_call = client_constructor_ffi_meta(&ctor.class, false).generate_wasm_call(None);
+        let wasm_call = client_constructor_ffi_meta(&ctor.class, false, &"cap".into()).generate_wasm_call(None);
 
         // 4. Generate
         let output = ctor.client_method_generation(None);
@@ -276,7 +288,7 @@ mod tests {
         let ctor = create_constructor(code, Some("MyError"));
 
         // 3. Generate Expected FFI Call
-        let wasm_call = client_constructor_ffi_meta(&ctor.class, false).generate_wasm_call(None);
+        let wasm_call = client_constructor_ffi_meta(&ctor.class, false, &"cap".into()).generate_wasm_call(None);
 
         // 4. Generate
         let output = ctor.client_method_generation(None);
@@ -323,7 +335,7 @@ mod tests {
             error_tn: None,
         });
 
-        let res = ClientConstructor::new(&method, &class);
+        let res = ClientConstructor::new(&method, &class, &"cap".into());
         assert!(res.is_err());
         assert!(
             res.unwrap_err()
@@ -348,7 +360,7 @@ mod tests {
         let ctor = create_constructor(code, None);
 
         // Generate FFI call for expectation
-        let wasm_call = client_constructor_ffi_meta(&ctor.class, false).generate_wasm_call(None);
+        let wasm_call = client_constructor_ffi_meta(&ctor.class, false, &"cap".into()).generate_wasm_call(None);
 
         let output = ctor.client_method_generation(None);
 

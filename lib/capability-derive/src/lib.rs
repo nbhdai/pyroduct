@@ -33,7 +33,7 @@ pub mod fmt {
         match syn::parse_file(&tokens.to_string()) {
             Ok(file) => prettyplease::unparse(&file),
             Err(err) => {
-                tracing::error!(?err, "Parsing Error");
+                println!("Parsing Error {err:?}");
                 tokens.to_string()
             }
         }

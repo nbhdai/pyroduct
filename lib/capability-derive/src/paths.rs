@@ -22,13 +22,6 @@ impl ClassIdent {
     // ========================================================================
 
     /// Library identifier for a method (e.g., __my_trait__my_state__method_name)
-    pub fn class_name(&self) -> Ident {
-        let trait_snake = AsSnakeCase(self.trait_tn.to_string()).to_string();
-        let state_snake = AsSnakeCase(self.state_tn.to_string()).to_string();
-        format_ident!("__{}__{}", trait_snake, state_snake)
-    }
-
-    /// Library identifier for a method (e.g., __my_trait__my_state__method_name)
     pub fn trace_name(&self, name: &Ident) -> Ident {
         let trait_snake = AsSnakeCase(self.trait_tn.to_string()).to_string();
         let state_snake = AsSnakeCase(self.state_tn.to_string()).to_string();

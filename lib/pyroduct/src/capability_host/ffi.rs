@@ -73,10 +73,10 @@ pub enum FfiBorrowedFutureObjectResult<'a> {
 
 // --- Function Typedefs ---
 
-pub type PluginRegisterFn<'a> =
-    unsafe extern "C" fn(plugin_id: u64, log_callback: LogCallback) -> PluginExports<'a>;
+pub type ClassRegisterFn<'a> =
+    unsafe extern "C" fn(Class_id: u64, log_callback: LogCallback) -> ClassExport<'a>;
 
-pub type AsyncPluginProcessFn<'a> = unsafe extern "C" fn(
+pub type AsyncFn<'a> = unsafe extern "C" fn(
     *const u8,
     usize,
     *const u8,
@@ -84,54 +84,54 @@ pub type AsyncPluginProcessFn<'a> = unsafe extern "C" fn(
     *mut c_void,
 ) -> FfiBorrowedFutureResult<'a>;
 
-pub type SyncPluginProcessFn =
+pub type SyncFn =
     unsafe extern "C" fn(*const u8, usize, *const u8, usize, *mut c_void) -> FfiResult;
 
 #[repr(C, u8)]
 #[derive(Clone, Copy)]
-pub enum PluginFunction<'a> {
-    Sync(SyncPluginProcessFn),
-    Async(AsyncPluginProcessFn<'a>),
+pub enum Function<'a> {
+    Sync(SyncFn),
+    Async(AsyncFn<'a>),
 }
 
 #[repr(C)]
-pub struct PluginExport<'a> {
+pub struct FunctionExport<'a> {
     pub module: *const u8,
     pub module_len: usize,
     pub name: *const u8,
     pub name_len: usize,
-    pub func: PluginFunction<'a>,
+    pub func: Function<'a>,
 }
 
 #[repr(C)]
-pub struct PluginExports<'a> {
-    pub ptr: *const PluginExport<'a>,
-    pub init: PluginInitFn<'a>,
-    pub drop: PluginDropFn,
-    pub reset: PluginResetFn<'a>,
+pub struct ClassExport<'a> {
+    pub ptr: *const FunctionExport<'a>,
+    pub init: ClassInitFn<'a>,
+    pub drop: ClassDropFn,
+    pub reset: ClassResetFn<'a>,
     pub len: usize,
 }
 
 // --- Init Functions ---
 
 // UPDATED: Returns FfiBorrowedFutureObjectResult
-pub type AsyncPluginInitFn<'a> =
+pub type AsyncClassInitFn<'a> =
     unsafe extern "C" fn(config: *const u8, config_len: usize) -> FfiBorrowedFutureObjectResult<'a>;
 
-pub type SyncPluginInitFn =
+pub type SyncClassInitFn =
     unsafe extern "C" fn(config: *const u8, config_len: usize) -> FfiInitResult;
 
 #[repr(C, u8)]
 #[derive(Clone, Copy)]
-pub enum PluginInitFn<'a> {
-    Sync(SyncPluginInitFn),
-    Async(AsyncPluginInitFn<'a>),
+pub enum ClassInitFn<'a> {
+    Sync(SyncClassInitFn),
+    Async(AsyncClassInitFn<'a>),
     Null,
 }
 
 #[repr(C, u8)]
 #[derive(Clone, Copy)]
-pub enum PluginDropFn {
+pub enum ClassDropFn {
     Sync(unsafe extern "C" fn(*mut c_void)),
     Null,
 }
@@ -139,14 +139,14 @@ pub enum PluginDropFn {
 // --- Reset Functions ---
 
 // UPDATED: Returns FfiBorrowedFutureResult (yields FfiResult)
-pub type AsyncPluginResetFn<'a> = unsafe extern "C" fn(*mut c_void) -> FfiBorrowedFutureResult<'a>;
-pub type SyncPluginResetFn = unsafe extern "C" fn(*mut c_void) -> FfiResult;
+pub type AsyncClassResetFn<'a> = unsafe extern "C" fn(*mut c_void) -> FfiBorrowedFutureResult<'a>;
+pub type SyncClassResetFn = unsafe extern "C" fn(*mut c_void) -> FfiResult;
 
 #[repr(C, u8)]
 #[derive(Clone, Copy)]
-pub enum PluginResetFn<'a> {
-    Sync(SyncPluginResetFn),
-    Async(AsyncPluginResetFn<'a>),
+pub enum ClassResetFn<'a> {
+    Sync(SyncClassResetFn),
+    Async(AsyncClassResetFn<'a>),
     Null,
 }
 
@@ -183,8 +183,8 @@ impl FfiResult {
 
 #[repr(C)]
 pub struct CapabilityExports<'a> {
-    pub classes: *mut PluginExports<'a>,
+    pub classes: *mut ClassExport<'a>,
     pub len_classes: usize,
-    pub functions: *mut PluginFunction<'a>,
+    pub functions: *mut FunctionExport<'a>,
     pub len_functions: usize,
 }

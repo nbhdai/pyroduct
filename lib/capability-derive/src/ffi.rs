@@ -15,6 +15,7 @@ pub enum InputParams {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityFuncFFI {
+    pub capability_name: Rc<str>,
     pub class: Option<Rc<ClassIdent>>,
     pub constructor: bool,
     pub fn_name: Ident,
@@ -155,6 +156,31 @@ impl CapabilityFuncFFI {
                     capability_state_ptr,
                     #closure_params #body
                 )
+            }
+        }
+    }
+
+    pub fn generate_vtable_entry(&self) -> TokenStream {
+        let fn_ffi_name = self.fn_ffi_name();
+        let fn_name_static = self.trace_name_static();
+
+        let func_variant = if self.is_async {
+            quote! {
+                ::pyroduct::capability_host::ffi::Function::Async(#fn_ffi_name)
+            }
+        } else {
+            quote! {
+                ::pyroduct::capability_host::ffi::Function::Sync(#fn_ffi_name)
+            }
+        };
+
+        quote! {
+            ::pyroduct::capability_host::ffi::FunctionExport {
+                module: __CAPABILITY_NAME.as_ptr(),
+                module_len: __CAPABILITY_NAME.len(),
+                name: #fn_name_static.as_ptr(),
+                name_len: #fn_name_static.len(),
+                func: #func_variant,
             }
         }
     }
@@ -361,6 +387,7 @@ mod tests {
     fn mock_ffi_base(name: &str, is_async: bool, is_class: bool) -> CapabilityFuncFFI {
         if is_class {
             CapabilityFuncFFI {
+                capability_name: "cap".into(),
                 class: Some(mock_class()),
                 constructor: false,
                 fn_name: format_ident!("{}", name),
@@ -371,6 +398,7 @@ mod tests {
             }
         } else {
             CapabilityFuncFFI {
+                capability_name: "cap".into(),
                 class: None,
                 constructor: false,
                 fn_name: format_ident!("{}", name),

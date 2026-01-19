@@ -150,9 +150,9 @@ impl CapServer {
         let init_ffi_name = self.export_init_ident();
 
         if self.attrs.is_async {
-            quote!(::pyroduct::capability_host::ffi::PluginInitFn::Async(#init_ffi_name))
+            quote!(::pyroduct::capability_host::ffi::ClassInitFn::Async(#init_ffi_name))
         } else {
-            quote!(::pyroduct::capability_host::ffi::PluginInitFn::Sync(#init_ffi_name))
+            quote!(::pyroduct::capability_host::ffi::ClassInitFn::Sync(#init_ffi_name))
         }
     }
 
@@ -179,7 +179,7 @@ impl CapServer {
 
     pub fn generate_drop_export(&self) -> TokenStream {
         let drop_ffi_name = self.export_drop_ident();
-        quote!(::pyroduct::capability_host::ffi::PluginDropFn::Sync(#drop_ffi_name))
+        quote!(::pyroduct::capability_host::ffi::ClassDropFn::Sync(#drop_ffi_name))
     }
 
     fn export_reset_ident(&self) -> Ident {
@@ -221,9 +221,9 @@ impl CapServer {
     pub fn generate_reset_export(&self) -> TokenStream {
         let reset_ffi_name = self.export_reset_ident();
         if self.attrs.is_async {
-            quote!(::pyroduct::capability_host::ffi::PluginResetFn::Async(#reset_ffi_name))
+            quote!(::pyroduct::capability_host::ffi::ClassResetFn::Async(#reset_ffi_name))
         } else {
-            quote!(::pyroduct::capability_host::ffi::PluginResetFn::Sync(#reset_ffi_name))
+            quote!(::pyroduct::capability_host::ffi::ClassResetFn::Sync(#reset_ffi_name))
         }
     }
 }

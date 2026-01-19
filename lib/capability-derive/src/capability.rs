@@ -5,6 +5,7 @@
 //! final Module (WASM) and Host (FFI) code blocks.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -20,7 +21,7 @@ use crate::utils::{extract_ident_ignoring_ref, extract_simple_trait_ident, has_a
 /// Parsed content from the capability! macro
 pub struct Capability {
     /// env string literal for usage in code
-    pub env_str: String,
+    pub env_str: Rc<str>,
 
     // Handlers
     pub services: Vec<CapabilityService>,
@@ -36,7 +37,7 @@ impl Parse for Capability {
         let _env_key: Ident = input.parse()?; // "env"
         let _: Token![=] = input.parse()?;
         let env_lit: LitStr = input.parse()?;
-        let env_str = env_lit.value();
+        let env_str: Rc<str> = env_lit.value().into();
 
         if input.peek(Token![,]) {
             let _: Token![,] = input.parse()?;
@@ -68,7 +69,7 @@ impl Parse for Capability {
                 // #[capability_function]
                 Item::Fn(mut f) if has_attr(&f.attrs, "capability") => {
                     let _ = remove_attr(&mut f.attrs, "capability");
-                    parsed_functions.push(CapFn::new(f)?);
+                    parsed_functions.push(CapFn::new(f, &env_str)?);
                 }
                 // #[capability] trait
                 Item::Trait(mut t) if has_attr(&t.attrs, "capability") => {
@@ -119,7 +120,7 @@ impl Parse for Capability {
             })?;
             let trait_name = extract_simple_trait_ident(&impl_item)?;
             let trait_def = if let Some(capability_trait) = parsed_traits.remove(&trait_name) {
-                CapabilityDefTrait::from_trait(capability_trait, struct_name.clone())?
+                CapabilityDefTrait::from_trait(capability_trait, struct_name.clone(), &env_str)?
             } else {
                 return Err(Error::new_spanned(
                     impl_item,
@@ -222,14 +223,27 @@ impl Capability {
 
     pub fn ffi_component(&self) -> TokenStream {
         let functions = self.functions.iter().map(|f| f.to_ffi().generate_capability_ffi()).collect::<Vec<_>>();
-
+        let functions_export = self.functions.iter().map(|f| f.to_ffi().generate_vtable_entry()).collect::<Vec<_>>();
+        let functions_len = functions.len();
         let class_functions = self.services.iter().map(|c| c.generate_ffi_functions()).collect::<Vec<_>>();
-        let class_export = self.services.iter().map(|c| c.generate_ffi_exports()).collect::<Vec<_>>();
+        let class_export_names = self.services.iter().map(|c| c.export_name()).collect::<Vec<_>>();
+        let class_functions_export = self.services.iter().map(|c| c.generate_ffi_exports()).collect::<Vec<_>>();
+        let classes_len = self.services.len();
 
         quote! {
             #(#functions)*
+            static __FUNCTIONS: [::pyroduct::capability_host::ffi::FunctionExport;#functions_len]  = [#(#functions_export),*];
             #(#class_functions)*
-            #(#class_export)*
+            #(#class_functions_export)*
+            static __CLASSES: [::pyroduct::capability_host::ffi::ClassExport;#classes_len]  = [#(#class_export_names),*];
+
+            static __EXPORTS: CapabilityExports = CapabilityExports {
+                classes: __CLASSES.as_ptr(),
+                len_classes: #classes_len,
+                functions: __FUNCTIONS.as_ptr(),
+                len_functions: #functions_len,
+            };
+
         }
     }
 
@@ -239,12 +253,16 @@ impl Capability {
         let capability_component = self.capability_component();
         let ffi_component = self.ffi_component();
         let others = &self.other_items;
+        let name = self.env_str.as_ref();
         quote! {
             #module_component
-            pub mod __wasm {
+            mod __wasm {
+                use super::*;
                 #wasm_calls_component
             }
-            pub mod __capability {
+            mod __capability {
+                use super::*;
+                static __CAPABILITY_NAME: &'static str = #name;
                 #capability_component
                 #(#others)*
                 #ffi_component
@@ -300,15 +318,15 @@ mod tests {
             #[capability]
             impl MyTrait for MyServer {
                 type Client = MyClient;
-                fn new_client(&self, c: &MyClient) -> Result<(), ()> { Ok(()) }
-                fn do_thing(&self, c: &MyClient) -> Result<bool, ()> { Ok(true) }
+                fn new_client(&self, c: &MyClient)  { Ok(()) }
+                fn do_thing(&self, c: &MyClient) -> bool { Ok(true) }
             }
         };
 
 
         let module: Capability = parse2(input).expect("Failed to parse module");
 
-        assert_eq!(module.env_str, "test_env");
+        assert_eq!(module.env_str, "test_env".into());
         assert_eq!(
             module.services.len(),
             1,

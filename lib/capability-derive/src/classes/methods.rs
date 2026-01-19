@@ -16,6 +16,7 @@ use crate::{
 /// Represents a validated method within the Capability trait.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CapabilityMethod {
+    pub capability_name: Rc<str>,
     pub name: Ident,
     pub class: Rc<ClassIdent>,
     pub inputs: Vec<(Ident, Type)>,
@@ -25,7 +26,7 @@ pub struct CapabilityMethod {
 }
 
 impl CapabilityMethod {
-    pub fn from_trait(method: TraitItemFn, class: &Rc<ClassIdent>) -> syn::Result<Self> {
+    pub fn from_trait(method: TraitItemFn, class: &Rc<ClassIdent>, capability_name: &Rc<str>) -> syn::Result<Self> {
         let sig = &method.sig;
 
         // --------------------------------------------------------
@@ -107,6 +108,7 @@ impl CapabilityMethod {
         };
 
         Ok(Self {
+            capability_name: capability_name.clone(),
             name: sig.ident.clone(),
             class: class.clone(),
             inputs: clean_inputs,
@@ -169,6 +171,7 @@ impl CapabilityMethod {
 
         // 4. Construct Struct
         CapabilityFuncFFI {
+            capability_name: self.capability_name.clone(),
             class: Some(self.class.clone()),
             fn_name: name.clone(),
             constructor: false,
@@ -321,7 +324,7 @@ mod tests {
             error_tn: error_type,
         });
 
-        CapabilityMethod::from_trait(method, &class)
+        CapabilityMethod::from_trait(method, &class, &"cap".into())
     }
 
     #[test]

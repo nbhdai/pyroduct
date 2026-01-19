@@ -42,6 +42,7 @@ use crate::utils::extract_ident_from_type;
 ///     corresponding `Server` state instance.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CapabilityDefTrait {
+    pub capability_name: Rc<str>,
     pub ident: Rc<ClassIdent>,
     pub original_attrs: Vec<syn::Attribute>,
     pub generics: syn::Generics,
@@ -52,7 +53,7 @@ pub struct CapabilityDefTrait {
 
 impl CapabilityDefTrait {
     /// Ingests a Trait Definition (original logic).
-    pub fn from_trait(input: ItemTrait, state_tn: Ident) -> syn::Result<Self> {
+    pub fn from_trait(input: ItemTrait, state_tn: Ident, capability_name: &Rc<str>) -> syn::Result<Self> {
         let trait_tn = input.ident.clone();
         let mut methods = Vec::new();
         let mut constructors = Vec::new();
@@ -118,10 +119,10 @@ impl CapabilityDefTrait {
                 };
 
                 if is_constructor {
-                    let ctor = ClientConstructor::new(method, &ident)?;
+                    let ctor = ClientConstructor::new(method, &ident, &capability_name)?;
                     constructors.push(ctor);
                 } else {
-                    let cap_method = CapabilityMethod::from_trait(method.clone(), &ident)?;
+                    let cap_method = CapabilityMethod::from_trait(method.clone(), &ident, &capability_name)?;
                     methods.push(cap_method);
                 }
             }
@@ -136,6 +137,7 @@ impl CapabilityDefTrait {
         }
 
         Ok(Self {
+            capability_name: capability_name.clone(),
             ident,
             original_attrs: input.attrs.clone(),
             generics: input.generics,
@@ -202,7 +204,7 @@ impl CapabilityDefTrait {
 
     pub fn capability_ffis(&self) -> Vec<CapabilityFuncFFI> {
         let mut capability_ffis = Vec::with_capacity(self.methods.len() + 1);
-        let constructor_ffi = client_constructor_ffi_meta(&self.ident, false);
+        let constructor_ffi = client_constructor_ffi_meta(&self.ident, false, &self.capability_name);
         capability_ffis.push(constructor_ffi);
 
         capability_ffis.extend(self.methods.iter().map(|m| m.build_ffi_meta()));
@@ -220,6 +222,7 @@ mod tests {
     #[test]
     fn test_generate_client_impl_integration() {
         let state_name = format_ident!("MyState");
+        let expected_cap = "cap".into();
         let expected_class = Rc::new(ClassIdent {
             trait_tn: format_ident!("MyTrait"),
             state_tn: format_ident!("MyState"),
@@ -252,13 +255,13 @@ mod tests {
         })
         .unwrap();
 
-        let expected_constructor = ClientConstructor::new(&constructor, &expected_class).unwrap();
-        let expected_method = CapabilityMethod::from_trait(method, &expected_class).unwrap();
+        let expected_constructor = ClientConstructor::new(&constructor, &expected_class, &expected_cap).unwrap();
+        let expected_method = CapabilityMethod::from_trait(method, &expected_class, &expected_cap).unwrap();
 
         let expected_constructor = expected_constructor.client_method_generation(None);
         let expected_method = expected_method.client_method_generation(None);
 
-        let def = CapabilityDefTrait::from_trait(code, state_name.clone())
+        let def = CapabilityDefTrait::from_trait(code, state_name.clone(), &expected_cap)
             .expect("Failed to parse capability trait");
         let output = def.generate_client_impl(None);
 
@@ -297,6 +300,7 @@ mod tests {
             client_tn: format_ident!("AdvancedClient"),
             error_tn: Some(syn::parse_str("MyError").unwrap()),
         });
+        let expected_cap = "cap".into();
 
         let code = parse2(quote! {
             trait AdvancedTrait {
@@ -340,18 +344,18 @@ mod tests {
         })
         .unwrap();
 
-        let expected_constructor = ClientConstructor::new(&constructor, &expected_class).unwrap();
+        let expected_constructor = ClientConstructor::new(&constructor, &expected_class, &expected_cap).unwrap();
         let expected_constructor_2 =
-            ClientConstructor::new(&constructor_2, &expected_class).unwrap();
-        let expected_method = CapabilityMethod::from_trait(method, &expected_class).unwrap();
-        let expected_method_2 = CapabilityMethod::from_trait(method_2, &expected_class).unwrap();
+            ClientConstructor::new(&constructor_2, &expected_class, &expected_cap).unwrap();
+        let expected_method = CapabilityMethod::from_trait(method, &expected_class, &expected_cap).unwrap();
+        let expected_method_2 = CapabilityMethod::from_trait(method_2, &expected_class, &expected_cap).unwrap();
 
         let expected_constructor = expected_constructor.client_method_generation(None);
         let expected_constructor_2 = expected_constructor_2.client_method_generation(None);
         let expected_method = expected_method.client_method_generation(None);
         let expected_method_2 = expected_method_2.client_method_generation(None);
 
-        let def = CapabilityDefTrait::from_trait(code, state_name.clone())
+        let def = CapabilityDefTrait::from_trait(code, state_name.clone(), &expected_cap)
             .expect("Failed to parse capability trait");
         let output = def.generate_client_impl(None);
 
@@ -405,7 +409,7 @@ mod tests {
         .unwrap();
         let state_name = format_ident!("MyState");
 
-        let result = CapabilityDefTrait::from_trait(code, state_name);
+        let result = CapabilityDefTrait::from_trait(code, state_name, &"cap".into());
         assert!(result.is_err());
     }
 }

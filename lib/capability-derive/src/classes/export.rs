@@ -44,6 +44,9 @@ impl CapabilityService {
     pub fn orig_impl(&self) -> &ItemImpl {
         &self.orig_impl
     }
+    pub fn export_name(&self) -> Ident {
+        quote::format_ident!("{}__CLASS_EXPORTS", self.trait_def.ident.class_name_static())
+    }
     /// Generates the complete FFI export table for this service.
     ///
     /// This creates:
@@ -68,30 +71,7 @@ impl CapabilityService {
         // Generate the PluginExport array entries
         let plugin_exports: Vec<_> = capability_ffis
             .iter()
-            .map(|ffi| {
-                let fn_ffi_name = &ffi.fn_ffi_name();
-                let fn_name_static = ffi.trace_name_static();
-
-                let func_variant = if ffi.is_async {
-                    quote! {
-                        ::pyroduct::capability_host::ffi::PluginFunction::Async(#fn_ffi_name)
-                    }
-                } else {
-                    quote! {
-                        ::pyroduct::capability_host::ffi::PluginFunction::Sync(#fn_ffi_name)
-                    }
-                };
-
-                quote! {
-                    ::pyroduct::capability_host::ffi::PluginExport {
-                        module: #class_name_static.as_ptr(),
-                        module_len: #class_name_static.len(),
-                        name: #fn_name_static.as_ptr(),
-                        name_len: #fn_name_static.len(),
-                        func: #func_variant,
-                    }
-                }
-            })
+            .map(|ffi| ffi.generate_vtable_entry())
             .collect();
 
         let plugin_static_str: Vec<_> = capability_ffis
@@ -111,20 +91,19 @@ impl CapabilityService {
         let exports_array_name = quote::format_ident!("{}__EXPORTS", class_name_static);
 
         // Generate the PluginExports struct name
-        let plugin_exports_name = quote::format_ident!("{}__PLUGIN_EXPORTS", class_name_static);
-        let class_name = self.trait_def.ident.class_name().to_string();
+        let plugin_exports_name = self.export_name();
+        
         quote! {
-            static #class_name_static: &'static str  = #class_name;
             #(#plugin_static_str)*
 
             // Generate the static export array
-            static #exports_array_name: [::pyroduct::capability_host::ffi::PluginExport; #num_exports] = [
+            static #exports_array_name: [::pyroduct::capability_host::ffi::FunctionExport; #num_exports] = [
                 #(#plugin_exports),*
             ];
 
             // Generate the PluginExports struct
-            pub static #plugin_exports_name: ::pyroduct::capability_host::ffi::PluginExports = ::pyroduct::capability_host::ffi::PluginExports {
-                ptr: exports.as_ptr(),
+            pub static #plugin_exports_name: ::pyroduct::capability_host::ffi::ClassExport = ::pyroduct::capability_host::ffi::ClassExport {
+                ptr: #exports_array_name.as_ptr(),
                 init: #init_export,
                 drop: #drop_export,
                 reset: #reset_export,
@@ -179,6 +158,7 @@ mod tests {
 
     #[test]
     fn test_generate_ffi_exports() {
+        let expected_cap = "cap".into();
         // 1. Define the complete capability setup
         let client_code = quote! {
             pub struct TestClient {
@@ -225,7 +205,7 @@ mod tests {
         let server_attr = quote! { service = TestTrait, config = TestConfig };
         let server = CapServer::new(server_attr, server_struct).unwrap();
         let trait_def =
-            CapabilityDefTrait::from_trait(trait_def, server.struct_name.clone()).unwrap();
+            CapabilityDefTrait::from_trait(trait_def, server.struct_name.clone(), &expected_cap).unwrap();
 
         // 3. Create the service
         let service = CapabilityService {
