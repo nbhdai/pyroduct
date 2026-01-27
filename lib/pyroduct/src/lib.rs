@@ -226,3 +226,5 @@ pub use module_derive::module;
 /// }
 /// ```
 pub use capability_derive::capability;
+
+pub type PyroductResult<T> = Result<T, errors::PyroductError>;

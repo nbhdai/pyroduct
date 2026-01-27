@@ -1,12 +1,15 @@
+use crate::PyroductResult;
 use crate::capability_host::ffi::{
-    COutput, FfiBorrowedFutureObjectResult, FfiBorrowedFutureResult, FfiInitResult, FfiResult,
+    COutput, ClassDropFn, FfiBorrowedFutureObjectResult, FfiBorrowedFutureResult, FfiInitResult, FfiResult
 };
 use crate::errors::{FfiError, PyroductError};
+use crate::host::wasm_link::StatePtr;
 use std::ffi::c_void;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use pin_project::pin_project;
 use tracing::{debug, error, trace};
 
 /// Helper to take ownership of the FFI output vector
@@ -280,6 +283,90 @@ impl<'a> Future for AsyncExecFuture<'a> {
                     error!("AsyncExecFuture: polled after completion");
                     Err(FfiError::FuturePolledAfterCompletion.to_capability_error(name, path))
                 }))
+            }
+        }
+    }
+}
+
+
+
+#[pin_project(project = CapInit)]
+pub enum CapabilityInit<'a> {
+    Sync {
+        state: Option<*mut c_void>,
+        destroy_fn: ClassDropFn,
+    },
+    Async {
+        config_bytes: Vec<u8>,
+        #[pin]
+        future: AsyncInitFuture<'a>,
+        destroy_fn: ClassDropFn,
+    },
+    Null,
+}
+
+impl<'a> Future for CapabilityInit<'a> {
+    type Output = PyroductResult<StatePtr>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        match self.project() {
+            CapInit::Sync { state, destroy_fn } => match state.take() {
+                Some(state) => std::task::Poll::Ready(Ok(StatePtr {
+                    ptr: state,
+                    destroy_fn: *destroy_fn,
+                })),
+                None => panic!("Double await!"),
+            },
+            CapInit::Async {
+                config_bytes: _,
+                future,
+                destroy_fn,
+            } => match future.poll(cx) {
+                std::task::Poll::Ready(result) => match result {
+                    Ok(pointer) => std::task::Poll::Ready(Ok(StatePtr {
+                        ptr: pointer,
+                        destroy_fn: *destroy_fn,
+                    })),
+                    Err(e) => std::task::Poll::Ready(Err(e)),
+                },
+                std::task::Poll::Pending => std::task::Poll::Pending,
+            },
+            CapInit::Null => std::task::Poll::Ready(Ok(StatePtr {
+                ptr: std::ptr::null_mut(),
+                destroy_fn: ClassDropFn::Null,
+            })),
+        }
+    }
+}
+
+#[pin_project(project = CapReset)]
+pub enum CapabilityReset<'a> {
+    Async(#[pin] AsyncExecFuture<'a>),
+    SyncOrNull(Option<PyroductResult<()>>),
+}
+
+impl<'a> Future for CapabilityReset<'a> {
+    type Output = PyroductResult<()>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        match self.project() {
+            CapReset::Async(this) => match this.poll(cx) {
+                std::task::Poll::Ready(Ok(_)) => std::task::Poll::Ready(Ok(())),
+                std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(e)),
+                std::task::Poll::Pending => std::task::Poll::Pending,
+            },
+            CapReset::SyncOrNull(result) => {
+                match result.take() {
+                    Some(result) => std::task::Poll::Ready(result),
+                    None => std::task::Poll::Ready(Err(FfiError::FuturePolledAfterCompletion
+                        .to_capability_error("unknown", "unknown"))),
+                }
             }
         }
     }

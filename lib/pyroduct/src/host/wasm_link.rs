@@ -8,20 +8,23 @@ use std::sync::{Arc, RwLock};
 use tracing::{Span, error, info};
 use wasmtime::{Caller, Linker};
 
+use crate::PyroductResult;
 use crate::capability_host::ffi::{
     AsyncFn, ClassDropFn, FunctionExport, Function, ClassInitFn, CapabilityRegisterFn, ClassResetFn, SyncFn
 };
 use crate::errors::{FfiError, PyroductError};
+use crate::host::class::CapClass;
 use crate::host::ffi_bridge::{
-    AsyncExecFuture, AsyncInitFuture, ExecutionResultBridge, InitResultBridge,
+    AsyncExecFuture, AsyncInitFuture, CapabilityInit, CapabilityReset, ExecutionResultBridge, InitResultBridge
 };
+use crate::host::function::CapFunction;
 
 // --- Type definitions for clarity ---
 type WasmArgs = (i32, i32, i32, i32); // (wasm_state_ptr, wasm_state_len, ptr, len)
 
 pub struct StatePtr {
-    ptr: *mut c_void,
-    destroy_fn: ClassDropFn,
+    pub(super) ptr: *mut c_void,
+    pub(super) destroy_fn: ClassDropFn,
 }
 
 unsafe impl Send for StatePtr {}
@@ -47,7 +50,7 @@ impl Drop for StatePtr {
 
 pub struct HarnessState {
     // Map capability index -> Opaque State Pointer
-    cap_states: Vec<StatePtr>,
+    pub cap_states: Vec<StatePtr>,
     /// Shared slot for an error that occurred during a host function call
     pub error_slot: Option<PyroductError>,
 }
@@ -58,7 +61,6 @@ pub struct Capabilities {
     caps: Vec<Arc<dyn Capability>>,
 }
 
-type PyroductResult<T> = Result<T, PyroductError>;
 
 impl HarnessState {
     pub async fn new(
@@ -96,252 +98,6 @@ impl HarnessState {
     }
 }
 
-trait CapabilityExt: Capability {
-    /// Handles the "Preparation" phase: getting host state, validating memory bounds,
-    /// and calculating raw pointers.
-    fn prepare_io(
-        &self,
-        caller: &mut Caller<'_, HarnessState>,
-        cap_index: usize,
-        args: WasmArgs,
-        wasm_name: &str,
-        wasm_path: &Path,
-    ) -> PyroductResult<(*mut c_void, *mut u8, *const u8)> {
-        let (wasm_state_ptr, wasm_state_len, ptr, len) = args;
-
-        let host_state_ptr = caller
-            .data()
-            .cap_states
-            .get(cap_index)
-            .map(|s| s.ptr)
-            .unwrap_or(std::ptr::null_mut());
-
-        let memory = caller
-            .get_export("memory")
-            .ok_or_else(|| {
-                PyroductError::from_module_linking(
-                    wasm_name.to_string(),
-                    wasm_path.to_path_buf(),
-                    "Missing 'memory'",
-                )
-            })?
-            .into_memory()
-            .ok_or_else(|| {
-                PyroductError::from_module_linking(
-                    wasm_name.to_string(),
-                    wasm_path.to_path_buf(),
-                    "The 'memory' in the module isn't actually memory",
-                )
-            })?;
-
-        let (mem_slice, _) = memory.data_and_store_mut(caller);
-
-        // Validate bounds
-        if ptr as usize + len as usize > mem_slice.len() {
-            error!("Segfault Risk: Input pointer out of WASM memory bounds!");
-            return Err(PyroductError::from_module_linking(
-                wasm_name.to_string(),
-                wasm_path.to_path_buf(),
-                "Returned memory pointer out of bounds",
-            ));
-        }
-
-        if wasm_state_ptr as usize + wasm_state_len as usize > mem_slice.len() {
-            error!("Segfault Risk: Client pointer out of WASM memory bounds!");
-            return Err(PyroductError::from_module_linking(
-                wasm_name.to_string(),
-                wasm_path.to_path_buf(),
-                "Returned memory pointer out of bounds",
-            ));
-        }
-
-        // Calculate pointers
-        // SAFETY: Bounds checked above.
-        let input_ptr = mem_slice.as_ptr().wrapping_add(ptr as usize);
-        let w_state_ptr = mem_slice.as_mut_ptr().wrapping_add(wasm_state_ptr as usize);
-
-        Ok((host_state_ptr, w_state_ptr, input_ptr))
-    }
-
-    /// Handles the "Finalization" phase: allocating memory in WASM and writing the result.
-    async fn finalize_io(
-        &self,
-        mut caller: &mut Caller<'_, HarnessState>,
-        output_vec: Vec<u8>,
-        wasm_name: &str,
-        wasm_path: &Path,
-    ) -> PyroductResult<i32> {
-        let total_len = 4 + output_vec.len();
-
-        // Get alloc function
-        let alloc = caller
-            .get_export("alloc")
-            .ok_or_else(|| {
-                PyroductError::from_module_linking(
-                    wasm_name.to_string(),
-                    wasm_path.to_path_buf(),
-                    "Missing alloc",
-                )
-            })?
-            .into_func()
-            .ok_or_else(|| {
-                PyroductError::from_module_linking(
-                    wasm_name.to_string(),
-                    wasm_path.to_path_buf(),
-                    "Alloc is not a function",
-                )
-            })?;
-
-        let alloc_typed = alloc.typed::<i32, i32>(&mut caller).map_err(|err| {
-            PyroductError::from_module_linking(
-                wasm_name.to_string(),
-                wasm_path.to_path_buf(),
-                format!("Alloc has incorrect function signature: {err}"),
-            )
-        })?;
-
-        // Call alloc (async)
-        let result_ptr = alloc_typed
-            .call_async(&mut caller, total_len as i32)
-            .await
-            .map_err(|err| {
-                PyroductError::from_module_linking(
-                    wasm_name.to_string(),
-                    wasm_path.to_path_buf(),
-                    format!("Allocation failed: {err}"),
-                )
-            })?;
-
-        // Re-acquire memory (invalidated by call_async)
-        let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
-        let (mem_slice, _) = memory.data_and_store_mut(&mut caller);
-
-        // Write result
-        unsafe {
-            let dest_ptr = mem_slice.as_mut_ptr().add(result_ptr as usize);
-            *(dest_ptr as *mut u32) = output_vec.len() as u32;
-            std::ptr::copy_nonoverlapping(output_vec.as_ptr(), dest_ptr.add(4), output_vec.len());
-        }
-
-        Ok(result_ptr)
-    }
-
-    /// Executes a Sync capability call
-    async fn process_sync_call(
-        &self,
-        mut caller: Caller<'_, HarnessState>,
-        raw_fn: SyncFn,
-        args: WasmArgs,
-        cap_index: usize,
-        wasm_name: String,
-        wasm_path: PathBuf,
-    ) -> i32 {
-        let (_, wasm_state_len, _, input_len) = args;
-
-        // 1. Prepare Pointers
-        let (host_state_ptr, w_state_ptr, input_ptr) =
-            match self.prepare_io(&mut caller, cap_index, args, &wasm_name, &wasm_path) {
-                Ok(ptrs) => ptrs,
-                Err(e) => {
-                    caller.data_mut().error_slot = Some(e);
-                    return 0;
-                }
-            };
-
-        // 2. Execute unsafe FFI
-        info!("Entering unsafe plugin function...");
-        let result = unsafe {
-            raw_fn(
-                w_state_ptr,
-                wasm_state_len as usize,
-                input_ptr,
-                input_len as usize,
-                host_state_ptr,
-            )
-        };
-        info!("Exited unsafe plugin function.");
-
-        let output_vec = match unsafe {
-            ExecutionResultBridge::from_ffi(result, self.name(), self.path().unwrap().to_path_buf())
-        } {
-            Ok(v) => v,
-            Err(e) => {
-                caller.data_mut().error_slot = Some(e);
-                return 0;
-            }
-        };
-
-        // 3. Finalize (Alloc & Write)
-        match self
-            .finalize_io(&mut caller, output_vec, &wasm_name, &wasm_path)
-            .await
-        {
-            Ok(ptr) => ptr,
-            Err(e) => {
-                caller.data_mut().error_slot = Some(e);
-                0
-            }
-        }
-    }
-
-    /// Executes an Async capability call
-    async fn process_async_call(
-        &self,
-        mut caller: Caller<'_, HarnessState>,
-        raw_fn: AsyncFn<'static>,
-        args: WasmArgs,
-        cap_index: usize,
-        wasm_name: String,
-        wasm_path: PathBuf,
-    ) -> i32 {
-        let (_, wasm_state_len, _, input_len) = args;
-
-        // 1. Prepare Pointers
-        let (host_state_ptr, w_state_ptr, input_ptr) =
-            match self.prepare_io(&mut caller, cap_index, args, &wasm_name, &wasm_path) {
-                Ok(ptrs) => ptrs,
-                Err(e) => {
-                    caller.data_mut().error_slot = Some(e);
-                    return 0;
-                }
-            };
-
-        // 2. Execute unsafe FFI
-        info!("Entering unsafe async plugin function...");
-        let fut = unsafe {
-            raw_fn(
-                w_state_ptr,
-                wasm_state_len as usize,
-                input_ptr,
-                input_len as usize,
-                host_state_ptr,
-            )
-        };
-
-        let exec_fut = AsyncExecFuture::new(fut, self.name(), self.path().unwrap().to_path_buf());
-        let output_vec = match exec_fut.await {
-            Ok(v) => v,
-            Err(e) => {
-                info!("Exited unsafe async plugin function (Error).");
-                caller.data_mut().error_slot = Some(e);
-                return 0;
-            }
-        };
-        info!("Exited unsafe async plugin function (Success).");
-
-        // 3. Finalize (Alloc & Write)
-        match self
-            .finalize_io(&mut caller, output_vec, &wasm_name, &wasm_path)
-            .await
-        {
-            Ok(ptr) => ptr,
-            Err(e) => {
-                caller.data_mut().error_slot = Some(e);
-                0
-            }
-        }
-    }
-}
 
 // Implement the extension trait for all Capabilities
 impl<T: Capability + ?Sized> CapabilityExt for T {}
@@ -414,6 +170,47 @@ impl Capabilities {
         }
     }
 
+    fn get_memory(&self) -> PyroductResult<> {
+                let memory = caller
+            .get_export("memory")
+            .ok_or_else(|| {
+                PyroductError::from_module_linking(
+                    wasm_name.to_string(),
+                    wasm_path.to_path_buf(),
+                    "Missing 'memory'",
+                )
+            })?
+            .into_memory()
+            .ok_or_else(|| {
+                PyroductError::from_module_linking(
+                    wasm_name.to_string(),
+                    wasm_path.to_path_buf(),
+                    "The 'memory' in the module isn't actually memory",
+                )
+            })?;
+
+        let (mem_slice, _) = memory.data_and_store_mut(caller);
+
+        // Validate bounds
+        if ptr as usize + len as usize > mem_slice.len() {
+            error!("Segfault Risk: Input pointer out of WASM memory bounds!");
+            return Err(PyroductError::from_module_linking(
+                wasm_name.to_string(),
+                wasm_path.to_path_buf(),
+                "Returned memory pointer out of bounds",
+            ));
+        }
+
+        if wasm_state_ptr as usize + wasm_state_len as usize > mem_slice.len() {
+            error!("Segfault Risk: Client pointer out of WASM memory bounds!");
+            return Err(PyroductError::from_module_linking(
+                wasm_name.to_string(),
+                wasm_path.to_path_buf(),
+                "Returned memory pointer out of bounds",
+            ));
+        }
+    }
+
     pub async fn reset_states(&self, states: &mut HarnessState) -> PyroductResult<()> {
         for (i, cap) in self.caps.iter().enumerate() {
             if let Some(state) = states.cap_states.get_mut(i) {
@@ -424,106 +221,14 @@ impl Capabilities {
     }
 }
 
-#[pin_project(project = CapInit)]
-pub enum CapabilityInit<'a> {
-    Sync {
-        state: Option<*mut c_void>,
-        destroy_fn: ClassDropFn,
-    },
-    Async {
-        config_bytes: Vec<u8>,
-        #[pin]
-        future: AsyncInitFuture<'a>,
-        destroy_fn: ClassDropFn,
-    },
-    Null,
-}
-
-impl<'a> Future for CapabilityInit<'a> {
-    type Output = PyroductResult<StatePtr>;
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        match self.project() {
-            CapInit::Sync { state, destroy_fn } => match state.take() {
-                Some(state) => std::task::Poll::Ready(Ok(StatePtr {
-                    ptr: state,
-                    destroy_fn: *destroy_fn,
-                })),
-                None => panic!("Double await!"),
-            },
-            CapInit::Async {
-                config_bytes: _,
-                future,
-                destroy_fn,
-            } => match future.poll(cx) {
-                std::task::Poll::Ready(result) => match result {
-                    Ok(pointer) => std::task::Poll::Ready(Ok(StatePtr {
-                        ptr: pointer,
-                        destroy_fn: *destroy_fn,
-                    })),
-                    Err(e) => std::task::Poll::Ready(Err(e)),
-                },
-                std::task::Poll::Pending => std::task::Poll::Pending,
-            },
-            CapInit::Null => std::task::Poll::Ready(Ok(StatePtr {
-                ptr: ptr::null_mut(),
-                destroy_fn: ClassDropFn::Null,
-            })),
-        }
-    }
-}
-
-#[pin_project(project = CapReset)]
-pub enum CapabilityReset<'a> {
-    Async(#[pin] AsyncExecFuture<'a>),
-    SyncOrNull(Option<PyroductResult<()>>),
-}
-
-impl<'a> Future for CapabilityReset<'a> {
-    type Output = PyroductResult<()>;
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        match self.project() {
-            CapReset::Async(this) => match this.poll(cx) {
-                std::task::Poll::Ready(Ok(_)) => std::task::Poll::Ready(Ok(())),
-                std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(e)),
-                std::task::Poll::Pending => std::task::Poll::Pending,
-            },
-            CapReset::SyncOrNull(result) => {
-                match result.take() {
-                    Some(result) => std::task::Poll::Ready(result),
-                    None => std::task::Poll::Ready(Err(FfiError::FuturePolledAfterCompletion
-                        .to_capability_error("unknown", "unknown"))),
-                }
-            }
-        }
-    }
-}
-
-pub trait Capability: Send + Sync {
-    fn init(&self, config: &Option<&serde_json::Value>) -> PyroductResult<CapabilityInit<'static>>;
-    fn imports(&self) -> Vec<(String, String, Function<'static>)>;
-    fn reset(&self, state: &mut StatePtr) -> CapabilityReset<'static>;
-
-    fn path(&self) -> Option<&Path>;
-    fn name(&self) -> String;
-}
 
 pub struct DynamicCapability {
     name: String,
     path: PathBuf,
     #[allow(dead_code)]
     library: Arc<Library>,
-    imports: Vec<(String, String, Function<'static>)>,
-    init_fn: ClassInitFn<'static>,
-    reset_fn: ClassResetFn<'static>,
-    destroy_fn: ClassDropFn,
+    functions: Vec<CapFunction>,
+    classes: Vec<CapClass>,
 }
 
 static LOG_CALLBACK_SPAN: RwLock<Vec<Span>> = RwLock::new(Vec::new());
@@ -571,8 +276,6 @@ impl DynamicCapability {
                 })?;
 
             let export = manifest_fn(span_id, log_callback);
-            let exports: *mut [FunctionExport<'static>] = ptr::slice_from_raw_parts(export.ptr, export.len) as *mut _;
-            let exports: Box<[FunctionExport<'static>]> = unsafe { Box::from_raw(exports) };
 
             let mut imports = Vec::new();
             for export in exports {
