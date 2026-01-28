@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use arrow_scalars::ArrowRow;
-use pyroduct::host::{CompiledModule, DynamicCapability};
+use pyroduct::host::{CompiledModule};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;

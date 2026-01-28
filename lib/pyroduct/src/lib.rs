@@ -11,6 +11,8 @@ pub mod module_host;
 
 pub mod errors;
 
+use std::path::Display;
+
 pub use arrow_scalars::{deep_ref::DeepRef, from_row::FromRow, to_row::ToRow};
 
 pub use arrow_derive::{DeepRef, FromRow, ToRow};
@@ -228,3 +230,56 @@ pub use module_derive::module;
 pub use capability_derive::capability;
 
 pub type PyroductResult<T> = Result<T, errors::PyroductError>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapIdentity {
+    pub path: std::sync::Arc<std::path::Path>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModIdentity {
+    pub path: std::sync::Arc<std::path::Path>,
+}
+
+impl CapIdentity {
+    pub fn from<'a, P: Into<&'a std::path::Path>>(p: P) -> Self {
+        Self {
+            path: std::sync::Arc::from(p.into()),
+        }
+    }
+    
+    pub fn display(&self) -> Display<'_> {
+        self.path.display()
+    }
+
+    pub fn name(&self) -> &str {
+        self.path
+            .as_ref()
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.strip_prefix("lib").unwrap_or(s))
+            .unwrap_or_else(|| "unknown")
+    }
+}
+
+
+impl ModIdentity {
+    pub fn from<'a, P: Into<&'a std::path::Path>>(p: P) -> Self {
+        Self {
+            path: std::sync::Arc::from(p.into()),
+        }
+    }
+
+    pub fn display(&self) -> Display<'_> {
+        self.path.display()
+    }
+
+    pub fn name(&self) -> &str {
+        self.path
+            .as_ref()
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.strip_prefix("lib").unwrap_or(s))
+            .unwrap_or_else(|| "unknown")
+    }
+}

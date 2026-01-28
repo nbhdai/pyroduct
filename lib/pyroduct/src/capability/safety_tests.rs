@@ -1,11 +1,12 @@
 use super::safe_async::execute_safe_async;
 use super::safe_io::get_input;
 use super::safe_lifecycle::{execute_safe_init, execute_safe_reset};
+use crate::CapIdentity;
 use crate::capability_host::ffi::FfiBorrowedFutureResult;
 use crate::errors::FfiError;
 use crate::host::ffi_bridge::{AsyncExecFuture, ExecutionResultBridge, InitResultBridge};
 use crate::module_capability::panic::register_ffi_panic_hook;
-use std::path::PathBuf;
+use std::path::Path;
 use std::ptr;
 
 // A simple type for serialization testing
@@ -127,7 +128,7 @@ fn test_bridge_handles_lifecycle_panic() {
     // 3. Run the "Host" side bridge logic
     // This consumes the raw FFI result and attempts to reconstruct the error
     let host_result = unsafe {
-        InitResultBridge::from_ffi(raw_ffi_result, "test_cap".into(), PathBuf::from("test.so"))
+        InitResultBridge::from_ffi(raw_ffi_result, &CapIdentity::from(Path::new("test_cap")))
     };
     tracing::info!(?host_result, "Result");
 
@@ -158,8 +159,7 @@ fn test_bridge_handles_null_pointer_input() {
     let host_result = unsafe {
         ExecutionResultBridge::expected_null_from_ffi(
             raw_ffi_result,
-            "test_cap".into(),
-            PathBuf::from("test.so"),
+            &CapIdentity::from(Path::new("test_cap")),
         )
     };
 
@@ -192,8 +192,7 @@ async fn test_bridge_handles_async_panic() {
     // AsyncExecFuture handles polling the C-compatible future and converting the result
     let host_future = AsyncExecFuture::new(
         ffi_future_result,
-        "test_cap".into(),
-        PathBuf::from("test.so"),
+        &CapIdentity::from(Path::new("test_cap")),
     );
 
     // 3. Await it like a normal Rust future
@@ -226,7 +225,7 @@ fn test_bridge_handles_deserialization_failure() {
 
     // 2. Decode on host
     let host_result = unsafe {
-        InitResultBridge::from_ffi(raw_ffi_result, "test_cap".into(), PathBuf::from("test.so"))
+        InitResultBridge::from_ffi(raw_ffi_result, &CapIdentity::from(Path::new("test_cap")))
     };
 
     // 3. Verify

@@ -1,9 +1,13 @@
 pub mod ffi_bridge;
 mod wasm_execute;
-mod wasm_link;
 mod class;
 mod function;
-mod linker;
+mod capability;
+mod wasm_bridge;
+mod harness;
 
-pub use wasm_execute::{CapabilityConfig, CompiledModule, HarnessConfig};
-pub use wasm_link::{Capabilities, DynamicCapability};
+pub use wasm_execute::{CapabilityDefinition, CompiledModule, HarnessConfig};
+pub use capability::{Capability, CapabilityConfig, CapabilityState};
+pub use class::{CapClass, ClassState};
+pub use function::CapFunction;
+pub use harness::HarnessState;

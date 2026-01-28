@@ -2,9 +2,11 @@
 
 use std::{
     fmt,
-    path::{Path, PathBuf},
+    path::Path,
 };
 use thiserror::Error;
+
+use crate::{CapIdentity, ModIdentity};
 
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct FfiPanic {
@@ -110,7 +112,6 @@ pub enum FfiError {
 /// User-facing error that wraps internal errors with simplified messaging
 #[derive(Debug, Error)]
 pub struct PyroductError {
-    name: String,
     kind: ErrorKind,
     inner: InnerError,
     /// Location where the error was created (host-side)
@@ -140,103 +141,92 @@ enum ErrorKind {
 
 #[derive(Debug)]
 enum InnerError {
-    Capability(PathBuf, FfiError),
-    Module(PathBuf, FfiError),
-    CapabilityLinking(PathBuf, String),
-    ModuleLinking(PathBuf, String),
-    ModuleUnknown(PathBuf, String),
+    Capability(CapIdentity, FfiError),
+    Module(ModIdentity, FfiError),
+    CapabilityLinking(CapIdentity, String),
+    ModuleLinking(ModIdentity, String),
+    ModuleUnknown(ModIdentity, String),
     // New Extensions
-    ModuleSerialization(PathBuf, String),
-    ModuleMemory(PathBuf, String),
-    ModuleValidation(PathBuf, String),
-    ModuleExecution(PathBuf, String),
+    ModuleSerialization(ModIdentity, String),
+    ModuleMemory(ModIdentity, String),
+    ModuleValidation(ModIdentity, String),
+    ModuleExecution(ModIdentity, String),
 }
 
 impl PyroductError {
     /// Create a new user-facing error from a capability FfiError with automatic location tracking
     pub fn from_capability(
-        name: impl Into<String>,
-        path: impl Into<PathBuf>,
+        ident: &CapIdentity,
         inner: FfiError,
     ) -> Self {
-        Self::from_capability_with_location(name, path, inner, None)
+        Self::from_capability_with_location(ident, inner, None)
     }
 
     /// Create a new user-facing error from a capability FfiError with explicit location
     pub fn from_capability_with_location(
-        name: impl Into<String>,
-        path: impl Into<PathBuf>,
+        ident: &CapIdentity,
         inner: FfiError,
         location: Option<ErrorLocation>,
     ) -> Self {
         let kind = Self::classify_error(&inner);
         Self {
-            name: name.into(),
             kind,
-            inner: InnerError::Capability(path.into(), inner),
+            inner: InnerError::Capability(ident.clone(), inner),
             location,
         }
     }
 
+        /// Create a new user-facing error for capability dynamic library loading/linking failures
+    pub fn from_capability_linking(
+        ident: &CapIdentity,
+        error: impl fmt::Display,
+    ) -> Self {
+        Self {
+            kind: ErrorKind::LinkingError,
+            inner: InnerError::CapabilityLinking(ident.clone(), error.to_string()),
+            location: None,
+        }
+    }
+
     /// Create a new user-facing error from a module FfiError with automatic location tracking
-    pub fn from_module(name: impl Into<String>, path: impl Into<PathBuf>, inner: FfiError) -> Self {
-        Self::from_module_with_location(name, path, inner, None)
+    pub fn from_module(module: &ModIdentity, inner: FfiError) -> Self {
+        Self::from_module_with_location(module, inner, None)
     }
 
     /// Create a new user-facing error from a module FfiError with automatic location tracking
     pub fn from_module_unknown(
-        name: impl Into<String>,
-        path: impl Into<PathBuf>,
+        module: &ModIdentity,
         error: impl fmt::Display,
     ) -> Self {
         Self {
-            name: name.into(),
             kind: ErrorKind::Unknown,
-            inner: InnerError::ModuleUnknown(path.into(), error.to_string()),
+            inner: InnerError::ModuleUnknown(module.clone(), error.to_string()),
             location: None,
         }
     }
 
     /// Create a new user-facing error from a module FfiError with explicit location
     pub fn from_module_with_location(
-        name: impl Into<String>,
-        path: impl Into<PathBuf>,
+        module: &ModIdentity,
         inner: FfiError,
         location: Option<ErrorLocation>,
     ) -> Self {
         let kind = Self::classify_error(&inner);
         Self {
-            name: name.into(),
             kind,
-            inner: InnerError::Module(path.into(), inner),
+            inner: InnerError::Module(module.clone(), inner),
             location,
-        }
-    }
-
-    /// Create a new user-facing error for capability dynamic library loading/linking failures
-    pub fn from_capability_linking(
-        name: impl Into<String>,
-        path: impl Into<PathBuf>,
-        error: impl fmt::Display,
-    ) -> Self {
-        Self {
-            name: name.into(),
-            kind: ErrorKind::LinkingError,
-            inner: InnerError::CapabilityLinking(path.into(), error.to_string()),
-            location: None,
         }
     }
 
     /// Create a new user-facing error for module loading/linking failures
     pub fn from_module_linking(
-        name: impl Into<String>,
-        path: impl Into<PathBuf>,
+        module: &ModIdentity,
         error: impl fmt::Display,
     ) -> Self {
         Self {
-            name: name.into(),
             kind: ErrorKind::LinkingError,
-            inner: InnerError::ModuleLinking(path.into(), error.to_string()),
+            inner: InnerError::ModuleLinking(module.clone(), error.to_string()),
             location: None,
         }
     }
@@ -244,53 +234,45 @@ impl PyroductError {
     // --- New Extension Methods ---
 
     pub fn from_module_serialization(
-        name: impl Into<String>,
-        path: impl Into<PathBuf>,
+        module: &ModIdentity,
         error: impl fmt::Display,
     ) -> Self {
         Self {
-            name: name.into(),
             kind: ErrorKind::IoError,
-            inner: InnerError::ModuleSerialization(path.into(), error.to_string()),
+            inner: InnerError::ModuleSerialization(module.clone(), error.to_string()),
             location: None,
         }
     }
 
     pub fn from_module_memory(
-        name: impl Into<String>,
-        path: impl Into<PathBuf>,
+        module: &ModIdentity,
         error: impl fmt::Display,
     ) -> Self {
         Self {
-            name: name.into(),
             kind: ErrorKind::IoError,
-            inner: InnerError::ModuleMemory(path.into(), error.to_string()),
+            inner: InnerError::ModuleMemory(module.clone(), error.to_string()),
             location: None,
         }
     }
 
     pub fn from_module_validation(
-        name: impl Into<String>,
-        path: impl Into<PathBuf>,
+        module: &ModIdentity,
         error: impl fmt::Display,
     ) -> Self {
         Self {
-            name: name.into(),
             kind: ErrorKind::IoError,
-            inner: InnerError::ModuleValidation(path.into(), error.to_string()),
+            inner: InnerError::ModuleValidation(module.clone(), error.to_string()),
             location: None,
         }
     }
 
     pub fn from_module_execution(
-        name: impl Into<String>,
-        path: impl Into<PathBuf>,
+        module: &ModIdentity,
         error: impl fmt::Display,
     ) -> Self {
         Self {
-            name: name.into(),
             kind: ErrorKind::Unknown,
-            inner: InnerError::ModuleExecution(path.into(), error.to_string()),
+            inner: InnerError::ModuleExecution(module.clone(), error.to_string()),
             location: None,
         }
     }
@@ -321,15 +303,30 @@ impl PyroductError {
     /// Get the path to the capability or module that errored
     pub fn path(&self) -> &Path {
         match &self.inner {
-            InnerError::Capability(path, _)
-            | InnerError::Module(path, _)
-            | InnerError::CapabilityLinking(path, _)
-            | InnerError::ModuleLinking(path, _)
-            | InnerError::ModuleUnknown(path, _)
-            | InnerError::ModuleSerialization(path, _)
-            | InnerError::ModuleMemory(path, _)
-            | InnerError::ModuleValidation(path, _)
-            | InnerError::ModuleExecution(path, _) => path.as_path(),
+            InnerError::Capability(ident, _)
+            | InnerError::CapabilityLinking(ident, _)  => &ident.path,
+            InnerError::Module(ident, _)
+            | InnerError::ModuleLinking(ident, _)
+            | InnerError::ModuleUnknown(ident, _)
+            | InnerError::ModuleSerialization(ident, _)
+            | InnerError::ModuleMemory(ident, _)
+            | InnerError::ModuleValidation(ident, _)
+            | InnerError::ModuleExecution(ident, _) => &ident.path,
+        }
+    }
+
+    /// Get the path to the capability or module that errored
+    pub fn name(&self) -> &str {
+        match &self.inner {
+            InnerError::Capability(ident, _)
+            | InnerError::CapabilityLinking(ident, _) => &ident.name(),
+            InnerError::Module(ident, _)
+            | InnerError::ModuleLinking(ident, _)
+            | InnerError::ModuleUnknown(ident, _)
+            | InnerError::ModuleSerialization(ident, _)
+            | InnerError::ModuleMemory(ident, _)
+            | InnerError::ModuleValidation(ident, _)
+            | InnerError::ModuleExecution(ident, _) => &ident.name(),
         }
     }
 
@@ -376,25 +373,25 @@ impl fmt::Display for PyroductError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.kind {
             ErrorKind::LogicPanic => {
-                write!(f, "{} experienced a logic panic", self.name)?;
+                write!(f, "{} experienced a logic panic", self.name())?;
                 write!(f, ": {}", self.inner)?;
             }
             ErrorKind::IoError => {
-                write!(f, "{} experienced an I/O error", self.name)?;
+                write!(f, "{} experienced an I/O error", self.name())?;
                 if let Some(loc) = &self.location {
                     write!(f, " (detected at {})", loc)?;
                 }
                 write!(f, ": {}", self.inner)?;
             }
             ErrorKind::LinkingError => {
-                write!(f, "{} experienced a linking error", self.name)?;
+                write!(f, "{} experienced a linking error", self.name())?;
                 if let Some(loc) = &self.location {
                     write!(f, " (detected at {})", loc)?;
                 }
                 write!(f, ": {}", self.inner)?;
             }
             ErrorKind::Unknown => {
-                write!(f, "{} failed with an unknown error", self.name)?;
+                write!(f, "{} failed with an unknown error", self.name())?;
                 if let Some(loc) = &self.location {
                     write!(f, " (detected at {})", loc)?;
                 }
@@ -443,17 +440,15 @@ impl fmt::Display for InnerError {
 impl FfiError {
     pub fn to_capability_error(
         self,
-        name: impl Into<String>,
-        path: impl Into<PathBuf>,
+        ident: &CapIdentity,
     ) -> PyroductError {
-        PyroductError::from_capability(name, path, self)
+        PyroductError::from_capability(ident, self)
     }
 
     pub fn to_module_error(
         self,
-        name: impl Into<String>,
-        path: impl Into<PathBuf>,
+        ident: &ModIdentity,
     ) -> PyroductError {
-        PyroductError::from_module(name, path, self)
+        PyroductError::from_module(ident, self)
     }
 }

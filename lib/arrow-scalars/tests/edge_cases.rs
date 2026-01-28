@@ -293,12 +293,12 @@ fn test_struct_with_all_field_types() {
 }
 
 #[test]
+#[allow(non_snake_case)]
 fn test_special_field_names() {
     #[derive(FromRow, DeepRef, ToRow)]
     struct SpecialNames {
         r#type: i32,      // Reserved keyword
         _underscore: i32, // Leading underscore
-        #[allow(non_snake_case)]
         camelCase: i32, // Mixed case
     }
 

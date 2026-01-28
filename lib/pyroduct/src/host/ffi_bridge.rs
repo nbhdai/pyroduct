@@ -1,12 +1,11 @@
-use crate::PyroductResult;
+use crate::{CapIdentity, PyroductResult};
 use crate::capability_host::ffi::{
-    COutput, ClassDropFn, FfiBorrowedFutureObjectResult, FfiBorrowedFutureResult, FfiInitResult, FfiResult
+    COutput, ClassDropFn, ClassResetFn, FfiBorrowedFutureObjectResult, FfiBorrowedFutureResult, FfiInitResult, FfiResult
 };
 use crate::errors::{FfiError, PyroductError};
-use crate::host::wasm_link::StatePtr;
+use crate::host::class::ClassState;
 use std::ffi::c_void;
 use std::future::Future;
-use std::path::PathBuf;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use pin_project::pin_project;
@@ -61,8 +60,7 @@ pub struct InitResultBridge;
 impl InitResultBridge {
     pub unsafe fn from_ffi(
         res: FfiInitResult,
-        capability_name: String,
-        capability_path: PathBuf,
+        ident: &CapIdentity,
     ) -> Result<*mut c_void, PyroductError> {
         trace!(tag = res.tag, "InitResultBridge: processing FFI result");
         match res.tag {
@@ -73,12 +71,12 @@ impl InitResultBridge {
             1 => {
                 debug!("InitResultBridge: initialization failed, deserializing error");
                 Err(unsafe { deserialize_error(res.error) }
-                    .to_capability_error(capability_name, capability_path))
+                    .to_capability_error(ident))
             }
             _ => {
                 error!(tag = res.tag, "InitResultBridge: unknown tag received");
                 Err(FfiError::UnknownTag(res.tag)
-                    .to_capability_error(capability_name, capability_path))
+                    .to_capability_error(ident))
             }
         }
     }
@@ -92,15 +90,13 @@ pub enum AsyncInitState<'a> {
 /// Wrapper for the async init future that handles both pending futures and early errors.
 pub struct AsyncInitFuture<'a> {
     state: AsyncInitState<'a>,
-    capability_name: String,
-    capability_path: PathBuf,
+    ident: CapIdentity,
 }
 
 impl<'a> AsyncInitFuture<'a> {
     pub fn new(
         res: FfiBorrowedFutureObjectResult<'a>,
-        capability_name: String,
-        capability_path: PathBuf,
+        ident: &CapIdentity,
     ) -> Self {
         let state = match res {
             FfiBorrowedFutureObjectResult::Future(fut) => {
@@ -113,8 +109,7 @@ impl<'a> AsyncInitFuture<'a> {
                 let result = unsafe {
                     InitResultBridge::from_ffi(
                         val,
-                        capability_name.clone(),
-                        capability_path.clone(),
+                        ident,
                     )
                 };
                 AsyncInitState::Ready(Some(result))
@@ -122,8 +117,7 @@ impl<'a> AsyncInitFuture<'a> {
         };
         Self {
             state,
-            capability_name,
-            capability_path,
+            ident: ident.clone(),
         }
     }
 }
@@ -133,14 +127,13 @@ impl<'a> Future for AsyncInitFuture<'a> {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // We need to move these out to avoid borrow checker issues when calling from_ffi
-        let name = self.capability_name.clone();
-        let path = self.capability_path.clone();
+        let ident = self.ident.clone();
 
         match &mut self.state {
             AsyncInitState::Ffi(fut) => match Pin::new(fut).poll(cx) {
                 Poll::Ready(res) => {
                     trace!("AsyncInitFuture: underlying future ready");
-                    Poll::Ready(unsafe { InitResultBridge::from_ffi(res, name, path) })
+                    Poll::Ready(unsafe { InitResultBridge::from_ffi(res, &ident) })
                 }
                 Poll::Pending => Poll::Pending,
             },
@@ -148,7 +141,7 @@ impl<'a> Future for AsyncInitFuture<'a> {
                 trace!("AsyncInitFuture: returning ready result");
                 Poll::Ready(res.take().unwrap_or_else(|| {
                     error!("AsyncInitFuture: polled after completion");
-                    Err(FfiError::FuturePolledAfterCompletion.to_capability_error(name, path))
+                    Err(FfiError::FuturePolledAfterCompletion.to_capability_error(&ident))
                 }))
             }
         }
@@ -164,8 +157,7 @@ pub struct ExecutionResultBridge;
 impl ExecutionResultBridge {
     pub unsafe fn from_ffi(
         res: FfiResult,
-        capability_name: String,
-        capability_path: PathBuf,
+        ident: &CapIdentity,
     ) -> Result<Vec<u8>, PyroductError> {
         trace!(
             tag = res.tag,
@@ -179,20 +171,19 @@ impl ExecutionResultBridge {
             1 | 2 => {
                 debug!("ExecutionResultBridge: execution failed (error)");
                 Err(unsafe { deserialize_error(res.output) }
-                    .to_capability_error(capability_name, capability_path))
+                    .to_capability_error(ident))
             }
             _ => {
                 error!(tag = res.tag, "ExecutionResultBridge: unknown tag received");
                 Err(FfiError::UnknownTag(res.tag)
-                    .to_capability_error(capability_name, capability_path))
+                    .to_capability_error(ident))
             }
         }
     }
 
     pub unsafe fn expected_null_from_ffi(
         res: FfiResult,
-        capability_name: String,
-        capability_path: PathBuf,
+        ident: &CapIdentity,
     ) -> Result<(), PyroductError> {
         trace!(
             tag = res.tag,
@@ -208,11 +199,11 @@ impl ExecutionResultBridge {
                 Ok(())
             }
             1 | 2 => Err(unsafe { deserialize_error(res.output) }
-                .to_capability_error(capability_name, capability_path)),
+                .to_capability_error(ident)),
             _ => {
                 error!(tag = res.tag, "ExecutionResultBridge: unknown tag received");
                 Err(FfiError::UnknownTag(res.tag)
-                    .to_capability_error(capability_name, capability_path))
+                    .to_capability_error(ident))
             }
         }
     }
@@ -226,15 +217,13 @@ pub enum AsyncExecState<'a> {
 /// Wrapper for the async execution future that handles both pending futures and early errors.
 pub struct AsyncExecFuture<'a> {
     state: AsyncExecState<'a>,
-    capability_name: String,
-    capability_path: PathBuf,
+    ident: CapIdentity,
 }
 
 impl<'a> AsyncExecFuture<'a> {
     pub fn new(
         res: FfiBorrowedFutureResult<'a>,
-        capability_name: String,
-        capability_path: PathBuf,
+        ident: &CapIdentity,
     ) -> Self {
         let state = match res {
             FfiBorrowedFutureResult::Future(fut) => {
@@ -247,8 +236,7 @@ impl<'a> AsyncExecFuture<'a> {
                 let result = unsafe {
                     ExecutionResultBridge::from_ffi(
                         val,
-                        capability_name.clone(),
-                        capability_path.clone(),
+                        ident,
                     )
                 };
                 AsyncExecState::Ready(Some(result))
@@ -256,8 +244,7 @@ impl<'a> AsyncExecFuture<'a> {
         };
         Self {
             state,
-            capability_name,
-            capability_path,
+            ident: ident.clone(),
         }
     }
 }
@@ -266,14 +253,13 @@ impl<'a> Future for AsyncExecFuture<'a> {
     type Output = Result<Vec<u8>, PyroductError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let name = self.capability_name.clone();
-        let path = self.capability_path.clone();
+        let ident = self.ident.clone();
 
         match &mut self.state {
             AsyncExecState::Ffi(fut) => match Pin::new(fut).poll(cx) {
                 Poll::Ready(res) => {
                     trace!("AsyncExecFuture: underlying future ready");
-                    Poll::Ready(unsafe { ExecutionResultBridge::from_ffi(res, name, path) })
+                    Poll::Ready(unsafe { ExecutionResultBridge::from_ffi(res, &ident) })
                 }
                 Poll::Pending => Poll::Pending,
             },
@@ -281,7 +267,7 @@ impl<'a> Future for AsyncExecFuture<'a> {
                 trace!("AsyncExecFuture: returning ready result");
                 Poll::Ready(res.take().unwrap_or_else(|| {
                     error!("AsyncExecFuture: polled after completion");
-                    Err(FfiError::FuturePolledAfterCompletion.to_capability_error(name, path))
+                    Err(FfiError::FuturePolledAfterCompletion.to_capability_error(&ident))
                 }))
             }
         }
@@ -293,10 +279,12 @@ impl<'a> Future for AsyncExecFuture<'a> {
 #[pin_project(project = CapInit)]
 pub enum CapabilityInit<'a> {
     Sync {
+        reset_fn: ClassResetFn<'static>,
         state: Option<*mut c_void>,
         destroy_fn: ClassDropFn,
     },
     Async {
+        reset_fn: ClassResetFn<'static>,
         config_bytes: Vec<u8>,
         #[pin]
         future: AsyncInitFuture<'a>,
@@ -306,27 +294,30 @@ pub enum CapabilityInit<'a> {
 }
 
 impl<'a> Future for CapabilityInit<'a> {
-    type Output = PyroductResult<StatePtr>;
+    type Output = PyroductResult<ClassState>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
         match self.project() {
-            CapInit::Sync { state, destroy_fn } => match state.take() {
-                Some(state) => std::task::Poll::Ready(Ok(StatePtr {
+            CapInit::Sync { reset_fn, state, destroy_fn } => match state.take() {
+                Some(state) => std::task::Poll::Ready(Ok(ClassState {
+                    reset_fn: reset_fn.clone(),
                     ptr: state,
                     destroy_fn: *destroy_fn,
                 })),
                 None => panic!("Double await!"),
             },
             CapInit::Async {
+                reset_fn,
                 config_bytes: _,
                 future,
                 destroy_fn,
             } => match future.poll(cx) {
                 std::task::Poll::Ready(result) => match result {
-                    Ok(pointer) => std::task::Poll::Ready(Ok(StatePtr {
+                    Ok(pointer) => std::task::Poll::Ready(Ok(ClassState {
+                        reset_fn: reset_fn.clone(),
                         ptr: pointer,
                         destroy_fn: *destroy_fn,
                     })),
@@ -334,7 +325,8 @@ impl<'a> Future for CapabilityInit<'a> {
                 },
                 std::task::Poll::Pending => std::task::Poll::Pending,
             },
-            CapInit::Null => std::task::Poll::Ready(Ok(StatePtr {
+            CapInit::Null => std::task::Poll::Ready(Ok(ClassState {
+                reset_fn: ClassResetFn::Null,
                 ptr: std::ptr::null_mut(),
                 destroy_fn: ClassDropFn::Null,
             })),
@@ -345,7 +337,7 @@ impl<'a> Future for CapabilityInit<'a> {
 #[pin_project(project = CapReset)]
 pub enum CapabilityReset<'a> {
     Async(#[pin] AsyncExecFuture<'a>),
-    SyncOrNull(Option<PyroductResult<()>>),
+    SyncOrNull(CapIdentity, Option<PyroductResult<()>>),
 }
 
 impl<'a> Future for CapabilityReset<'a> {
@@ -361,11 +353,11 @@ impl<'a> Future for CapabilityReset<'a> {
                 std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(e)),
                 std::task::Poll::Pending => std::task::Poll::Pending,
             },
-            CapReset::SyncOrNull(result) => {
+            CapReset::SyncOrNull(ident, result) => {
                 match result.take() {
                     Some(result) => std::task::Poll::Ready(result),
                     None => std::task::Poll::Ready(Err(FfiError::FuturePolledAfterCompletion
-                        .to_capability_error("unknown", "unknown"))),
+                        .to_capability_error(ident))),
                 }
             }
         }
