@@ -3,9 +3,10 @@ use std::rc::Rc;
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 
+use syn::parse::Parser;
+use syn::punctuated::Punctuated;
 use syn::{
-    Ident, ItemTrait, ReturnType, TraitItem,
-    Type,
+    Ident, ItemTrait, Meta, Result, ReturnType, Token, TraitItem, Type
 };
 
 use super::constructors::{ClientConstructor, client_constructor_ffi_meta};
@@ -53,7 +54,8 @@ pub struct CapabilityDefTrait {
 
 impl CapabilityDefTrait {
     /// Ingests a Trait Definition (original logic).
-    pub fn from_trait(input: ItemTrait, state_tn: Ident, capability_name: &Rc<str>) -> syn::Result<Self> {
+    pub fn from_trait(attr: TokenStream, input: ItemTrait, capability_name: &Rc<str>) -> syn::Result<Self> {
+        let state_tn = parse_trait_attrs(attr)?;
         let trait_tn = input.ident.clone();
         let mut methods = Vec::new();
         let mut constructors = Vec::new();
@@ -212,6 +214,33 @@ impl CapabilityDefTrait {
     }
 }
 
+pub fn parse_trait_attrs(attr: TokenStream) -> Result<Ident> {
+    let mut state: Option<Ident> = None;
+
+    let parser = Punctuated::<Meta, Token![,]>::parse_terminated;
+    let metas = parser.parse2(attr)?;
+
+    for meta in metas {
+        match &meta {
+            Meta::Path(path) => {
+                match path.get_ident() {
+                    Some(ident) => state = Some(ident.clone()),
+                    None => return Err(syn::Error::new_spanned(&meta, "Need a simple ident: #[capability(MyStruct)]")),
+                }
+            }
+            _ => {
+                return Err(syn::Error::new_spanned(&meta, "Need a simple ident: #[capability(MyStruct)]"))
+            }
+        }
+    }
+
+    let state = state.ok_or_else(|| {
+        syn::Error::new(Span::call_site(), "Missing `MyStruct` attribute")
+    })?;
+    Ok(state)
+}
+
+
 #[cfg(test)]
 mod tests {
     use quote::format_ident;
@@ -261,7 +290,7 @@ mod tests {
         let expected_constructor = expected_constructor.client_method_generation(None);
         let expected_method = expected_method.client_method_generation(None);
 
-        let def = CapabilityDefTrait::from_trait(code, state_name.clone(), &expected_cap)
+        let def = CapabilityDefTrait::from_trait(todo!(), code, &expected_cap)
             .expect("Failed to parse capability trait");
         let output = def.generate_client_impl(None);
 
@@ -355,7 +384,7 @@ mod tests {
         let expected_method = expected_method.client_method_generation(None);
         let expected_method_2 = expected_method_2.client_method_generation(None);
 
-        let def = CapabilityDefTrait::from_trait(code, state_name.clone(), &expected_cap)
+        let def = CapabilityDefTrait::from_trait(todo!(), code, &expected_cap)
             .expect("Failed to parse capability trait");
         let output = def.generate_client_impl(None);
 
@@ -409,7 +438,7 @@ mod tests {
         .unwrap();
         let state_name = format_ident!("MyState");
 
-        let result = CapabilityDefTrait::from_trait(code, state_name, &"cap".into());
+        let result = CapabilityDefTrait::from_trait(todo!(), code, &"cap".into());
         assert!(result.is_err());
     }
 }

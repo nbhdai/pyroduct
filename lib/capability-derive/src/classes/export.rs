@@ -205,7 +205,7 @@ mod tests {
         let server_attr = quote! { service = TestTrait, config = TestConfig };
         let server = CapServer::new(server_attr, server_struct).unwrap();
         let trait_def =
-            CapabilityDefTrait::from_trait(trait_def, server.struct_name.clone(), &expected_cap).unwrap();
+            CapabilityDefTrait::from_trait(todo!(), trait_def, &expected_cap).unwrap();
 
         // 3. Create the service
         let service = CapabilityService {

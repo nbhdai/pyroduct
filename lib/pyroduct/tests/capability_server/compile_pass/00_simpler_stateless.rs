@@ -1,19 +1,22 @@
-use pyroduct::{capability, capability_server};
+use pyroduct::{capability};
 
-#[capability]
-pub trait Simple {
-    fn call(&mut self);
-}
+capability! {
+    #[capability_client]
+    pub struct SimpleClient;
 
-#[capability_server(service = Simple, stateless)]
-pub struct StatelessServer;
+    #[capability]
+    pub trait Simple {
+        type Client = SimpleClient;
+        fn call(&mut self);
+    }
 
-#[capability_server(service = Simple)]
-pub struct StatefulServer;
+    #[capability_server(service = Simple)]
+    pub struct StatefulServer;
 
-impl StatefulServerInit for StatefulServer {
-    fn new() -> Self { Self }
-    fn reset(&mut self) {}
+    impl Simple for StatefulServer {
+        fn new() -> Self { Self }
+        fn reset(&mut self) {}
+    }
 }
 
 fn main() {

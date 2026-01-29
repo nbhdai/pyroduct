@@ -247,7 +247,7 @@ impl CapIdentity {
             path: std::sync::Arc::from(p.into()),
         }
     }
-    
+
     pub fn display(&self) -> Display<'_> {
         self.path.display()
     }
@@ -261,7 +261,6 @@ impl CapIdentity {
             .unwrap_or_else(|| "unknown")
     }
 }
-
 
 impl ModIdentity {
     pub fn from<'a, P: Into<&'a std::path::Path>>(p: P) -> Self {

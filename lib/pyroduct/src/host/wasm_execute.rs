@@ -1,8 +1,8 @@
-use crate::{ModIdentity, host::HarnessConfig};
 use crate::errors::PyroductError;
 use crate::host::capability::Capabilities;
 use crate::host::harness::HarnessState;
 use crate::module_capability::access::wasm_ptr_to_slice;
+use crate::{ModIdentity, host::HarnessConfig};
 use arrow_scalars::ArrowRow;
 
 use rkyv::rancor;
@@ -33,7 +33,9 @@ impl CompiledModule {
                 format!("Unable to parse the wasm binary: {err}"),
             )
         })?;
-        let harness_state = capabilities.init(ident, config.capabilities.iter().map(|c| c.config())).await?;
+        let harness_state = capabilities
+            .init(ident, config.capabilities.iter().map(|c| c.config()))
+            .await?;
 
         let mut store = Store::new(engine, harness_state);
         let mut linker = Linker::new(engine);
@@ -64,7 +66,7 @@ impl CompiledModule {
                     format!("Module does not have a sutible log function: {err}"),
                 )
             })?;
-        
+
         capabilities.link(&mut linker)?;
 
         let instance = linker

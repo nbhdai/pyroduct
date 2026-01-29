@@ -29,13 +29,13 @@ impl<'a> WasmMemory<'a> {
                         &ident,
                         "The 'memory' in the module isn't actually memory",
                     ),
-                ))
+                ));
             }
             None => {
                 return Err((
                     caller,
                     PyroductError::from_module_linking(&ident, "Missing 'memory'"),
-                ))
+                ));
             }
         };
 
@@ -46,13 +46,13 @@ impl<'a> WasmMemory<'a> {
                 return Err((
                     caller,
                     PyroductError::from_module_linking(&ident, "Alloc is not a function"),
-                ))
+                ));
             }
             None => {
                 return Err((
                     caller,
                     PyroductError::from_module_linking(&ident, "Missing alloc"),
-                ))
+                ));
             }
         };
 
@@ -65,7 +65,7 @@ impl<'a> WasmMemory<'a> {
                         &ident,
                         format!("Alloc has incorrect function signature: {err}"),
                     ),
-                ))
+                ));
             }
         };
 
@@ -76,13 +76,13 @@ impl<'a> WasmMemory<'a> {
                 return Err((
                     caller,
                     PyroductError::from_module_linking(&ident, "Dealloc is not a function"),
-                ))
+                ));
             }
             None => {
                 return Err((
                     caller,
                     PyroductError::from_module_linking(&ident, "Missing dealloc"),
-                ))
+                ));
             }
         };
 
@@ -95,7 +95,7 @@ impl<'a> WasmMemory<'a> {
                         &ident,
                         format!("Dealloc has incorrect function signature: {err}"),
                     ),
-                ))
+                ));
             }
         };
 
@@ -113,11 +113,10 @@ impl<'a> WasmMemory<'a> {
         let start = pointer as usize;
         let end = start + len as usize;
         // Validate bounds
-        if start > mem_slice.len() || end > mem_slice.len()  {
+        if start > mem_slice.len() || end > mem_slice.len() {
             error!("Segfault Risk: Input pointer out of WASM memory bounds!");
             self.write_error(PyroductError::from_module_linking(
-                        &self.ident,
-                
+                &self.ident,
                 "Returned memory pointer out of bounds",
             ));
             return None;
@@ -131,23 +130,21 @@ impl<'a> WasmMemory<'a> {
             .call_async(&mut self.caller, data.len() as i32)
             .await
             .map_err(|err| {
-                self.write_error(
-                    PyroductError::from_module_linking(
-                        &self.ident,
+                self.write_error(PyroductError::from_module_linking(
+                    &self.ident,
                     format!("Allocation failed: {err}"),
                 ))
             })
             .ok()?;
         let mem_slice = self.memory.data_mut(&mut self.caller);
-        
+
         let start = result_ptr as usize;
         let end = start + data.len();
         // Write result
-        if start > mem_slice.len() || end > mem_slice.len()  {
+        if start > mem_slice.len() || end > mem_slice.len() {
             error!("Segfault Risk: Input pointer out of WASM memory bounds!");
             self.write_error(PyroductError::from_module_linking(
-                        &self.ident,
-
+                &self.ident,
                 "Written pointer out of bounds",
             ));
             return None;
@@ -158,15 +155,12 @@ impl<'a> WasmMemory<'a> {
         Some(result_ptr)
     }
 
-    pub fn class_state(&mut self, 
-        state_index: usize,
-        class_index: usize,
-    ) -> *mut c_void {
+    pub fn class_state(&mut self, state_index: usize) -> *mut c_void {
         self.caller
             .data()
             .cap_states
             .get(state_index)
-            .map(|s| s.get_class_ptr(class_index))
+            .map(|s| s.ptr)
             .unwrap_or(std::ptr::null_mut())
     }
 

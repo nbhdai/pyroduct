@@ -10,18 +10,69 @@
 //! 4. **Both states** - `#[capability_client]` struct + `#[capability]` trait + `#[capability_server]` struct
 
 use proc_macro::TokenStream;
+use syn::{ItemStruct, ItemTrait, parse_macro_input};
 
-pub(crate) mod capability;
 pub(crate) mod classes;
 pub(crate) mod ffi;
-pub(crate) mod function;
 pub(crate) mod paths;
 pub(crate) mod utils;
 
-#[proc_macro]
-pub fn capability(item: TokenStream) -> TokenStream {
-    let input = syn::parse_macro_input!(item as capability::Capability);
-    input.everything().into()
+/// Marks a struct as client-side state.
+/// Adds rkyv serialization and the internal configuration buffer.
+#[proc_macro_attribute]
+pub fn capability_client(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as ItemStruct);
+    match crate::classes::client::CapClient::new(input) {
+        Ok(client) => client.expand().into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// Defines the capability interface.
+/// Transforms methods to include &self and Client references.
+#[proc_macro_attribute]
+pub fn capability(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as ItemTrait);
+    
+    let capability_name = std::env::var("CARGO_PKG_NAME").unwrap().into();
+
+
+    match crate::classes::definition::CapabilityDefTrait::from_trait(attr.into(), input, &capability_name) {
+        Ok(def) => {
+            let trait_def = def.generate_trait_definition();
+            let client_impl = def.generate_client_impl(None);
+
+            quote::quote! {
+                #trait_def
+                #client_impl
+            }.into()
+        },
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// Marks a struct as the server-side host implementation.
+#[proc_macro_attribute]
+pub fn capability_server(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as ItemStruct);
+    let attr_tokens = proc_macro2::TokenStream::from(attr);
+
+    match crate::classes::state::CapServer::new(attr_tokens, input) {
+        Ok(server) => {
+            let struct_def = &server.input;
+            let init_trait = server.generate_init_trait();
+            let ffi_init = server.generate_init_fn();
+            let ffi_drop = server.generate_drop_fn();
+
+            quote::quote! {
+                #struct_def
+                #init_trait
+                #ffi_init
+                #ffi_drop
+            }.into()
+        }
+        Err(e) => e.to_compile_error().into(),
+    }
 }
 
 #[cfg(test)]

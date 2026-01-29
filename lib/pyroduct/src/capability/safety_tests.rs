@@ -190,10 +190,8 @@ async fn test_bridge_handles_async_panic() {
 
     // 2. Wrap it in the Host Bridge Future
     // AsyncExecFuture handles polling the C-compatible future and converting the result
-    let host_future = AsyncExecFuture::new(
-        ffi_future_result,
-        &CapIdentity::from(Path::new("test_cap")),
-    );
+    let host_future =
+        AsyncExecFuture::new(ffi_future_result, &CapIdentity::from(Path::new("test_cap")));
 
     // 3. Await it like a normal Rust future
     let result = host_future.await;

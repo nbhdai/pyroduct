@@ -8,13 +8,13 @@ use syn::{Expr, Ident, ItemStruct, Meta, Result, Token, Type, parse::Parser};
 
 #[derive(Debug, Clone)]
 pub struct ServerAttrs {
-    //pub service: Ident,
+    pub service: Ident,
     pub config: Type,
     pub is_async: bool,
 }
 
 pub fn parse_server_attrs(attr: TokenStream) -> Result<ServerAttrs> {
-    // let mut service: Option<Ident> = None;
+    let mut service: Option<Ident> = None;
     let mut config: Option<Type> = None;
 
     let parser = Punctuated::<Meta, Token![,]>::parse_terminated;
@@ -25,9 +25,9 @@ pub fn parse_server_attrs(attr: TokenStream) -> Result<ServerAttrs> {
         match &meta {
             Meta::NameValue(nv) => {
                 if nv.path.is_ident("service") {
-                    // if let Expr::Path(path) = &nv.value {
-                    //     service = path.path.get_ident().cloned();
-                    // }
+                    if let Expr::Path(path) = &nv.value {
+                        service = path.path.get_ident().cloned();
+                    }
                 } else if nv.path.is_ident("config") {
                     if let Expr::Path(path) = &nv.value {
                         config = Some(Type::Path(syn::TypePath {
@@ -46,14 +46,14 @@ pub fn parse_server_attrs(attr: TokenStream) -> Result<ServerAttrs> {
         }
     }
 
-    // let service = service.ok_or_else(|| {
-    //     syn::Error::new(Span::call_site(), "Missing `service = TraitName` attribute")
-    // })?;
+    let service = service.ok_or_else(|| {
+        syn::Error::new(Span::call_site(), "Missing `service = TraitName` attribute")
+    })?;
     let config = config
         .ok_or_else(|| syn::Error::new(Span::call_site(), "Missing `config = Struct` attribute"))?;
 
     Ok(ServerAttrs {
-        //service,
+        service,
         config,
         is_async,
     })

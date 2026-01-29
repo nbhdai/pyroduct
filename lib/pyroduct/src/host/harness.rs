@@ -1,7 +1,11 @@
-use std::{path::PathBuf, sync::Mutex};
 use futures::future::try_join_all;
+use std::{path::PathBuf, sync::Mutex};
 
-use crate::{ModIdentity, PyroductResult, errors::PyroductError, host::{CapabilityConfig, capability::{Capabilities, CapabilityState}}};
+use crate::{
+    ModIdentity, PyroductResult,
+    errors::PyroductError,
+    host::{ClassState, capability::Capabilities},
+};
 
 #[derive(serde::Deserialize, Debug)]
 pub struct HarnessConfig {
@@ -18,15 +22,15 @@ pub enum CapabilityDefinition {
     NoConfig(PathBuf),
     Config {
         path: PathBuf,
-        config: CapabilityConfig,
+        config: serde_json::Value,
     },
 }
 
 impl CapabilityDefinition {
-    pub fn config(&self) -> Option<&CapabilityConfig> {
+    pub fn config(&self) -> Option<&serde_json::Value> {
         match self {
             CapabilityDefinition::NoConfig(_) => None,
-            CapabilityDefinition::Config { config, .. } => Some(config),
+            CapabilityDefinition::Config { config, .. } => Some(&config),
         }
     }
 }
@@ -34,11 +38,11 @@ impl CapabilityDefinition {
 pub struct HarnessState {
     pub module: ModIdentity,
     // Map capability index -> CapabilityState
-    pub cap_states: Vec<CapabilityState>,
+    pub cap_states: Vec<ClassState>,
 
     /// Shared slot for an error that occurred during a host function call
     pub error_slot: Mutex<Option<PyroductError>>,
-    
+
     pub capabilities: Capabilities,
 }
 
@@ -71,7 +75,11 @@ impl HarnessState {
     }
 
     pub async fn reset(&mut self) -> PyroductResult<()> {
-        let resets: Vec<_> = self.cap_states.iter_mut().map(|state| state.reset()).collect();
+        let resets: Vec<_> = self
+            .cap_states
+            .iter_mut()
+            .map(|state| state.reset())
+            .collect();
 
         try_join_all(resets).await?;
         Ok(())

@@ -82,7 +82,6 @@ where
     execute_safe(|| (func)(state, client, input))
 }
 
-
 /// Complete call with state, client, and input
 pub fn sc_call<'a, S, C, O, F>(
     client_state_ptr: *const u8,

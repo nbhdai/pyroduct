@@ -178,13 +178,5 @@ impl FfiResult {
     }
 }
 
-#[repr(C)]
-pub struct CapabilityExports<'a> {
-    pub classes: *mut ClassExport<'a>,
-    pub len_classes: usize,
-    pub functions: *mut FunctionExport<'a>,
-    pub len_functions: usize,
-}
-
 pub type CapabilityRegisterFn<'a> =
-    unsafe extern "C" fn(class_id: u64, log_callback: LogCallback) -> CapabilityExports<'a>;
+    unsafe extern "C" fn(class_id: u64, log_callback: LogCallback) -> ClassExport<'a>;

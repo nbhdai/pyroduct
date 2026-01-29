@@ -1,9 +1,12 @@
 use crate::CapIdentity;
-use crate::capability_host::ffi::{
-    COutput, FfiBorrowedFutureResult, FfiInitResult, FfiResult
-};
+use crate::capability_host::ffi::{COutput, FfiBorrowedFutureResult, FfiInitResult, FfiResult};
 use crate::errors::{FfiError, PyroductError};
-use std::{ffi::c_void, future::Future, pin::Pin, task::{Context, Poll}};
+use std::{
+    ffi::c_void,
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
 use tracing::{debug, error, trace};
 
 /// Helper to take ownership of the FFI output vector
@@ -65,13 +68,11 @@ impl InitResultBridge {
             }
             1 => {
                 debug!("InitResultBridge: initialization failed, deserializing error");
-                Err(unsafe { deserialize_error(res.error) }
-                    .to_capability_error(ident))
+                Err(unsafe { deserialize_error(res.error) }.to_capability_error(ident))
             }
             _ => {
                 error!(tag = res.tag, "InitResultBridge: unknown tag received");
-                Err(FfiError::UnknownTag(res.tag)
-                    .to_capability_error(ident))
+                Err(FfiError::UnknownTag(res.tag).to_capability_error(ident))
             }
         }
     }
@@ -84,10 +85,7 @@ impl InitResultBridge {
 pub struct ExecutionResultBridge;
 
 impl ExecutionResultBridge {
-    pub unsafe fn from_ffi(
-        res: FfiResult,
-        ident: &CapIdentity,
-    ) -> Result<Vec<u8>, PyroductError> {
+    pub unsafe fn from_ffi(res: FfiResult, ident: &CapIdentity) -> Result<Vec<u8>, PyroductError> {
         trace!(
             tag = res.tag,
             "ExecutionResultBridge: processing FFI result"
@@ -99,13 +97,11 @@ impl ExecutionResultBridge {
             }
             1 | 2 => {
                 debug!("ExecutionResultBridge: execution failed (error)");
-                Err(unsafe { deserialize_error(res.output) }
-                    .to_capability_error(ident))
+                Err(unsafe { deserialize_error(res.output) }.to_capability_error(ident))
             }
             _ => {
                 error!(tag = res.tag, "ExecutionResultBridge: unknown tag received");
-                Err(FfiError::UnknownTag(res.tag)
-                    .to_capability_error(ident))
+                Err(FfiError::UnknownTag(res.tag).to_capability_error(ident))
             }
         }
     }
@@ -127,12 +123,10 @@ impl ExecutionResultBridge {
                 }
                 Ok(())
             }
-            1 | 2 => Err(unsafe { deserialize_error(res.output) }
-                .to_capability_error(ident)),
+            1 | 2 => Err(unsafe { deserialize_error(res.output) }.to_capability_error(ident)),
             _ => {
                 error!(tag = res.tag, "ExecutionResultBridge: unknown tag received");
-                Err(FfiError::UnknownTag(res.tag)
-                    .to_capability_error(ident))
+                Err(FfiError::UnknownTag(res.tag).to_capability_error(ident))
             }
         }
     }
@@ -150,10 +144,7 @@ pub struct AsyncExecFuture<'a> {
 }
 
 impl<'a> AsyncExecFuture<'a> {
-    pub fn new(
-        res: FfiBorrowedFutureResult<'a>,
-        ident: &CapIdentity,
-    ) -> Self {
+    pub fn new(res: FfiBorrowedFutureResult<'a>, ident: &CapIdentity) -> Self {
         let state = match res {
             FfiBorrowedFutureResult::Future(fut) => {
                 trace!("AsyncExecFuture: created from Future variant");
@@ -162,12 +153,7 @@ impl<'a> AsyncExecFuture<'a> {
             FfiBorrowedFutureResult::EarlyError(val) => {
                 trace!("AsyncExecFuture: created from EarlyError variant");
                 // Convert the early result immediately
-                let result = unsafe {
-                    ExecutionResultBridge::from_ffi(
-                        val,
-                        ident,
-                    )
-                };
+                let result = unsafe { ExecutionResultBridge::from_ffi(val, ident) };
                 AsyncExecState::Ready(Some(result))
             }
         };
