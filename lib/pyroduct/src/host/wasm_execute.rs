@@ -1,45 +1,13 @@
-use crate::ModIdentity;
+use crate::{ModIdentity, host::HarnessConfig};
 use crate::errors::PyroductError;
 use crate::host::capability::Capabilities;
-use crate::host::CapabilityConfig;
 use crate::host::harness::HarnessState;
 use crate::module_capability::access::wasm_ptr_to_slice;
 use arrow_scalars::ArrowRow;
 
 use rkyv::rancor;
-use std::path::PathBuf;
 use tracing::{debug, info};
 use wasmtime::{Caller, Engine, Extern, Instance, Linker, Memory, Module, Store, TypedFunc};
-
-#[derive(serde::Deserialize, Debug)]
-pub struct HarnessConfig {
-    pub module_name: String,
-    /// Path to the WASM module to run
-    pub module: PathBuf,
-    /// List of paths to dynamic library capabilities (.so/.dylib/.dll)
-    pub capabilities: Vec<CapabilityDefinition>,
-    /// Input data as JSON - will be deserialized into ArrowRow
-    pub inputs: Vec<ArrowRow<'static>>,
-}
-
-#[derive(serde::Deserialize, Debug)]
-#[serde(untagged)]
-pub enum CapabilityDefinition {
-    NoConfig(PathBuf),
-    Config {
-        path: PathBuf,
-        config: CapabilityConfig,
-    },
-}
-
-impl CapabilityDefinition {
-    pub fn config(&self) -> Option<&CapabilityConfig> {
-        match self {
-            CapabilityDefinition::NoConfig(_) => None,
-            CapabilityDefinition::Config { config, .. } => Some(config),
-        }
-    }
-}
 
 pub struct CompiledModule {
     ident: ModIdentity,

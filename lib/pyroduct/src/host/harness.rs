@@ -1,8 +1,35 @@
-use std::sync::Mutex;
-
+use std::{path::PathBuf, sync::Mutex};
 use futures::future::try_join_all;
 
-use crate::{ModIdentity, PyroductResult, errors::PyroductError, host::capability::{Capabilities, CapabilityState}};
+use crate::{ModIdentity, PyroductResult, errors::PyroductError, host::{CapabilityConfig, capability::{Capabilities, CapabilityState}}};
+
+#[derive(serde::Deserialize, Debug)]
+pub struct HarnessConfig {
+    pub module_name: String,
+    /// Path to the WASM module to run
+    pub module: PathBuf,
+    /// List of paths to dynamic library capabilities (.so/.dylib/.dll)
+    pub capabilities: Vec<CapabilityDefinition>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+#[serde(untagged)]
+pub enum CapabilityDefinition {
+    NoConfig(PathBuf),
+    Config {
+        path: PathBuf,
+        config: CapabilityConfig,
+    },
+}
+
+impl CapabilityDefinition {
+    pub fn config(&self) -> Option<&CapabilityConfig> {
+        match self {
+            CapabilityDefinition::NoConfig(_) => None,
+            CapabilityDefinition::Config { config, .. } => Some(config),
+        }
+    }
+}
 
 pub struct HarnessState {
     pub module: ModIdentity,

@@ -6,13 +6,16 @@ use wasmtime::Linker;
 use crate::{CapIdentity, ModIdentity, PyroductResult};
 use crate::capability_host::ffi::{CapabilityRegisterFn, ClassExport, FunctionExport};
 use crate::errors::PyroductError;
-use crate::host::class::{CapClass, ClassState};
-use crate::host::function::CapFunction;
 use crate::host::harness::HarnessState;
 use std::ffi::c_void;
 use std::path::Path;
 use std::ptr;
 use std::sync::{Arc, Mutex, RwLock};
+
+mod class;
+mod function;
+pub use class::{CapClass, ClassState};
+pub use function::CapFunction;
 
 static LOG_CALLBACK_SPAN: RwLock<Vec<Span>> = RwLock::new(Vec::new());
 

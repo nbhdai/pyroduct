@@ -1,14 +1,9 @@
-use crate::{CapIdentity, PyroductResult};
+use crate::CapIdentity;
 use crate::capability_host::ffi::{
-    COutput, ClassDropFn, ClassResetFn, FfiBorrowedFutureObjectResult, FfiBorrowedFutureResult, FfiInitResult, FfiResult
+    COutput, FfiBorrowedFutureResult, FfiInitResult, FfiResult
 };
 use crate::errors::{FfiError, PyroductError};
-use crate::host::class::ClassState;
-use std::ffi::c_void;
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use pin_project::pin_project;
+use std::{ffi::c_void, future::Future, pin::Pin, task::{Context, Poll}};
 use tracing::{debug, error, trace};
 
 /// Helper to take ownership of the FFI output vector
@@ -77,72 +72,6 @@ impl InitResultBridge {
                 error!(tag = res.tag, "InitResultBridge: unknown tag received");
                 Err(FfiError::UnknownTag(res.tag)
                     .to_capability_error(ident))
-            }
-        }
-    }
-}
-
-pub enum AsyncInitState<'a> {
-    Ffi(async_ffi::BorrowingFfiFuture<'a, FfiInitResult>),
-    Ready(Option<Result<*mut c_void, PyroductError>>),
-}
-
-/// Wrapper for the async init future that handles both pending futures and early errors.
-pub struct AsyncInitFuture<'a> {
-    state: AsyncInitState<'a>,
-    ident: CapIdentity,
-}
-
-impl<'a> AsyncInitFuture<'a> {
-    pub fn new(
-        res: FfiBorrowedFutureObjectResult<'a>,
-        ident: &CapIdentity,
-    ) -> Self {
-        let state = match res {
-            FfiBorrowedFutureObjectResult::Future(fut) => {
-                trace!("AsyncInitFuture: created from Future variant");
-                AsyncInitState::Ffi(fut)
-            }
-            FfiBorrowedFutureObjectResult::EarlyError(val) => {
-                trace!("AsyncInitFuture: created from EarlyError variant");
-                // Convert the early result immediately
-                let result = unsafe {
-                    InitResultBridge::from_ffi(
-                        val,
-                        ident,
-                    )
-                };
-                AsyncInitState::Ready(Some(result))
-            }
-        };
-        Self {
-            state,
-            ident: ident.clone(),
-        }
-    }
-}
-
-impl<'a> Future for AsyncInitFuture<'a> {
-    type Output = Result<*mut c_void, PyroductError>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // We need to move these out to avoid borrow checker issues when calling from_ffi
-        let ident = self.ident.clone();
-
-        match &mut self.state {
-            AsyncInitState::Ffi(fut) => match Pin::new(fut).poll(cx) {
-                Poll::Ready(res) => {
-                    trace!("AsyncInitFuture: underlying future ready");
-                    Poll::Ready(unsafe { InitResultBridge::from_ffi(res, &ident) })
-                }
-                Poll::Pending => Poll::Pending,
-            },
-            AsyncInitState::Ready(res) => {
-                trace!("AsyncInitFuture: returning ready result");
-                Poll::Ready(res.take().unwrap_or_else(|| {
-                    error!("AsyncInitFuture: polled after completion");
-                    Err(FfiError::FuturePolledAfterCompletion.to_capability_error(&ident))
-                }))
             }
         }
     }
@@ -269,96 +198,6 @@ impl<'a> Future for AsyncExecFuture<'a> {
                     error!("AsyncExecFuture: polled after completion");
                     Err(FfiError::FuturePolledAfterCompletion.to_capability_error(&ident))
                 }))
-            }
-        }
-    }
-}
-
-
-
-#[pin_project(project = CapInit)]
-pub enum CapabilityInit<'a> {
-    Sync {
-        reset_fn: ClassResetFn<'static>,
-        state: Option<*mut c_void>,
-        destroy_fn: ClassDropFn,
-    },
-    Async {
-        reset_fn: ClassResetFn<'static>,
-        config_bytes: Vec<u8>,
-        #[pin]
-        future: AsyncInitFuture<'a>,
-        destroy_fn: ClassDropFn,
-    },
-    Null,
-}
-
-impl<'a> Future for CapabilityInit<'a> {
-    type Output = PyroductResult<ClassState>;
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        match self.project() {
-            CapInit::Sync { reset_fn, state, destroy_fn } => match state.take() {
-                Some(state) => std::task::Poll::Ready(Ok(ClassState {
-                    reset_fn: reset_fn.clone(),
-                    ptr: state,
-                    destroy_fn: *destroy_fn,
-                })),
-                None => panic!("Double await!"),
-            },
-            CapInit::Async {
-                reset_fn,
-                config_bytes: _,
-                future,
-                destroy_fn,
-            } => match future.poll(cx) {
-                std::task::Poll::Ready(result) => match result {
-                    Ok(pointer) => std::task::Poll::Ready(Ok(ClassState {
-                        reset_fn: reset_fn.clone(),
-                        ptr: pointer,
-                        destroy_fn: *destroy_fn,
-                    })),
-                    Err(e) => std::task::Poll::Ready(Err(e)),
-                },
-                std::task::Poll::Pending => std::task::Poll::Pending,
-            },
-            CapInit::Null => std::task::Poll::Ready(Ok(ClassState {
-                reset_fn: ClassResetFn::Null,
-                ptr: std::ptr::null_mut(),
-                destroy_fn: ClassDropFn::Null,
-            })),
-        }
-    }
-}
-
-#[pin_project(project = CapReset)]
-pub enum CapabilityReset<'a> {
-    Async(#[pin] AsyncExecFuture<'a>),
-    SyncOrNull(CapIdentity, Option<PyroductResult<()>>),
-}
-
-impl<'a> Future for CapabilityReset<'a> {
-    type Output = PyroductResult<()>;
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        match self.project() {
-            CapReset::Async(this) => match this.poll(cx) {
-                std::task::Poll::Ready(Ok(_)) => std::task::Poll::Ready(Ok(())),
-                std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(e)),
-                std::task::Poll::Pending => std::task::Poll::Pending,
-            },
-            CapReset::SyncOrNull(ident, result) => {
-                match result.take() {
-                    Some(result) => std::task::Poll::Ready(result),
-                    None => std::task::Poll::Ready(Err(FfiError::FuturePolledAfterCompletion
-                        .to_capability_error(ident))),
-                }
             }
         }
     }

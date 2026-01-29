@@ -1,6 +1,6 @@
 //! FFI Export Table Generation for CapabilityService
 //!
-//! This module generates the `PluginExports` structure and associated
+//! This module generates the `ClassExport` structure and associated
 //! registration logic for a complete capability service.
 
 use proc_macro2::TokenStream;
@@ -50,8 +50,8 @@ impl CapabilityService {
     /// Generates the complete FFI export table for this service.
     ///
     /// This creates:
-    /// 1. An array of `PluginExport` entries (one per method)
-    /// 2. A `PluginExports` struct containing:
+    /// 1. An array of `FunctionExport` entries (one per method)
+    /// 2. A `ClassExport` struct containing:
     ///    - Pointer to the export array
     ///    - Init function pointer
     ///    - Drop function pointer
@@ -68,7 +68,7 @@ impl CapabilityService {
         let drop_export = self.struct_def.generate_drop_export();
         let reset_export = self.struct_def.generate_reset_export();
 
-        // Generate the PluginExport array entries
+        // Generate the FunctionExport array entries
         let plugin_exports: Vec<_> = capability_ffis
             .iter()
             .map(|ffi| ffi.generate_vtable_entry())
@@ -90,7 +90,7 @@ impl CapabilityService {
         // Generate the static export array name
         let exports_array_name = quote::format_ident!("{}__EXPORTS", class_name_static);
 
-        // Generate the PluginExports struct name
+        // Generate the ClassExport struct name
         let plugin_exports_name = self.export_name();
         
         quote! {
@@ -101,7 +101,7 @@ impl CapabilityService {
                 #(#plugin_exports),*
             ];
 
-            // Generate the PluginExports struct
+            // Generate the ClassExport struct
             const #plugin_exports_name: ::pyroduct::capability_host::ffi::ClassExport = ::pyroduct::capability_host::ffi::ClassExport {
                 ptr: #exports_array_name.as_ptr(),
                 init: #init_export,
@@ -225,36 +225,36 @@ mod tests {
             static __TEST_TRAIT__TEST_SERVER__GET_VALUE: &'static str = "__test_trait__test_server__get_value";
             static __TEST_TRAIT__TEST_SERVER__ASYNC_OP: &'static str = "__test_trait__test_server__async_op";
 
-            static __TEST_TRAIT__TEST_SERVER__EXPORTS: [::pyroduct::capability_host::ffi::PluginExport; 3usize] = [
-                ::pyroduct::capability_host::ffi::PluginExport {
+            static __TEST_TRAIT__TEST_SERVER__EXPORTS: [::pyroduct::capability_host::ffi::FunctionExport; 3usize] = [
+                ::pyroduct::capability_host::ffi::FunctionExport {
                     module: __TEST_TRAIT__TEST_SERVER.as_ptr(),
                     module_len: __TEST_TRAIT__TEST_SERVER.len(),
                     name: __TEST_TRAIT__TEST_SERVER__NEW_CLIENT.as_ptr(),
                     name_len: __TEST_TRAIT__TEST_SERVER__NEW_CLIENT.len(),
-                    func: ::pyroduct::capability_host::ffi::PluginFunction::Sync(__test_trait__test_server__new_client__ffi),
+                    func: ::pyroduct::capability_host::ffi::Function::Sync(__test_trait__test_server__new_client__ffi),
                 },
-                ::pyroduct::capability_host::ffi::PluginExport {
+                ::pyroduct::capability_host::ffi::FunctionExport {
                     module: __TEST_TRAIT__TEST_SERVER.as_ptr(),
                     module_len: __TEST_TRAIT__TEST_SERVER.len(),
                     name: __TEST_TRAIT__TEST_SERVER__GET_VALUE.as_ptr(),
                     name_len: __TEST_TRAIT__TEST_SERVER__GET_VALUE.len(),
-                    func: ::pyroduct::capability_host::ffi::PluginFunction::Sync(__test_trait__test_server__get_value__ffi),
+                    func: ::pyroduct::capability_host::ffi::Function::Sync(__test_trait__test_server__get_value__ffi),
                 },
-                ::pyroduct::capability_host::ffi::PluginExport {
+                ::pyroduct::capability_host::ffi::FunctionExport {
                     module: __TEST_TRAIT__TEST_SERVER.as_ptr(),
                     module_len: __TEST_TRAIT__TEST_SERVER.len(),
                     name: __TEST_TRAIT__TEST_SERVER__ASYNC_OP.as_ptr(),
                     name_len: __TEST_TRAIT__TEST_SERVER__ASYNC_OP.len(),
-                    func: ::pyroduct::capability_host::ffi::PluginFunction::Async(__test_trait__test_server__async_op__ffi),
+                    func: ::pyroduct::capability_host::ffi::Function::Async(__test_trait__test_server__async_op__ffi),
                 },
             ];
 
-            pub static __TEST_TRAIT__TEST_SERVER__PLUGIN_EXPORTS: ::pyroduct::capability_host::ffi::PluginExports =
-                ::pyroduct::capability_host::ffi::PluginExports {
+            pub static __TEST_TRAIT__TEST_SERVER__PLUGIN_EXPORTS: ::pyroduct::capability_host::ffi::ClassExport =
+                ::pyroduct::capability_host::ffi::ClassExport {
                     ptr: exports.as_ptr(),
-                    init: ::pyroduct::capability_host::ffi::PluginInitFn::Sync(__test_server__ffi_init),
-                    drop: ::pyroduct::capability_host::ffi::PluginDropFn::Sync(__test_server__ffi_drop),
-                    reset: ::pyroduct::capability_host::ffi::PluginResetFn::Sync(__test_server__ffi_reset),
+                    init: ::pyroduct::capability_host::ffi::ClassInitFn::Sync(__test_server__ffi_init),
+                    drop: ::pyroduct::capability_host::ffi::ClassDropFn::Sync(__test_server__ffi_drop),
+                    reset: ::pyroduct::capability_host::ffi::ClassResetFn::Sync(__test_server__ffi_reset),
                     len: 3usize,
                 };
         };
