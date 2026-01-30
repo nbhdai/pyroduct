@@ -283,7 +283,7 @@ mod tests {
     #[tracing_test::traced_test]
     #[test]
     fn test_sync_server_init_trait() {
-        let attr = quote! { service = Greeter, config = GreeterConfig };
+        let attr = quote! { methods = GreeterTrait, service = Greeter, config = GreeterConfig };
         let item = quote! {
             pub struct GreeterServer {
                 count: u32,
@@ -307,7 +307,7 @@ mod tests {
     #[tracing_test::traced_test]
     #[test]
     fn test_sync_server_init_fn() {
-        let attr = quote! { service = Greeter, config = GreeterConfig };
+        let attr = quote! { methods = GreeterTrait, service = Greeter, config = GreeterConfig };
         let item = quote! {
             pub struct GreeterServer {
                 count: u32,
@@ -340,7 +340,7 @@ mod tests {
     #[tracing_test::traced_test]
     #[test]
     fn test_sync_server_drop_fn() {
-        let attr = quote! { service = Greeter, config = GreeterConfig };
+        let attr = quote! { methods = GreeterTrait, service = Greeter, config = GreeterConfig };
         let item = quote! {
             pub struct GreeterServer {
                 count: u32,
@@ -366,7 +366,7 @@ mod tests {
     #[tracing_test::traced_test]
     #[test]
     fn test_sync_server_reset_fn() {
-        let attr = quote! { service = Greeter, config = GreeterConfig };
+        let attr = quote! { methods = GreeterTrait, service = Greeter, config = GreeterConfig };
         let item = quote! {
             pub struct GreeterServer {
                 count: u32,
@@ -395,7 +395,7 @@ mod tests {
     #[tracing_test::traced_test]
     #[test]
     fn test_async_server_init_trait() {
-        let attr = quote! { service = Greeter, config = GreeterConfig, async_init };
+        let attr = quote! { methods = GreeterTrait, service = Greeter, config = GreeterConfig, async_init };
         let item = quote! {
             pub struct GreeterServer {
                 count: u32,
@@ -419,7 +419,7 @@ mod tests {
     #[tracing_test::traced_test]
     #[test]
     fn test_async_server_init_fn() {
-        let attr = quote! { service = Greeter, config = GreeterConfig, async_init };
+        let attr = quote! { methods = GreeterTrait, service = Greeter, config = GreeterConfig, async_init };
         let item = quote! {
             pub struct GreeterServer {
                 count: u32,
@@ -452,7 +452,7 @@ mod tests {
     #[tracing_test::traced_test]
     #[test]
     fn test_async_server_drop_fn() {
-        let attr = quote! { service = Greeter, config = GreeterConfig, async_init };
+        let attr = quote! { methods = GreeterTrait, service = Greeter, config = GreeterConfig, async_init };
         let item = quote! {
             pub struct GreeterServer {
                 count: u32,
@@ -478,7 +478,7 @@ mod tests {
     #[tracing_test::traced_test]
     #[test]
     fn test_async_server_reset_fn() {
-        let attr = quote! { service = Greeter, config = GreeterConfig, async_init };
+        let attr = quote! { methods = GreeterTrait, service = Greeter, config = GreeterConfig, async_init };
         let item = quote! {
             pub struct GreeterServer {
                 count: u32,
@@ -507,7 +507,7 @@ mod tests {
     #[tracing_test::traced_test]
     #[test]
     fn test_server_export() {
-        let attr = quote! { service = Greeter, config = GreeterConfig, async_init };
+        let attr = quote! { methods = GreeterTrait, service = Greeter, config = GreeterConfig, async_init };
         let item = quote! {
             pub struct GreeterServer {
                 count: u32,

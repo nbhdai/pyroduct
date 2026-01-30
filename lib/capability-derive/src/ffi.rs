@@ -689,7 +689,7 @@ mod tests {
                     input_ptr,
                     input_len,
                     capability_state_ptr,
-                    |state, client| async move { state.test_async_client(client).await },
+                    |state, client| async move { state.test_async_client(&client).await },
                 )
             }
         };
@@ -705,7 +705,7 @@ mod tests {
                     _,
                 >(
                     "__mock_trait__mock_server__test_async_client",
-                    Some(self),
+                    Some(&self),
                     None,
                     |client_state_ptr: *const u8,
                     client_state_len: usize,
@@ -764,7 +764,7 @@ mod tests {
                     input_ptr,
                     input_len,
                     capability_state_ptr,
-                    |state, client, input| state.test_sync_client_input(client, input),
+                    |state, client, input| state.test_sync_client_input(&client, input),
                 )
             }
         };
@@ -780,7 +780,7 @@ mod tests {
                     _,
                 >(
                     "__mock_trait__mock_server__test_sync_client_input",
-                    Some(self),
+                    Some(&self),
                     Some(&x),
                     |client_state_ptr: *const u8,
                     client_state_len: usize,
@@ -853,7 +853,7 @@ mod tests {
                     input_len,
                     capability_state_ptr,
                     |state, client, input| async move {
-                        state.test_sci_multi(client, input.a, input.b).await
+                        state.test_sci_multi(&client, input.a, input.b).await
                     },
                 )
             }
@@ -871,7 +871,7 @@ mod tests {
                     _,
                 >(
                     "__mock_trait__mock_server__test_sci_multi",
-                    Some(self),
+                    Some(&self),
                     Some(&__MockTrait__MockServer__TestSciMulti__Input { a , b }),
                     |client_state_ptr: *const u8,
                     client_state_len: usize,

@@ -280,7 +280,7 @@ mod tests {
 
         // 5. Expected Output
         let expected = quote! {
-            pub fn new(id: u32) -> Self {
+            pub fn new(id: u32) -> MyClient {
                 let mut new_self = (|| {
                     MyClient {
                         id,
@@ -349,7 +349,7 @@ mod tests {
         // 5. Expected Output
         // Note: The signature returns Result<Self, MyError>
         let expected = quote! {
-            pub fn create(name: String) -> Result<Self, MyError> {
+            pub fn create(name: String) -> Result<MyClient, MyError> {
                 let mut new_self = (|| {
                     MyClient {
                         name,
@@ -418,7 +418,7 @@ mod tests {
         let output = ctor.client_method_generation(None);
 
         let expected = quote! {
-            pub fn build(x: usize, y: usize) -> Self {
+            pub fn build(x: usize, y: usize) -> MyClient {
                 let mut new_self = (|| {
                     let z = x + y;
                     let c = {

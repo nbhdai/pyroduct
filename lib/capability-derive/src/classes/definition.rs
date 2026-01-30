@@ -423,8 +423,6 @@ mod tests {
         let server_trait = def.generate_trait_definition();
         let expected_trait = quote! {
             pub trait AdvancedTrait {
-                type Client = AdvancedClient;
-                type Error = MyError;
                 fn new_client(&self, client: &AdvancedClient) -> Result<(), MyError>;
                 async fn process(&self, client: &AdvancedClient, val: u32, flag: bool) -> Result<u32, MyError>;
                 fn sync_op(&self, client: &AdvancedClient, level: u8) -> Result<bool, MyError>;
