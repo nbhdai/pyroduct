@@ -42,13 +42,14 @@ pub fn capability(attr: TokenStream, item: TokenStream) -> TokenStream {
             let trait_def = def.generate_trait_definition();
             let client_impl = def.generate_client_impl(Some(&format_ident!("wasm")));
             let export = def.generate_ffi_exports();
-            let wasm_imports = def.generate_wasm_imports();
+            let wasm_fn_declarations = def.generate_wasm_imports();
 
             quote::quote! {
                 #client_impl
 
-                pub mod wasm {
-                    #(#wasm_imports)*
+                #[link(wasm_import_module = "env")]
+                extern "C" {
+                    #(#wasm_fn_declarations)*
                 }
 
                 pub mod methods {
