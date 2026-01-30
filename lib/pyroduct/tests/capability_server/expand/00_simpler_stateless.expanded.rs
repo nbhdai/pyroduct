@@ -110,21 +110,21 @@ impl SimpleClient {
                 }
             },
         );
-        ::pyroduct::module_capability::Client {
-            data: self,
-            __config_buf,
-        }
+        ::pyroduct::module_capability::Client::new(self, __config_buf)
     }
 }
-impl ::pyroduct::module_capability::Client<SimpleClient> {
-    pub fn call(&self) -> f32 {
+pub trait SimpleClientMethods {
+    fn call(&self) -> f32;
+}
+impl SimpleClientMethods for ::pyroduct::module_capability::Client<SimpleClient> {
+    fn call(&self) -> f32 {
         ::pyroduct::module_capability::access::call_from_wasm::<
             (),
             f32,
             _,
         >(
             "__stateful_server__call",
-            Some(&self.buffer()),
+            Some(self.buffer()),
             None,
             |
                 client_state_ptr: *const u8,

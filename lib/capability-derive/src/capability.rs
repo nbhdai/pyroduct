@@ -206,7 +206,7 @@ impl CapabilityImpl {
         }
     }
 
-    fn generate_client_impl(&self) -> TokenStream {
+fn generate_client_impl(&self) -> TokenStream {
         let client = &self.ident.client_tn;
         let module = format_ident!("wasm");
 
@@ -222,10 +222,9 @@ impl CapabilityImpl {
                     quote! {
                          let ffi_result = #wasm_call;
                          match ffi_result {
-                             Ok(_) => Ok(::pyroduct::module_capability::Client {
-                                data: self,
-                                __config_buf,
-                            }),
+                             Ok(_) => Ok(
+                                ::pyroduct::module_capability::Client::new(self, __config_buf)
+                             ),
                              Err(e) => Err(e.into()),
                          }
                     }
@@ -235,10 +234,7 @@ impl CapabilityImpl {
                     quote!(::pyroduct::module_capability::Client<Self>),
                     quote! {
                         #wasm_call;
-                        ::pyroduct::module_capability::Client {
-                            data: self,
-                            __config_buf,
-                        }
+                        ::pyroduct::module_capability::Client::new(self, __config_buf)
                     }
                 )
             };
@@ -259,20 +255,41 @@ impl CapabilityImpl {
             }
         };
 
-        // 2. Generate the Capability Methods (on the Client wrapper)
-        let methods: Vec<_> = self.methods.iter()
+        // 2. Generate the trait with method signatures
+        let trait_name = format_ident!("{}Methods", client);
+        
+        let trait_methods: Vec<_> = self.methods.iter()
+            .map(|m| {
+                let name = &m.name;
+                let output = &m.output;
+                let args: Vec<_> = m.inputs.iter().map(|(n, t)| quote!(#n: #t)).collect();
+                quote! {
+                    fn #name(&self, #(#args),*) #output;
+                }
+            })
+            .collect();
+
+        let trait_def = quote! {
+            pub trait #trait_name {
+                #(#trait_methods)*
+            }
+        };
+
+        // 3. Generate the trait implementation for Client<T>
+        let method_impls: Vec<_> = self.methods.iter()
             .map(|m| m.generate_client_method(&module))
             .collect();
 
-        let wrapper_impl = quote! {
-            impl ::pyroduct::module_capability::Client<#client> {
-                #(#methods)*
+        let trait_impl = quote! {
+            impl #trait_name for ::pyroduct::module_capability::Client<#client> {
+                #(#method_impls)*
             }
         };
 
         quote! {
             #client_impl
-            #wrapper_impl
+            #trait_def
+            #trait_impl
         }
     }
 
@@ -626,7 +643,11 @@ mod tests {
                     new_self
                 }
             }
-            impl ::pyroduct::module_capability::Client<MyClient> {
+            pub trait MyClientMethods {
+                fn get_info(&self) -> u32;
+                fn get_other_info(&self, data: f32) -> u32;
+            }
+            impl MyClientMethods for ::pyroduct::module_capability::Client<MyClient> {
                 pub fn get_info(&self) -> u32 {
                     ::pyroduct::module_capability::access::call_from_wasm::<
                         MyClient,
@@ -757,7 +778,9 @@ mod tests {
                     }
                 }
             }
-
+            pub trait AdvancedClientMethods {
+                fn process(&self, val: u32, flag: bool) -> Result<u32, MyError>;
+            }
             impl ::pyroduct::module_capability::Client<AdvancedClient> {
                 pub fn process(&self, val: u32, flag: bool) -> Result<u32, MyError> {
                     #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]

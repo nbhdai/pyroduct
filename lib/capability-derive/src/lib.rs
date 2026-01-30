@@ -11,6 +11,7 @@
 
 use proc_macro::TokenStream;
 
+pub(crate) mod config;
 pub(crate) mod client;
 pub(crate) mod ffi;
 pub(crate) mod paths;
@@ -26,6 +27,17 @@ pub fn client(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemStruct);
     match crate::client::CapClient::new(input) {
         Ok(client) => client.expand().into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// Marks a struct as configuration for a struct.
+/// Adds rkyv serialization and the internal configuration buffer.
+#[proc_macro_attribute]
+pub fn config(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemStruct);
+    match crate::config::CapConfig::new(input) {
+        Ok(config) => config.expand().into(),
         Err(e) => e.to_compile_error().into(),
     }
 }

@@ -90,7 +90,7 @@ pub use module_derive::module;
 
 pub use rkyv;
 
-pub use capability_derive::{capability, client};
+pub use capability_derive::{capability, client, config};
 
 pub type PyroductResult<T> = Result<T, errors::PyroductError>;
 

@@ -204,7 +204,7 @@ impl CapabilityFuncFFI {
             if self.constructor {
                 quote!(Some(&__config_buf))
             } else {
-                quote!(Some(&self.buffer()))
+                quote!(Some(self.buffer()))
             }
         } else {
             quote!(None)

@@ -217,7 +217,7 @@ impl ImplMethod {
 
         quote! {
             #(#attrs)*
-            pub fn #name(&self, #(#args),*) #output {
+            fn #name(&self, #(#args),*) #output {
                 #struct_def
                 #wasm_call
             }

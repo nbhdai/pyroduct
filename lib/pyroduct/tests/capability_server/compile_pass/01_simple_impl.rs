@@ -1,12 +1,17 @@
 #[pyroduct::client]
 pub struct GreeterClient {}
 
+pub struct Greeter;
+
+#[pyroduct::config]
+pub struct GreeterConfig {}
+
 
 #[pyroduct::capability]
-impl Greeter for Greeter {
+impl Greeter {
     type Config = GreeterConfig;
     type Client = GreeterClient;
-    fn new(config: Option<GreeterConfig>) -> Self {
+    fn new(_config: Option<GreeterConfig>) -> Self {
         Greeter
     }
     
