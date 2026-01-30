@@ -8,13 +8,11 @@ use syn::{Expr, Ident, ItemStruct, Meta, Result, Token, Type, parse::Parser};
 
 #[derive(Debug, Clone)]
 pub struct ServerAttrs {
-    pub service: Ident,
     pub config: Type,
     pub is_async: bool,
 }
 
 pub fn parse_server_attrs(attr: TokenStream) -> Result<ServerAttrs> {
-    let mut service: Option<Ident> = None;
     let mut config: Option<Type> = None;
 
     let parser = Punctuated::<Meta, Token![,]>::parse_terminated;
@@ -24,11 +22,7 @@ pub fn parse_server_attrs(attr: TokenStream) -> Result<ServerAttrs> {
     for meta in metas {
         match &meta {
             Meta::NameValue(nv) => {
-                if nv.path.is_ident("service") {
-                    if let Expr::Path(path) = &nv.value {
-                        service = path.path.get_ident().cloned();
-                    }
-                } else if nv.path.is_ident("config") {
+                if nv.path.is_ident("config") {
                     if let Expr::Path(path) = &nv.value {
                         config = Some(Type::Path(syn::TypePath {
                             qself: None,
@@ -45,15 +39,10 @@ pub fn parse_server_attrs(attr: TokenStream) -> Result<ServerAttrs> {
             _ => {}
         }
     }
-
-    let service = service.ok_or_else(|| {
-        syn::Error::new(Span::call_site(), "Missing `service = TraitName` attribute")
-    })?;
     let config = config
         .ok_or_else(|| syn::Error::new(Span::call_site(), "Missing `config = Struct` attribute"))?;
 
     Ok(ServerAttrs {
-        service,
         config,
         is_async,
     })
@@ -226,6 +215,39 @@ impl CapServer {
             quote!(::pyroduct::capability_host::ffi::ClassResetFn::Sync(#reset_ffi_name))
         }
     }
+
+    pub fn generate_ffi_exports(&self) -> TokenStream {
+        let class_name_static = &self.struct_name;
+
+        let init_ffi_func = self.generate_init_fn();
+        let drop_ffi_func = self.generate_drop_fn();
+        let reset_ffi_func = self.generate_reset_fn();
+
+        // Generate init, drop, and reset function pointers
+        let init_export = self.generate_init_export();
+        let drop_export = self.generate_drop_export();
+        let reset_export = self.generate_reset_export();
+
+        // Generate the static export array name
+        let exports_array_name = quote::format_ident!("{}__METHODS", class_name_static);
+        let plugin_exports_name = quote::format_ident!("{}__EXPORT", class_name_static);
+        
+        quote! {
+            #init_ffi_func
+            #drop_ffi_func
+            #reset_ffi_func
+
+            // Generate the ClassExport struct
+            const #plugin_exports_name: ::pyroduct::capability_host::ffi::ClassExport = ::pyroduct::capability_host::ffi::ClassExport {
+                ptr: super::methods::#exports_array_name.as_ptr(),
+                init: #init_export,
+                drop: #drop_export,
+                reset: #reset_export,
+                len: super::methods::#exports_array_name.len(),
+            };
+        }
+    }
+
 }
 
 #[cfg(test)]
@@ -455,5 +477,26 @@ mod tests {
         };
 
         crate::fmt::assert_code_eq_token(&result, &expected);
+    }
+
+    #[tracing_test::traced_test]
+    #[test]
+    fn test_server_export() {
+        let attr = quote! { service = Greeter, config = GreeterConfig, async_init };
+        let item = quote! {
+            pub struct GreeterServer {
+                count: u32,
+            }
+        };
+        let expected = quote! {
+            pub static __GREETER_SERVER__EXPORTS: ::pyroduct::capability_host::ffi::ClassExport =
+            ::pyroduct::capability_host::ffi::ClassExport {
+                ptr: exports.as_ptr(),
+                init: ::pyroduct::capability_host::ffi::ClassInitFn::Sync(__greeter_server__ffi_init),
+                drop: ::pyroduct::capability_host::ffi::ClassDropFn::Sync(__greeter_server__ffi_drop),
+                reset: ::pyroduct::capability_host::ffi::ClassResetFn::Sync(__greeter_server__ffi_reset),
+                len: 3usize,
+            };
+        };
     }
 }

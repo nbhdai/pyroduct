@@ -220,14 +220,14 @@ pub use module_derive::module;
 ///
 /// # Example
 /// ```ignore
-/// #[capability_impl(env = "reporter")]
+/// #[capability(env = "reporter")]
 /// impl Reporter for ReporterServer {
 ///     fn report(&mut self, message: String) -> String {
 ///         // implementation
 ///     }
 /// }
 /// ```
-pub use capability_derive::capability;
+pub use capability_derive::{capability, capability_server, capability_client};
 
 pub type PyroductResult<T> = Result<T, errors::PyroductError>;
 

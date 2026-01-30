@@ -10,6 +10,7 @@
 //! 4. **Both states** - `#[capability_client]` struct + `#[capability]` trait + `#[capability_server]` struct
 
 use proc_macro::TokenStream;
+use quote::format_ident;
 use syn::{ItemStruct, ItemTrait, parse_macro_input};
 
 pub(crate) mod classes;
@@ -40,11 +41,21 @@ pub fn capability(attr: TokenStream, item: TokenStream) -> TokenStream {
     match crate::classes::definition::CapabilityDefTrait::from_trait(attr.into(), input, &capability_name) {
         Ok(def) => {
             let trait_def = def.generate_trait_definition();
-            let client_impl = def.generate_client_impl(None);
+            let client_impl = def.generate_client_impl(Some(&format_ident!("wasm")));
+            let export = def.generate_ffi_exports();
+            let wasm_imports = def.generate_wasm_imports();
 
             quote::quote! {
-                #trait_def
                 #client_impl
+
+                pub mod wasm {
+                    #(#wasm_imports)*
+                }
+
+                pub mod methods {
+                    #trait_def
+                    #export
+                }
             }.into()
         },
         Err(e) => e.to_compile_error().into(),
@@ -61,14 +72,14 @@ pub fn capability_server(attr: TokenStream, item: TokenStream) -> TokenStream {
         Ok(server) => {
             let struct_def = &server.input;
             let init_trait = server.generate_init_trait();
-            let ffi_init = server.generate_init_fn();
-            let ffi_drop = server.generate_drop_fn();
+            let exports = server.generate_ffi_exports();
 
             quote::quote! {
-                #struct_def
-                #init_trait
-                #ffi_init
-                #ffi_drop
+                pub mod state {
+                    #struct_def
+                    #init_trait
+                    #exports
+                }
             }.into()
         }
         Err(e) => e.to_compile_error().into(),

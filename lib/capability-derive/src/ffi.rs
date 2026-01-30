@@ -164,6 +164,12 @@ impl CapabilityFuncFFI {
         let fn_ffi_name = self.fn_ffi_name();
         let fn_name_static = self.trace_name_static();
 
+        let module_name = if let Some(class) = &self.class {
+            class.class_name_static()
+        } else {
+            format_ident!("__CAPABILITY_NAME")
+        };
+
         let func_variant = if self.is_async {
             quote! {
                 ::pyroduct::capability_host::ffi::Function::Async(#fn_ffi_name)
@@ -176,8 +182,8 @@ impl CapabilityFuncFFI {
 
         quote! {
             ::pyroduct::capability_host::ffi::FunctionExport {
-                module: __CAPABILITY_NAME.as_ptr(),
-                module_len: __CAPABILITY_NAME.len(),
+                module: #module_name.as_ptr(),
+                module_len: #module_name.len(),
                 name: #fn_name_static.as_ptr(),
                 name_len: #fn_name_static.len(),
                 func: #func_variant,
@@ -699,7 +705,7 @@ mod tests {
                     _,
                 >(
                     "__mock_trait__mock_server__test_async_client",
-                    Some(client),
+                    Some(self),
                     None,
                     |client_state_ptr: *const u8,
                     client_state_len: usize,
@@ -774,7 +780,7 @@ mod tests {
                     _,
                 >(
                     "__mock_trait__mock_server__test_sync_client_input",
-                    Some(client),
+                    Some(self),
                     Some(&x),
                     |client_state_ptr: *const u8,
                     client_state_len: usize,
@@ -865,7 +871,7 @@ mod tests {
                     _,
                 >(
                     "__mock_trait__mock_server__test_sci_multi",
-                    Some(client),
+                    Some(self),
                     Some(&__MockTrait__MockServer__TestSciMulti__Input { a , b }),
                     |client_state_ptr: *const u8,
                     client_state_len: usize,

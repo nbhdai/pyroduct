@@ -1,3 +1,14 @@
+use crate::module_capability::error;
+use rkyv::{
+    Archive, Deserialize, Serialize,
+    bytecheck::CheckBytes,
+    de::Pool,
+    rancor::{self, Error as RkyvError, Strategy},
+    ser::{Serializer, allocator::ArenaHandle, sharing::Share},
+    util::AlignedVec,
+    validation::{Validator, archive::ArchiveValidator, shared::SharedValidator},
+};
+
 pub type PackedWasmSlicePtr = u64;
 
 pub fn slice_to_wasm_slice<T: 'static + AsRef<[u8]>>(bytes: &T) -> PackedWasmSlicePtr {
@@ -32,17 +43,6 @@ pub fn wasm_ptr_to_slice(wasm_slice: PackedWasmSlicePtr) -> Option<(usize, usize
         }
     }
 }
-
-use crate::module_capability::error;
-use rkyv::{
-    Archive, Deserialize, Serialize,
-    bytecheck::CheckBytes,
-    de::Pool,
-    rancor::{self, Error as RkyvError, Strategy},
-    ser::{Serializer, allocator::ArenaHandle, sharing::Share},
-    util::AlignedVec,
-    validation::{Validator, archive::ArchiveValidator, shared::SharedValidator},
-};
 
 pub fn call_from_wasm<C, I, O, F>(
     capability: &'static str,

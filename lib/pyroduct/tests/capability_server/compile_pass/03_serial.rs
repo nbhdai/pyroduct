@@ -1,4 +1,4 @@
-use pyroduct::{capability, capability_client, capability_server, capability_impl, capability_export};
+use pyroduct::{capability, capability_client, capability_server};
 use serde::{Deserialize, Serialize};
 
 // 1. Configuration
@@ -15,10 +15,11 @@ pub struct SerialHandle {
 }
 
 // 3. Capability Definition
-#[capability]
+#[capability(SerialServer)]
 pub trait SerialPool {
+    type Client = SerialHandle;
     async fn open(port: String, baud: u32) -> Result<SerialHandle, String>;
-    fn close(#[client_state] handle: &SerialHandle) -> Result<(), String>;
+    fn close(handle: &SerialHandle) -> Result<(), String>;
 }
 
 // 4. Server State
@@ -34,8 +35,6 @@ impl SerialServerInit for SerialServer {
     fn reset(&mut self) { self.next_id = 0; }
 }
 
-// 6. Capability Implementation (generates FFI)
-#[capability_impl(env = "serial")]
 impl SerialPool for SerialServer {
     async fn open(port: String, baud: u32) -> Result<SerialHandle, String> {
         Ok(SerialHandle { id: 1 })

@@ -142,9 +142,9 @@ impl ClientConstructor {
 /// Encapsulates naming conventions and return type logic.
 pub fn client_constructor_ffi_meta(class: &Rc<ClassIdent>, is_async: bool, capability_name: &Rc<str>) -> CapabilityFuncFFI {
     let return_type: ReturnType = if let Some(err_type) = &class.error_tn {
-        type_to_return(&parse2(quote!(Result<(), #err_type>)).expect("This really should parse"))
+        type_to_return(&parse2(quote!(Result<Self, #err_type>)).expect("This really should parse"))
     } else {
-        type_to_return(&parse2(quote!(())).expect("This really should parse"))
+        type_to_return(&parse2(quote!(Self)).expect("This really should parse"))
     };
     CapabilityFuncFFI {
         capability_name: capability_name.clone(),
@@ -263,12 +263,7 @@ mod tests {
                     .expect("Failed to serialize config")
                     .into_vec();
 
-                let ffi_result = #wasm_call;
-
-                match ffi_result {
-                    Ok(_) => Ok(new_self),
-                    Err(e) => Err(e.into()),
-                }
+                #wasm_call
             }
         };
 
@@ -380,12 +375,7 @@ mod tests {
                     .expect("Failed to serialize config")
                     .into_vec();
 
-                let ffi_result = #wasm_call;
-
-                match ffi_result {
-                    Ok(_) => Ok(new_self),
-                    Err(e) => Err(e.into()),
-                }
+                #wasm_call
             }
         };
 

@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn test_generate_client_impl_integration() {
-        let state_name = format_ident!("MyState");
+        let attr = quote! { MyState };
         let expected_cap = "cap".into();
         let expected_class = Rc::new(ClassIdent {
             trait_tn: format_ident!("MyTrait"),
@@ -290,7 +290,7 @@ mod tests {
         let expected_constructor = expected_constructor.client_method_generation(None);
         let expected_method = expected_method.client_method_generation(None);
 
-        let def = CapabilityDefTrait::from_trait(todo!(), code, &expected_cap)
+        let def = CapabilityDefTrait::from_trait(attr, code, &expected_cap)
             .expect("Failed to parse capability trait");
         let output = def.generate_client_impl(None);
 
@@ -322,7 +322,7 @@ mod tests {
 
     #[test]
     fn test_generate_client_impl_with_error_and_input_structs() {
-        let state_name = format_ident!("MyState");
+        let attr = quote! { MyState };
         let expected_class = Rc::new(ClassIdent {
             trait_tn: format_ident!("AdvancedTrait"),
             state_tn: format_ident!("MyState"),
@@ -384,7 +384,7 @@ mod tests {
         let expected_method = expected_method.client_method_generation(None);
         let expected_method_2 = expected_method_2.client_method_generation(None);
 
-        let def = CapabilityDefTrait::from_trait(todo!(), code, &expected_cap)
+        let def = CapabilityDefTrait::from_trait(attr, code, &expected_cap)
             .expect("Failed to parse capability trait");
         let output = def.generate_client_impl(None);
 
@@ -430,15 +430,15 @@ mod tests {
 
     #[test]
     fn test_no_client_impl_generated_if_no_client_type() {
+        let attr = quote! { MyState };
         let code = parse2(quote! {
             trait PureInterface {
                 fn do_thing();
             }
         })
         .unwrap();
-        let state_name = format_ident!("MyState");
 
-        let result = CapabilityDefTrait::from_trait(todo!(), code, &"cap".into());
+        let result = CapabilityDefTrait::from_trait(attr, code, &"cap".into());
         assert!(result.is_err());
     }
 }
