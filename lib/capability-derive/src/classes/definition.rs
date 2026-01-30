@@ -265,14 +265,19 @@ mod tests {
         });
 
         let code = parse2(quote! {
-            trait MyTrait {
+            impl MyState {
                 type Client = MyClient;
+                type Config = MyConfig;
 
-                fn new(id: u32) -> MyClient {
-                    MyClient { id }
+                fn new(config: Option<MyConfig>) -> MyState {
+                    if let Some(config) = config {
+                        MyState { config }
+                    } else {
+                        MyState { config: MyConfig::default() }
+                    }
                 }
 
-                fn get_info() -> u32;
+                fn get_info(&self, client: &MyClient) -> u32;
             }
         })
         .unwrap();
@@ -301,8 +306,7 @@ mod tests {
 
         let expected = quote! {
             impl MyClient {
-                #expected_constructor
-                #expected_method
+                todo!()
             }
         };
 
@@ -337,55 +341,32 @@ mod tests {
         let expected_cap = "cap".into();
 
         let code = parse2(quote! {
-            trait AdvancedTrait {
+            impl AdvancedStruct {
                 type Client = AdvancedClient;
                 type Error = MyError;
 
-                fn create(name: String) -> AdvancedClient {
+                fn new_client(&self, client: &AdvancedClient) -> Result<(), MyError> {
                     AdvancedClient { name }
                 }
 
-                fn create_2(name: String) -> AdvancedClient {
-                    AdvancedClient { name }
-                }
+                fn reset(&mut self) {}
 
-                async fn process(val: u32, flag: bool) -> Result<u32, MyError>;
-                fn sync_op(level: u8) -> Result<bool, MyError>;
+                async fn process(&self, client: &AdvancedClient, val: u32, flag: bool) -> Result<u32, MyError>;
+                fn sync_op(&self, client: &AdvancedClient, level: u8) -> Result<bool, MyError>;
             }
         })
         .unwrap();
 
-        let constructor = parse2(quote! {
-            fn create(name: String) -> AdvancedClient {
-                AdvancedClient { name }
-            }
-        })
-        .unwrap();
-
-        let constructor_2 = parse2(quote! {
-            fn create_2(name: String) -> AdvancedClient {
-                AdvancedClient { name }
-            }
-        })
-        .unwrap();
 
         let method = parse2(quote! {
-            async fn process(val: u32, flag: bool) -> Result<u32, MyError>;
+            async fn process(&self, val: u32, flag: bool) -> Result<u32, MyError>;
         })
         .unwrap();
         let method_2 = parse2(quote! {
-            fn sync_op(level: u8) -> Result<bool, MyError>;
+            fn sync_op(&self, level: u8) -> Result<bool, MyError>;
         })
         .unwrap();
 
-        let expected_constructor = ClientConstructor::new(&constructor, &expected_class, &expected_cap).unwrap();
-        let expected_constructor_2 =
-            ClientConstructor::new(&constructor_2, &expected_class, &expected_cap).unwrap();
-        let expected_method = CapabilityMethod::from_trait(method, &expected_class, &expected_cap).unwrap();
-        let expected_method_2 = CapabilityMethod::from_trait(method_2, &expected_class, &expected_cap).unwrap();
-
-        let expected_constructor = expected_constructor.client_method_generation(None);
-        let expected_constructor_2 = expected_constructor_2.client_method_generation(None);
         let expected_method = expected_method.client_method_generation(None);
         let expected_method_2 = expected_method_2.client_method_generation(None);
 

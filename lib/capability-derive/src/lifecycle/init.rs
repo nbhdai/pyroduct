@@ -1,0 +1,361 @@
+//! Init function parsing and validation
+
+use proc_macro2::TokenStream;
+use quote::{format_ident, quote};
+use syn::{Error, FnArg, Ident, ImplItemFn, Pat, ReturnType, Type};
+
+use heck::AsSnakeCase;
+
+#[derive(Debug, Clone)]
+pub struct InitFn {
+    pub is_async: bool,
+    pub config_type: Option<Type>,
+    pub body: syn::Block,
+    pub attrs: Vec<syn::Attribute>,
+}
+
+impl InitFn {
+    /// Parse the init function and validate it against the expected configuration.
+    ///
+    /// - `expected_config`: The type derived from `config = MyConfig`. Pass `None` if no config attribute exists.
+    /// - `f`: The function implementation to parse.
+    pub fn parse(expected_config: Option<Type>, f: &ImplItemFn) -> syn::Result<Self> {
+        let sig = &f.sig;
+
+        // 1. Validate name
+        if sig.ident != "new" {
+            return Err(Error::new_spanned(&sig.ident, "Expected function named 'new'"));
+        }
+
+        // 2. Validate return type is Self
+        match &sig.output {
+            ReturnType::Type(_, ty) => {
+                let ty_str = quote!(#ty).to_string().replace(" ", "");
+                if ty_str != "Self" {
+                    return Err(Error::new_spanned(
+                        &sig.output,
+                        "fn new must return Self",
+                    ));
+                }
+            }
+            ReturnType::Default => {
+                return Err(Error::new_spanned(&sig, "fn new must return Self"));
+            }
+        }
+
+        // 3. Validate no &self receiver
+        if let Some(FnArg::Receiver(r)) = sig.inputs.first() {
+            return Err(Error::new_spanned(
+                r,
+                "fn new must be a static function (no self parameter)",
+            ));
+        }
+
+        // 4. Validate Argument consistency against Expected Config
+        match &expected_config {
+            // Case A: Attribute said `config = MyType`
+            Some(expected_ty) => {
+                if sig.inputs.len() != 1 {
+                    return Err(Error::new_spanned(
+                        &sig.inputs,
+                        format!("Macro attribute defined 'config = {}', so fn new must take exactly one argument: 'config: &{}'", 
+                        quote!(#expected_ty), quote!(#expected_ty))
+                    ));
+                }
+
+                let arg = sig.inputs.first().unwrap();
+                if let FnArg::Typed(pt) = arg {
+                    // Check name is 'config'
+                    if let Pat::Ident(pi) = &*pt.pat {
+                        if pi.ident != "config" {
+                            return Err(Error::new_spanned(&pi.ident, "Parameter must be named 'config'"));
+                        }
+                    } else {
+                        return Err(Error::new_spanned(&pt.pat, "Expected simple identifier 'config'"));
+                    }
+
+                    // Check type is Reference
+                    if let Type::Reference(r) = &*pt.ty {
+                        // Check inner type matches expected type
+                        // We use string comparison of the tokens here as a heuristic
+                        let inner_ty = &*r.elem;
+                        let inner_str = quote!(#inner_ty).to_string().replace(" ", "");
+                        let expected_str = quote!(#expected_ty).to_string().replace(" ", "");
+
+                        if inner_str != expected_str {
+                            return Err(Error::new_spanned(
+                                inner_ty,
+                                format!("Type mismatch. Expected '{}' based on macro attribute, found '{}'", expected_str, inner_str)
+                            ));
+                        }
+                    } else {
+                        return Err(Error::new_spanned(
+                            &pt.ty,
+                            "Config parameter must be a reference (e.g., &ConfigType)",
+                        ));
+                    }
+                }
+            }
+            // Case B: No config attribute
+            None => {
+                if !sig.inputs.is_empty() {
+                    return Err(Error::new_spanned(
+                        &sig.inputs,
+                        "No 'config' attribute specified in macro, so fn new() must take 0 arguments.",
+                    ));
+                }
+            }
+        }
+
+        Ok(Self {
+            is_async: sig.asyncness.is_some(),
+            config_type: expected_config,
+            body: f.block.clone(),
+            attrs: f.attrs.clone(),
+        })
+    }
+
+    /// Generate the FFI init function
+    pub fn generate_ffi(&self, server: &Ident) -> TokenStream {
+        let server_snake = AsSnakeCase(server.to_string()).to_string();
+        let init_name = format_ident!("__{}__ffi_init", server_snake);
+
+        // Determine config type and closure body
+        let (config_type, closure) = if let Some(t) = &self.config_type {
+            (quote!(#t), quote!(|config| #server::new(config)))
+        } else {
+            (
+                quote!(::pyroduct::capability::safe_lifecycle::EmptyConfig),
+                quote!(|| #server::new()),
+            )
+        };
+
+        if self.is_async {
+            let async_closure = if self.config_type.is_some() {
+                 quote!(|config| async move { #server::new(config).await })
+            } else {
+                 quote!(|| async move { #server::new().await })
+            };
+
+            quote! {
+                #[unsafe(no_mangle)]
+                pub extern "C" fn #init_name<'a>(
+                    config_ptr: *const u8,
+                    config_len: usize
+                ) -> ::pyroduct::capability_host::ffi::FfiBorrowedFutureObjectResult<'a> {
+                    unsafe {
+                        ::pyroduct::capability::safe_lifecycle::execute_safe_async_init::<
+                            'a,
+                            #config_type,
+                            #server,
+                            _,
+                            _,
+                        >(
+                            config_ptr,
+                            config_len,
+                            #async_closure,
+                        )
+                    }
+                }
+            }
+        } else {
+            quote! {
+                #[unsafe(no_mangle)]
+                pub extern "C" fn #init_name(
+                    config_ptr: *const u8,
+                    config_len: usize
+                ) -> ::pyroduct::capability_host::ffi::FfiInitResult {
+                    unsafe {
+                        ::pyroduct::capability::safe_lifecycle::execute_safe_init::<
+                            #config_type,
+                            #server,
+                            _,
+                        >(
+                            config_ptr,
+                            config_len,
+                            #closure,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /// Generate the export entry for the init function
+    pub fn generate_export(&self, server: &Ident) -> TokenStream {
+        let server_snake = AsSnakeCase(server.to_string()).to_string();
+        let init_name = format_ident!("__{}__ffi_init", server_snake);
+
+        if self.is_async {
+            quote!(::pyroduct::capability_host::ffi::ClassInitFn::Async(#init_name))
+        } else {
+            quote!(::pyroduct::capability_host::ffi::ClassInitFn::Sync(#init_name))
+        }
+    }
+
+    /// Generate the impl method (preserves original)
+    pub fn generate_impl_method(&self) -> TokenStream {
+        let attrs = &self.attrs;
+        let body = &self.body;
+        let async_kw = if self.is_async { quote!(async) } else { quote!() };
+
+        let params = if let Some(config) = &self.config_type {
+            quote!(config: &#config)
+        } else {
+            quote!()
+        };
+
+        quote! {
+            #(#attrs)*
+            pub #async_kw fn new(#params) -> Self #body
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quote::{format_ident, quote};
+    use syn::parse_quote;
+
+    fn assert_code_eq(actual: &TokenStream, expected: &TokenStream) {
+        let actual_str = actual.to_string();
+        let expected_str = expected.to_string();
+        if actual_str != expected_str {
+            println!("Expected:\n{}", expected_str);
+            println!("Actual:\n{}", actual_str);
+            panic!("Code mismatch");
+        }
+    }
+
+    #[test]
+    fn test_sync_server_init_fn() {
+        // 1. Simulate the config attribute passed from the macro
+        let config_type: Type = parse_quote!(GreeterConfig);
+
+        // 2. Simulate the user's implementation
+        let item: ImplItemFn = parse_quote! {
+            fn new(config: &GreeterConfig) -> Self {
+                Self { count: 0 }
+            }
+        };
+
+        // 3. Parse with validation
+        let init_fn = InitFn::parse(Some(config_type), &item).expect("Parse failed");
+        
+        let server_ident = format_ident!("GreeterServer");
+        let result = init_fn.generate_ffi(&server_ident);
+
+        let expected = quote! {
+            #[unsafe(no_mangle)]
+            pub extern "C" fn __greeter_server__ffi_init(
+                config_ptr: *const u8,
+                config_len: usize
+            ) -> ::pyroduct::capability_host::ffi::FfiInitResult {
+                unsafe {
+                    ::pyroduct::capability::safe_lifecycle::execute_safe_init::<GreeterConfig, GreeterServer, _>(
+                        config_ptr,
+                        config_len,
+                        |config| GreeterServer::new(config)
+                    )
+                }
+            }
+        };
+
+        assert_code_eq(&result, &expected);
+    }
+
+    #[test]
+    fn test_async_server_init_fn() {
+        // 1. Config attribute
+        let config_type: Type = parse_quote!(GreeterConfig);
+
+        // 2. User implementation
+        let item: ImplItemFn = parse_quote! {
+            async fn new(config: &GreeterConfig) -> Self {
+                Self { count: 0 }
+            }
+        };
+
+        // 3. Parse
+        let init_fn = InitFn::parse(Some(config_type), &item).expect("Parse failed");
+
+        let server_ident = format_ident!("GreeterServer");
+        let result = init_fn.generate_ffi(&server_ident);
+
+        let expected = quote! {
+            #[unsafe(no_mangle)]
+            pub extern "C" fn __greeter_server__ffi_init<'a>(
+                config_ptr: *const u8,
+                config_len: usize
+            ) -> ::pyroduct::capability_host::ffi::FfiBorrowedFutureObjectResult<'a> {
+                unsafe {
+                    ::pyroduct::capability::safe_lifecycle::execute_safe_async_init::<'a, GreeterConfig, GreeterServer, _, _>(
+                        config_ptr,
+                        config_len,
+                        |config| async move { GreeterServer::new(config).await }
+                    )
+                }
+            }
+        };
+
+        assert_code_eq(&result, &expected);
+    }
+
+    #[test]
+    fn test_no_config_init_fn() {
+        // 1. No config attribute passed (None)
+        let config_type = None;
+
+        // 2. User implementation (must have 0 args)
+        let item: ImplItemFn = parse_quote! {
+            fn new() -> Self {
+                Self { count: 0 }
+            }
+        };
+
+        // 3. Parse
+        let init_fn = InitFn::parse(config_type, &item).expect("Parse failed");
+
+        let server_ident = format_ident!("GreeterServer");
+        let result = init_fn.generate_ffi(&server_ident);
+
+        let expected = quote! {
+            #[unsafe(no_mangle)]
+            pub extern "C" fn __greeter_server__ffi_init(
+                config_ptr: *const u8,
+                config_len: usize
+            ) -> ::pyroduct::capability_host::ffi::FfiInitResult {
+                unsafe {
+                    ::pyroduct::capability::safe_lifecycle::execute_safe_init::<::pyroduct::capability::safe_lifecycle::EmptyConfig, GreeterServer, _>(
+                        config_ptr,
+                        config_len,
+                        || GreeterServer::new()
+                    )
+                }
+            }
+        };
+
+        assert_code_eq(&result, &expected);
+    }
+
+    #[test]
+    fn test_validation_errors() {
+        // Case: Config expected, but 0 args provided
+        let config_type: Type = parse_quote!(MyConfig);
+        let item: ImplItemFn = parse_quote! { fn new() -> Self { Self } };
+        assert!(InitFn::parse(Some(config_type.clone()), &item).is_err());
+
+        // Case: Config expected, but argument name is wrong
+        let item: ImplItemFn = parse_quote! { fn new(wrong: &MyConfig) -> Self { Self } };
+        assert!(InitFn::parse(Some(config_type.clone()), &item).is_err());
+
+        // Case: Config expected, but type is mismatch
+        let item: ImplItemFn = parse_quote! { fn new(config: &WrongConfig) -> Self { Self } };
+        assert!(InitFn::parse(Some(config_type.clone()), &item).is_err());
+
+        // Case: No config expected, but arg provided
+        let item: ImplItemFn = parse_quote! { fn new(config: &MyConfig) -> Self { Self } };
+        assert!(InitFn::parse(None, &item).is_err());
+    }
+}

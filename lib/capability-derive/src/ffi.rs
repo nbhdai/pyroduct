@@ -4,7 +4,7 @@ use quote::{format_ident, quote};
 use std::rc::Rc;
 use syn::{Ident, ReturnType, Type, Visibility};
 
-use crate::paths::ClassIdent;
+use crate::paths::CapabilityIdent;
 use crate::utils::return_to_type;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,8 +15,7 @@ pub enum InputParams {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityFuncFFI {
-    pub capability_name: Rc<str>,
-    pub class: Option<Rc<ClassIdent>>,
+    pub class: Option<Rc<CapabilityIdent>>,
     pub constructor: bool,
     pub fn_name: Ident,
 
@@ -381,9 +380,9 @@ mod tests {
 
     // --- Helpers to construct mock objects ---
 
-    fn mock_class() -> Rc<ClassIdent> {
-        Rc::new(ClassIdent {
-            trait_tn: format_ident!("MockTrait"),
+    fn mock_class() -> Rc<CapabilityIdent> {
+        Rc::new(CapabilityIdent {
+            config_tn: None,
             state_tn: format_ident!("MockServer"),
             client_tn: format_ident!("MockClient"),
             error_tn: None,
@@ -393,7 +392,6 @@ mod tests {
     fn mock_ffi_base(name: &str, is_async: bool, is_class: bool) -> CapabilityFuncFFI {
         if is_class {
             CapabilityFuncFFI {
-                capability_name: "cap".into(),
                 class: Some(mock_class()),
                 constructor: false,
                 fn_name: format_ident!("{}", name),
@@ -404,7 +402,6 @@ mod tests {
             }
         } else {
             CapabilityFuncFFI {
-                capability_name: "cap".into(),
                 class: None,
                 constructor: false,
                 fn_name: format_ident!("{}", name),

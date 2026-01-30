@@ -13,17 +13,20 @@ use proc_macro::TokenStream;
 use quote::format_ident;
 use syn::{ItemStruct, ItemTrait, parse_macro_input};
 
-pub(crate) mod classes;
+pub(crate) mod client;
 pub(crate) mod ffi;
 pub(crate) mod paths;
 pub(crate) mod utils;
+pub(crate) mod methods;
+pub(crate) mod lifecycle;
+pub(crate) mod capability;
 
 /// Marks a struct as client-side state.
 /// Adds rkyv serialization and the internal configuration buffer.
 #[proc_macro_attribute]
 pub fn client(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemStruct);
-    match crate::classes::client::CapClient::new(input) {
+    match crate::client::CapClient::new(input) {
         Ok(client) => client.expand().into(),
         Err(e) => e.to_compile_error().into(),
     }
