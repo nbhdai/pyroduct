@@ -90,7 +90,138 @@ pub use module_derive::module;
 
 pub use rkyv;
 
-pub use capability_derive::{capability, client, config};
+/// Marks a struct as configuration for a capability.
+///
+/// Adds serde serialization/deserialization derives so the config can be passed
+/// across the FFI boundary as JSON.
+///
+/// # Example
+/// ```rust
+/// #[pyroduct::config]
+/// pub struct SerialConfig {
+///     pub ports: Vec<String>,
+/// }
+/// ```
+pub use capability_derive::config;
+
+/// Marks a struct as client-side state for a capability.
+///
+/// Adds rkyv serialization/deserialization derives so the client state can be
+/// passed efficiently across the WASM/FFI boundary using zero-copy deserialization.
+///
+/// # Example
+/// ```rust
+/// #[pyroduct::client]
+/// pub struct SerialHandle {
+///     pub id: u64,
+/// }
+/// ```
+pub use capability_derive::client;
+
+
+/// Defines a capability implementation with lifecycle methods and callable functions.
+///
+/// This macro transforms an impl block into a complete capability with FFI bindings,
+/// WASM imports, and client-side method generation.
+///
+/// # Associated Types
+///
+/// The impl block must define the following associated types:
+///
+/// - **`type Client = ...`** (required): The client state struct marked with `#[pyroduct::client]`.
+///   All capability methods must accept `&Self::Client` as their second parameter.
+///
+/// - **`type Config = ...`** (optional): The configuration struct marked with `#[pyroduct::config]`.
+///   If specified, `fn new` must accept `Option<Self::Config>` as its parameter.
+///
+/// - **`type Error = ...`** (optional): The error type for fallible operations.
+///   If specified, `new_client` and all other methods must return `Result<T, Self::Error>`.
+///
+/// # Lifecycle Methods
+///
+/// Three lifecycle methods are required:
+///
+/// ## `fn new(config: Option<Config>) -> Self` or `fn new() -> Self`
+///
+/// Called once when the capability is loaded by the host. Use this to initialize
+/// server-side state such as connection pools, caches, or hardware handles.
+/// May be `async`. The `config` parameter is `Option<T>` because the host may
+/// not provide configuration.
+///
+/// ## `fn reset(&mut self)`
+///
+/// Called before each module invocation to reset server state to a clean baseline.
+/// Use this to clear per-request caches, reset counters, or release temporary resources
+/// while preserving expensive-to-create resources like connections. May be `async`.
+///
+/// ## `fn new_client(&self, client: &Client)` or `fn new_client(&self, client: &Client) -> Result<(), Error>`
+///
+/// Called when a WASM module registers a new client instance. Use this to validate
+/// client configuration, allocate per-client resources, or perform authentication.
+/// If `type Error` is defined, this must return `Result<(), Error>`.
+///
+/// # Capability Methods
+///
+/// Additional methods define the capability's API. All methods must:
+/// - Take `&self` as the first parameter (not `&mut self`)
+/// - Take `client: &Client` (or `_client: &Client`) as the second parameter
+/// - Return `Result<T, Error>` if `type Error` is defined
+///
+/// Methods may be `async` and may take additional parameters which will be
+/// automatically serialized across the FFI boundary.
+///
+/// # Example
+///
+/// ```rust
+/// #[pyroduct::config]
+/// pub struct SerialConfig {
+///     pub ports: Vec<String>,
+/// }
+///
+/// #[pyroduct::client]
+/// pub struct SerialHandle {
+///     pub id: u64,
+/// }
+///
+/// pub struct SerialServer {
+///     ports: Vec<String>,
+///     next_id: u64,
+/// }
+///
+/// #[pyroduct::capability]
+/// impl SerialServer {
+///     type Config = SerialConfig;
+///     type Client = SerialHandle;
+///     type Error = String;
+///
+///     fn new(config: Option<SerialConfig>) -> Self {
+///         Self {
+///             ports: config.map(|c| c.ports).unwrap_or_default(),
+///             next_id: 0,
+///         }
+///     }
+///
+///     fn reset(&mut self) {
+///         self.next_id = 0;
+///     }
+///
+///     fn new_client(&self, client: &SerialHandle) -> Result<(), String> {
+///         if client.id > 100 {
+///             return Err("Invalid client ID".to_string());
+///         }
+///         Ok(())
+///     }
+///
+///     fn write(&self, _client: &SerialHandle, data: Vec<u8>) -> Result<usize, String> {
+///         Ok(data.len())
+///     }
+///
+///     async fn read(&self, _client: &SerialHandle, count: usize) -> Result<Vec<u8>, String> {
+///         Ok(vec![0u8; count])
+///     }
+/// }
+/// ```
+pub use capability_derive::capability;
 
 pub type PyroductResult<T> = Result<T, errors::PyroductError>;
 
