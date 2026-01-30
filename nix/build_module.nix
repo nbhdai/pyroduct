@@ -1,54 +1,19 @@
-{ pkgs, lib, craneLibWasm, toToml, mkDep, pyroductSource }:
+{ pkgs, lib, craneLibWasm, makeModuleToml }:
 
-{
+args@{
   name,
   version ? "0.1.0",
   src,
-  # REQUIRED: The generator needs to know where to write the Cargo.toml on disk
   srcPath ? "modules/${name}", 
   capabilities ? [],
-  dependencies ? [],
-  extraCargoToml ? {},
-  pyroduct ? { workspace = "pyroduct"; },
+  ...
 }: 
 
 let
-  formatDep = dep: 
-    if builtins.isString dep then { name = dep; version = "*"; }
-    else if builtins.isAttrs dep then dep
-    else throw "Invalid dependency format";
-  deps = map formatDep dependencies;
+  # --- 1. Generate Cargo.toml Content ---
+  cargoTomlContent = makeModuleToml args;
 
-  # --- Generate Cargo.toml Content ---
-  cargoToml = {
-    package = {
-      inherit name version;
-      edition = "2024";
-      authors = [ "Sven Cattell" ];
-    };
-    lib = { crate-type = [ "cdylib" ]; };
-    dependencies = lib.listToAttrs (
-      # Regular dependencies
-      (map (d: { name = d.name; value = mkDep d; }) deps) ++
-      # Capability dependencies
-      (map (cap: { 
-        name = cap.pname or cap.name; 
-        value = mkDep {
-          name = cap.pname or cap.name;
-          # Point strictly to the 'crate' folder inside the capability artifact
-          path = "${cap.output}/crate";
-          features = [ "module" ];
-        }; 
-      }) capabilities)
-    ) // {
-      pyroduct = { path = "../lib/pyroduct"; };
-      tracing = "*";
-    };
-  } // extraCargoToml;
-
-  cargoTomlContent = toToml cargoToml;
-
-  # --- Build the Source with Cargo.toml ---
+  # --- 2. Build the Source with Cargo.toml ---
   srcWithCargoToml = pkgs.runCommand "${name}-src" {} ''
     mkdir -p $out
     cp -r ${src}/* $out/ 2>/dev/null || true  
@@ -63,14 +28,15 @@ in {
   inherit name version cargoTomlContent srcPath;
   capabilities = capabilities;
   src = srcWithCargoToml;
-
-  # --- Compile WASM ---
+  
+  # --- 3. Compile WASM ---
   wasm = craneLibWasm.buildPackage {
     pname = name;
     inherit version;
     src = srcWithCargoToml;
     cargoExtraArgs = "--target wasm32-unknown-unknown -p ${name}";
     doCheck = false;
+    
     installPhase = ''
       mkdir -p $out/lib
       cp target/wasm32-unknown-unknown/release/*.wasm $out/lib/

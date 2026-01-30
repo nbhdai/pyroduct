@@ -1,4 +1,4 @@
-{ lib, toToml, mkDep, pyroductPath }:
+{ lib, toToml, mkDep, pyroductDep }:
 
 {
   name,
@@ -43,7 +43,7 @@ let
       (map (d: { name = d.name; value = mkDep (d // { optional = true; }); }) moduleDeps)
     ) // {
       # FIX: Discard string context so this path can be written to a pure TOML string
-      pyroduct = { path = builtins.unsafeDiscardStringContext pyroductPath; };
+      pyroduct = pyroductDep;
     };
   } // extraCargoToml;
 
