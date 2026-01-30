@@ -27,7 +27,6 @@
         ];
         nightlyToolchain = with fenix.packages.${system}; combine [
           latest.toolchain
-          # targets.x86_64-unknown-linux-gnu.latest.rust-std
           targets.wasm32-unknown-unknown.latest.rust-std
         ];
 
@@ -36,10 +35,10 @@
         craneLibNightly = (crane.mkLib pkgs).overrideToolchain nightlyToolchain;
 
         # Import our custom library
-        myLib = import ./lib/nix/crate.nix {
+        myLib = import ./nix/crate.nix {
           inherit lib pkgs craneLibNative craneLibWasm;
           workspaceRoot = ./.;
-          pyroductPath = "../../../lib/pyroduct";
+          pyroduct = { git = "ssh://git@github.com/nbhdai/pyroduct.git"; version = "0.1.0"; };
         };
 
         # Build all capabilities first

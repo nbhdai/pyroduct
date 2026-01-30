@@ -1,4 +1,4 @@
-{ pkgs, lib, craneLibNative, toToml, mkDep, pyroductPath }:
+{ pkgs, lib, craneLibNative, toToml, mkDep }:
 
 {
   name,
@@ -10,6 +10,7 @@
   moduleDependencies ? [],
   sharedDependencies ? [],
   extraCargoToml ? {},
+  pyroduct ? { workspace = "pyroduct"; }
   ...
 }: 
 
@@ -47,7 +48,7 @@ let
     ) // {
       # Pyroduct path is injected here. 
       # If pyroductPath is a store path, this becomes an absolute path in the generated toml.
-      pyroduct = { path = pyroductPath; };
+      pyroduct = pyroduct;
     };
   } // extraCargoToml;
 
@@ -69,7 +70,8 @@ CARGO_TOML_EOF
     pname = name;
     inherit version;
     src = srcWithCargoToml;
-    cargoExtraArgs = "--features host -p ${name}";
+    cargoExtraArgs = "--features capability -p ${name}";
+    cargoVendorDir = null;
     # We only care about the library output
     installPhase = ''
       mkdir -p $out/lib
