@@ -461,44 +461,36 @@ mod tests {
 
 
     #[test]
-    fn test_generate_ffi_exports() {
-        let attr = quote! { TestServer };
-        let expected_cap = "cap".into();
-
-        let trait_code = quote! {
+    fn test_generate_export_table() {
+        // 1. Define Input
+        let code = quote! {
             impl TestServer {
                 type Client = TestClient;
 
-                fn new_client(&self, client: &TestClient);
-                fn get_value(&self, client: &TestClient) -> u32;
-                async fn async_op(&self, client: &TestClient, x: u32) -> u32;
+                fn new() -> Self { Self }
+                fn reset(&mut self) {}
+                fn new_client(&self, client: &TestClient) {}
+                fn get_value(&self, client: &TestClient) -> u32 { 0 }
             }
         };
 
-        // 2. Parse all components
-        let trait_def = parse2(trait_code).unwrap();
+        // 2. Parse
+        let input: ItemImpl = parse2(code).unwrap();
+        let cap = CapabilityImpl::new(input).unwrap();
 
-        let trait_def =
-            CapabilityImpl::new(trait_def).unwrap();
+        // 3. Generate Output
+        let output = cap.generate_export_table();
 
-        // 3. Generate the FFI exports
-        let output = trait_def.generate_ffi_exports();
-
-        let capability_ffi_funcs: Vec<_> = trait_def.capability_ffis()
-            .iter()
-            .map(|ffi| ffi.generate_capability_ffi())
-            .collect();
-
-        // 4. Define expected output
+        // 4. Define Expected Output
+        // Note: The ordering matches the iteration: new_client is always first in the list built inside generate_export_table,
+        // followed by methods in declaration order.
         let expected = quote! {
-            #(#capability_ffi_funcs)*
-
             const __TEST_SERVER: &'static str = "__test_server";
             const __TEST_SERVER__NEW_CLIENT: &'static str = "__test_server__new_client";
             const __TEST_SERVER__GET_VALUE: &'static str = "__test_server__get_value";
-            const __TEST_SERVER__ASYNC_OP: &'static str = "__test_server__async_op";
-            const __TEST_SERVER__METHODS: [::pyroduct::capability_host::ffi::FunctionExport; 3usize] = [
-                ::pyroduct::capability_host::ffi::FunctionExport {
+
+            const __TEST_SERVER__METHODS: [::pyroduct::capability_host::ffi::FunctionExport; 2usize] = [
+                 ::pyroduct::capability_host::ffi::FunctionExport {
                     module: __TEST_SERVER.as_ptr(),
                     module_len: __TEST_SERVER.len(),
                     name: __TEST_SERVER__NEW_CLIENT.as_ptr(),
@@ -511,52 +503,115 @@ mod tests {
                     name: __TEST_SERVER__GET_VALUE.as_ptr(),
                     name_len: __TEST_SERVER__GET_VALUE.len(),
                     func: ::pyroduct::capability_host::ffi::Function::Sync(__test_server__get_value__ffi),
-                },
-                ::pyroduct::capability_host::ffi::FunctionExport {
-                    module: __TEST_SERVER.as_ptr(),
-                    module_len: __TEST_SERVER.len(),
-                    name: __TEST_SERVER__ASYNC_OP.as_ptr(),
-                    name_len: __TEST_SERVER__ASYNC_OP.len(),
-                    func: ::pyroduct::capability_host::ffi::Function::Async(__test_server__async_op__ffi),
-                },
+                }
             ];
+
+            const __TEST_SERVER__EXPORT: ::pyroduct::capability_host::ffi::ClassExport = 
+                ::pyroduct::capability_host::ffi::ClassExport {
+                    ptr: __TEST_SERVER__METHODS.as_ptr(),
+                    init: ::pyroduct::capability_host::ffi::ClassInitFn::Sync(__test_server__ffi_init),
+                    drop: ::pyroduct::capability_host::ffi::ClassDropFn::Sync(__test_server__ffi_drop),
+                    reset: ::pyroduct::capability_host::ffi::ClassResetFn::Sync(__test_server__ffi_reset),
+                    len: __TEST_SERVER__METHODS.len(),
+                };
         };
 
         crate::fmt::assert_code_eq_token(&output, &expected);
     }
 
-        #[test]
+    #[test]
     fn test_generate_client_impl_integration() {
-        let attr = quote! { MyState };
-        let expected_cap = "cap".into();
-        let expected_class = Rc::new(CapabilityIdent {
-            config_tn: Some(syn::parse_str("MyConfig").unwrap()),
-            state_tn: format_ident!("MyState"),
-            client_tn: format_ident!("MyClient"),
-            error_tn: None,
-        });
-
-        let code = parse2(quote! {
+        // 1. Define Input
+        let code = quote! {
             impl MyState {
                 type Client = MyClient;
                 type Config = MyConfig;
 
-                fn new(config: Option<MyConfig>) -> MyState {
-                    if let Some(config) = config {
-                        MyState { config }
-                    } else {
-                        MyState { config: MyConfig::default() }
-                    }
-                }
-
-                fn get_info(&self, client: &MyClient) -> u32;
+                fn new(config: &MyConfig) -> Self { Self }
+                fn reset(&mut self) {}
+                fn new_client(&self, client: &MyClient) {}
+                fn get_info(&self, client: &MyClient) -> u32 { 0 }
             }
-        })
-        .unwrap();
+        };
 
+        // 2. Parse
+        let input: ItemImpl = parse2(code).unwrap();
+        let cap = CapabilityImpl::new(input).unwrap();
+
+        // 3. Generate Output
+        let output = cap.generate_client_impl();
+
+        // 4. Define Expected Output
+        // Checks constructor generation (using rkyv for config) and normal method generation.
         let expected = quote! {
             impl MyClient {
-                todo!()
+                pub fn register(self) -> Client<Self> {
+                    let __config_buf = ::rkyv::to_bytes::<::rkyv::rancor::Error>(&new_self)
+                        .expect("Failed to serialize config")
+                        .into_vec();
+
+                    let mut new_self = Client {
+                        data: self,
+                        __config_buf,
+                    };
+                    
+                    ::pyroduct::module_capability::access::call_from_wasm::<
+                        MyClient,
+                        (),
+                        (),
+                        _
+                    >(
+                        "__my_state__new_client",
+                        Some(&new_self),
+                        None,
+                        |client_state_ptr: *const u8,
+                         client_state_len: usize,
+                         input_ptr: *const u8,
+                         input_len: usize| {
+                            unsafe {
+                                wasm::__my_state__new_client__wasm(
+                                    client_state_ptr, 
+                                    client_state_len, 
+                                    input_ptr, 
+                                    input_len
+                                )
+                            }
+                        }
+                    );
+                    new_self
+                }
+            }
+            impl Client<MyClient> {
+                pub fn get_info(&self) -> u32 {
+                    // Method body generated by generate_client_method -> generate_wasm_call
+                    #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+                    #[rkyv(compare(PartialEq), derive(Debug))]
+                    struct __MyState__GetInfo__Input {}
+
+                    ::pyroduct::module_capability::access::call_from_wasm::<
+                        MyClient,
+                        (),
+                        u32,
+                        _
+                    >(
+                        "__my_state__get_info",
+                        Some(&self),
+                        None,
+                        |client_state_ptr: *const u8,
+                         client_state_len: usize,
+                         input_ptr: *const u8,
+                         input_len: usize| {
+                            unsafe {
+                                wasm::__my_state__get_info__wasm(
+                                    client_state_ptr, 
+                                    client_state_len, 
+                                    input_ptr, 
+                                    input_len
+                                )
+                            }
+                        }
+                    )
+                }
             }
         };
 
@@ -565,48 +620,112 @@ mod tests {
 
     #[test]
     fn test_generate_client_impl_with_error_and_input_structs() {
-        let attr = quote! { MyState };
-        let expected_class = Rc::new(CapabilityIdent {
-            config_tn: None,
-            state_tn: format_ident!("MyState"),
-            client_tn: format_ident!("AdvancedClient"),
-            error_tn: Some(syn::parse_str("MyError").unwrap()),
-        });
-        let expected_cap = "cap".into();
-
-        let code = parse2(quote! {
+        // 1. Define Input: Complex case with Errors and Arguments
+        let code = quote! {
             impl AdvancedStruct {
                 type Client = AdvancedClient;
                 type Error = MyError;
 
-                fn new_client(&self, client: &AdvancedClient) -> Result<(), MyError> {
-                    AdvancedClient { name }
-                }
-
+                fn new() -> Self { Self }
                 fn reset(&mut self) {}
 
-                async fn process(&self, client: &AdvancedClient, val: u32, flag: bool) -> Result<u32, MyError>;
-                fn sync_op(&self, client: &AdvancedClient, level: u8) -> Result<bool, MyError>;
+                fn new_client(&self, client: &AdvancedClient) -> Result<(), MyError> {
+                    Ok(())
+                }
+
+                async fn process(&self, client: &AdvancedClient, val: u32, flag: bool) -> Result<u32, MyError> {
+                    Ok(val)
+                }
             }
-        })
-        .unwrap();
-
-
-        let client_method = quote! {
-            async fn process(&self, val: u32, flag: bool) -> Result<u32, MyError>;
-        };
-        let client_method_2 = quote! {
-            fn sync_op(&self, level: u8) -> Result<bool, MyError>;
         };
 
-        let def = CapabilityDefTrait::from_trait(attr, code, &expected_cap)
-            .expect("Failed to parse capability trait");
-        let output = def.generate_client_impl(None);
+        // 2. Parse
+        let input: ItemImpl = parse2(code).unwrap();
+        let cap = CapabilityImpl::new(input).unwrap();
 
+        // 3. Generate Output
+        let output = cap.generate_client_impl();
+
+        // 4. Define Expected Output
+        // - new_client constructor should return Result<Self, MyError>.
+        // - process method should define an input struct and return Result<u32, MyError>.
         let expected = quote! {
             impl AdvancedClient {
-                #client_method
-                #client_method_2
+                pub fn register(self) -> Result<Client<Self>, MyError> {
+                    
+                    let __config_buf = ::rkyv::to_bytes::<::rkyv::rancor::Error>(&new_self)
+                        .expect("Failed to serialize config")
+                        .into_vec();
+
+                    let mut new_self = Client {
+                        data: self,
+                        __config_buf,
+                    };
+                    
+                    let ffi_result = ::pyroduct::module_capability::access::call_from_wasm::<
+                        AdvancedClient,
+                        (),
+                        Result<(), MyError>,
+                        _
+                    >(
+                        "__advanced_struct__new_client",
+                        Some(&new_self),
+                        None,
+                        |client_state_ptr: *const u8,
+                         client_state_len: usize,
+                         input_ptr: *const u8,
+                         input_len: usize| {
+                            unsafe {
+                                wasm::__advanced_struct__new_client__wasm(
+                                    client_state_ptr, 
+                                    client_state_len, 
+                                    input_ptr, 
+                                    input_len
+                                )
+                            }
+                        }
+                    );
+
+                    match ffi_result {
+                        Ok(_) => Ok(new_self),
+                        Err(e) => Err(e.into()),
+                    }
+                }
+            }
+
+            impl Client<AdvancedClient> {
+                pub async fn process(&self, val: u32, flag: bool) -> Result<u32, MyError> {
+                    #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+                    #[rkyv(compare(PartialEq), derive(Debug))]
+                    struct __AdvancedStruct__Process__Input {
+                        pub val: u32,
+                        pub flag: bool
+                    }
+
+                    ::pyroduct::module_capability::access::call_from_wasm::<
+                        AdvancedClient,
+                        __AdvancedStruct__Process__Input,
+                        Result<u32, MyError>,
+                        _
+                    >(
+                        "__advanced_struct__process",
+                        Some(&self),
+                        Some(&__AdvancedStruct__Process__Input { val, flag }),
+                        |client_state_ptr: *const u8,
+                         client_state_len: usize,
+                         input_ptr: *const u8,
+                         input_len: usize| {
+                            unsafe {
+                                wasm::__advanced_struct__process__wasm(
+                                    client_state_ptr, 
+                                    client_state_len, 
+                                    input_ptr, 
+                                    input_len
+                                )
+                            }
+                        }
+                    )
+                }
             }
         };
 
