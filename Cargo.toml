@@ -7,24 +7,15 @@ members = [
     "lib/module-derive",
     "lib/pyroduct", 
 
-    "proto/capabilities/reporter",
-    "proto/capabilities/http_client",
-    "proto/capabilities/cpu_info",
-    "proto/capabilities/serial_client",
+    "capabilities/rag",
+    "capabilities/http_client",
+    "capabilities/cpu_client",
+    "capabilities/serial_client",
 
-    "proto/modules/module",
-    "proto/modules/module_2",
-    "proto/modules/module_3",
-    
-    # "capabilities/cpu_info", 
-    # "capabilities/http_client", 
-    # "capabilities/reporter", 
-    # "capabilities/serial_client", 
-    # 
-    # "modules/basic",
-    # "modules/basic_capability",
-    # "modules/dual_capability",
-    # "modules/state_capability",
+    "modules/basic",
+    "modules/basic_capability",
+    "modules/rag_capability",
+    "modules/struct_io",
 ]
 
 default-members = [
@@ -35,7 +26,7 @@ default-members = [
     "lib/module-derive",
     "lib/pyroduct", 
 
-    # "capabilities/cpu_info", 
+    # "capabilities/cpu_client", 
     # "capabilities/http_client", 
     # "capabilities/reporter", 
     # "capabilities/serial_client", 

@@ -1,226 +1,199 @@
-//! Serial Port Capability
-//! 
-//! Pattern: Both client and host state
-//! - Host: SerialPoolServer manages actual port connections
-//! - Client: SerialHandle identifies which port the client is using
-
-use capability_derive::*;
-
-// ============================================================================
-// SHARED TYPES
-// ============================================================================
-
-/// Configuration for allowed serial connections
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[rkyv(compare(PartialEq), derive(Debug))]
-pub struct SerialConnection {
-    pub port_name: String,
-    pub baud_rate: u32,
-}
-
-/// Server configuration - list of permitted connections
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+// Serial port capability
+#[pyroduct::config]
 pub struct SerialConfig {
-    /// If empty, all connections are permitted
-    pub permitted: Vec<SerialConnection>,
+    pub allowed_ports: Vec<AllowedPort>,
 }
 
-/// Client-side handle to an open serial port.
-/// 
-/// This gets serialized and sent with each request so the server
-/// knows which port the client is referring to.
-#[capability_client]
-#[derive(Debug, Clone)]
-pub struct SerialHandle {
-    port_id: u64,
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct AllowedPort {
+    pub path: String,
+    pub baud_rate: u32,
+    pub timeout_ms: u64,
 }
 
-// ============================================================================
-// CAPABILITY DEFINITION
-// ============================================================================
-
-/// Serial port capability.
-/// 
-/// This demonstrates the most complex pattern:
-/// - Server has state (pool of open ports)
-/// - Client has state (handle to specific port)
-/// - Some methods return client state (open)
-/// - Some methods consume client state conceptually (close)
-#[capability]
-pub trait SerialPool {
-    /// Open a new serial port. Returns a handle for future operations.
-    /// No client state input (we're creating new state).
-    async fn open(port_name: String, baud_rate: u32) -> Result<SerialHandle, String>;
-    
-    /// Write data to a serial port. Requires client handle.
-    async fn write(
-        #[client_state] handle: &SerialHandle, 
-        data: Vec<u8>
-    ) -> Result<usize, String>;
-    
-    /// Read data from a serial port. Requires client handle.
-    async fn read(
-        #[client_state] handle: &SerialHandle, 
-        max_bytes: usize
-    ) -> Result<Vec<u8>, String>;
-    
-    /// Close a serial port. Requires client handle.
-    /// After this, the handle should not be used.
-    fn close(#[client_state] handle: &SerialHandle) -> Result<(), String>;
+#[pyroduct::client]
+pub struct SerialClient {
+    pub port_path: String,
 }
 
-// ============================================================================
-// CLIENT-SIDE API
-// ============================================================================
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::io::{Read, Write};
 
-#[cfg(target_arch = "wasm32")]
-impl SerialHandle {
-    /// Open a new serial port connection
-    pub fn open(port_name: &str, baud_rate: u32) -> Result<Self, String> {
-        serial_pool_client::open(port_name.to_string(), baud_rate)
-    }
-    
-    /// Write data to this port
-    pub fn write(&self, data: &[u8]) -> Result<usize, String> {
-        serial_pool_client::write(self, data.to_vec())
-    }
-    
-    /// Read up to max_bytes from this port
-    pub fn read(&self, max_bytes: usize) -> Result<Vec<u8>, String> {
-        serial_pool_client::read(self, max_bytes)
-    }
-    
-    /// Close this port (consumes the handle)
-    pub fn close(self) -> Result<(), String> {
-        serial_pool_client::close(&self)
-    }
+pub struct SerialServer {
+    allowed_ports: HashMap<String, AllowedPort>,
+    connections: Mutex<HashMap<String, Box<dyn SerialPort + Send>>>,
 }
 
-// ============================================================================
-// SERVER IMPLEMENTATION
-// ============================================================================
+// Trait to abstract over serial port implementations
+trait SerialPort: Read + Write {
+    fn bytes_to_read(&self) -> std::io::Result<usize>;
+}
 
-#[cfg(not(target_arch = "wasm32"))]
-mod server {
-    use super::*;
-    use std::collections::HashMap;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    /// Server-side state managing multiple open serial ports.
-    /// 
-    /// Config attached here to make different configs possible
-    #[capability_server(service = SerialPool, config = SerialConfig)]
-    pub struct SerialPoolServer {
-        permitted: Vec<SerialConnection>,
-        ports: HashMap<u64, tokio_serial::SerialStream>,
-        next_id: u64,
-    }
-
-    impl SerialPoolServer {
-        fn check_permitted(&self, port_name: &str, baud_rate: u32) -> Result<(), String> {
-            if self.permitted.is_empty() {
-                return Ok(());
-            }
-            
-            let conn = SerialConnection {
-                port_name: port_name.to_string(),
-                baud_rate,
-            };
-            
-            if self.permitted.contains(&conn) {
-                Ok(())
-            } else {
-                Err(format!("Connection to {}@{} not permitted", port_name, baud_rate))
-            }
+#[pyroduct::capability]
+impl SerialServer {
+    type Client = SerialClient;
+    type Config = SerialConfig;
+    type Error = String;
+    
+    fn new(config: Option<SerialConfig>) -> Self {
+        let config = config.unwrap_or(SerialConfig {
+            allowed_ports: Vec::new(),
+        });
+        
+        let allowed_ports: HashMap<String, AllowedPort> = config
+            .allowed_ports
+            .into_iter()
+            .map(|p| (p.path.clone(), p))
+            .collect();
+        
+        Self {
+            allowed_ports,
+            connections: Mutex::new(HashMap::new()),
         }
     }
-
-    /// Generated trait by the "capability_server" macro
-    impl SerialPoolServerInit for SerialPoolServer {
-        fn new() -> Self {
-            tracing::info!("SerialPoolServer initialized (no restrictions)");
-            Self {
-                permitted: Vec::new(),
-                ports: HashMap::new(),
-                next_id: 1,
-            }
-        }
-
-        fn with_config(config: SerialConfig) -> Self {
-            tracing::info!("SerialPoolServer initialized with {} permitted connections", 
-                config.permitted.len());
-            Self {
-                permitted: config.permitted,
-                ports: HashMap::new(),
-                next_id: 1,
-            }
-        }
-
-        fn reset(&mut self) {
-            let count = self.ports.len();
-            self.ports.clear();
-            tracing::debug!("SerialPoolServer reset, closed {} ports", count);
-        }
+    
+    fn reset(&mut self) {
+        let mut conns = self.connections.lock().unwrap();
+        conns.clear();
     }
-
-    // These are generated by the configuration trait
-    impl SerialPool for SerialPoolServer {
-        async fn open(&mut self, port_name: String, baud_rate: u32) -> Result<SerialHandle, String> {
-            use tokio_serial::SerialPortBuilderExt;
-            
-            self.check_permitted(&port_name, baud_rate)?;
-            
-            let stream = tokio_serial::new(&port_name, baud_rate)
-                .open_native_async()
-                .map_err(|e| format!("Failed to open '{}': {}", port_name, e))?;
-            
-            let id = self.next_id;
-            self.next_id += 1;
-            self.ports.insert(id, stream);
-            
-            tracing::info!("Opened port '{}' at {} baud (id={})", port_name, baud_rate, id);
-            Ok(SerialHandle { port_id: id })
+    
+    fn new_client(&self, client: &SerialClient) -> Result<(), String> {
+        if !self.allowed_ports.contains_key(&client.port_path) {
+            return Err(format!(
+                "Port {} is not in the allowlist. Allowed ports: {:?}",
+                client.port_path,
+                self.allowed_ports.keys().collect::<Vec<_>>()
+            ));
         }
-
-        async fn write(&mut self, handle: &SerialHandle, data: Vec<u8>) -> Result<usize, String> {
-            let port = self.ports.get_mut(&handle.port_id)
-                .ok_or_else(|| format!("Port {} not found", handle.port_id))?;
-            
-            let len = data.len();
-            port.write_all(&data)
-                .await
-                .map_err(|e| format!("Write error: {}", e))?;
-            
-            tracing::debug!("Wrote {} bytes to port {}", len, handle.port_id);
-            Ok(len)
+        Ok(())
+    }
+    
+    fn open(&self, client: &SerialClient) -> Result<(), String> {
+        let port_config = self.allowed_ports
+            .get(&client.port_path)
+            .ok_or_else(|| format!("Port {} not allowed", client.port_path))?;
+        
+        let mut conns = self.connections.lock().unwrap();
+        
+        if conns.contains_key(&client.port_path) {
+            return Ok(()); // Already open
         }
-
-        async fn read(&mut self, handle: &SerialHandle, max_bytes: usize) -> Result<Vec<u8>, String> {
-            let port = self.ports.get_mut(&handle.port_id)
-                .ok_or_else(|| format!("Port {} not found", handle.port_id))?;
-            
-            let mut buf = vec![0u8; max_bytes];
-            let n = port.read(&mut buf)
-                .await
-                .map_err(|e| format!("Read error: {}", e))?;
-            
-            buf.truncate(n);
-            tracing::debug!("Read {} bytes from port {}", n, handle.port_id);
-            Ok(buf)
-        }
-
-        fn close(&mut self, handle: &SerialHandle) -> Result<(), String> {
-            match self.ports.remove(&handle.port_id) {
-                Some(_) => {
-                    tracing::info!("Closed port {}", handle.port_id);
-                    Ok(())
+        
+        let port = serialport::new(&port_config.path, port_config.baud_rate)
+            .timeout(std::time::Duration::from_millis(port_config.timeout_ms))
+            .open()
+            .map_err(|e| format!("Failed to open port {}: {}", port_config.path, e))?;
+        
+        conns.insert(client.port_path.clone(), Box::new(PortWrapper(port)));
+        Ok(())
+    }
+    
+    fn close(&self, client: &SerialClient) -> Result<(), String> {
+        let mut conns = self.connections.lock().unwrap();
+        conns.remove(&client.port_path);
+        Ok(())
+    }
+    
+    fn write(&self, client: &SerialClient, data: Vec<u8>) -> Result<usize, String> {
+        let mut conns = self.connections.lock().unwrap();
+        let port = conns
+            .get_mut(&client.port_path)
+            .ok_or_else(|| format!("Port {} is not open", client.port_path))?;
+        
+        port.write(&data)
+            .map_err(|e| format!("Write failed: {}", e))
+    }
+    
+    fn read(&self, client: &SerialClient, max_bytes: usize) -> Result<Vec<u8>, String> {
+        let mut conns = self.connections.lock().unwrap();
+        let port = conns
+            .get_mut(&client.port_path)
+            .ok_or_else(|| format!("Port {} is not open", client.port_path))?;
+        
+        let mut buf = vec![0u8; max_bytes];
+        let n = port.read(&mut buf)
+            .map_err(|e| format!("Read failed: {}", e))?;
+        
+        buf.truncate(n);
+        Ok(buf)
+    }
+    
+    fn write_line(&self, client: &SerialClient, line: String) -> Result<usize, String> {
+        let mut data = line.into_bytes();
+        data.push(b'\n');
+        self.write(client, data)
+    }
+    
+    fn read_line(&self, client: &SerialClient) -> Result<String, String> {
+        let mut conns = self.connections.lock().unwrap();
+        let port = conns
+            .get_mut(&client.port_path)
+            .ok_or_else(|| format!("Port {} is not open", client.port_path))?;
+        
+        let mut result = Vec::new();
+        let mut byte = [0u8; 1];
+        
+        loop {
+            match port.read(&mut byte) {
+                Ok(1) => {
+                    if byte[0] == b'\n' {
+                        break;
+                    }
+                    result.push(byte[0]);
                 }
-                None => Err(format!("Port {} not found", handle.port_id)),
+                Ok(_) => break,
+                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => break,
+                Err(e) => return Err(format!("Read failed: {}", e)),
             }
         }
+        
+        String::from_utf8(result)
+            .map_err(|e| format!("Invalid UTF-8: {}", e))
     }
+    
+    fn available(&self, client: &SerialClient) -> Result<usize, String> {
+        let conns = self.connections.lock().unwrap();
+        let port = conns
+            .get(&client.port_path)
+            .ok_or_else(|| format!("Port {} is not open", client.port_path))?;
+        
+        port.bytes_to_read()
+            .map_err(|e| format!("Failed to check available bytes: {}", e))
+    }
+    
+    fn flush(&self, client: &SerialClient) -> Result<(), String> {
+        let mut conns = self.connections.lock().unwrap();
+        let port = conns
+            .get_mut(&client.port_path)
+            .ok_or_else(|| format!("Port {} is not open", client.port_path))?;
+        
+        port.flush()
+            .map_err(|e| format!("Flush failed: {}", e))
+    }
+}
 
-    capability_export!(env = "serial_client", SerialPoolServer);
+// Wrapper to implement our trait for serialport
+struct PortWrapper(Box<dyn serialport::SerialPort>);
+
+impl Read for PortWrapper {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buf)
+    }
+}
+
+impl Write for PortWrapper {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl SerialPort for PortWrapper {
+    fn bytes_to_read(&self) -> std::io::Result<usize> {
+        self.0.bytes_to_read().map(|n| n as usize)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+    }
 }

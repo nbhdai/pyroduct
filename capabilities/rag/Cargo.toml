@@ -1,5 +1,5 @@
 [package]
-name = "reporter"
+name = "rag"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

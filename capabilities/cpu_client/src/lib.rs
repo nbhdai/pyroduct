@@ -1,24 +1,19 @@
-//! CPU Info Capability
-//! 
-//! Pattern: Stateless (no state on either side)
+#[pyroduct::client]
+pub struct CpuClient;
 
-use capability_derive::*;
+pub struct CpuServer;
 
-// ============================================================================
-// CAPABILITY DEFINITION
-// ============================================================================
-
-/// A simple stateless capability for CPU information.
-#[capability_function]
-pub fn get_cpu_count() -> u32 {
-    std::thread::available_parallelism()
-        .map(|n| n.get() as u32)
-        .unwrap_or(1)
+#[pyroduct::capability]
+impl CpuServer {
+    type Client = CpuClient;
+    
+    fn new() -> Self { Self }
+    fn reset(&mut self) {}
+    fn new_client(&self, _client: &CpuClient) {}
+    
+    fn get_cpu_count(&self, _client: &CpuClient) -> u32 {
+        std::thread::available_parallelism()
+            .map(|n| n.get() as u32)
+            .unwrap_or(1)
+    }
 }
-
-#[capability_function]
-pub fn get_architecture() -> u32 {
-    std::env::consts::ARCH.to_string()
-}
-
-capability_export!(env = "cpu_info", functions = [get_cpu_count, get_architecture]);

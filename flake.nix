@@ -44,10 +44,10 @@
 
         # Build all capabilities first
         capabilities = {
-          proto_reporter = (import ./proto/capabilities/reporter/capability.nix { inherit myLib; });
-          proto_cpu_info = (import ./proto/capabilities/cpu_info/capability.nix { inherit myLib; });
-          proto_http_client = (import ./proto/capabilities/http_client/capability.nix { inherit myLib; });
-          proto_serial_client = (import ./proto/capabilities/serial_client/capability.nix { inherit myLib; });
+          rag = (import ./capabilities/rag/capability.nix { inherit myLib; });
+          cpu_client = (import ./capabilities/cpu_client/capability.nix { inherit myLib; });
+          http_client = (import ./capabilities/http_client/capability.nix { inherit myLib; });
+          serial_client = (import ./capabilities/serial_client/capability.nix { inherit myLib; });
         };
 
         # Build all modules
