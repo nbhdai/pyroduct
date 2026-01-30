@@ -10,8 +10,6 @@
 //! 4. **Both states** - `#[capability_client]` struct + `#[capability]` trait + `#[capability_server]` struct
 
 use proc_macro::TokenStream;
-use quote::format_ident;
-use syn::{ItemStruct, ItemTrait, parse_macro_input};
 
 pub(crate) mod client;
 pub(crate) mod ffi;
@@ -25,13 +23,24 @@ pub(crate) mod capability;
 /// Adds rkyv serialization and the internal configuration buffer.
 #[proc_macro_attribute]
 pub fn client(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as ItemStruct);
+    let input = syn::parse_macro_input!(item as syn::ItemStruct);
     match crate::client::CapClient::new(input) {
         Ok(client) => client.expand().into(),
         Err(e) => e.to_compile_error().into(),
     }
 }
 
+
+/// Marks a struct as client-side state.
+/// Adds rkyv serialization and the internal configuration buffer.
+#[proc_macro_attribute]
+pub fn capability(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemImpl);
+    match crate::capability::CapabilityImpl::new(input) {
+        Ok(capability) => capability.expand().into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
 
 #[cfg(test)]
 pub mod fmt {

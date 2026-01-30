@@ -20,9 +20,13 @@ impl CapClient {
         }
 
         // 2. Decorate with Rkyv attributes
+        let rkyv_crate: Attribute = parse_quote!(
+            #[rkyv(crate = ::pyroduct::rkyv)]
+        );
         let rkyv_derive: Attribute = parse_quote!(
             #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Serialize, ::pyroduct::rkyv::Deserialize)]
         );
+        input.attrs.insert(0, rkyv_crate);
         input.attrs.insert(0, rkyv_derive);
         Ok(Self { input })
     }
@@ -63,6 +67,7 @@ mod tests {
         // Just adds the derives.
         let expected = quote! {
             #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Serialize, ::pyroduct::rkyv::Deserialize)]
+            #[rkyv(crate = ::pyroduct::rkyv)]
             pub struct MyClient {
                 pub id: u32,
             }
@@ -88,6 +93,7 @@ mod tests {
         // Derives added, generics preserved, debug preserved.
         let expected = quote! {
             #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Serialize, ::pyroduct::rkyv::Deserialize)]
+            #[rkyv(crate = ::pyroduct::rkyv)]
             #[derive(Clone, Debug)]
             pub struct GenericClient<T> {
                 pub data: T,
@@ -110,6 +116,7 @@ mod tests {
         // 3. Define Expected Output
         let expected = quote! {
             #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Serialize, ::pyroduct::rkyv::Deserialize)]
+            #[rkyv(crate = ::pyroduct::rkyv)]
             pub struct TupleClient(u32, String);
         };
 

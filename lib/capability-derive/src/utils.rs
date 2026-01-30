@@ -1,6 +1,6 @@
 use quote::quote;
 use syn::{
-    Error, FnArg, Ident, PathArguments, Result, ReturnType, Type, parse2,
+    Error, Ident, PathArguments, Result, ReturnType, Type, parse2,
     token::RArrow,
 };
 
@@ -12,26 +12,6 @@ pub fn return_to_type(arg: &ReturnType) -> Type {
     match arg {
         ReturnType::Default => parse2(quote!(())).expect("Works"),
         ReturnType::Type(_, arg_type) => arg_type.as_ref().clone(),
-    }
-}
-
-pub fn is_self_ref_or_type(input: &FnArg) -> bool {
-    match input {
-        FnArg::Receiver(_) => true,
-        FnArg::Typed(pat_type) => {
-            if let Type::Path(type_path) = &*pat_type.ty {
-                if type_path.path.is_ident("Self") {
-                    return true;
-                }
-            } else if let Type::Reference(type_ref) = &*pat_type.ty {
-                if let Type::Path(type_path) = &*type_ref.elem {
-                    if type_path.path.is_ident("Self") {
-                        return true;
-                    }
-                }
-            }
-            false
-        }
     }
 }
 
@@ -78,41 +58,4 @@ pub fn extract_ident_from_type(ty: &Type) -> Result<Ident> {
             "Type must be a simple struct identifier. References, tuples, slices, or pointers are not allowed.",
         )),
     }
-}
-
-pub fn extract_ident_ignoring_ref(ty: &Type) -> Option<&Ident> {
-    // 1. Peel off the reference (if it exists) to get the inner type
-    // Handles &MyClient -> MyClient
-    let inner_ty = if let Type::Reference(type_ref) = ty {
-        &type_ref.elem
-    } else {
-        ty
-    };
-
-    // 2. Check if the inner type is a Path (e.g. MyClient, crate::MyClient)
-    if let Type::Path(type_path) = inner_ty {
-        // 3. Ensure no Qualified Self (<Type as Trait>::Assoc)
-        if type_path.qself.is_some() {
-            return None;
-        }
-
-        // 4. Enforce "1 word" rule
-        // Accepts: MyClient
-        // Rejects: crate::MyClient, foo::MyClient
-        if type_path.path.segments.len() != 1 {
-            return None;
-        }
-
-        let segment = type_path.path.segments.first().unwrap();
-
-        // 5. Enforce no generics
-        // Accepts: MyClient
-        // Rejects: MyClient<T>
-        if matches!(segment.arguments, PathArguments::None) {
-            return Some(&segment.ident);
-        }
-    }
-
-    // Returns None for everything else (Tuples, Arrays, complex paths, etc.)
-    None
 }

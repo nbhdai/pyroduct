@@ -201,13 +201,8 @@ impl CapabilityFuncFFI {
 
         // Determine client serialization
         let (client_type, client_expr) = if let Some(class) = &self.class {
-            if self.constructor {
-                let client_tn = &class.client_tn;
-                (quote!(#client_tn), quote!(Some(&new_self)))
-            } else {
-                let client_tn = &class.client_tn;
-                (quote!(#client_tn), quote!(Some(&self)))
-            }
+            let client_tn = &class.client_tn;
+            (quote!(#client_tn), quote!(Some(&self)))
         } else {
             (quote!(()), quote!(None))
         };
@@ -667,7 +662,7 @@ mod tests {
 
         let output_capability = quote! {
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __mock_trait__mock_server__test_async_client__ffi<'a>(
+            pub unsafe extern "C" fn __mock_server__test_async_client__ffi<'a>(
                 client_state_ptr: *const u8,
                 client_state_len: usize,
                 input_ptr: *const u8,
@@ -701,7 +696,7 @@ mod tests {
                     u32,
                     _,
                 >(
-                    "__mock_trait__mock_server__test_async_client",
+                    "__mock_server__test_async_client",
                     Some(&self),
                     None,
                     |client_state_ptr: *const u8,
@@ -709,7 +704,7 @@ mod tests {
                     input_ptr: *const u8,
                     input_len: usize| {
                         unsafe {
-                            __mock_trait__mock_server__test_async_client__wasm(client_state_ptr, client_state_len, input_ptr, input_len)
+                            __mock_server__test_async_client__wasm(client_state_ptr, client_state_len, input_ptr, input_len)
                         }
                     },
                 )
@@ -742,7 +737,7 @@ mod tests {
 
         let output_capability = quote! {
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __mock_trait__mock_server__test_sync_client_input__ffi(
+            pub unsafe extern "C" fn __mock_server__test_sync_client_input__ffi(
                 client_state_ptr: *const u8,
                 client_state_len: usize,
                 input_ptr: *const u8,
@@ -776,7 +771,7 @@ mod tests {
                     u32,
                     _,
                 >(
-                    "__mock_trait__mock_server__test_sync_client_input",
+                    "__mock_server__test_sync_client_input",
                     Some(&self),
                     Some(&x),
                     |client_state_ptr: *const u8,
@@ -784,7 +779,7 @@ mod tests {
                     input_ptr: *const u8,
                     input_len: usize| {
                         unsafe {
-                            __mock_trait__mock_server__test_sync_client_input__wasm(client_state_ptr, client_state_len, input_ptr, input_len)
+                            __mock_server__test_sync_client_input__wasm(client_state_ptr, client_state_len, input_ptr, input_len)
                         }
                     },
                 )
@@ -820,7 +815,7 @@ mod tests {
         let output_struct = quote! {
             #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
             #[rkyv(compare(PartialEq), derive(Debug))]
-            struct __MockTrait__MockServer__TestSciMulti__Input {
+            struct __MockServer__TestSciMulti__Input {
                 pub a: i32,
                 pub b: i32,
             }
@@ -829,7 +824,7 @@ mod tests {
 
         let output_capability = quote! {
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __mock_trait__mock_server__test_sci_multi__ffi<'a>(
+            pub unsafe extern "C" fn __mock_server__test_sci_multi__ffi<'a>(
                 client_state_ptr: *const u8,
                 client_state_len: usize,
                 input_ptr: *const u8,
@@ -839,7 +834,7 @@ mod tests {
                 ::pyroduct::capability::safe_async::sci_call::<
                     MockServer,
                     MockClient,
-                    __MockTrait__MockServer__TestSciMulti__Input,
+                    __MockServer__TestSciMulti__Input,
                     u32,
                     _,
                     _,
@@ -863,19 +858,19 @@ mod tests {
             fn func() {
                 ::pyroduct::module_capability::access::call_from_wasm::<
                     MockClient,
-                    __MockTrait__MockServer__TestSciMulti__Input,
+                    __MockServer__TestSciMulti__Input,
                     u32,
                     _,
                 >(
-                    "__mock_trait__mock_server__test_sci_multi",
+                    "__mock_server__test_sci_multi",
                     Some(&self),
-                    Some(&__MockTrait__MockServer__TestSciMulti__Input { a , b }),
+                    Some(&__MockServer__TestSciMulti__Input { a , b }),
                     |client_state_ptr: *const u8,
                     client_state_len: usize,
                     input_ptr: *const u8,
                     input_len: usize| {
                         unsafe {
-                            __mock_trait__mock_server__test_sci_multi__wasm(client_state_ptr, client_state_len, input_ptr, input_len)
+                            __mock_server__test_sci_multi__wasm(client_state_ptr, client_state_len, input_ptr, input_len)
                         }
                     },
                 )

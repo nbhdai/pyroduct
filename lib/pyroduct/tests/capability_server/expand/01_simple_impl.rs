@@ -1,17 +1,23 @@
-use pyroduct::{capability, capability_server, capability_impl};
+#[pyroduct::client]
+pub struct GreeterClient {}
 
-#[capability]
-pub trait Greeter {
-    fn greet(&self, name: String) -> String;
-}
 
-pub struct GreeterServer;
+#[pyroduct::capability]
+impl Greeter for Greeter {
+    type Config = GreeterConfig;
+    type Client = GreeterClient;
+    fn new(config: Option<GreeterConfig>) -> Self {
+        Greeter
+    }
+    
+    fn reset(&mut self) {}
 
-#[capability_impl(env = "greeter")]
-impl Greeter for GreeterServer {
-    fn greet(&self, name: String) -> String {
+    fn new_client(&self, _client: &GreeterClient) -> () {}
+    
+    fn greet(&self, _client: &GreeterClient, name: String) -> String {
         format!("Hello, {}", name)
     }
 }
 
-capability_export!(env = "greeter", GreeterServer);
+
+fn main() {}

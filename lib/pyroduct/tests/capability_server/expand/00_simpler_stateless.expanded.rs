@@ -1,152 +1,104 @@
-pub struct SimpleClient {
-    #[rkyv(with = rkyv::with::Skip)]
-    __config_buf: Vec<u8>,
-}
+#[rkyv(crate = ::pyroduct::rkyv)]
+pub struct SimpleClient;
 #[automatically_derived]
 ///An archived [`SimpleClient`]
-#[bytecheck(crate = ::rkyv::bytecheck)]
+#[bytecheck(crate = ::pyroduct::rkyv::bytecheck)]
 #[repr(C)]
-pub struct ArchivedSimpleClient
-where
-    rkyv::with::Skip: ::rkyv::with::ArchiveWith<Vec<u8>>,
-{
-    ///The archived counterpart of [`SimpleClient::__config_buf`]
-    __config_buf: <rkyv::with::Skip as ::rkyv::with::ArchiveWith<Vec<u8>>>::Archived,
-}
+pub struct ArchivedSimpleClient;
 #[automatically_derived]
 unsafe impl<
-    __C: ::rkyv::bytecheck::rancor::Fallible + ?::core::marker::Sized,
-> ::rkyv::bytecheck::CheckBytes<__C> for ArchivedSimpleClient
+    __C: ::pyroduct::rkyv::bytecheck::rancor::Fallible + ?::core::marker::Sized,
+> ::pyroduct::rkyv::bytecheck::CheckBytes<__C> for ArchivedSimpleClient
 where
-    rkyv::with::Skip: ::rkyv::with::ArchiveWith<Vec<u8>>,
-    <__C as ::rkyv::bytecheck::rancor::Fallible>::Error: ::rkyv::bytecheck::rancor::Trace,
-    <rkyv::with::Skip as ::rkyv::with::ArchiveWith<
-        Vec<u8>,
-    >>::Archived: ::rkyv::bytecheck::CheckBytes<__C>,
+    <__C as ::pyroduct::rkyv::bytecheck::rancor::Fallible>::Error: ::pyroduct::rkyv::bytecheck::rancor::Trace,
 {
     unsafe fn check_bytes(
         value: *const Self,
         context: &mut __C,
     ) -> ::core::result::Result<
         (),
-        <__C as ::rkyv::bytecheck::rancor::Fallible>::Error,
+        <__C as ::pyroduct::rkyv::bytecheck::rancor::Fallible>::Error,
     > {
-        <<rkyv::with::Skip as ::rkyv::with::ArchiveWith<
-            Vec<u8>,
-        >>::Archived as ::rkyv::bytecheck::CheckBytes<
-            __C,
-        >>::check_bytes(&raw const (*value).__config_buf, context)
-            .map_err(|e| {
-                <<__C as ::rkyv::bytecheck::rancor::Fallible>::Error as ::rkyv::bytecheck::rancor::Trace>::trace(
-                    e,
-                    ::rkyv::bytecheck::StructCheckContext {
-                        struct_name: "ArchivedSimpleClient",
-                        field_name: "__config_buf",
-                    },
-                )
-            })?;
         ::core::result::Result::Ok(())
     }
 }
 #[automatically_derived]
 ///The resolver for an archived [`SimpleClient`]
-pub struct SimpleClientResolver
-where
-    rkyv::with::Skip: ::rkyv::with::ArchiveWith<Vec<u8>>,
-{
-    __config_buf: <rkyv::with::Skip as ::rkyv::with::ArchiveWith<Vec<u8>>>::Resolver,
-}
-impl ::rkyv::Archive for SimpleClient
-where
-    rkyv::with::Skip: ::rkyv::with::ArchiveWith<Vec<u8>>,
-{
+pub struct SimpleClientResolver;
+impl ::pyroduct::rkyv::Archive for SimpleClient {
     type Archived = ArchivedSimpleClient;
     type Resolver = SimpleClientResolver;
+    const COPY_OPTIMIZATION: ::pyroduct::rkyv::traits::CopyOptimization<Self> = unsafe {
+        ::pyroduct::rkyv::traits::CopyOptimization::enable_if(
+            0 == ::core::mem::size_of::<SimpleClient>(),
+        )
+    };
     #[allow(clippy::unit_arg)]
-    fn resolve(&self, resolver: Self::Resolver, out: ::rkyv::Place<Self::Archived>) {
-        let field_ptr = unsafe { &raw mut (*out.ptr()).__config_buf };
-        let field_out = unsafe { ::rkyv::Place::from_field_unchecked(out, field_ptr) };
-        <rkyv::with::Skip as ::rkyv::with::ArchiveWith<
-            Vec<u8>,
-        >>::resolve_with(&self.__config_buf, resolver.__config_buf, field_out);
-    }
+    fn resolve(
+        &self,
+        resolver: Self::Resolver,
+        out: ::pyroduct::rkyv::Place<Self::Archived>,
+    ) {}
 }
-unsafe impl ::rkyv::traits::Portable for ArchivedSimpleClient
-where
-    rkyv::with::Skip: ::rkyv::with::ArchiveWith<Vec<u8>>,
-    <rkyv::with::Skip as ::rkyv::with::ArchiveWith<
-        Vec<u8>,
-    >>::Archived: ::rkyv::traits::Portable,
-{}
+unsafe impl ::pyroduct::rkyv::traits::Portable for ArchivedSimpleClient {}
 #[automatically_derived]
-impl<__S: ::rkyv::rancor::Fallible + ?Sized> ::rkyv::Serialize<__S> for SimpleClient
-where
-    rkyv::with::Skip: ::rkyv::with::SerializeWith<Vec<u8>, __S>,
-{
+impl<__S: ::pyroduct::rkyv::rancor::Fallible + ?Sized> ::pyroduct::rkyv::Serialize<__S>
+for SimpleClient {
     fn serialize(
         &self,
         serializer: &mut __S,
     ) -> ::core::result::Result<
-        <Self as ::rkyv::Archive>::Resolver,
-        <__S as ::rkyv::rancor::Fallible>::Error,
+        <Self as ::pyroduct::rkyv::Archive>::Resolver,
+        <__S as ::pyroduct::rkyv::rancor::Fallible>::Error,
     > {
         let __this = self;
-        ::core::result::Result::Ok(SimpleClientResolver {
-            __config_buf: <rkyv::with::Skip as ::rkyv::with::SerializeWith<
-                Vec<u8>,
-                __S,
-            >>::serialize_with(&__this.__config_buf, serializer)?,
-        })
+        ::core::result::Result::Ok(SimpleClientResolver)
     }
 }
 #[automatically_derived]
-impl<__D: ::rkyv::rancor::Fallible + ?Sized> ::rkyv::Deserialize<SimpleClient, __D>
-for ::rkyv::Archived<SimpleClient>
-where
-    rkyv::with::Skip: ::rkyv::with::ArchiveWith<Vec<u8>>,
-    rkyv::with::Skip: ::rkyv::with::DeserializeWith<
-        <rkyv::with::Skip as ::rkyv::with::ArchiveWith<Vec<u8>>>::Archived,
-        Vec<u8>,
-        __D,
-    >,
-{
+impl<
+    __D: ::pyroduct::rkyv::rancor::Fallible + ?Sized,
+> ::pyroduct::rkyv::Deserialize<SimpleClient, __D>
+for ::pyroduct::rkyv::Archived<SimpleClient> {
     fn deserialize(
         &self,
         deserializer: &mut __D,
-    ) -> ::core::result::Result<SimpleClient, <__D as ::rkyv::rancor::Fallible>::Error> {
+    ) -> ::core::result::Result<
+        SimpleClient,
+        <__D as ::pyroduct::rkyv::rancor::Fallible>::Error,
+    > {
         let __this = self;
-        ::core::result::Result::Ok(SimpleClient {
-            __config_buf: <rkyv::with::Skip as ::rkyv::with::DeserializeWith<
-                <rkyv::with::Skip as ::rkyv::with::ArchiveWith<Vec<u8>>>::Archived,
-                Vec<u8>,
-                __D,
-            >>::deserialize_with(&__this.__config_buf, deserializer)?,
-        })
+        ::core::result::Result::Ok(SimpleClient)
     }
 }
-impl ::pyroduct::module_capability::CapabilityClient for SimpleClient {
-    fn config_buffer(&self) -> &[u8] {
-        &self.__config_buf
+pub struct StatefulServer;
+impl StatefulServer {
+    pub fn new() -> Self {
+        Self
+    }
+    pub fn reset(&mut self) {}
+    pub fn new_client(&self, client: &SimpleClient) {}
+    type Client = SimpleClient;
+    pub fn call(&self, _client: &SimpleClient) -> f32 {
+        42.0
     }
 }
 impl SimpleClient {
-    pub fn client() -> SimpleClient {
-        let mut new_self = (|| {
-            SimpleClient {
-                __config_buf: std::vec::Vec::new(),
-            }
-        })();
-        new_self.__config_buf = ::rkyv::to_bytes::<::rkyv::rancor::Error>(&new_self)
-            .expect("Failed to serialize config")
-            .into_vec();
+    pub fn register(self) -> ::pyroduct::module_capability::Client<Self> {
+        let __config_buf = ::rkyv::to_bytes::<::rkyv::rancor::Error>(&self)
+            .expect("Failed to serialize config");
+        let mut new_self = ::pyroduct::module_capability::Client {
+            data: self,
+            __config_buf,
+        };
         ::pyroduct::module_capability::access::call_from_wasm::<
             SimpleClient,
             (),
             (),
             _,
         >(
-            "__simple__stateful_server__new_client",
-            Some(&new_self),
+            "__stateful_server__new_client",
+            Some(&self),
             None,
             |
                 client_state_ptr: *const u8,
@@ -155,7 +107,7 @@ impl SimpleClient {
                 input_len: usize|
             {
                 unsafe {
-                    wasm::__simple__stateful_server__new_client__wasm(
+                    wasm::__stateful_server__new_client__wasm(
                         client_state_ptr,
                         client_state_len,
                         input_ptr,
@@ -166,6 +118,8 @@ impl SimpleClient {
         );
         new_self
     }
+}
+impl ::pyroduct::module_capability::Client<SimpleClient> {
     pub fn call(&self) -> f32 {
         ::pyroduct::module_capability::access::call_from_wasm::<
             SimpleClient,
@@ -173,7 +127,7 @@ impl SimpleClient {
             f32,
             _,
         >(
-            "__simple__stateful_server__call",
+            "__stateful_server__call",
             Some(&self),
             None,
             |
@@ -183,7 +137,7 @@ impl SimpleClient {
                 input_len: usize|
             {
                 unsafe {
-                    wasm::__simple__stateful_server__call__wasm(
+                    wasm::__stateful_server__call__wasm(
                         client_state_ptr,
                         client_state_len,
                         input_ptr,
@@ -198,13 +152,13 @@ pub mod wasm {
     use super::*;
     #[link(wasm_import_module = "env")]
     unsafe extern "C" {
-        pub fn __simple__stateful_server__new_client__wasm(
+        pub fn __stateful_server__new_client__wasm(
             cs_ptr: *const u8,
             cs_len: usize,
             in_ptr: *const u8,
             in_len: usize,
         ) -> *const u8;
-        pub fn __simple__stateful_server__call__wasm(
+        pub fn __stateful_server__call__wasm(
             cs_ptr: *const u8,
             cs_len: usize,
             in_ptr: *const u8,
@@ -212,12 +166,36 @@ pub mod wasm {
         ) -> *const u8;
     }
 }
-pub trait Simple {
-    fn new_client(&self, client: &SimpleClient) -> ();
-    fn call(&self, client: &SimpleClient) -> f32;
+#[unsafe(no_mangle)]
+pub extern "C" fn __stateful_server__ffi_init(
+    config_ptr: *const u8,
+    config_len: usize,
+) -> ::pyroduct::capability_host::ffi::FfiInitResult {
+    unsafe {
+        ::pyroduct::capability::safe_lifecycle::execute_safe_init::<
+            ::pyroduct::capability::safe_lifecycle::EmptyConfig,
+            StatefulServer,
+            _,
+        >(config_ptr, config_len, || StatefulServer::new())
+    }
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn __simple__stateful_server__new_client__ffi(
+pub unsafe extern "C" fn __stateful_server__ffi_drop(state: *mut std::ffi::c_void) {
+    if !state.is_null() {
+        drop(unsafe { Box::from_raw(state as *mut StatefulServer) });
+    }
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __stateful_server__ffi_reset(
+    state: *mut std::ffi::c_void,
+) -> ::pyroduct::capability_host::ffi::FfiResult {
+    ::pyroduct::capability::safe_lifecycle::execute_safe_reset::<
+        StatefulServer,
+        _,
+    >(state, |state| state.reset())
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __stateful_server__new_client__ffi(
     client_state_ptr: *const u8,
     client_state_len: usize,
     input_ptr: *const u8,
@@ -239,7 +217,7 @@ pub unsafe extern "C" fn __simple__stateful_server__new_client__ffi(
     )
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn __simple__stateful_server__call__ffi(
+pub unsafe extern "C" fn __stateful_server__call__ffi(
     client_state_ptr: *const u8,
     client_state_len: usize,
     input_ptr: *const u8,
@@ -260,42 +238,40 @@ pub unsafe extern "C" fn __simple__stateful_server__call__ffi(
         |state, client| state.call(&client),
     )
 }
-const __SIMPLE__STATEFUL_SERVER: &'static str = "__simple__stateful_server";
-const __SIMPLE__STATEFUL_SERVER__NEW_CLIENT: &'static str = "__simple__stateful_server__new_client";
-const __SIMPLE__STATEFUL_SERVER__CALL: &'static str = "__simple__stateful_server__call";
-const __SIMPLE__STATEFUL_SERVER__METHODS: [::pyroduct::capability_host::ffi::FunctionExport; 2usize] = [
+const __STATEFUL_SERVER: &'static str = "__stateful_server";
+const __STATEFUL_SERVER__NEW_CLIENT: &'static str = "__stateful_server__new_client";
+const __STATEFUL_SERVER__CALL: &'static str = "__stateful_server__call";
+const __STATEFUL_SERVER__METHODS: [::pyroduct::capability_host::ffi::FunctionExport; 2usize] = [
     ::pyroduct::capability_host::ffi::FunctionExport {
-        module: __SIMPLE__STATEFUL_SERVER.as_ptr(),
-        module_len: __SIMPLE__STATEFUL_SERVER.len(),
-        name: __SIMPLE__STATEFUL_SERVER__NEW_CLIENT.as_ptr(),
-        name_len: __SIMPLE__STATEFUL_SERVER__NEW_CLIENT.len(),
+        module: __STATEFUL_SERVER.as_ptr(),
+        module_len: __STATEFUL_SERVER.len(),
+        name: __STATEFUL_SERVER__NEW_CLIENT.as_ptr(),
+        name_len: __STATEFUL_SERVER__NEW_CLIENT.len(),
         func: ::pyroduct::capability_host::ffi::Function::Sync(
-            __simple__stateful_server__new_client__ffi,
+            __stateful_server__new_client__ffi,
         ),
     },
     ::pyroduct::capability_host::ffi::FunctionExport {
-        module: __SIMPLE__STATEFUL_SERVER.as_ptr(),
-        module_len: __SIMPLE__STATEFUL_SERVER.len(),
-        name: __SIMPLE__STATEFUL_SERVER__CALL.as_ptr(),
-        name_len: __SIMPLE__STATEFUL_SERVER__CALL.len(),
+        module: __STATEFUL_SERVER.as_ptr(),
+        module_len: __STATEFUL_SERVER.len(),
+        name: __STATEFUL_SERVER__CALL.as_ptr(),
+        name_len: __STATEFUL_SERVER__CALL.len(),
         func: ::pyroduct::capability_host::ffi::Function::Sync(
-            __simple__stateful_server__call__ffi,
+            __stateful_server__call__ffi,
         ),
     },
 ];
-impl Simple for StatefulServer {
-    fn new_client(&self, client: &SimpleClient) {}
-    fn call(&self, client: &SimpleClient) -> f32 {
-        42.0
-    }
-}
-impl StatefulServerInit for StatefulServer {
-    fn new(config: &()) -> Self {
-        Self
-    }
-    fn default() -> Self {
-        Self
-    }
-    fn reset(&mut self) {}
-}
+const __STATEFUL_SERVER__EXPORT: ::pyroduct::capability_host::ffi::ClassExport = ::pyroduct::capability_host::ffi::ClassExport {
+    ptr: __STATEFUL_SERVER__METHODS.as_ptr(),
+    init: ::pyroduct::capability_host::ffi::ClassInitFn::Sync(
+        __stateful_server__ffi_init,
+    ),
+    drop: ::pyroduct::capability_host::ffi::ClassDropFn::Sync(
+        __stateful_server__ffi_drop,
+    ),
+    reset: ::pyroduct::capability_host::ffi::ClassResetFn::Sync(
+        __stateful_server__ffi_reset,
+    ),
+    len: __STATEFUL_SERVER__METHODS.len(),
+};
 fn main() {}

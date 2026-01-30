@@ -9,35 +9,19 @@ pub struct SerialHandle {
     pub id: u64,
 }
 
-#[pyroduct::capability(SerialServer)]
-pub trait SerialPool {
+#[pyroduct::capability]
+impl SerialServer {
     type Client = SerialHandle;
-    
-    fn open(_port: String, _baud: u32) -> SerialHandle {
-        SerialHandle { id: 0 }
-    }
-    fn close() -> Result<(), String>;
-}
-
-// 4. Server State
-#[pyroduct::server(methods = SerialPool, config = SerialConfig)]
-pub struct SerialServer {
-    next_id: u64,
-}
-
-#[pyroduct::server_impl]
-impl SerialServerInit for SerialServer {
+    type Config = SerialConfig;
+    type Error = String;
     fn new(_config: Option<SerialConfig>) -> Self { 
         Self { next_id: 0 } 
     }
     fn reset(&mut self) { 
         self.next_id = 0; 
     }
-}
 
-#[pyroduct::capability_impl]
-impl SerialPool for SerialServer {
-    fn new_client(&self, _client: &SerialHandle) -> () {}
+    fn new_client(&self, _client: &SerialHandle) -> Result<(), String>  {}
     
     fn close(&self, _client: &SerialHandle) -> Result<(), String> {
         Ok(())

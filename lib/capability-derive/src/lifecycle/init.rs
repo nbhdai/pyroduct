@@ -214,19 +214,11 @@ impl InitFn {
 
 #[cfg(test)]
 mod tests {
+    use crate::fmt::assert_code_eq_token;
+
     use super::*;
     use quote::{format_ident, quote};
     use syn::parse_quote;
-
-    fn assert_code_eq(actual: &TokenStream, expected: &TokenStream) {
-        let actual_str = actual.to_string();
-        let expected_str = expected.to_string();
-        if actual_str != expected_str {
-            println!("Expected:\n{}", expected_str);
-            println!("Actual:\n{}", actual_str);
-            panic!("Code mismatch");
-        }
-    }
 
     #[test]
     fn test_sync_server_init_fn() {
@@ -262,7 +254,7 @@ mod tests {
             }
         };
 
-        assert_code_eq(&result, &expected);
+        assert_code_eq_token(&result, &expected);
     }
 
     #[test]
@@ -299,7 +291,7 @@ mod tests {
             }
         };
 
-        assert_code_eq(&result, &expected);
+        assert_code_eq_token(&result, &expected);
     }
 
     #[test]
@@ -330,13 +322,13 @@ mod tests {
                     ::pyroduct::capability::safe_lifecycle::execute_safe_init::<::pyroduct::capability::safe_lifecycle::EmptyConfig, GreeterServer, _>(
                         config_ptr,
                         config_len,
-                        || GreeterServer::new()
+                        |_| GreeterServer::new()
                     )
                 }
             }
         };
 
-        assert_code_eq(&result, &expected);
+        assert_code_eq_token(&result, &expected);
     }
 
     #[test]

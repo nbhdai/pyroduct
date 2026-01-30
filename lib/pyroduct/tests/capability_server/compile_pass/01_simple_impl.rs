@@ -1,28 +1,17 @@
 #[pyroduct::client]
 pub struct GreeterClient {}
 
-#[pyroduct::config]
-pub struct GreeterConfig {
-    data: u32
-}
 
-#[pyroduct::capability(GreeterServer)]
-trait Greeter {
+#[pyroduct::capability]
+impl Greeter for Greeter {
+    type Config = GreeterConfig;
     type Client = GreeterClient;
-    
-    fn new() -> GreeterClient {
-        GreeterClient {}
+    fn new(config: Option<GreeterConfig>) -> Self {
+        Greeter
     }
     
-    fn greet(name: String) -> String;
-}
+    fn reset(&mut self) {}
 
-#[pyroduct::server(methods = Greeter, config = GreeterConfig)]
-pub struct GreeterServer;
-
-
-#[pyroduct::capability_impl]
-impl Greeter for GreeterServer {
     fn new_client(&self, _client: &GreeterClient) -> () {}
     
     fn greet(&self, _client: &GreeterClient, name: String) -> String {
@@ -30,13 +19,5 @@ impl Greeter for GreeterServer {
     }
 }
 
-#[pyroduct::server_impl]
-impl GreeterServerInit for GreeterServer {
-    fn new(_config: Option<GreeterConfig>) -> Self {
-        GreeterServer
-    }
-    
-    fn reset(&mut self) {}
-}
 
 fn main() {}

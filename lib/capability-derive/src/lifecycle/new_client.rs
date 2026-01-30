@@ -170,46 +170,6 @@ impl NewClientFn {
             pub fn new_client(&self, client: &#client) #return_type #body
         }
     }
-
-    /// Generate the client-side constructor
-    pub fn generate_client_constructor(&self, module: &Ident, class: &Rc<CapabilityIdent>) -> TokenStream {
-        let client = &self.client_type;
-        let ffi = self.build_ffi(class);
-        let wasm_call = ffi.generate_wasm_call(Some(module));
-
-        let (return_type, result_handle) = if let Some(err) = &self.error_type {
-            (
-                quote!(Result<Self, #err>),
-                quote! {
-                    let ffi_result = #wasm_call;
-                    match ffi_result {
-                        Ok(_) => Ok(new_self),
-                        Err(e) => Err(e.into()),
-                    }
-                },
-            )
-        } else {
-            (
-                quote!(Self),
-                quote! {
-                    #wasm_call;
-                    new_self
-                },
-            )
-        };
-
-        quote! {
-            pub fn new() -> #return_type {
-                let mut new_self = #client {
-                    __config_buf: Vec::new(),
-                };
-                new_self.__config_buf = ::rkyv::to_bytes::<::rkyv::rancor::Error>(&new_self)
-                    .expect("Failed to serialize config")
-                    .into_vec();
-                #result_handle
-            }
-        }
-    }
 }
 
 /// Extract the error type from Result<(), ErrorType>
