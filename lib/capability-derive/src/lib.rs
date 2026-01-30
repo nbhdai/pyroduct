@@ -21,7 +21,7 @@ pub(crate) mod utils;
 /// Marks a struct as client-side state.
 /// Adds rkyv serialization and the internal configuration buffer.
 #[proc_macro_attribute]
-pub fn capability_client(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn client(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemStruct);
     match crate::classes::client::CapClient::new(input) {
         Ok(client) => client.expand().into(),
@@ -62,7 +62,7 @@ pub fn capability(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 /// Marks a struct as the server-side host implementation.
 #[proc_macro_attribute]
-pub fn capability_server(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn server(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemStruct);
     let attr_tokens = proc_macro2::TokenStream::from(attr);
 
@@ -86,7 +86,17 @@ pub fn capability_server(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn capability_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    item // Just pass it through
+    item
+}
+
+#[proc_macro_attribute]
+pub fn server_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+#[proc_macro_attribute]
+pub fn config(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
 }
 
 #[cfg(test)]

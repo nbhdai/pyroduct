@@ -16,6 +16,9 @@ use crate::{
     errors::{FfiError, Phase},
 };
 
+/// For new that doesn't have a config.
+#[derive(serde::Deserialize)]
+pub struct EmptyConfig {}
 // --- Sync Wrappers ---
 
 #[tracing::instrument(skip(init_fn))]
@@ -113,7 +116,7 @@ where
     C: serde::Deserialize<'static> + Send + 'static,
     S: Send + 'static,
     Fut: std::future::Future<Output = S> + Send + 'a,
-    F: FnOnce(C) -> Fut + Send + 'a,
+    F: FnOnce(Option<C>) -> Fut + Send + 'a,
 {
     trace!("execute_safe_async_init: entering");
 
@@ -129,7 +132,7 @@ where
     }
     let config_bytes = unsafe { std::slice::from_raw_parts(config_ptr, config_len) };
 
-    let config = match serde_json::from_slice::<C>(config_bytes) {
+    let config = match serde_json::from_slice::<Option<C>>(config_bytes) {
         Ok(config) => config,
         Err(error) => {
             let ffi_error = FfiError::DeserializationFailed(error.to_string(), Phase::Init);

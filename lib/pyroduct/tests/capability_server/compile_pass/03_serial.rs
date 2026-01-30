@@ -1,42 +1,33 @@
-// 1. Configuration
-#[derive(serde::Deserialize)]
+#[pyroduct::config]
 pub struct SerialConfig {
     pub ports: Vec<String>,
 }
 
-// 2. Client State
-#[pyroduct::capability_client]
+#[pyroduct::client]
 #[derive(Clone)]
 pub struct SerialHandle {
     pub id: u64,
 }
 
-// 3. Capability Definition
 #[pyroduct::capability(SerialServer)]
 pub trait SerialPool {
     type Client = SerialHandle;
     
-    // Constructor - returns the Client type directly
     fn open(_port: String, _baud: u32) -> SerialHandle {
         SerialHandle { id: 0 }
     }
-    
-    // Regular method - returns Result, can include Client in Ok variant
     fn close() -> Result<(), String>;
 }
 
 // 4. Server State
-#[pyroduct::capability_server(methods = SerialPool, config = SerialConfig)]
+#[pyroduct::server(methods = SerialPool, config = SerialConfig)]
 pub struct SerialServer {
     next_id: u64,
 }
 
-// 5. Lifecycle Implementation
+#[pyroduct::server_impl]
 impl SerialServerInit for SerialServer {
-    fn new(_config: &SerialConfig) -> Self { 
-        Self { next_id: 0 } 
-    }
-    fn default() -> Self { 
+    fn new(_config: Option<SerialConfig>) -> Self { 
         Self { next_id: 0 } 
     }
     fn reset(&mut self) { 
@@ -44,7 +35,7 @@ impl SerialServerInit for SerialServer {
     }
 }
 
-// 6. Trait Implementation  
+#[pyroduct::capability_impl]
 impl SerialPool for SerialServer {
     fn new_client(&self, _client: &SerialHandle) -> () {}
     
@@ -53,6 +44,4 @@ impl SerialPool for SerialServer {
     }
 }
 
-fn main() {
-    // Just verifying compilation
-}
+fn main() {}

@@ -88,7 +88,7 @@ pub use tracing;
 /// ```
 pub use module_derive::module;
 
-pub use capability_derive::{capability, capability_server, capability_client, capability_impl};
+pub use capability_derive::{capability, server, client, capability_impl, server_impl};
 
 pub type PyroductResult<T> = Result<T, errors::PyroductError>;
 

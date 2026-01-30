@@ -102,7 +102,13 @@ impl ClientConstructor {
         let inputs = &sig.inputs;
         let generics = &sig.generics;
         let where_clause = &sig.generics.where_clause;
-        let final_return_type = &self.sig.output; // Constructor implementation returns Self
+        let output = &self.class.client_tn;
+
+        let final_return_type = if let Some(error_type) = &self.class.error_tn {
+            quote! { Result<#output, #error_type> }
+        } else {
+            quote! { #output }
+        };
 
         let wasm_call = ffi.generate_wasm_call(module);
         
@@ -288,9 +294,7 @@ mod tests {
                         __config_buf: std::vec::Vec::new(),
                     }
                 })();
-                new_self.__config_buf = ::rkyv::to_bytes::<::rkyv::rancor::Error>>(&new_self)
-                    .expect("Failed to serialize config")
-                    .into_vec();
+                new_self.__config_buf = ::rkyv::to_bytes::<::rkyv::rancor::Error>>(&new_self).expect("Failed to serialize config").into_vec();
 
                 #wasm_call;
                 new_self
@@ -433,7 +437,8 @@ mod tests {
                     .expect("Failed to serialize config")
                     .into_vec();
 
-                #wasm_call
+                #wasm_call;
+                new_self
             }
         };
 

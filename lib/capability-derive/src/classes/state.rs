@@ -91,16 +91,23 @@ impl CapServer {
         let init_trait_name = &self.init_trait_name;
         let struct_vis = self.struct_vis.clone();
         let new_fn = if let Some(config_type) = &self.attrs.config {
-            quote! {fn new(config: &#config_type) -> Self;}
+            quote! {fn new(config: Option<#config_type>) -> Self;}
         } else  {
-            quote! {fn new(config: &()) -> Self;}
+            quote! {fn new() -> Self;}
         };
-
-        quote! {
+        if self.attrs.is_async {
+            quote! {
             #struct_vis trait #init_trait_name {
-                #new_fn
-                fn default() -> Self;
-                fn reset(&mut self);
+                async #new_fn
+                async fn reset(&mut self);
+            }
+        }
+        } else {
+            quote! {
+                #struct_vis trait #init_trait_name {
+                    #new_fn
+                    fn reset(&mut self);
+                }
             }
         }
     }
@@ -117,40 +124,48 @@ impl CapServer {
         let init_trait_name = &self.init_trait_name;
         let init_ffi_name = self.export_init_ident();
 
+        let (config_type, closure_args, new_args) = if let Some(cfg) = &self.attrs.config {
+            (quote! { #cfg }, quote! { |config| }, quote! { config })
+        } else {
+            (quote! { ::pyroduct::capability::safe_lifecycle::EmptyConfig }, quote! { || }, quote! {})
+        };
+
+        let constructor_call = quote! { 
+            <#struct_name as #init_trait_name>::new(#new_args) 
+        };
+
         if self.attrs.is_async {
-            let ffi_func = quote! {
+            quote! {
                 #[unsafe(no_mangle)]
                 pub extern "C" fn #init_ffi_name<'a>(
                     config_ptr: *const u8,
                     config_len: usize
                 ) -> ::pyroduct::capability_host::ffi::FfiBorrowedFutureObjectResult<'a> {
                     unsafe {
-                        ::pyroduct::capability::safe_lifecycle::execute_safe_async_init(
+                        ::pyroduct::capability::safe_lifecycle::execute_safe_async_init::<'a, #config_type, _, _, _>(
                             config_ptr,
                             config_len,
-                            |config| async move { <#struct_name as #init_trait_name>::new(&config).await },
+                            #closure_args async move { #constructor_call.await },
                         )
                     }
                 }
-            };
-            ffi_func
+            }
         } else {
-            let ffi_func = quote! {
+            quote! {
                 #[unsafe(no_mangle)]
                 pub extern "C" fn #init_ffi_name(
                     config_ptr: *const u8,
                     config_len: usize
                 ) -> ::pyroduct::capability_host::ffi::FfiInitResult {
                     unsafe {
-                        ::pyroduct::capability::safe_lifecycle::execute_safe_init(
+                        ::pyroduct::capability::safe_lifecycle::execute_safe_init::<#config_type, _, _>(
                             config_ptr,
                             config_len,
-                            |config| <#struct_name as #init_trait_name>::new(&config)
+                            #closure_args #constructor_call
                         )
                     }
                 }
-            };
-            ffi_func
+            }
         }
     }
 
@@ -205,7 +220,7 @@ impl CapServer {
             let ffi_func = quote! {
                 #[unsafe(no_mangle)]
                 pub unsafe extern "C" fn #reset_ffi_name<'a>(state: *mut std::ffi::c_void) -> ::pyroduct::capability_host::ffi::FfiBorrowedFutureResult<'a> {
-                    ::pyroduct::capability::safe_lifecycle::execute_safe_async_reset::<#struct_name, _, _>(
+                    ::pyroduct::capability::safe_lifecycle::execute_safe_async_reset(
                         state,
                         |state| async move { <#struct_name as #init_trait_name>::reset(state).await },
                     )
@@ -216,7 +231,7 @@ impl CapServer {
             let ffi_func = quote! {
                 #[unsafe(no_mangle)]
                 pub unsafe extern "C" fn #reset_ffi_name(state: *mut std::ffi::c_void) -> ::pyroduct::capability_host::ffi::FfiResult {
-                    ::pyroduct::capability::safe_lifecycle::execute_safe_reset::<#struct_name, _>(
+                    ::pyroduct::capability::safe_lifecycle::execute_safe_reset(
                         state,
                         |state| <#struct_name as #init_trait_name>::reset(state)
                     )
@@ -296,41 +311,8 @@ mod tests {
 
         let expected = quote! {
             pub trait GreeterServerInit {
-                fn new(config: &GreeterConfig) -> Self;
+                fn new(config: Option<GreeterConfig>) -> Self;
                 fn reset(&mut self);
-            }
-        };
-
-        crate::fmt::assert_code_eq_token(&result, &expected);
-    }
-
-    #[tracing_test::traced_test]
-    #[test]
-    fn test_sync_server_init_fn() {
-        let attr = quote! { methods = GreeterTrait, service = Greeter, config = GreeterConfig };
-        let item = quote! {
-            pub struct GreeterServer {
-                count: u32,
-            }
-        };
-
-        let item = parse2(item).expect("error");
-        let server = CapServer::new(attr, item).expect("Expansion failed");
-        let result = server.generate_init_fn();
-
-        let expected = quote! {
-            #[unsafe(no_mangle)]
-            pub extern "C" fn __greeter_server__ffi_init(
-                config_ptr: *const u8,
-                config_len: usize
-            ) -> ::pyroduct::capability_host::ffi::FfiInitResult {
-                unsafe {
-                    ::pyroduct::capability::safe_lifecycle::execute_safe_init::<GreeterConfig, GreeterServer, _>(
-                        config_ptr,
-                        config_len,
-                        |config| <GreeterServer as GreeterServerInit>::new(&config)
-                    )
-                }
             }
         };
 
@@ -382,7 +364,7 @@ mod tests {
             pub unsafe extern "C" fn __greeter_server__ffi_reset(
                 state: *mut std::ffi::c_void
             ) -> ::pyroduct::capability_host::ffi::FfiResult {
-                ::pyroduct::capability::safe_lifecycle::execute_safe_reset::<GreeterServer, _>(
+                ::pyroduct::capability::safe_lifecycle::execute_safe_reset(
                     state,
                     |state| <GreeterServer as GreeterServerInit>::reset(state)
                 )
@@ -408,8 +390,45 @@ mod tests {
 
         let expected = quote! {
             pub trait GreeterServerInit {
-                fn new(config: &GreeterConfig) -> Self;
-                fn reset(&mut self);
+                async fn new(config: Option<GreeterConfig>) -> Self;
+                async fn reset(&mut self);
+            }
+        };
+
+        crate::fmt::assert_code_eq_token(&result, &expected);
+    }
+
+    #[tracing_test::traced_test]
+    #[test]
+    fn test_sync_server_init_fn() {
+        let attr = quote! { methods = GreeterTrait, service = Greeter, config = GreeterConfig };
+        let item = quote! {
+            pub struct GreeterServer {
+                count: u32,
+            }
+        };
+
+        let item = parse2(item).expect("error");
+        let server = CapServer::new(attr, item).expect("Expansion failed");
+        let result = server.generate_init_fn();
+
+        // Updated expectation: 
+        // 1. added ::<GreeterConfig, _, _> 
+        // 2. new(config) instead of new(&config) based on the deduplication logic 
+        //    (assuming the deduplication used 'config' directly as generated in the previous step)
+        let expected = quote! {
+            #[unsafe(no_mangle)]
+            pub extern "C" fn __greeter_server__ffi_init(
+                config_ptr: *const u8,
+                config_len: usize
+            ) -> ::pyroduct::capability_host::ffi::FfiInitResult {
+                unsafe {
+                    ::pyroduct::capability::safe_lifecycle::execute_safe_init::<GreeterConfig, _, _>(
+                        config_ptr,
+                        config_len,
+                        |config| <GreeterServer as GreeterServerInit>::new(config)
+                    )
+                }
             }
         };
 
@@ -430,6 +449,9 @@ mod tests {
         let server = CapServer::new(attr, item).expect("Expansion failed");
         let result = server.generate_init_fn();
 
+        // Updated expectation: 
+        // 1. added ::<'a, GreeterConfig, _, _, _>
+        // 2. new(config)
         let expected = quote! {
             #[unsafe(no_mangle)]
             pub extern "C" fn __greeter_server__ffi_init<'a>(
@@ -437,10 +459,48 @@ mod tests {
                 config_len: usize
             ) -> ::pyroduct::capability_host::ffi::FfiBorrowedFutureObjectResult<'a> {
                 unsafe {
-                    ::pyroduct::capability::safe_lifecycle::execute_safe_async_init::<GreeterConfig, GreeterServer, _, _>(
+                    ::pyroduct::capability::safe_lifecycle::execute_safe_async_init::<'a, GreeterConfig, _, _, _>(
                         config_ptr,
                         config_len,
-                        |config| async move { <GreeterServer as GreeterServerInit>::new(&config).await },
+                        |config| async move { <GreeterServer as GreeterServerInit>::new(config).await },
+                    )
+                }
+            }
+        };
+
+        crate::fmt::assert_code_eq_token(&result, &expected);
+    }
+
+    #[tracing_test::traced_test]
+    #[test]
+    fn test_no_config_init_fn() {
+        // No 'config' attribute provided
+        let attr = quote! { methods = GreeterTrait, service = Greeter };
+        let item = quote! {
+            pub struct GreeterServer {
+                count: u32,
+            }
+        };
+
+        let item = parse2(item).expect("error");
+        let server = CapServer::new(attr, item).expect("Expansion failed");
+        let result = server.generate_init_fn();
+
+        // Expectation:
+        // 1. Generic is unit type: ::<(), _, _>
+        // 2. Closure has no args: ||
+        // 3. new() has no args
+        let expected = quote! {
+            #[unsafe(no_mangle)]
+            pub extern "C" fn __greeter_server__ffi_init(
+                config_ptr: *const u8,
+                config_len: usize
+            ) -> ::pyroduct::capability_host::ffi::FfiInitResult {
+                unsafe {
+                    ::pyroduct::capability::safe_lifecycle::execute_safe_init::<::pyroduct::capability::safe_lifecycle::EmptyConfig, _, _>(
+                        config_ptr,
+                        config_len,
+                        || <GreeterServer as GreeterServerInit>::new()
                     )
                 }
             }
@@ -494,7 +554,7 @@ mod tests {
             pub unsafe extern "C" fn __greeter_server__ffi_reset<'a>(
                 state: *mut std::ffi::c_void
             ) -> ::pyroduct::capability_host::ffi::FfiBorrowedFutureResult<'a> {
-                ::pyroduct::capability::safe_lifecycle::execute_safe_async_reset::<GreeterServer, _, _>(
+                ::pyroduct::capability::safe_lifecycle::execute_safe_async_reset(
                     state,
                     |state| async move { <GreeterServer as GreeterServerInit>::reset(state).await },
                 )
