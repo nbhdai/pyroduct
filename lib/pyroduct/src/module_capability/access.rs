@@ -44,15 +44,13 @@ pub fn wasm_ptr_to_slice(wasm_slice: PackedWasmSlicePtr) -> Option<(usize, usize
     }
 }
 
-pub fn call_from_wasm<C, I, O, F>(
+pub fn call_from_wasm<I, O, F>(
     capability: &'static str,
-    client_state: Option<&C>,
+    client_state: Option<&AlignedVec>,
     input: Option<&I>,
     func: F,
 ) -> O
 where
-    C: Archive,
-    for<'a> C: Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, RkyvError>>,
     I: Archive,
     for<'a> I: Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, RkyvError>>,
     O: Archive,
@@ -61,19 +59,10 @@ where
     for<'a> <O as Archive>::Archived: Deserialize<O, Strategy<Pool, RkyvError>>,
     F: FnOnce(*const u8, usize, *const u8, usize) -> *const u8,
 {
-    let (c_ptr, c_len, _c_bytes) = if let Some(cs) = client_state {
-        let client_bytes = match rkyv::to_bytes::<RkyvError>(cs) {
-            Ok(bytes) => bytes,
-            Err(err) => {
-                error::set_last_error(error::CapabilityIoError::ClientSerialization(
-                    err.to_string(),
-                ));
-                panic!("{} Capability Serialization failed: {}", capability, err);
-            }
-        };
-        (client_bytes.as_ptr(), client_bytes.len(), client_bytes)
+    let (c_ptr, c_len) = if let Some(cs) = client_state {
+        (cs.as_ptr(), cs.len())
     } else {
-        (std::ptr::null(), 0, AlignedVec::new())
+        (std::ptr::null(), 0)
     };
 
     let (i_ptr, i_len, _i_bytes) = if let Some(i) = input {

@@ -200,11 +200,14 @@ impl CapabilityFuncFFI {
         let (input_type, input_expr) = self.determine_input_serialization();
 
         // Determine client serialization
-        let (client_type, client_expr) = if let Some(class) = &self.class {
-            let client_tn = &class.client_tn;
-            (quote!(#client_tn), quote!(Some(&self)))
+        let client_expr = if let Some(_) = &self.class {
+            if self.constructor {
+                quote!(Some(&__config_buf))
+            } else {
+                quote!(Some(&self.buffer()))
+            }
         } else {
-            (quote!(()), quote!(None))
+            quote!(None)
         };
         let module_tn = if let Some(module) = module {
             quote!(#module::)
@@ -214,7 +217,6 @@ impl CapabilityFuncFFI {
 
         quote! {
             ::pyroduct::module_capability::access::call_from_wasm::<
-                #client_type,
                 #input_type,
                 #return_type,
                 _

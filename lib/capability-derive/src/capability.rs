@@ -41,7 +41,7 @@ pub struct CapabilityImpl {
     // Methods
     pub methods: Vec<ImplMethod>,
 
-    // Other items (consts, etc.)
+    // Other items (consts, etc.) - excluding type aliases
     pub other_items: Vec<ImplItem>,
 }
 
@@ -90,9 +90,9 @@ impl CapabilityImpl {
                         config_tn = Some(ty.ty.clone());
                     } else if ty.ident == "Error" {
                         error_tn = Some(ty.ty.clone());
-                    } else {
-                        other_items.push(item.clone());
                     }
+                    // Note: We intentionally do NOT add type aliases to other_items
+                    // because inherent associated types are unstable in Rust
                 }
                 _ => {}
             }
@@ -129,6 +129,10 @@ impl CapabilityImpl {
                             method_fns.push(f.clone());
                         }
                     }
+                }
+                ImplItem::Type(_) => {
+                    // Skip type aliases - they were already processed above
+                    // and we don't want them in the output impl block
                 }
                 other => other_items.push(other.clone()),
             }
@@ -207,8 +211,6 @@ impl CapabilityImpl {
         let module = format_ident!("wasm");
 
         // 1. Generate the Register Method (on the user struct)
-        // This manually constructs the 'register' method rather than calling NewClientFn::generate_client_constructor
-        // because the architecture wraps the client in Client<T>.
         let register_method = {
             let ffi = self.new_client_fn.build_ffi(&self.ident);
             let wasm_call = ffi.generate_wasm_call(Some(&module));
@@ -220,7 +222,10 @@ impl CapabilityImpl {
                     quote! {
                          let ffi_result = #wasm_call;
                          match ffi_result {
-                             Ok(_) => Ok(new_self),
+                             Ok(_) => Ok(::pyroduct::module_capability::Client {
+                                data: self,
+                                __config_buf,
+                            }),
                              Err(e) => Err(e.into()),
                          }
                     }
@@ -230,7 +235,10 @@ impl CapabilityImpl {
                     quote!(::pyroduct::module_capability::Client<Self>),
                     quote! {
                         #wasm_call;
-                        new_self
+                        ::pyroduct::module_capability::Client {
+                            data: self,
+                            __config_buf,
+                        }
                     }
                 )
             };
@@ -239,11 +247,6 @@ impl CapabilityImpl {
                 pub fn register(self) -> #return_sig {
                     let __config_buf = ::rkyv::to_bytes::<::rkyv::rancor::Error>(&self)
                         .expect("Failed to serialize config");
-
-                    let mut new_self = ::pyroduct::module_capability::Client {
-                        data: self,
-                        __config_buf,
-                    };
                     
                     #body
                 }
@@ -257,8 +260,6 @@ impl CapabilityImpl {
         };
 
         // 2. Generate the Capability Methods (on the Client wrapper)
-        // ImplMethod::generate_client_method puts methods inside the impl block it is part of.
-        // Here we put them inside `impl Client<#client>`.
         let methods: Vec<_> = self.methods.iter()
             .map(|m| m.generate_client_method(&module))
             .collect();
@@ -592,10 +593,9 @@ mod tests {
             impl MyClient {
                 pub fn register(self) -> ::pyroduct::module_capability::Client<Self> {
                     let __config_buf = ::rkyv::to_bytes::<::rkyv::rancor::Error>(&self)
-                        .expect("Failed to serialize config")
-                        .into_vec();
+                        .expect("Failed to serialize config");
 
-                    let mut new_self = ::pyroduct::module_capability::Client {
+                    let new_self = ::pyroduct::module_capability::Client {
                         data: self,
                         __config_buf,
                     };
@@ -720,10 +720,9 @@ mod tests {
                 pub fn register(self) -> Result<::pyroduct::module_capability::Client<Self>, MyError> {
                     
                     let __config_buf = ::rkyv::to_bytes::<::rkyv::rancor::Error>(&self)
-                        .expect("Failed to serialize config")
-                        .into_vec();
+                        .expect("Failed to serialize config");
 
-                    let mut new_self = ::pyroduct::module_capability::Client {
+                    let new_self = ::pyroduct::module_capability::Client {
                         data: self,
                         __config_buf,
                     };

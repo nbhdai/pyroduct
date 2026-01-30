@@ -126,7 +126,7 @@ impl InitFn {
         } else {
             (
                 quote!(::pyroduct::capability::safe_lifecycle::EmptyConfig),
-                quote!(|| #server::new()),
+                quote!(|_| #server::new()),
             )
         };
 
@@ -134,7 +134,7 @@ impl InitFn {
             let async_closure = if self.config_type.is_some() {
                  quote!(|config| async move { #server::new(config).await })
             } else {
-                 quote!(|| async move { #server::new().await })
+                 quote!(|_| async move { #server::new().await })
             };
 
             quote! {

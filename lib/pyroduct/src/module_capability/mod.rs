@@ -22,3 +22,9 @@ impl<T> Deref for Client<T> {
         &self.data
     }
 }
+
+impl<T> Client<T> {
+    pub fn buffer(&self) -> &AlignedVec {
+        &self.__config_buf
+    }
+}

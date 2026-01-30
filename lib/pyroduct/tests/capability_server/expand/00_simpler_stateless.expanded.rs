@@ -78,7 +78,6 @@ impl StatefulServer {
     }
     pub fn reset(&mut self) {}
     pub fn new_client(&self, client: &SimpleClient) {}
-    type Client = SimpleClient;
     pub fn call(&self, _client: &SimpleClient) -> f32 {
         42.0
     }
@@ -87,18 +86,13 @@ impl SimpleClient {
     pub fn register(self) -> ::pyroduct::module_capability::Client<Self> {
         let __config_buf = ::rkyv::to_bytes::<::rkyv::rancor::Error>(&self)
             .expect("Failed to serialize config");
-        let mut new_self = ::pyroduct::module_capability::Client {
-            data: self,
-            __config_buf,
-        };
         ::pyroduct::module_capability::access::call_from_wasm::<
-            SimpleClient,
             (),
             (),
             _,
         >(
             "__stateful_server__new_client",
-            Some(&self),
+            Some(&__config_buf),
             None,
             |
                 client_state_ptr: *const u8,
@@ -116,19 +110,21 @@ impl SimpleClient {
                 }
             },
         );
-        new_self
+        ::pyroduct::module_capability::Client {
+            data: self,
+            __config_buf,
+        }
     }
 }
 impl ::pyroduct::module_capability::Client<SimpleClient> {
     pub fn call(&self) -> f32 {
         ::pyroduct::module_capability::access::call_from_wasm::<
-            SimpleClient,
             (),
             f32,
             _,
         >(
             "__stateful_server__call",
-            Some(&self),
+            Some(&self.buffer()),
             None,
             |
                 client_state_ptr: *const u8,
@@ -176,7 +172,7 @@ pub extern "C" fn __stateful_server__ffi_init(
             ::pyroduct::capability::safe_lifecycle::EmptyConfig,
             StatefulServer,
             _,
-        >(config_ptr, config_len, || StatefulServer::new())
+        >(config_ptr, config_len, |_| StatefulServer::new())
     }
 }
 #[unsafe(no_mangle)]
