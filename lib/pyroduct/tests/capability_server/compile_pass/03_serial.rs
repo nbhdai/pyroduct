@@ -25,7 +25,9 @@ impl SerialServer {
         self.ids.clear(); 
     }
 
-    fn new_client(&self, _client: &SerialHandle) -> Result<(), String>  {}
+    fn new_client(&self, _client: &SerialHandle) -> Result<(), String>  {
+        Ok(())
+    }
     
     fn close(&self, _client: &SerialHandle) -> Result<(), String> {
         Ok(())
