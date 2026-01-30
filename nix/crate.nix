@@ -1,4 +1,4 @@
-{ lib, pkgs, craneLibNative, craneLibWasm, workspaceRoot, pyroduct }:
+{ lib, pkgs, craneLibNative, craneLibWasm, pyroductSource }:
 
 let
   # Helper to convert a Nix attrset to TOML
@@ -18,11 +18,11 @@ let
 
   # --- Import the separated Builders ---
   buildCapabilityImpl = import ./build_capability.nix {
-    inherit pkgs lib craneLibNative toToml mkDep;
+    inherit pkgs lib craneLibNative toToml mkDep pyroductSource;
   };
 
   buildModuleImpl = import ./build_module.nix {
-    inherit pkgs lib craneLibWasm toToml mkDep;
+    inherit pkgs lib craneLibWasm toToml mkDep pyroductSource;
   };
 
   # --- Generator Script Logic ---

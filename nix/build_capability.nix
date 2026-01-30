@@ -1,4 +1,4 @@
-{ pkgs, lib, craneLibNative, toToml, mkDep }:
+{ pkgs, lib, craneLibNative, toToml, mkDep, pyroductSource }:
 
 {
   name,
@@ -10,7 +10,6 @@
   moduleDependencies ? [],
   sharedDependencies ? [],
   extraCargoToml ? {},
-  pyroduct ? { workspace = "pyroduct"; }
   ...
 }: 
 
@@ -48,7 +47,7 @@ let
     ) // {
       # Pyroduct path is injected here. 
       # If pyroductPath is a store path, this becomes an absolute path in the generated toml.
-      pyroduct = pyroduct;
+      pyroduct = { path = pyroductSource; };
     };
   } // extraCargoToml;
 

@@ -1,4 +1,4 @@
-{ pkgs, lib, craneLibWasm, toToml, mkDep }:
+{ pkgs, lib, craneLibWasm, toToml, mkDep, pyroductSource }:
 
 {
   name,
@@ -9,7 +9,7 @@
   capabilities ? [],
   dependencies ? [],
   extraCargoToml ? {},
-  pyroduct ? { workspace = "pyroduct"; }
+  pyroduct ? { workspace = "pyroduct"; },
 }: 
 
 let
@@ -41,7 +41,7 @@ let
         }; 
       }) capabilities)
     ) // {
-      pyroduct = pyroduct;
+      pyroduct = { path = pyroductSource; };
       tracing = "*";
     };
   } // extraCargoToml;

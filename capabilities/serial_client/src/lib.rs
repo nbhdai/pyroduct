@@ -1,4 +1,3 @@
-// Serial port capability
 #[pyroduct::config]
 pub struct SerialConfig {
     pub allowed_ports: Vec<AllowedPort>,

@@ -1,8 +1,8 @@
 [package]
 name = "pyroduct"
-version.workspace = true
-authors.workspace = true
-edition.workspace = true
+version = "0.1.0"
+authors = ["Sven Cattell"]
+edition = "2024"
 
 [features]
 capability = []

@@ -34,11 +34,15 @@
         craneLibWasm = (crane.mkLib pkgs).overrideToolchain wasmToolchain;
         craneLibNightly = (crane.mkLib pkgs).overrideToolchain nightlyToolchain;
 
+        pyroductSource = pkgs.runCommand "pyroduct-lib-source" { } ''
+          mkdir -p $out
+          cp -r ${self}/lib/* $out/
+        '';
+
         # Import our custom library
         myLib = import ./nix/crate.nix {
           inherit lib pkgs craneLibNative craneLibWasm;
-          workspaceRoot = ./.;
-          pyroduct = { git = "ssh://git@github.com/nbhdai/pyroduct.git"; version = "0.1.0"; };
+          pyroductSource = "${pyroductSource}/pyroduct";
         };
 
         # Build all capabilities first
