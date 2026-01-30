@@ -1,57 +1,17 @@
-{ pkgs, lib, craneLibNative, toToml, mkDep, pyroductSource }:
+{ pkgs, lib, craneLibNative, makeCapabilityToml }:
 
-{
+args@{
   name,
   version ? "0.1.0",
   src,
-  # Optional: only needed if you want to generate a Cargo.toml back to disk for dev
   srcPath ? null,
-  hostDependencies ? [],
-  moduleDependencies ? [],
-  sharedDependencies ? [],
-  extraCargoToml ? {},
   ...
 }: 
 
 let
-  # --- Dependency Formatting ---
-  formatDep = dep: 
-    if builtins.isString dep then { name = dep; version = "*"; }
-    else if builtins.isAttrs dep then dep
-    else throw "Invalid dependency format";
-
-  hostDeps = map formatDep hostDependencies;
-  moduleDeps = map formatDep moduleDependencies;
-  sharedDeps = map formatDep sharedDependencies;
-  
-  hostFeatureList = map (d: "dep:${d.name}") hostDeps;
-  moduleFeatureList = map (d: "dep:${d.name}") moduleDeps;
-
-  # --- 1. Generate Cargo.toml Content ---
-  cargoToml = {
-    package = {
-      inherit name version;
-      edition = "2024";
-      authors = [ "Sven Cattell" ];
-    };
-    lib = { crate-type = [ "cdylib" "rlib" ]; };
-    features = {
-      default = [];
-      capability = hostFeatureList;
-      module = moduleFeatureList;
-    };
-    dependencies = lib.listToAttrs (
-      (map (d: { name = d.name; value = mkDep d; }) sharedDeps) ++
-      (map (d: { name = d.name; value = mkDep (d // { optional = true; }); }) hostDeps) ++
-      (map (d: { name = d.name; value = mkDep (d // { optional = true; }); }) moduleDeps)
-    ) // {
-      # Pyroduct path is injected here. 
-      # If pyroductPath is a store path, this becomes an absolute path in the generated toml.
-      pyroduct = { path = pyroductSource; };
-    };
-  } // extraCargoToml;
-
-  cargoTomlContent = toToml cargoToml;
+  # --- 1. Generate Cargo.toml Content using the helper ---
+  # Pass all args through; the helper picks what it needs (dependencies, etc.)
+  cargoTomlContent = makeCapabilityToml args;
 
   # --- 2. Create the Source Tree with Generated Cargo.toml ---
   srcWithCargoToml = pkgs.runCommand "${name}-src" {} ''
@@ -64,14 +24,13 @@ ${cargoTomlContent}
 CARGO_TOML_EOF
   '';
 
-  # --- 3. Compile the Native Binary (Intermediate Step) ---
+  # --- 3. Compile the Native Binary ---
   compiledBinary = craneLibNative.buildPackage {
     pname = name;
     inherit version;
     src = srcWithCargoToml;
-    cargoExtraArgs = "--features capability -p ${name}";
-    cargoVendorDir = null;
-    # We only care about the library output
+    cargoExtraArgs = "--features host -p ${name}";
+    
     installPhase = ''
       mkdir -p $out/lib
       cp target/release/*.so $out/lib/ 2>/dev/null || \
@@ -81,6 +40,15 @@ CARGO_TOML_EOF
   };
 
   # --- 4. Generate Metadata/Docs ---
+  # Note: We reconstruct feature list slightly redundantly here or we could return it from toml gen
+  # For now, simplistic recreation is fine:
+  hostDependencies = args.hostDependencies or [];
+  moduleDependencies = args.moduleDependencies or [];
+  
+  formatDepName = d: if builtins.isString d then d else d.name;
+  hostFeatureList = map (d: "dep:${formatDepName d}") hostDependencies;
+  moduleFeatureList = map (d: "dep:${formatDepName d}") moduleDependencies;
+
   docsJson = pkgs.writeText "docs.json" (builtins.toJSON {
     inherit name version;
     type = "capability";
@@ -88,10 +56,6 @@ CARGO_TOML_EOF
   });
 
   # --- 5. Assemble the Final Artifact ---
-  # Structure:
-  # /crate (source)
-  # /libname.so (binary)
-  # /docs.json
   artifact = pkgs.runCommand "${name}-artifact" {} ''
     mkdir -p $out/crate
     
@@ -105,21 +69,16 @@ CARGO_TOML_EOF
     cp ${docsJson} $out/docs.json
   '';
 
-  # Determine binary extension for helper path
   libExt = if pkgs.stdenv.isDarwin then "dylib" else "so";
 
 in {
   inherit name version cargoTomlContent srcPath;
   pname = name;
-  
-  # The output is the full artifact folder in /nix/store
   output = artifact;
   
-  # For convenience, pointers to specific parts
   src = "${artifact}/crate";
   binaryPath = "${artifact}/lib${name}.${libExt}";
   docsPath = "${artifact}/docs.json";
   
-  # Kept for backward compatibility if needed
   hostPlugin = compiledBinary;
 }

@@ -41,7 +41,7 @@ let
         }; 
       }) capabilities)
     ) // {
-      pyroduct = { path = pyroductSource; };
+      pyroduct = { path = "../lib/pyroduct"; };
       tracing = "*";
     };
   } // extraCargoToml;

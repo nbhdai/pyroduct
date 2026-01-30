@@ -15,7 +15,7 @@ struct HttpResponse {
 }
 
 #[module(output = "response")]
-fn http_call(input: &HttpRequestRef<'_>) -> Result<HttpResponse, String> {
+fn http_call(request: &HttpRequestRef<'_>) -> Result<HttpResponse, String> {
     let http = HttpClient.register()?;
     
     let body = match input.method {
