@@ -5,7 +5,7 @@ myLib.buildModule {
   src = ./.;
   
   capabilities = [
-    capabilities.proto_reporter
+    capabilities.rag
   ];
   
   dependencies = [

@@ -52,9 +52,10 @@
 
         # Build all modules
         modules = {
-          proto_module = (import ./proto/modules/module/module.nix { inherit myLib capabilities; });
-          proto_module_2 = (import ./proto/modules/module_2/module.nix { inherit myLib capabilities; });
-          proto_module_3 = (import ./proto/modules/module_3/module.nix { inherit myLib capabilities; });
+          basic = (import ./modules/basic/module.nix { inherit myLib capabilities; });
+          basic_capability = (import ./modules/basic_capability/module.nix { inherit myLib capabilities; });
+          rag_capability = (import ./modules/rag_capability/module.nix { inherit myLib capabilities; });
+          struct_io = (import ./modules/struct_io/module.nix { inherit myLib capabilities; });
         };
 
         # Build the harness (still using traditional approach for now)
