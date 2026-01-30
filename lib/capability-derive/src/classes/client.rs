@@ -33,13 +33,17 @@ impl CapClient {
             ));
         }
 
-        // 3. Validate Fields (Must be Named e.g., { x: i32 })
+        // 3. Handle different field types
         let mut fields = match input.fields {
             Fields::Named(named) => named,
+            Fields::Unit => {
+                // Unit struct - create empty named fields
+                syn::parse_quote!({ })
+            }
             _ => {
                 return Err(syn::Error::new_spanned(
                     input,
-                    "capability_client only supports structs with named fields",
+                    "capability_client only supports structs with named fields or unit structs",
                 ));
             }
         };
