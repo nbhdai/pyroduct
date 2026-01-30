@@ -12,17 +12,17 @@ pub trait Simple {
 }
 
 
-#[pyroduct::capability_server(methods = Simple)]
+#[pyroduct::capability_server]
 pub struct StatefulServer;
 
 #[pyroduct::capability_impl]
 impl Simple for StatefulServer {
-    fn new_client(&self, _client: &SimpleClient) {  }
-    fn call(&self, _client: &SimpleClient)  -> f32 { 42.0 }
+    fn new_client(&self, client: &SimpleClient) {  }
+    fn call(&self, client: &SimpleClient)  -> f32 { 42.0 }
 }
 
 impl StatefulServerInit for StatefulServer {
-    fn new(_config: &()) -> Self { Self }
+    fn new(config: &()) -> Self { Self }
     fn default() -> Self { Self }
     fn reset(&mut self) {}
 }

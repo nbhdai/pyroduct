@@ -1,7 +1,5 @@
-use serde::{Deserialize, Serialize};
-
 // 1. Configuration
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(serde::Deserialize)]
 pub struct SerialConfig {
     pub ports: Vec<String>,
 }
@@ -19,7 +17,7 @@ pub trait SerialPool {
     type Client = SerialHandle;
     
     // Constructor - returns the Client type directly
-    fn open(port: String, baud: u32) -> SerialHandle {
+    fn open(_port: String, _baud: u32) -> SerialHandle {
         SerialHandle { id: 0 }
     }
     
@@ -28,14 +26,17 @@ pub trait SerialPool {
 }
 
 // 4. Server State
-#[pyroduct::capability_server(config = SerialConfig)]
+#[pyroduct::capability_server(methods = SerialPool, config = SerialConfig)]
 pub struct SerialServer {
     next_id: u64,
 }
 
 // 5. Lifecycle Implementation
-impl state::SerialServerInit for state::SerialServer {
-    fn new(config: &SerialConfig) -> Self { 
+impl SerialServerInit for SerialServer {
+    fn new(_config: &SerialConfig) -> Self { 
+        Self { next_id: 0 } 
+    }
+    fn default() -> Self { 
         Self { next_id: 0 } 
     }
     fn reset(&mut self) { 
@@ -44,7 +45,7 @@ impl state::SerialServerInit for state::SerialServer {
 }
 
 // 6. Trait Implementation  
-impl methods::SerialPool for state::SerialServer {
+impl SerialPool for SerialServer {
     fn new_client(&self, _client: &SerialHandle) -> () {}
     
     fn close(&self, _client: &SerialHandle) -> Result<(), String> {

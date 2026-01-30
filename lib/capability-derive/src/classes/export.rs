@@ -21,6 +21,7 @@ impl CapabilityDefTrait {
     ///    - Array length and capacity
     pub fn generate_ffi_exports(&self) -> TokenStream {
         let class_name_static = &self.ident.class_name_static();
+        let class_name_string = class_name_static.to_string().to_lowercase(); // Matches common trace convention
 
         // Get all capability FFIs (includes constructor + methods)
         let capability_ffis = self.capability_ffis();
@@ -53,9 +54,11 @@ impl CapabilityDefTrait {
         // Generate the static export array name
         let exports_array_name = quote::format_ident!("{}__METHODS", class_name_static);
         
+        // FIX: Added generation of the Module Name Constant (#class_name_static).
         quote! {
             #(#capability_ffi_funcs)*
 
+            const #class_name_static: &'static str = #class_name_string;
             #(#plugin_static_str)*
             const #exports_array_name: [::pyroduct::capability_host::ffi::FunctionExport; #num_exports] = [
                 #(#plugin_exports),*
@@ -63,15 +66,22 @@ impl CapabilityDefTrait {
         }
     }
 
-    pub fn generate_wasm_imports(&self) -> Vec<TokenStream> {
-        // Get all capability FFIs (includes constructor + methods)
+    
+    pub fn generate_wasm_imports(&self) -> TokenStream {
         let capability_ffis = self.capability_ffis();
-
-        // Generate all WASM import declarations
-        capability_ffis
+        let declarations = capability_ffis
             .iter()
-            .map(|ffi| ffi.generate_client_wasm())
-            .collect()
+            .map(|ffi| ffi.generate_client_wasm());
+            
+        quote! {
+            pub mod wasm {
+                use super::*;
+                #[link(wasm_import_module = "env")]
+                unsafe extern "C" {
+                    #(#declarations)*
+                }
+            }
+        }
     }
 }
 
@@ -117,6 +127,7 @@ mod tests {
         let expected = quote! {
             #(#capability_ffi_funcs)*
 
+            const __TEST_TRAIT__TEST_SERVER: &'static str = "__test_trait__test_server";
             const __TEST_TRAIT__TEST_SERVER__NEW_CLIENT: &'static str = "__test_trait__test_server__new_client";
             const __TEST_TRAIT__TEST_SERVER__GET_VALUE: &'static str = "__test_trait__test_server__get_value";
             const __TEST_TRAIT__TEST_SERVER__ASYNC_OP: &'static str = "__test_trait__test_server__async_op";

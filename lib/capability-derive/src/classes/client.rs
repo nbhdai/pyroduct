@@ -171,7 +171,6 @@ impl CapClient {
         let mut new_attrs = Vec::new();
 
         new_attrs.push(parse_quote!(#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]));
-        new_attrs.push(parse_quote!(#[rkyv(compare(PartialEq), derive(Debug))]));
 
         for attr in input_attrs {
             if attr.path().is_ident("derive") {
@@ -250,7 +249,6 @@ mod tests {
         // Note: rkyv attributes are prepended, config_buf is appended, and CapabilityClient is implemented.
         let expected = quote! {
             #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-            #[rkyv(compare(PartialEq), derive(Debug))]
             pub struct MyClient {
                 pub id: u32,
                 #[rkyv(with = rkyv::with::Skip)]
@@ -284,7 +282,6 @@ mod tests {
         // Note: 'serde(skip)' should be added to the buffer field because Serialize/Deserialize were detected.
         let expected = quote! {
             #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-            #[rkyv(compare(PartialEq), derive(Debug))]
             #[derive(Clone, Serialize, Deserialize)]
             pub struct MyClient {
                 pub id: u32,
@@ -323,7 +320,6 @@ mod tests {
         // - The buffer field is NOT included in the debug output.
         let expected = quote! {
             #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-            #[rkyv(compare(PartialEq), derive(Debug))]
             #[derive(Clone)]
             pub struct MyDebugClient {
                 pub name: String,

@@ -229,7 +229,6 @@ const _: () = {
         }
     }
 };
-#[rkyv(compare(PartialEq), derive(Debug))]
 pub struct SerialHandle {
     pub id: u64,
     #[rkyv(with = rkyv::with::Skip)]
@@ -309,24 +308,6 @@ where
     }
 }
 #[automatically_derived]
-impl ::core::fmt::Debug for ArchivedSerialHandle
-where
-    u64: ::rkyv::Archive,
-    rkyv::with::Skip: ::rkyv::with::ArchiveWith<Vec<u8>>,
-{
-    #[inline]
-    fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
-        ::core::fmt::Formatter::debug_struct_field2_finish(
-            f,
-            "ArchivedSerialHandle",
-            "id",
-            &self.id,
-            "__config_buf",
-            &&self.__config_buf,
-        )
-    }
-}
-#[automatically_derived]
 ///The resolver for an archived [`SerialHandle`]
 pub struct SerialHandleResolver
 where
@@ -353,32 +334,6 @@ where
         <rkyv::with::Skip as ::rkyv::with::ArchiveWith<
             Vec<u8>,
         >>::resolve_with(&self.__config_buf, resolver.__config_buf, field_out);
-    }
-}
-impl PartialEq<ArchivedSerialHandle> for SerialHandle
-where
-    u64: ::rkyv::Archive,
-    rkyv::with::Skip: ::rkyv::with::ArchiveWith<Vec<u8>>,
-    <u64 as ::rkyv::Archive>::Archived: PartialEq<u64>,
-    <rkyv::with::Skip as ::rkyv::with::ArchiveWith<
-        Vec<u8>,
-    >>::Archived: PartialEq<Vec<u8>>,
-{
-    fn eq(&self, other: &ArchivedSerialHandle) -> bool {
-        true && other.id.eq(&self.id) && other.__config_buf.eq(&self.__config_buf)
-    }
-}
-impl PartialEq<SerialHandle> for ArchivedSerialHandle
-where
-    u64: ::rkyv::Archive,
-    rkyv::with::Skip: ::rkyv::with::ArchiveWith<Vec<u8>>,
-    <u64 as ::rkyv::Archive>::Archived: PartialEq<u64>,
-    <rkyv::with::Skip as ::rkyv::with::ArchiveWith<
-        Vec<u8>,
-    >>::Archived: PartialEq<Vec<u8>>,
-{
-    fn eq(&self, other: &SerialHandle) -> bool {
-        other.eq(self)
     }
 }
 unsafe impl ::rkyv::traits::Portable for ArchivedSerialHandle
@@ -450,24 +405,24 @@ impl ::pyroduct::module_capability::CapabilityClient for SerialHandle {
     }
 }
 impl SerialHandle {
-    pub fn open(port: String, baud: u32) -> Self {
+    pub fn open(port: String, baud: u32) -> SerialHandle {
         let mut new_self = (|| {
             SerialHandle {
                 id: 0,
                 __config_buf: std::vec::Vec::new(),
             }
         })();
-        new_self.__config_buf = ::rkyv::to_bytes::<_, 256>(&new_self)
+        new_self.__config_buf = ::rkyv::to_bytes::<::rkyv::rancor::Error>(&new_self)
             .expect("Failed to serialize config")
             .into_vec();
         ::pyroduct::module_capability::access::call_from_wasm::<
             SerialHandle,
             (),
-            Self,
+            (),
             _,
         >(
             "__serial_pool__serial_server__new_client",
-            Some(new_self),
+            Some(&new_self),
             None,
             |
                 client_state_ptr: *const u8,
@@ -484,7 +439,8 @@ impl SerialHandle {
                     )
                 }
             },
-        )
+        );
+        new_self
     }
     pub fn close(&self) -> Result<(), String> {
         ::pyroduct::module_capability::access::call_from_wasm::<
@@ -494,7 +450,7 @@ impl SerialHandle {
             _,
         >(
             "__serial_pool__serial_server__close",
-            Some(self),
+            Some(&self),
             None,
             |
                 client_state_ptr: *const u8,
@@ -514,148 +470,95 @@ impl SerialHandle {
         )
     }
 }
-#[link(wasm_import_module = "env")]
-extern "C" {
-    pub fn __serial_pool__serial_server__new_client__wasm(
-        cs_ptr: *const u8,
-        cs_len: usize,
-        in_ptr: *const u8,
-        in_len: usize,
-    ) -> *const u8;
-    pub fn __serial_pool__serial_server__close__wasm(
-        cs_ptr: *const u8,
-        cs_len: usize,
-        in_ptr: *const u8,
-        in_len: usize,
-    ) -> *const u8;
+pub mod wasm {
+    use super::*;
+    #[link(wasm_import_module = "env")]
+    unsafe extern "C" {
+        pub fn __serial_pool__serial_server__new_client__wasm(
+            cs_ptr: *const u8,
+            cs_len: usize,
+            in_ptr: *const u8,
+            in_len: usize,
+        ) -> *const u8;
+        pub fn __serial_pool__serial_server__close__wasm(
+            cs_ptr: *const u8,
+            cs_len: usize,
+            in_ptr: *const u8,
+            in_len: usize,
+        ) -> *const u8;
+    }
 }
-pub mod methods {
-    pub trait SerialPool {
-        type Client = SerialHandle;
-        fn new_client(&self, client: &SerialHandle) -> ();
-        fn close(&self, client: &SerialHandle) -> Result<(), String>;
-    }
-    #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn __serial_pool__serial_server__new_client__ffi(
-        client_state_ptr: *const u8,
-        client_state_len: usize,
-        input_ptr: *const u8,
-        input_len: usize,
-        capability_state_ptr: *mut std::ffi::c_void,
-    ) -> ::pyroduct::capability_host::ffi::FfiResult {
-        ::pyroduct::capability::safe_call::sc_call::<
-            SerialServer,
-            SerialHandle,
-            Self,
-            _,
-        >(
-            client_state_ptr,
-            client_state_len,
-            input_ptr,
-            input_len,
-            capability_state_ptr,
-            |state, client| state.new_client(client),
-        )
-    }
-    #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn __serial_pool__serial_server__close__ffi(
-        client_state_ptr: *const u8,
-        client_state_len: usize,
-        input_ptr: *const u8,
-        input_len: usize,
-        capability_state_ptr: *mut std::ffi::c_void,
-    ) -> ::pyroduct::capability_host::ffi::FfiResult {
-        ::pyroduct::capability::safe_call::sc_call::<
-            SerialServer,
-            SerialHandle,
-            Result<(), String>,
-            _,
-        >(
-            client_state_ptr,
-            client_state_len,
-            input_ptr,
-            input_len,
-            capability_state_ptr,
-            |state, client| state.close(client),
-        )
-    }
-    const __SERIAL_POOL__SERIAL_SERVER__NEW_CLIENT: &'static str = "__serial_pool__serial_server__new_client";
-    const __SERIAL_POOL__SERIAL_SERVER__CLOSE: &'static str = "__serial_pool__serial_server__close";
-    const __SERIAL_POOL__SERIAL_SERVER__METHODS: [::pyroduct::capability_host::ffi::FunctionExport; 2usize] = [
-        ::pyroduct::capability_host::ffi::FunctionExport {
-            module: __SERIAL_POOL__SERIAL_SERVER.as_ptr(),
-            module_len: __SERIAL_POOL__SERIAL_SERVER.len(),
-            name: __SERIAL_POOL__SERIAL_SERVER__NEW_CLIENT.as_ptr(),
-            name_len: __SERIAL_POOL__SERIAL_SERVER__NEW_CLIENT.len(),
-            func: ::pyroduct::capability_host::ffi::Function::Sync(
-                __serial_pool__serial_server__new_client__ffi,
-            ),
-        },
-        ::pyroduct::capability_host::ffi::FunctionExport {
-            module: __SERIAL_POOL__SERIAL_SERVER.as_ptr(),
-            module_len: __SERIAL_POOL__SERIAL_SERVER.len(),
-            name: __SERIAL_POOL__SERIAL_SERVER__CLOSE.as_ptr(),
-            name_len: __SERIAL_POOL__SERIAL_SERVER__CLOSE.len(),
-            func: ::pyroduct::capability_host::ffi::Function::Sync(
-                __serial_pool__serial_server__close__ffi,
-            ),
-        },
-    ];
+pub trait SerialPool {
+    fn new_client(&self, client: &SerialHandle) -> ();
+    fn close(&self, client: &SerialHandle) -> Result<(), String>;
 }
-pub mod state {
-    pub struct SerialServer {
-        next_id: u64,
-    }
-    pub trait SerialServerInit {
-        fn new(config: &SerialConfig) -> Self;
-        fn reset(&mut self);
-    }
-    #[unsafe(no_mangle)]
-    pub extern "C" fn __serial_server__ffi_init(
-        config_ptr: *const u8,
-        config_len: usize,
-    ) -> ::pyroduct::capability_host::ffi::FfiInitResult {
-        unsafe {
-            ::pyroduct::capability::safe_lifecycle::execute_safe_init::<
-                SerialConfig,
-                SerialServer,
-                _,
-            >(
-                config_ptr,
-                config_len,
-                |config| <SerialServer as SerialServerInit>::new(&config),
-            )
-        }
-    }
-    #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn __serial_server__ffi_drop(state: *mut std::ffi::c_void) {
-        if !state.is_null() {
-            drop(unsafe { Box::from_raw(state as *mut SerialServer) });
-        }
-    }
-    #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn __serial_server__ffi_reset(
-        state: *mut std::ffi::c_void,
-    ) -> ::pyroduct::capability_host::ffi::FfiResult {
-        ::pyroduct::capability::safe_lifecycle::execute_safe_reset::<
-            SerialServer,
-            _,
-        >(state, |state| <SerialServer as SerialServerInit>::reset(state))
-    }
-    const SerialServer__EXPORT: ::pyroduct::capability_host::ffi::ClassExport = ::pyroduct::capability_host::ffi::ClassExport {
-        ptr: super::methods::SerialServer__METHODS.as_ptr(),
-        init: ::pyroduct::capability_host::ffi::ClassInitFn::Sync(
-            __serial_server__ffi_init,
-        ),
-        drop: ::pyroduct::capability_host::ffi::ClassDropFn::Sync(
-            __serial_server__ffi_drop,
-        ),
-        reset: ::pyroduct::capability_host::ffi::ClassResetFn::Sync(
-            __serial_server__ffi_reset,
-        ),
-        len: super::methods::SerialServer__METHODS.len(),
-    };
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __serial_pool__serial_server__new_client__ffi(
+    client_state_ptr: *const u8,
+    client_state_len: usize,
+    input_ptr: *const u8,
+    input_len: usize,
+    capability_state_ptr: *mut std::ffi::c_void,
+) -> ::pyroduct::capability_host::ffi::FfiResult {
+    ::pyroduct::capability::safe_call::sc_call::<
+        SerialServer,
+        SerialHandle,
+        (),
+        _,
+    >(
+        client_state_ptr,
+        client_state_len,
+        input_ptr,
+        input_len,
+        capability_state_ptr,
+        |state, client| state.new_client(&client),
+    )
 }
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __serial_pool__serial_server__close__ffi(
+    client_state_ptr: *const u8,
+    client_state_len: usize,
+    input_ptr: *const u8,
+    input_len: usize,
+    capability_state_ptr: *mut std::ffi::c_void,
+) -> ::pyroduct::capability_host::ffi::FfiResult {
+    ::pyroduct::capability::safe_call::sc_call::<
+        SerialServer,
+        SerialHandle,
+        Result<(), String>,
+        _,
+    >(
+        client_state_ptr,
+        client_state_len,
+        input_ptr,
+        input_len,
+        capability_state_ptr,
+        |state, client| state.close(&client),
+    )
+}
+const __SERIAL_POOL__SERIAL_SERVER: &'static str = "__serial_pool__serial_server";
+const __SERIAL_POOL__SERIAL_SERVER__NEW_CLIENT: &'static str = "__serial_pool__serial_server__new_client";
+const __SERIAL_POOL__SERIAL_SERVER__CLOSE: &'static str = "__serial_pool__serial_server__close";
+const __SERIAL_POOL__SERIAL_SERVER__METHODS: [::pyroduct::capability_host::ffi::FunctionExport; 2usize] = [
+    ::pyroduct::capability_host::ffi::FunctionExport {
+        module: __SERIAL_POOL__SERIAL_SERVER.as_ptr(),
+        module_len: __SERIAL_POOL__SERIAL_SERVER.len(),
+        name: __SERIAL_POOL__SERIAL_SERVER__NEW_CLIENT.as_ptr(),
+        name_len: __SERIAL_POOL__SERIAL_SERVER__NEW_CLIENT.len(),
+        func: ::pyroduct::capability_host::ffi::Function::Sync(
+            __serial_pool__serial_server__new_client__ffi,
+        ),
+    },
+    ::pyroduct::capability_host::ffi::FunctionExport {
+        module: __SERIAL_POOL__SERIAL_SERVER.as_ptr(),
+        module_len: __SERIAL_POOL__SERIAL_SERVER.len(),
+        name: __SERIAL_POOL__SERIAL_SERVER__CLOSE.as_ptr(),
+        name_len: __SERIAL_POOL__SERIAL_SERVER__CLOSE.len(),
+        func: ::pyroduct::capability_host::ffi::Function::Sync(
+            __serial_pool__serial_server__close__ffi,
+        ),
+    },
+];
 impl state::SerialServerInit for state::SerialServer {
     fn new(config: &SerialConfig) -> Self {
         Self { next_id: 0 }

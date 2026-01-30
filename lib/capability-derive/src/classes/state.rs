@@ -1,27 +1,39 @@
 //! #[capability_server] - Marks a struct as server-side implementation
 
 use heck::AsSnakeCase;
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::punctuated::Punctuated;
 use syn::{Expr, Ident, ItemStruct, Meta, Result, Token, Type, parse::Parser};
 
 #[derive(Debug, Clone)]
 pub struct ServerAttrs {
-    pub config: Type,
+    pub trait_tn: Ident,
+    pub config: Option<Type>,
     pub is_async: bool,
 }
 
 pub fn parse_server_attrs(attr: TokenStream) -> Result<ServerAttrs> {
+    let mut trait_tn: Option<Ident> = None;
     let mut config: Option<Type> = None;
 
     let parser = Punctuated::<Meta, Token![,]>::parse_terminated;
     let metas = parser.parse2(attr)?;
     let mut is_async = false;
 
-    for meta in metas {
-        match &meta {
+    for meta in &metas {
+        match meta {
             Meta::NameValue(nv) => {
+                if nv.path.is_ident("methods") {
+                    if let Expr::Path(path) = &nv.value {
+                        match path.path.get_ident() {
+                            Some(ident) => trait_tn = Some(ident.clone()),
+                            None => return Err(syn::Error::new_spanned(&meta, "NNeed a simple ident: #[capability(methods = MyTrait)]")),
+                        }
+                    } else {
+                        return Err(syn::Error::new_spanned(&meta, "Need a simple ident: #[capability(methods = MyTrait)]"))
+                    }
+                }
                 if nv.path.is_ident("config") {
                     if let Expr::Path(path) = &nv.value {
                         config = Some(Type::Path(syn::TypePath {
@@ -39,10 +51,13 @@ pub fn parse_server_attrs(attr: TokenStream) -> Result<ServerAttrs> {
             _ => {}
         }
     }
-    let config = config
-        .ok_or_else(|| syn::Error::new(Span::call_site(), "Missing `config = Struct` attribute"))?;
+
+    let trait_tn = trait_tn.ok_or_else(|| {
+        syn::Error::new_spanned(&metas, "Missing `methods` attribute")
+    })?;
 
     Ok(ServerAttrs {
+        trait_tn,
         config,
         is_async,
     })
@@ -75,11 +90,16 @@ impl CapServer {
     pub fn generate_init_trait(&self) -> TokenStream {
         let init_trait_name = &self.init_trait_name;
         let struct_vis = self.struct_vis.clone();
-        let config_type = &self.attrs.config;
+        let new_fn = if let Some(config_type) = &self.attrs.config {
+            quote! {fn new(config: &#config_type) -> Self;}
+        } else  {
+            quote! {fn new(config: &()) -> Self;}
+        };
 
         quote! {
             #struct_vis trait #init_trait_name {
-                fn new(config: &#config_type) -> Self;
+                #new_fn
+                fn default() -> Self;
                 fn reset(&mut self);
             }
         }
@@ -94,7 +114,6 @@ impl CapServer {
 
     pub fn generate_init_fn(&self) -> TokenStream {
         let struct_name = self.struct_name.clone();
-        let config_type = &self.attrs.config;
         let init_trait_name = &self.init_trait_name;
         let init_ffi_name = self.export_init_ident();
 
@@ -106,7 +125,7 @@ impl CapServer {
                     config_len: usize
                 ) -> ::pyroduct::capability_host::ffi::FfiBorrowedFutureObjectResult<'a> {
                     unsafe {
-                        ::pyroduct::capability::safe_lifecycle::execute_safe_async_init::<#config_type, #struct_name, _, _>(
+                        ::pyroduct::capability::safe_lifecycle::execute_safe_async_init(
                             config_ptr,
                             config_len,
                             |config| async move { <#struct_name as #init_trait_name>::new(&config).await },
@@ -123,7 +142,7 @@ impl CapServer {
                     config_len: usize
                 ) -> ::pyroduct::capability_host::ffi::FfiInitResult {
                     unsafe {
-                        ::pyroduct::capability::safe_lifecycle::execute_safe_init::<#config_type, #struct_name, _>(
+                        ::pyroduct::capability::safe_lifecycle::execute_safe_init(
                             config_ptr,
                             config_len,
                             |config| <#struct_name as #init_trait_name>::new(&config)
@@ -229,8 +248,14 @@ impl CapServer {
         let reset_export = self.generate_reset_export();
 
         // Generate the static export array name
-        let exports_array_name = quote::format_ident!("{}__METHODS", class_name_static);
-        let plugin_exports_name = quote::format_ident!("{}__EXPORT", class_name_static);
+        let exports_array_name = quote::format_ident!("__{}__{}__METHODS",  
+            AsSnakeCase(self.attrs.trait_tn.to_string()).to_string().to_uppercase(),
+            AsSnakeCase(class_name_static.to_string()).to_string().to_uppercase(),
+        );
+        let plugin_exports_name = quote::format_ident!("__{}__{}__EXPORT", 
+            AsSnakeCase(self.attrs.trait_tn.to_string()).to_string().to_uppercase(),
+            AsSnakeCase(class_name_static.to_string()).to_string().to_uppercase(),
+        );
         
         quote! {
             #init_ffi_func
@@ -239,11 +264,11 @@ impl CapServer {
 
             // Generate the ClassExport struct
             const #plugin_exports_name: ::pyroduct::capability_host::ffi::ClassExport = ::pyroduct::capability_host::ffi::ClassExport {
-                ptr: super::methods::#exports_array_name.as_ptr(),
+                ptr: #exports_array_name.as_ptr(),
                 init: #init_export,
                 drop: #drop_export,
                 reset: #reset_export,
-                len: super::methods::#exports_array_name.len(),
+                len: #exports_array_name.len(),
             };
         }
     }

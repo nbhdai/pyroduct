@@ -204,10 +204,10 @@ impl CapabilityFuncFFI {
         let (client_type, client_expr) = if let Some(class) = &self.class {
             if self.constructor {
                 let client_tn = &class.client_tn;
-                (quote!(#client_tn), quote!(Some(new_self)))
+                (quote!(#client_tn), quote!(Some(&new_self)))
             } else {
                 let client_tn = &class.client_tn;
-                (quote!(#client_tn), quote!(Some(self)))
+                (quote!(#client_tn), quote!(Some(&self)))
             }
         } else {
             (quote!(()), quote!(None))
@@ -316,7 +316,7 @@ impl CapabilityFuncFFI {
             closure_params.push(quote!(state));
             call_args.push(quote!(state));
             closure_params.push(quote!(client));
-            call_args.push(quote!(client));
+            call_args.push(quote!(&client));
         }
 
         // Input parameter

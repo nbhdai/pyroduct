@@ -1,6 +1,4 @@
-use pyroduct::capability;
-
-#[capability]
+#[pyroduct::capability(GreeterServer)]
 trait Greeter {
     type Client = GreeterClient;
     
@@ -11,17 +9,20 @@ trait Greeter {
     fn greet(name: String) -> String;
 }
 
-#[capability_client]
+#[pyroduct::capability_client]
 pub struct GreeterClient {}
 
-#[capability_server(config = GreeterConfig)]
+#[derive(serde::Deserialize)]
+pub struct GreeterConfig {
+    data: u32
+}
+
+#[pyroduct::capability_server(methods = Greeter, config = GreeterConfig)]
 pub struct GreeterServer;
 
-pub struct GreeterConfig;
 
+#[pyroduct::capability_impl]
 impl Greeter for GreeterServer {
-    type Client = GreeterClient;
-    
     fn new_client(&self, _client: &GreeterClient) -> () {
         // Initialize client state on server if needed
     }
@@ -33,6 +34,10 @@ impl Greeter for GreeterServer {
 
 impl GreeterServerInit for GreeterServer {
     fn new(_config: &GreeterConfig) -> Self {
+        GreeterServer
+    }
+
+    fn default() -> Self {
         GreeterServer
     }
     

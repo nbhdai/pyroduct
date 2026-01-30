@@ -44,18 +44,16 @@ pub fn capability(attr: TokenStream, item: TokenStream) -> TokenStream {
             let export = def.generate_ffi_exports();
             let wasm_fn_declarations = def.generate_wasm_imports();
 
+            // FIX: trait_def is placed in the outer scope.
+            // FIX: mod methods imports super types.
             quote::quote! {
                 #client_impl
 
-                #[link(wasm_import_module = "env")]
-                extern "C" {
-                    #(#wasm_fn_declarations)*
-                }
+                #wasm_fn_declarations
 
-                pub mod methods {
-                    #trait_def
-                    #export
-                }
+                #trait_def
+
+                #export
             }.into()
         },
         Err(e) => e.to_compile_error().into(),
@@ -74,16 +72,21 @@ pub fn capability_server(attr: TokenStream, item: TokenStream) -> TokenStream {
             let init_trait = server.generate_init_trait();
             let exports = server.generate_ffi_exports();
 
+            // FIX: struct_def is placed in the outer scope.
+            // FIX: mod state imports super types.
             quote::quote! {
-                pub mod state {
-                    #struct_def
-                    #init_trait
-                    #exports
-                }
+                #struct_def
+                #init_trait
+                #exports
             }.into()
         }
         Err(e) => e.to_compile_error().into(),
     }
+}
+
+#[proc_macro_attribute]
+pub fn capability_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item // Just pass it through
 }
 
 #[cfg(test)]

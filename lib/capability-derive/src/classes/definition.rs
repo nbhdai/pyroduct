@@ -154,7 +154,12 @@ impl CapabilityDefTrait {
         let trait_name = &self.ident.trait_tn;
         let attrs = &self.original_attrs;
         let generics = &self.generics;
-        let other_items = &self.other_items;
+        let other_items = self.other_items.iter().filter(|item| {
+            if let TraitItem::Type(ty) = item {
+                return ty.ident != "Client" && ty.ident != "Error";
+            }
+            true
+        });
         let method_signatures = self.methods.iter().map(|m| m.trait_method_generation());
         let new_client_method = self.generate_new_client_signature();
 
