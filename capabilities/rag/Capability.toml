@@ -1,12 +1,16 @@
-[package]
+[capability]
 authors = ["nbhdai"]
-edition = "2024"
-name = "rag"
 version = "0.1.0"
-  
+name = "rag"
+
+[pyroduct]
+path = "../../lib/pyroduct"  
+
 [dependencies.host]
 reqwest = { version = "0.13.1", features = ["json"] }
   
 [dependencies.module]
 
 [dependencies.shared]
+
+[workspace]

@@ -6,8 +6,9 @@ use std::process::Command;
 use tar::Builder;
 use fs_err as fs;
 
+use crate::cli::expand::ModuleGenerator;
+
 use super::cargo::{CapabilityManifest, ModuleManifest};
-use super::ModuleGenerator;
 
 fn get_target_dir(path: &Path) -> Result<String> {
     let output = Command::new("cargo")
@@ -52,7 +53,7 @@ pub fn package_module(path: &Path, output: &Path) -> Result<()> {
     // Compile WASM
     println!("Compiling WASM module...");
     let status = Command::new("cargo")
-        .args(["build", "--release", "--target", "wasm32-unknown-unknown"])
+        .args(["build", "--release", "--target", "wasm32-unknown-unknown", "-p", name])
         .current_dir(path)
         .status()
         .context("Failed to run cargo build")?;
@@ -125,7 +126,7 @@ pub fn package_capability(path: &Path, output: &Path) -> Result<()> {
     // 2. Compile the capability binary with --features capability
     println!("Compiling capability binary...");
     let status = Command::new("cargo")
-        .args(["build", "--release", "--features", "capability"])
+        .args(["build", "--release", "--features", "capability", "-p", name])
         .current_dir(path)
         .status()
         .context("Failed to run cargo build")?;
@@ -195,6 +196,54 @@ pub fn package_capability(path: &Path, output: &Path) -> Result<()> {
 
 /// Main entry point for the package command
 pub fn package(path: &Path, output: Option<&Path>) -> Result<()> {
+    let cap_toml_path = path.join("Capability.toml");
+    let mod_toml_path = path.join("Module.toml");
+
+    if cap_toml_path.exists() || mod_toml_path.exists() {
+        return package_single(path, output);
+    }
+
+    // No manifest found, try packaging subdirectories
+    println!("No manifest found in {:?}, scanning subdirectories...", path);
+
+    let mut found_any = false;
+    let mut errors = Vec::new();
+
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let subpath = entry.path();
+
+        if !subpath.is_dir() {
+            continue;
+        }
+
+        let sub_cap = subpath.join("Capability.toml");
+        let sub_mod = subpath.join("Module.toml");
+
+        if sub_cap.exists() || sub_mod.exists() {
+            found_any = true;
+            if let Err(e) = package_single(&subpath, output) {
+                errors.push((subpath, e));
+            }
+        }
+    }
+
+    if !found_any {
+        anyhow::bail!("No Capability.toml or Module.toml found in {:?} or its subdirectories", path);
+    }
+
+    if !errors.is_empty() {
+        eprintln!("\nErrors encountered:");
+        for (path, err) in &errors {
+            eprintln!("  {:?}: {}", path, err);
+        }
+        anyhow::bail!("{} packaging(s) failed", errors.len());
+    }
+
+    Ok(())
+}
+
+fn package_single(path: &Path, output: Option<&Path>) -> Result<()> {
     let cap_toml_path = path.join("Capability.toml");
     let mod_toml_path = path.join("Module.toml");
 

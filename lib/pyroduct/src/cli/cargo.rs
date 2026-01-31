@@ -1,5 +1,5 @@
 use cargo_toml::{
-    Badges, Dependency, DependencyDetail, DepsSet, FeatureSet, Inheritable, InheritedDependencyDetail, LintGroups, Manifest, Package, PatchSet, Product, Profiles, TargetDepsSet, Workspace
+    Badges, Dependency, DependencyDetail, DepsSet, Edition, FeatureSet, Inheritable, InheritedDependencyDetail, LintGroups, Manifest, Package, PatchSet, Product, Profiles, TargetDepsSet, Workspace
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -113,7 +113,7 @@ impl CapabilityManifest {
 
         #[allow(deprecated)]
         Manifest {
-            package: self.capability,
+            package: self.capability.map(ensure_edition_2024),
             workspace: self.workspace,
             dependencies: final_deps,
             dev_dependencies: self.dev_dependencies,
@@ -135,10 +135,25 @@ impl CapabilityManifest {
 
     pub fn to_module_manifest(self) -> Manifest {
         let mut final_deps = BTreeMap::new();
+
+        let pyroduct = match self.pyroduct.clone() {
+            // 1) Simple -> Detailed with registry + optional flag
+            p @ (Dependency::Simple(_) | Dependency::Inherited(_)) => {p},
+
+            // 2) Detailed -> Add registry only if NOT path or git
+            Dependency::Detailed(detail) => {
+                let mut d = detail.clone();
+                
+                if let Some(path) = d.path.as_mut() {
+                    *path = format!("../{path}");
+                }
+                Dependency::Detailed(d)
+            },
+        };
         
         // 1. Shared Dependencies (Required)
         final_deps.extend(self.dependencies.shared.clone().into_iter());
-        final_deps.insert("pyroduct".to_string(), self.pyroduct.clone());
+        final_deps.insert("pyroduct".to_string(), pyroduct);
 
         // 2. Module Dependencies (Required, NOT optional)
         self.augment_deps(&mut final_deps, &self.dependencies.module, false);
@@ -154,7 +169,7 @@ impl CapabilityManifest {
 
         #[allow(deprecated)]
         Manifest {
-            package,
+            package: package.map(ensure_edition_2024),
             workspace: None,
             dependencies: final_deps,
             dev_dependencies: self.dev_dependencies,
@@ -243,7 +258,7 @@ impl ModuleManifest {
         
         #[allow(deprecated)]
         Manifest {
-            package: self.module,
+            package: self.module.map(ensure_edition_2024),
             workspace: self.workspace,
             dependencies: final_deps,
             dev_dependencies: self.dev_dependencies,
@@ -289,6 +304,10 @@ impl ModuleManifest {
                     if d.path.is_none() && d.git.is_none() && d.registry.is_none() {
                         d.registry = registry_url.clone();
                     }
+
+                    if let Some(path) = d.path.as_mut() {
+                        *path = format!("{path}/module");
+                    }
                     
                     d.optional = make_optional;
                     Dependency::Detailed(d)
@@ -304,7 +323,13 @@ impl ModuleManifest {
             target_map.insert(name.clone(), new_dep);
         }
     }
+}
 
+fn ensure_edition_2024<Metadata>(mut package: Package<Metadata>) -> Package<Metadata> {
+    if let Inheritable::Inherited = package.edition {
+        package.edition = Inheritable::Set(Edition::E2024);
+    }
+    package
 }
 
 #[cfg(test)]

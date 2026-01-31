@@ -4,8 +4,12 @@ edition = "2024"
 name = "struct_io"
 version = "0.1.0"
 
+[pyroduct]
+path = "../../lib/pyroduct"
+
 [capabilities]
 http_client = { path = "../../capabilities/http_client" }
 
 [dependencies]
 
+[workspace]

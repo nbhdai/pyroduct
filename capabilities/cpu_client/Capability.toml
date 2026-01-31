@@ -1,11 +1,15 @@
 [capability]
 authors = ["nbhdai"]
-edition = "2024"
 name = "cpu_client"
 version = "0.1.0"
+
+[pyroduct]
+path = "../../lib/pyroduct"
   
 [dependencies.host]
 
 [dependencies.module]
 
 [dependencies.shared]
+
+[workspace]

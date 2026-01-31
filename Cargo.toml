@@ -7,18 +7,6 @@ members = [
     "lib/capability-derive",
     "lib/module-derive",
     "lib/pyroduct", 
-
-    "capabilities/rag",
-    "capabilities/http_client",
-    "capabilities/cpu_client",
-
-    "capabilities/rag/module",
-    "capabilities/http_client/module",
-    "capabilities/cpu_client/module",
-
-    "modules/basic",
-    "modules/rag_capability",
-    "modules/struct_io",
 ]
 
 default-members = [

@@ -4,8 +4,13 @@ edition = "2024"
 name = "rag_capability"
 version = "0.1.0"
 
+[pyroduct]
+path = "../../lib/pyroduct"
+
 [capabilities]
 rag = { path = "../../capabilities/rag" }
 
 [dependencies]
 text-splitter = "0.15"
+
+[workspace]

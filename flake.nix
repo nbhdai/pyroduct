@@ -71,12 +71,6 @@
           inherit pyroduct;
         };
 
-        apps.generate-cargo-toml = flake-utils.lib.mkApp {
-          drv = myLib.mkGenerateCargoTomlScript (myLib.collectGenerationTargets {
-            inherit capabilities modules;
-          });
-        };
-
         devShells.default = craneLibNightly.devShell {
           packages = [ nightlyToolchain pyroduct ];
           RUST_SRC_PATH = "${nightlyToolchain}/lib/rustlib/src/rust/library";
