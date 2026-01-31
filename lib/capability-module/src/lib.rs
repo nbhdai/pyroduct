@@ -7,6 +7,8 @@ use syn::parse_file;
 // Import the parsing logic from your core crate
 use capability_core::{capability::CapabilityImpl, config::CapConfig, client::CapClient};
 
+mod cargo;
+
 /// A builder for generating capability client code.
 pub struct ClientGenerator {
     source_path: PathBuf,

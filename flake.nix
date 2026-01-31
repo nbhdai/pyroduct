@@ -34,9 +34,17 @@
         craneLibWasm = (crane.mkLib pkgs).overrideToolchain wasmToolchain;
         craneLibNightly = (crane.mkLib pkgs).overrideToolchain nightlyToolchain;
 
+        # Should make the base cli
+        capabilityModuleCli = craneLibNative.buildPackage (commonArgs // {
+          pname = "capability-module";
+          version = "0.1.0";
+          cargoArtifacts = nativeArtifacts;
+          cargoExtraArgs = "-p capability-module";
+        });
+
         # Import our custom library
         myLib = import ./nix/crate.nix {
-          inherit lib pkgs craneLibNative craneLibWasm;
+          inherit lib pkgs craneLibNative craneLibWasm capabilityModuleCli;
           pyroductDep = { workspace = true; };
         };
 
@@ -175,6 +183,10 @@
           });
         };
 
+        apps.generate-capabilities = flake-utils.lib.mkApp {
+          drv = myLib.mkWriteCapabilitiesScript (lib.attrValues capabilities);
+        };
+
         devShells.default = craneLibNightly.devShell {
           packages = [ nightlyToolchain ];
           RUST_SRC_PATH = "${nightlyToolchain}/lib/rustlib/src/rust/library";
@@ -192,6 +204,7 @@
             echo "Development shell loaded!"
             echo ""
             echo "Available commands:"
+            echo "  nix run .#generate-capabilities  - Generate crates file we can include"
             echo "  nix run .#generate-cargo-toml  - Generate Cargo.toml files"
             echo "  nix run .#run-tests            - Run the test harness"
           '';

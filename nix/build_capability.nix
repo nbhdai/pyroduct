@@ -1,4 +1,4 @@
-{ pkgs, lib, craneLibNative, makeCapabilityToml }:
+{ pkgs, lib, craneLibNative, makeCapabilityToml, capabilityModuleCli }:
 
 args@{
   name,
@@ -55,7 +55,40 @@ CARGO_TOML_EOF
     features = hostFeatureList ++ moduleFeatureList;
   });
 
-  # --- 5. Assemble the Final Artifact ---
+  # --- 5. Generate client lib.rs using capability-module CLI ---
+  generatedLibRs = pkgs.runCommand "${name}-generated-lib" {} ''
+    mkdir -p $out
+    ${capabilityModuleCli}/bin/capability-module \
+      --input ${src}/src/capability.rs \
+      --output $out
+  '';
+
+  # --- 6. Write capability crate to .capabilities ---
+  capabilityCrate = pkgs.runCommand "${name}-capability-crate" {
+    nativeBuildInputs = [ pkgs.cargo pkgs.rustc ];
+  } ''
+    mkdir -p $out/src
+    
+    # Write Cargo.toml
+    cat > $out/Cargo.toml << 'CARGO_TOML_EOF'
+${cargoTomlContent}
+CARGO_TOML_EOF
+    
+    # Write lib.rs
+    cp ${generatedLibRs}/lib.rs $out/src/lib.rs
+    
+    # Package into .crate file
+    cd $out
+    cargo package --no-verify --allow-dirty
+    
+    # Move the .crate file to output root
+    mv target/package/${name}-${version}.crate $out/${name}.crate
+    
+    # Clean up target directory
+    rm -rf target
+  '';
+
+  # --- 7. Assemble the Final Artifact ---
   artifact = pkgs.runCommand "${name}-artifact" {} ''
     mkdir -p $out/crate
     
@@ -72,7 +105,7 @@ CARGO_TOML_EOF
   libExt = if pkgs.stdenv.isDarwin then "dylib" else "so";
 
 in {
-  inherit name version cargoTomlContent srcPath;
+  inherit name version cargoTomlContent srcPath capabilityCrate;
   pname = name;
   output = artifact;
   

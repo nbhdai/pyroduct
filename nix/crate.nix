@@ -1,4 +1,4 @@
-{ lib, pkgs, craneLibNative, craneLibWasm, pyroductDep }:
+{ lib, pkgs, craneLibNative, craneLibWasm, pyroductDep, capabilityModuleCli }:
 
 let
   # Helper to convert a Nix attrset to TOML
@@ -29,7 +29,7 @@ mkDep = { name, optional ? false, features ? [], ... }@args:
 
   # --- 2. Import the Builders ---
   buildCapabilityImpl = import ./build_capability.nix {
-    inherit pkgs lib craneLibNative makeCapabilityToml;
+    inherit pkgs lib craneLibNative makeCapabilityToml capabilityModuleCli;
   };
 
   buildModuleImpl = import ./build_module.nix {
@@ -62,6 +62,35 @@ CARGO_TOML_EOF
     echo "Done. Generated ${toString (lib.length items)} Cargo.toml files."
   '';
 
+  # --- NEW: Script to write capability crates to .capabilities ---
+  mkWriteCapabilitiesScript = capabilities: 
+    let
+      capList = if builtins.isList capabilities 
+                then capabilities 
+                else lib.attrValues capabilities;
+    in
+    pkgs.writeShellScriptBin "write-capabilities" ''
+      set -euo pipefail
+      
+      echo "Writing capability crates to .capabilities/..."
+      
+      ${lib.concatMapStringsSep "\n" (cap: ''
+        echo "  Writing .capabilities/${cap.name}/"
+        mkdir -p ".capabilities/${cap.name}/src"
+        
+        # Copy Cargo.toml
+        cp ${cap.capabilityCrate}/Cargo.toml ".capabilities/${cap.name}/Cargo.toml"
+        
+        # Copy lib.rs
+        cp ${cap.capabilityCrate}/src/lib.rs ".capabilities/${cap.name}/src/lib.rs"
+        
+        # Copy .crate package
+        cp ${cap.capabilityCrate}/${cap.name}.crate ".capabilities/${cap.name}.crate"
+      '') capList}
+      
+      echo "Done. Generated ${toString (lib.length capList)} capability crates."
+    '';
+
   collectGenerationTargets = { capabilities ? {}, modules ? {} }:
     (lib.concatMap (cap: 
        if (cap ? srcPath && cap.srcPath != null) then [{
@@ -78,5 +107,5 @@ CARGO_TOML_EOF
 in {
   buildCapability = buildCapabilityImpl;
   buildModule = buildModuleImpl;
-  inherit toToml mkDep mkGenerateCargoTomlScript collectGenerationTargets;
+  inherit toToml mkDep mkGenerateCargoTomlScript mkWriteCapabilitiesScript collectGenerationTargets;
 }
