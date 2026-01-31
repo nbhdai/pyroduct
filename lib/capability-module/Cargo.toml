@@ -1,15 +1,18 @@
 [package]
 name = "capability-module"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
-# The shared logic (adjust path or version as needed)
+# Your core logic
 capability-core = { path = "../capability-core", version = "0.1.0" }
 
-# Parsing and Code Gen
+# Parsing & Generation
 syn = { version = "2.0", features = ["full", "extra-traits", "parsing"] }
 quote = "1.0"
 proc-macro2 = "1.0"
-anyhow = "1.0" # Optional, but good for build scripts
-fs-err = "2.9" # Optional, nicer error messages for file ops
+
+# CLI & Error Handling
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+fs-err = "2.9" # Better error messages for file I/O

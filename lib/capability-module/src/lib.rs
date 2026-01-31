@@ -61,7 +61,7 @@ impl ClientGenerator {
                              .map_err(|e| anyhow::anyhow!("{}", e))?;
                         
                         // Assumes capability-core has this method exposed
-                        generated_code.extend(cap.expand_wasm()); 
+                        generated_code.extend(cap.expand_module()); 
                     }
                 }
                 

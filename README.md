@@ -18,38 +18,40 @@ nix build
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                        Host                             │
+┌────────────────────────────────────────────────────────┐
+│                        Host                            │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
 │  │  Reporter   │  │ HTTP Client │  │  CPU Info   │     │
 │  │  Capability │  │  Capability │  │  Capability │     │
 │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘     │
-│         │                │                │             │
-│  ═══════╪════════════════╪════════════════╪═══════════  │
-│         │          FFI Boundary           │             │
-│  ═══════╪════════════════╪════════════════╪═══════════  │
-│         │                │                │             │
+│         │                │                │            │
+│  ═══════╪════════════════╪════════════════╪══════════  │
+│         │          FFI Boundary           │            │
+│  ═══════╪════════════════╪════════════════╪══════════  │
+│         │                │                │            │
 │  ┌──────┴────────────────┴────────────────┴──────┐     │
 │  │              WASM Module (Sandboxed)          │     │
-│  │                                                │     │
+│  │                                               │     │
 │  │   fn call(input) -> Result<Output, String>    │     │
-│  └────────────────────────────────────────────────┘     │
-└─────────────────────────────────────────────────────────┘
+│  └───────────────────────────────────────────────┘     │
+└────────────────────────────────────────────────────────┘
+
 ```
 
 ## Writing a Module
 
-Modules are WASM binaries that process inputs and return outputs. Use the `#[module]` macro to generate the FFI boilerplate.
+Modules are WASM binaries that process inputs and return outputs. Use the `#[pyroduct::module]` macro to generate the FFI boilerplate.
 
 ### Simple Module
 
 ```rust
 use pyroduct::*;
 
-#[module(output = message)]
+#[pyroduct::module(output = message)]
 fn call(input: &str) -> Result<String, String> {
     Ok(format!("Hello, {}", input))
 }
+
 ```
 
 ### Multiple Outputs
@@ -57,10 +59,11 @@ fn call(input: &str) -> Result<String, String> {
 ```rust
 use pyroduct::*;
 
-#[module(output = (count, data))]
+#[pyroduct::module(output = (count, data))]
 fn process(input: &str) -> Result<(u32, Vec<u8>), String> {
     Ok((input.len() as u32, input.as_bytes().to_vec()))
 }
+
 ```
 
 ### Struct Output
@@ -74,150 +77,132 @@ struct ProcessResult {
     data: Vec<u8>,
 }
 
-#[module(output = ProcessResult)]
+#[pyroduct::module(output = ProcessResult)]
 fn process(input: &str) -> Result<ProcessResult, String> {
     Ok(ProcessResult { count: 42, data: vec![] })
 }
-```
 
-### Multiple Inputs
-
-```rust
-use pyroduct::*;
-
-#[module(output = result)]
-fn call(port: &str, baud: u32, command: &str) -> Result<Vec<u8>, String> {
-    // Process multiple typed inputs
-    Ok(vec![])
-}
 ```
 
 ### Using Capabilities
 
 ```rust
-use proto_reporter::report;
-use proto_http_client::HttpClient;
+use http_client::{HttpClient, HttpClientMethods};
 
-#[module(output = cpu_count)]
-fn call(url: &str) -> Result<u32, String> {
-    // Call a stateless capability
-    let cpus = proto_cpu_info::get_cpu_count();
+#[pyroduct::module(output = response)]
+fn call(url: &str) -> Result<String, String> {
+    // Initialize the capability client
+    let client = HttpClient.register()?;
     
-    // Use a stateful capability  
-    let client = HttpClient::new(url);
-    let response = client.get("/")?;
+    // Call capability methods
+    let response = client.get(url)?;
     
-    // Report to the host
-    report(format!("Got {} bytes", response.body.len()));
-    
-    Ok(cpus)
+    Ok(response)
 }
+
 ```
 
 ## Writing a Capability
 
-Capabilities expose native functionality to WASM modules. There are three patterns.
+Capabilities expose native functionality to WASM modules using a unified macro system. You define a server struct (Host), a client struct (WASM), and an optional config struct.
 
-### Pattern 1: Stateless Functions
+### Components
 
-For simple functions with no state:
+1. **Config**: `#[pyroduct::config]` (Optional) - Configuration passed from Host to Capability on startup.
+2. **Client**: `#[pyroduct::client]` - State passed from WASM to Host during calls.
+3. **Server**: `#[pyroduct::capability]` - The implementation block defining lifecycle and logic.
 
-```rust
-use capability_derive::*;
-
-#[capability_function]
-pub fn get_cpu_count() -> u32 {
-    std::thread::available_parallelism()
-        .map(|n| n.get() as u32)
-        .unwrap_or(1)
-}
-
-capability_export!(env = "cpu_info", functions = [get_cpu_count]);
-```
-
-### Pattern 2: Host State Only
-
-The server maintains state across calls, client is stateless:
+### Example: HTTP Client
 
 ```rust
-use capability_derive::*;
+use pyroduct;
 
-#[capability]
-pub trait Reporter {
-    fn report(&mut self, message: String) -> String;
+// 1. Configuration (Optional)
+#[pyroduct::config]
+pub struct HttpConfig {
+    pub timeout_ms: u64,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-mod server {
-    use super::*;
+// 2. Client State
+#[pyroduct::client]
+pub struct HttpClient;
+
+// 3. Server Implementation
+pub struct HttpServer {
+    timeout: std::time::Duration,
+}
+
+#[pyroduct::capability]
+impl HttpServer {
+    // Required associated types
+    type Client = HttpClient;
+    type Config = HttpConfig; 
+    type Error = String; // Optional, makes methods return Result<T, String>
     
-    #[capability_server(service = Reporter, config = ReporterConfig)]
-    pub struct ReporterServer {
-        logs: VecDeque<String>,
-    }
-
-    impl ReporterServerInit for ReporterServer {
-        fn new() -> Self {
-            Self { logs: VecDeque::new() }
-        }
-        
-        fn with_config(config: ReporterConfig) -> Self {
-            Self { logs: VecDeque::with_capacity(config.max_history) }
-        }
-        
-        fn reset(&mut self) {
-            self.logs.clear();
-        }
-    }
-
-    impl Reporter for ReporterServer {
-        fn report(&mut self, message: String) -> String {
-            self.logs.push_back(message.clone());
-            format!("Logged: {}", message)
+    // Lifecycle: Initialize
+    fn new(config: Option<HttpConfig>) -> Self {
+        let config = config.unwrap_or(HttpConfig { timeout_ms: 30000 });
+        Self {
+            timeout: std::time::Duration::from_millis(config.timeout_ms),
         }
     }
     
-    capability_export!(env = "reporter", ReporterServer);
+    // Lifecycle: Reset state between module calls
+    fn reset(&mut self) {}
+    
+    // Lifecycle: Register a new client instance
+    fn new_client(&self, _client: &HttpClient) -> Result<(), String> {
+        Ok(())
+    }
+    
+    // Capability Method: Exposed to WASM
+    // Must take &self and client: &Client
+    async fn get(&self, _client: &HttpClient, url: String) -> Result<String, String> {
+        // Implementation...
+        Ok(format!("Fetched {}", url))
+    }
 }
+
 ```
 
-### Pattern 3: Client State (Stateless Server)
+## Adding a New Capability
 
-Client holds configuration, server is stateless per-request:
+To add a new capability to the project:
 
-```rust
-use capability_derive::*;
-
-#[capability_client]
-#[derive(Debug, Clone)]
-pub struct HttpClient {
-    pub base_url: String,
-    pub timeout_secs: Option<u64>,
+1. **Create Directory**: Create a folder in `capabilities/`, e.g., `capabilities/my_cap`.
+2. **Create Definition**: Add `capability.nix` in that folder:
+```nix
+{ myLib }:
+myLib.buildCapability {
+  name = "my_cap";
+  src = ./.;
+  # Native dependencies (e.g. tokio, reqwest)
+  hostDependencies = [
+    { name = "tokio"; version = "1.49.0"; features = ["full"]; }
+  ];
 }
 
-#[capability(stateless)]
-pub trait Http {
-    async fn get(#[client_state] client: &HttpClient, path: &str) -> Result<HttpResponse, String>;
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-mod server {
-    use super::*;
-    
-    #[capability_server(service = Http, stateless)]
-    pub struct HttpServer;
-
-    impl Http for HttpServer {
-        async fn get(client: &HttpClient, path: &str) -> Result<HttpResponse, String> {
-            let url = format!("{}{}", client.base_url, path);
-            // Make actual HTTP request...
-            Ok(HttpResponse { status: 200, headers: vec![], body: vec![] })
-        }
-    }
-    
-    capability_export!(env = "http_client", HttpServer);
-}
 ```
+
+
+3. **Implement**: Create `src/lib.rs` with the Rust implementation using the macros described above.
+4. **Register**: Add the capability to `flake.nix` in the `capabilities` set:
+```nix
+capabilities = {
+  # ... existing capabilities ...
+  my_cap = (import ./capabilities/my_cap/capability.nix { inherit myLib; });
+};
+
+```
+
+
+5. **Generate Cargo Files**: Run the generator to create `Cargo.toml` for your new crate.
+```bash
+nix run .#generate-cargo-toml
+
+```
+
+
 
 ## Project Structure
 
@@ -228,45 +213,59 @@ mod server {
 │   ├── arrow-scalars/     # Arrow serialization
 │   ├── module-derive/     # #[module] macro
 │   └── capability-derive/ # Capability macros
-├── proto/
-│   ├── capabilities/      # Example capabilities
-│   │   ├── reporter/
-│   │   ├── cpu_info/
-│   │   ├── http_client/
-│   │   └── serial_client/
-│   └── modules/           # Example modules
-│       ├── module/        # Uses reporter
-│       ├── module_2/      # Uses cpu_info + http_client
-│       └── module_3/      # Uses serial_client
-└── flake.nix
+├── capabilities/          # Capability implementations
+│   ├── cpu_client/
+│   ├── http_client/
+│   ├── rag/
+│   └── serial_client/
+├── modules/               # Example WASM modules
+│   ├── basic/
+│   ├── basic_capability/
+│   └── struct_io/
+└── flake.nix              # Nix build definition
+
 ```
+
+## Derive Macros Reference
+
+| Macro | Attribute | Description |
+| --- | --- | --- |
+| `#[pyroduct::module]` | `output = ...` | Generates WASM entry point. Output can be a field name `val`, a tuple `(a, b)`, or a struct `MyStruct`. |
+| `#[pyroduct::capability]` |  | Applied to the `impl` block of the server struct. Generates FFI glue and Client traits. |
+| `#[pyroduct::client]` |  | Marks a struct as the Client state. Adds serialization. |
+| `#[pyroduct::config]` |  | Marks a struct as the Capability configuration. Adds serialization. |
+| `#[derive(ToRow)]` |  | Implements serialization for a struct to be returned to the host or passed to a capability. |
+| `#[derive(FromRow)]` |  | Implements deserialization for a struct coming from the host (module input). |
+| `#[derive(DeepRef)]` |  | Generates a zero-copy view struct (e.g., `MyStructRef`) for reading inputs efficiently. |
 
 ## Building with Nix
 
-Capabilities and modules are defined in `.nix` files:
+Capabilities and modules are defined in `.nix` files.
 
 **capability.nix**
+
 ```nix
 { myLib }:
-
 myLib.buildCapability {
   name = "proto_reporter";
   src = ./.;
-  hostDependencies = [
-    { name = "tracing"; version = "0.1"; }
-  ];
+  hostDependencies = [];
 }
+
 ```
 
 **module.nix**
-```nix
-{ myLib, capabilities }:
 
+```nix
+{ myLib }:
 myLib.buildModule {
   name = "proto_module";
   src = ./.;
-  capabilities = [ capabilities.proto_reporter ];
+  capabilities = [
+    { path = "../../capabilities/proto_reporter"; }
+  ];
 }
+
 ```
 
 ## Running Modules
@@ -279,14 +278,15 @@ The harness runs modules with a JSON config:
   "module": "/path/to/module.wasm",
   "capabilities": ["/path/to/libreporter.so"],
   "inputs": [
-    { "input": "Hello World" },
-    { "input": "Second input" }
+    { "input": "Hello World" }
   ]
 }
+
 ```
 
 ```bash
 harness config.json
+
 ```
 
 ## Available Commands
@@ -295,23 +295,8 @@ harness config.json
 nix develop                    # Enter dev shell
 nix run .#run-tests            # Run all example modules
 nix run .#generate-cargo-toml  # Generate Cargo.toml for IDE support
-nix run .#show-cargo-toml      # Preview generated Cargo.toml
 nix build .#harness            # Build the harness
-nix build .#proto_module       # Build a specific module
-nix build .#proto_reporter     # Build a specific capability
+nix build .#basic              # Build a specific module
+nix build .#http_client        # Build a specific capability
+
 ```
-
-## Derive Macros Reference
-
-| Macro | Purpose |
-|-------|---------|
-| `#[module(output = ...)]` | Generate WASM entry point for a module |
-| `#[capability]` | Define a capability trait |
-| `#[capability_function]` | Mark a standalone function as a capability |
-| `#[capability_client]` | Mark a struct as client-side state |
-| `#[capability_server(...)]` | Mark a struct as the server implementation |
-| `#[capability_impl(...)]` | Generate FFI for a trait impl |
-| `capability_export!(...)` | Generate plugin manifest |
-| `#[derive(ToRow)]` | Serialize struct to Arrow row |
-| `#[derive(FromRow)]` | Deserialize struct from Arrow row |
-| `#[derive(DeepRef)]` | Generate `*Ref` type for zero-copy access |

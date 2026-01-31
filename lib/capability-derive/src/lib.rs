@@ -40,7 +40,7 @@ pub fn config(_attr: TokenStream, item: TokenStream) -> TokenStream {
 pub fn capability(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemImpl);
     match capability_core::capability::CapabilityImpl::new(input) {
-        Ok(capability) => capability.expand().into(),
+        Ok(capability) => capability.expand_capability().into(),
         Err(e) => e.to_compile_error().into(),
     }
 }

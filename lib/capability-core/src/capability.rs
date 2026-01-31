@@ -166,20 +166,26 @@ impl CapabilityImpl {
     }
 
     /// Generate all output code
-    pub fn expand(&self) -> TokenStream {
+    pub fn expand_capability(&self) -> TokenStream {
         let server_impl = self.generate_server_impl();
         let lifecycle_ffi = self.generate_lifecycle_ffi();
         let method_ffis = self.generate_method_ffis();
         let export_table = self.generate_export_table();
-        let wasm_imports = self.generate_wasm_imports();
-        let client_impl = self.generate_client_impl();
 
         quote! {
             #server_impl
             #lifecycle_ffi
             #method_ffis
             #export_table
+        }
+    }
 
+        /// Generate all output code
+    pub fn expand_module(&self) -> TokenStream {
+        let wasm_imports = self.generate_wasm_imports();
+        let client_impl = self.generate_client_impl();
+
+        quote! {
             #client_impl
             #wasm_imports
         }
