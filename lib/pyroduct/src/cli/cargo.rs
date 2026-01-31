@@ -326,9 +326,7 @@ impl ModuleManifest {
 }
 
 fn ensure_edition_2024<Metadata>(mut package: Package<Metadata>) -> Package<Metadata> {
-    if let Inheritable::Inherited = package.edition {
-        package.edition = Inheritable::Set(Edition::E2024);
-    }
+    package.edition = Inheritable::Set(Edition::E2024);
     package
 }
 

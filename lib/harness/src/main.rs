@@ -1,155 +1,95 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use arrow_scalars::ArrowRow;
-use pyroduct::host::{CompiledModule};
-use std::fs;
-use std::path::PathBuf;
-use std::sync::Arc;
-use tracing::{error, info};
-use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+use clap::Parser;
+use fs_err as fs;
+use pyroduct::host::{Capabilities, CapabilityDefinition, CompiledModule, HarnessConfig};
+use pyroduct::ModIdentity;
+use std::path::{Path, PathBuf};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use wasmtime::{Config, Engine};
 
-#[derive(serde::Deserialize, Debug)]
-struct HarnessConfig {
-    module_name: String,
-    /// Path to the WASM module to run
-    module: PathBuf,
-    /// List of paths to dynamic library capabilities (.so/.dylib/.dll)
-    capabilities: Vec<CapabilityConfig>,
-    /// List of inputs to process
-    inputs: Vec<InputConfig>,
+#[derive(Parser, Debug)]
+#[command(author, version, about = "Run a WASM module with capabilities")]
+struct Args {
+    /// Path to the harness config TOML file
+    #[arg(value_name = "CONFIG")]
+    config: PathBuf,
+
+    /// Input data as JSON string
+    #[arg(short, long)]
+    input: Option<String>,
 }
 
-#[derive(serde::Deserialize, Debug)]
-#[serde(untagged)]
-pub enum CapabilityConfig {
-    NoConfig(PathBuf),
-    Config {
-        path: PathBuf,
-        config: serde_json::Value,
-    },
-}
-
-#[derive(serde::Deserialize, Debug)]
-struct InputConfig {
-    /// Input data as JSON - will be deserialized into ArrowRow
-    input: serde_json::Value,
-}
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Initialize tracing
+fn main() -> Result<()> {
     tracing_subscriber::registry()
-        .with(fmt::layer().with_target(true))
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            "info,harness=debug,pyroduct=debug,cranelift_codegen=off,cranelift_wasm=off,wasmtime_cranelift=off,wasmtime_internal_cranelift=off,wasmtime=off".into()
-        }))
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
         .init();
 
-    info!("Starting Harness...");
+    let args = Args::parse();
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(run(&args.config, args.input.as_deref()))
+}
 
-    // Parse command line arguments
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: {} <config_file.json>", args[0]);
-        std::process::exit(1);
-    }
-    let config_path = &args[1];
+async fn run(config_path: &Path, input_json: Option<&str>) -> Result<()> {
+    tracing::info!("Loading config from {:?}", config_path);
 
-    // Load and parse configuration
-    info!("Loading config from: {}", config_path);
-    let config_content = fs::read_to_string(config_path).context("Failed to read config file")?;
-    let config: HarnessConfig =
-        serde_json::from_str(&config_content).context("Failed to parse config JSON")?;
+    let config_str = fs::read_to_string(config_path)?;
+    let config: HarnessConfig = toml::from_str(&config_str)?;
+    let config_dir = config_path.parent().unwrap_or(Path::new("."));
 
-    info!("Configuration loaded successfully");
-    info!("Module: {:?}", config.module);
-    info!("Module name: {}", config.module_name);
-    info!("Capabilities: {} loaded", config.capabilities.len());
-    info!("Inputs: {} to process", config.inputs.len());
+    let module_path = if config.module.is_relative() {
+        config_dir.join(&config.module)
+    } else {
+        config.module.clone()
+    };
 
-    // Load dynamic capabilities
-    let mut loaded_caps: Vec<Arc<dyn pyroduct::host::Capability>> = Vec::new();
-    let mut loaded_configs: Vec<Option<serde_json::Value>> = Vec::new();
+    tracing::info!("Loading WASM module from {:?}", module_path);
+    let wasm_bytes = fs::read(&module_path)?;
 
-    for cap_config in &config.capabilities {
-        let (path, cap_json) = match cap_config {
-            CapabilityConfig::NoConfig(path) => (path, None),
-            CapabilityConfig::Config { path, config } => (path, Some(config.clone())),
-        };
+    let cap_paths: Vec<PathBuf> = config
+        .capabilities
+        .iter()
+        .map(|c| {
+            let p = match c {
+                CapabilityDefinition::NoConfig(p) => p,
+                CapabilityDefinition::Config { path, .. } => path,
+            };
+            if p.is_relative() { config_dir.join(p) } else { p.clone() }
+        })
+        .collect();
 
-        info!(" - Loading Capability: {:?}", path);
-        let cap = unsafe {
-            DynamicCapability::load(path)
-                .with_context(|| format!("Failed to load plugin at {:?}", path))?
-        };
-        loaded_caps.push(Arc::new(cap));
-        loaded_configs.push(cap_json);
-    }
+    tracing::info!("Loading {} capabilities", cap_paths.len());
+    let capabilities = Capabilities::load(cap_paths.iter().map(|p: &PathBuf| p.as_path()))?;
 
-    info!("All capabilities loaded successfully");
-
-    // Load WASM module bytes
-    info!("Loading WASM module from: {:?}", config.module);
-    let wasm_bytes = fs::read(&config.module)
-        .with_context(|| format!("Failed to read WASM module at {:?}", config.module))?;
-
-    info!("WASM module loaded, size: {} bytes", wasm_bytes.len());
-
-    let mut engine_config = wasmtime::Config::new();
+    let mut engine_config = Config::new();
     engine_config.async_support(true);
-    let engine = wasmtime::Engine::new(&engine_config)?;
+    let engine = Engine::new(&engine_config)?;
 
-    // Create the WASM module with capabilities
-    info!("Initializing WASM module with capabilities...");
-    let mut wasm_module = CompiledModule::new(
-        &config.module_name,
-        &config.module,
-        &engine,
-        &wasm_bytes,
-        loaded_caps,
-        loaded_configs.iter().map(|c| c.as_ref()).collect(),
-    )
-    .await
-    .context("Failed to create WASM module")?;
+    let ident = ModIdentity::from(&config.module_name);
 
-    info!("WASM module initialized successfully");
+    tracing::info!("Compiling module '{}'", config.module_name);
+    let mut compiled = CompiledModule::new(&ident, &engine, &wasm_bytes, &capabilities, &config).await?;
 
-    // Process each input
-    for (idx, input_config) in config.inputs.iter().enumerate() {
-        info!("===== Processing input {} =====", idx + 1);
+    let input_row: ArrowRow<'static> = if let Some(json) = input_json {
+        serde_json::from_str(json)?
+    } else {
+        ArrowRow::default()
+    };
 
-        // Deserialize JSON into ArrowRow
-        let arrow_row: ArrowRow = serde_json::from_value(input_config.input.clone())
-            .with_context(|| format!("Failed to deserialize input {} into ArrowRow", idx + 1))?;
+    tracing::info!("Processing input...");
+    let result = compiled.process(&input_row).await?;
 
-        info!("Input deserialized: {:?}", arrow_row);
-
-        // Process through WASM module
-        info!("Calling WASM module...");
-        match wasm_module.process(&arrow_row).await {
-            Ok(result) => {
-                match result {
-                    Ok(output) => {
-                        info!("✓ Success! Output: {:?}", output);
-
-                        // Pretty print the output as JSON
-                        match serde_json::to_string_pretty(&output) {
-                            Ok(json) => println!("{}", json),
-                            Err(e) => error!("Failed to serialize output to JSON: {}", e),
-                        }
-                    }
-                    Err(e) => {
-                        error!("✗ WASM module returned error: {}", e);
-                    }
-                }
-            }
-            Err(e) => {
-                error!("✗ Failed to process input: {:?}", e);
-            }
+    match result {
+        Ok(output) => {
+            tracing::info!("Module completed successfully");
+            println!("{}", serde_json::to_string_pretty(&output)?);
         }
-
-        println!(); // Empty line between outputs
+        Err(e) => {
+            tracing::error!("Module returned error: {}", e);
+            anyhow::bail!("Module error: {}", e);
+        }
     }
 
-    info!("All inputs processed. Harness complete.");
     Ok(())
 }
