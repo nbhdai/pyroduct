@@ -7,7 +7,7 @@ authors = ["nbhdai"]
 [workspace]
 members = []
 
-[dependencies.http_client-interface]
+[dependencies.http_client]
 path = "../../capabilities/http_client/interface"
 optional = true
 

@@ -160,16 +160,11 @@ impl CapabilityManifest {
 
         // 3. Pyroduct
 
-        let mut package = self.capability.clone();
-        if let Some(pkg) = &mut package {
-            pkg.name = format!("{}-interface", pkg.name);
-        }
-
         let final_features = self.features.clone();
 
         #[allow(deprecated)]
         Manifest {
-            package: package.map(ensure_edition_2024),
+            package: self.capability.map(ensure_edition_2024),
             workspace: None,
             dependencies: final_deps,
             dev_dependencies: self.dev_dependencies,
@@ -320,8 +315,7 @@ impl ModuleManifest {
                     Dependency::Inherited(d)
                 }
             };
-            
-            target_map.insert(format!("{}-interface", name), new_dep);
+            target_map.insert(name.clone(), new_dep);
         }
     }
 }

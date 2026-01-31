@@ -108,6 +108,7 @@ pub use module_derive::module;
 ///     pub ports: Vec<String>,
 /// }
 /// ```
+#[cfg(not(target_arch = "wasm32"))]
 pub use capability_derive::config;
 
 /// Marks a struct as client-side state for a capability.
@@ -122,6 +123,7 @@ pub use capability_derive::config;
 ///     pub id: u64,
 /// }
 /// ```
+#[cfg(not(target_arch = "wasm32"))]
 pub use capability_derive::client;
 
 
@@ -227,6 +229,7 @@ pub use capability_derive::client;
 ///     }
 /// }
 /// ```
+#[cfg(not(target_arch = "wasm32"))]
 pub use capability_derive::capability;
 
 pub type PyroductResult<T> = Result<T, errors::PyroductError>;

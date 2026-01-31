@@ -12,5 +12,10 @@ rag = { path = "../../capabilities/rag" }
 
 [dependencies]
 text-splitter = "0.15"
+# This is to clean up a wasm problem
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
 
 [workspace]

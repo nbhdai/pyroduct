@@ -312,7 +312,6 @@ dependencies = [
  "arrow-derive",
  "arrow-schema",
  "half",
- "indexmap",
  "macrotest",
  "rkyv",
  "serde",

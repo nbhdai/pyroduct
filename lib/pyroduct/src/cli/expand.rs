@@ -7,11 +7,11 @@ use fs_err as fs;
 
 use crate::cli::cargo::{CapabilityManifest, ModuleManifest};
 
-pub struct ModuleGenerator {
+pub struct InterfaceGenerator {
     pub source_path: PathBuf,
 }
 
-impl ModuleGenerator {
+impl InterfaceGenerator {
     pub fn new(source_path: impl AsRef<Path>) -> Self {
         Self {
             source_path: source_path.as_ref().to_path_buf(),
@@ -138,7 +138,7 @@ fn generate_interface_crate(input: &Path, output: &Path, cap_manifest: Capabilit
         anyhow::bail!("Source file not found: {:?}", source_rs);
     }
 
-    let generator = ModuleGenerator::new(source_rs);
+    let generator = InterfaceGenerator::new(source_rs);
     generator.generate_rust_source(dest_rs)?;
     println!("  ✓ Wrote interface/src/lib.rs");
 

@@ -2,12 +2,18 @@ use arrow_schema::{ArrowError, DataType};
 use thiserror::Error;
 mod arrow_value;
 pub use arrow_value::*;
-mod scalar;
-pub use scalar::*;
-mod record_batch;
-pub use record_batch::*;
+
 mod repair;
 pub use repair::ScalarRepairError;
+
+#[cfg(not(target_arch = "wasm32"))]
+mod record_batch;
+#[cfg(not(target_arch = "wasm32"))]
+pub use record_batch::*;
+#[cfg(not(target_arch = "wasm32"))]
+mod scalar;
+#[cfg(not(target_arch = "wasm32"))]
+pub use scalar::*;
 
 pub mod deep_ref;
 pub use deep_ref::DeepRef;

@@ -10,12 +10,22 @@ members = []
 [dependencies]
 text-splitter = "0.15"
 
+[dependencies.getrandom]
+version = "0.3"
+features = ["wasm_js"]
+
 [dependencies.pyroduct]
 path = "../../lib/pyroduct"
 
 [dependencies.rag]
-path = "../../capabilities/rag/module"
+path = "../../capabilities/rag/interface"
 optional = true
+
+[target.wasm32-unknown-unknown.dependencies]
+
+[target.wasm32-unknown-unknown.dev-dependencies]
+
+[target.wasm32-unknown-unknown.build-dependencies]
 
 [lib]
 crate-type = ["cdylib"]
