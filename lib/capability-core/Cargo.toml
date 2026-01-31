@@ -11,5 +11,7 @@ syn = { version = "2.0", features = ["full", "extra-traits", "parsing"] }
 darling = "0.20"
 heck = "0.5.0"
 
+anyhow = "1.0"
+
 [dev-dependencies]
 prettyplease = "0.2.37"

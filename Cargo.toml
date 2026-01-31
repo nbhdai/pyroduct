@@ -5,7 +5,6 @@ members = [
     "lib/arrow-derive",
     "lib/capability-core",
     "lib/capability-derive",
-    "lib/capability-module",
     "lib/module-derive",
     "lib/pyroduct", 
 

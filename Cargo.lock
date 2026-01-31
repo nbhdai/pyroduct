@@ -526,6 +526,7 @@ checksum = "b35204fbdc0b3f4446b89fc1ac2cf84a8a68971995d0bf2e925ec7cd960f9cb3"
 name = "capability-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "darling",
  "heck",
  "prettyplease",
@@ -540,23 +541,6 @@ version = "0.1.0"
 dependencies = [
  "capability-core",
  "syn",
-]
-
-[[package]]
-name = "capability-module"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "capability-core",
- "cargo_toml",
- "clap",
- "fs-err",
- "proc-macro2",
- "quote",
- "serde",
- "syn",
- "tempfile",
- "toml",
 ]
 
 [[package]]
@@ -2339,7 +2323,11 @@ dependencies = [
  "arrow-derive",
  "arrow-scalars",
  "async-ffi",
+ "capability-core",
  "capability-derive",
+ "cargo_toml",
+ "clap",
+ "fs-err",
  "futures",
  "libloading 0.9.0",
  "macrotest",
@@ -2348,8 +2336,10 @@ dependencies = [
  "rkyv",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.17",
  "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
  "tracing-test",

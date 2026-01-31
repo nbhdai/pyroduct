@@ -1,5 +1,5 @@
 use cargo_toml::{
-    Badges, Dependency, DependencyDetail, DepsSet, FeatureSet, Inheritable, LintGroups, Manifest, Package, PatchSet, Product, Profiles, TargetDepsSet, Workspace
+    Badges, Dependency, DependencyDetail, DepsSet, FeatureSet, Inheritable, InheritedDependencyDetail, LintGroups, Manifest, Package, PatchSet, Product, Profiles, TargetDepsSet, Workspace
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -14,6 +14,9 @@ use toml::Value;
 pub struct CapabilityManifest<Metadata = Value> {
     pub package: Option<Package<Metadata>>,
     pub workspace: Option<Workspace<Metadata>>,
+
+    #[serde(default = "default_pyroduct")]
+    pub pyroduct: Dependency,
 
     #[serde(default)]
     pub dependencies: CapabilityDependencies,
@@ -50,6 +53,10 @@ pub struct CapabilityManifest<Metadata = Value> {
     pub lints: Inheritable<LintGroups>,
 }
 
+fn default_pyroduct() -> Dependency {
+    Dependency::Inherited(InheritedDependencyDetail { workspace: true, ..Default::default() })
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct CapabilityDependencies {
@@ -68,8 +75,9 @@ pub struct CapabilityDependencies {
 impl CapabilityManifest {
     /// Reads from a file string, processes logic, and returns a standard Manifest 
     /// ready for serialization.
-    pub fn to_cargo_manifest(self, pyroduct: Dependency) -> Manifest {
+    pub fn to_capability_manifest(self) -> Manifest {
         let mut final_deps = BTreeMap::new();
+        final_deps.insert("pyroduct".to_string(), self.pyroduct.clone());
         final_deps.extend(self.dependencies.shared.clone().into_iter());
         
         // 1. Augment and merge dependencies
@@ -78,10 +86,6 @@ impl CapabilityManifest {
         
         // Module: Optional = true
         self.augment_deps(&mut final_deps, &self.dependencies.module, true);
-
-        // Always add pyroduct workspace dep
-        final_deps.insert("pyroduct".to_string(), pyroduct);
-
         // 2. Create Requisite Features
         let final_features = self.create_requisite_features(&self.features);
 
@@ -102,6 +106,47 @@ impl CapabilityManifest {
             profile: self.profile,
             badges: self.badges,
             bin: self.bin,
+            bench: self.bench,
+            test: self.test,
+            example: self.example,
+            lints: self.lints,
+            replace: BTreeMap::default(),
+        }
+    }
+
+    pub fn to_module_manifest(self) -> Manifest {
+        let mut final_deps = BTreeMap::new();
+        
+        // 1. Shared Dependencies (Required)
+        final_deps.extend(self.dependencies.shared.clone().into_iter());
+        final_deps.insert("pyroduct".to_string(), self.pyroduct.clone());
+
+        // 2. Module Dependencies (Required, NOT optional)
+        self.augment_deps(&mut final_deps, &self.dependencies.module, false);
+
+        // 3. Pyroduct
+
+        let mut package = self.package.clone();
+        if let Some(pkg) = &mut package {
+            pkg.name = format!("{}-module", pkg.name);
+        }
+
+        let final_features = self.features.clone();
+
+        #[allow(deprecated)]
+        Manifest {
+            package,
+            workspace: None,
+            dependencies: final_deps,
+            dev_dependencies: self.dev_dependencies,
+            build_dependencies: self.build_dependencies,
+            target: self.target,
+            features: final_features,
+            patch: self.patch,
+            lib: self.lib,
+            profile: self.profile,
+            badges: self.badges,
+            bin: Vec::new(),
             bench: self.bench,
             test: self.test,
             example: self.example,
@@ -176,8 +221,6 @@ impl CapabilityManifest {
 
 #[cfg(test)]
 mod tests {
-    use cargo_toml::InheritedDependencyDetail;
-
     use super::*;
 
     #[test]
@@ -205,10 +248,9 @@ serde = { version = "1.0", features = ["derive"] }
 
         // 1. Deserialize into Custom Struct
         let cap_manifest: CapabilityManifest = toml::from_str(input_toml).unwrap();
-        let pyroduct = Dependency::Inherited(InheritedDependencyDetail { workspace: true, ..Default::default() });
 
         // 2. Convert to Standard Manifest (Augment logic runs here)
-        let standard_manifest = cap_manifest.to_cargo_manifest(pyroduct);
+        let standard_manifest = cap_manifest.to_capability_manifest();
 
         // 3. Verify Dependencies
         let deps = &standard_manifest.dependencies;
