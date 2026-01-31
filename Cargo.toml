@@ -20,7 +20,7 @@ members = [
 ]
 
 default-members = [
-    "lib/harness",
+    # "lib/harness",
     "lib/arrow-scalars",
     "lib/arrow-derive",
     "lib/capability-derive",

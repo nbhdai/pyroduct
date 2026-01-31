@@ -1,15 +1,5 @@
-error[E0107]: missing generics for struct `GenericStruct`
- --> tests/compile_fail/generics_not_supported_to.rs:6:8
+error: ToRow cannot be derived for structs with generic parameters (types, lifetimes, or consts)
+ --> tests/compile_fail/generics_not_supported_to.rs:6:21
   |
 6 | struct GenericStruct<T> {
-  |        ^^^^^^^^^^^^^ expected 1 generic argument
-  |
-note: struct defined here, with 1 generic parameter: `T`
- --> tests/compile_fail/generics_not_supported_to.rs:6:8
-  |
-6 | struct GenericStruct<T> {
-  |        ^^^^^^^^^^^^^ -
-help: add missing generic argument
-  |
-6 | struct GenericStruct<T><T> {
-  |                     +++
+  |                     ^^^

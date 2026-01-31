@@ -1,0 +1,13 @@
+[package]
+authors = ["nbhdai"]
+edition = "2024"
+name = "serial_client"
+version = "0.1.0"
+  
+[dependencies.host]
+tokio = { version = "1.49.0", features = ["full"] }
+tokio-serial = { version = "5.4.1" }
+  
+[dependencies.module]
+
+[dependencies.shared]

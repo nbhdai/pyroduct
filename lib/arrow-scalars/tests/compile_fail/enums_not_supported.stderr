@@ -4,4 +4,4 @@ error: proc-macro derive panicked
 5 | #[derive(ToRow)]
   |          ^^^^^
   |
-  = help: message: ToRow can only be derived for structs
+  = help: message: ToRow can only be derived for structs with fields

@@ -1,0 +1,11 @@
+[package]
+authors = ["nbhdai"]
+edition = "2024"
+name = "cpu_client"
+version = "0.1.0"
+  
+[dependencies.host]
+
+[dependencies.module]
+
+[dependencies.shared]

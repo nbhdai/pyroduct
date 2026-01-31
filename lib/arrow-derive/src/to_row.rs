@@ -5,11 +5,20 @@ use syn::{Data, DeriveInput, GenericArgument, Path, PathArguments, Type, TypePat
 pub fn derive_with_path(input: TokenStream, import_location: Path) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
+    if !input.generics.params.is_empty() {
+        return syn::Error::new_spanned(
+            &input.generics,
+            "ToRow cannot be derived for structs with generic parameters (types, lifetimes, or consts)"
+        )
+        .to_compile_error()
+        .into();
+    }
+
     let struct_name = input.ident;
 
     let fields = match input.data {
         Data::Struct(ref data) => &data.fields,
-        _ => panic!("ToRow can only be derived for structs"),
+        _ => panic!("ToRow can only be derived for structs with fields"),
     };
 
     // FIX: Handle empty structs by returning ArrowRow::new()

@@ -34,17 +34,9 @@
         craneLibWasm = (crane.mkLib pkgs).overrideToolchain wasmToolchain;
         craneLibNightly = (crane.mkLib pkgs).overrideToolchain nightlyToolchain;
 
-        # Should make the base cli
-        capabilityModuleCli = craneLibNative.buildPackage (commonArgs // {
-          pname = "capability-module";
-          version = "0.1.0";
-          cargoArtifacts = nativeArtifacts;
-          cargoExtraArgs = "-p capability-module";
-        });
-
         # Import our custom library
         myLib = import ./nix/crate.nix {
-          inherit lib pkgs craneLibNative craneLibWasm capabilityModuleCli;
+          inherit lib pkgs craneLibNative craneLibWasm;
           pyroductDep = { workspace = true; };
         };
 
@@ -65,7 +57,12 @@
         };
 
         # Build the harness
-        src = craneLibNative.cleanCargoSource ./.;
+        src = lib.cleanSourceWith {
+          src = craneLibNative.cleanCargoSource ./.;
+          filter = path: type:
+            (craneLibNative.filterCargoSources path type)
+            || (lib.hasSuffix ".stderr" path);
+        };
         commonArgs = {
           inherit src;
           strictDeps = true;
@@ -80,64 +77,20 @@
           cargoExtraArgs = "--workspace --exclude basic --exclude basic_capability --exclude rag_capability --exclude struct_io";
         });
 
-        harness = craneLibNative.buildPackage (commonArgs // {
-          pname = "harness";
+        pyroduct = craneLibNative.buildPackage (commonArgs // {
+          pname = "pyroduct";
           version = "0.1.0";
           cargoArtifacts = nativeArtifacts;
-          cargoExtraArgs = "-p harness";
+          cargoExtraArgs = "-p pyroduct";
+          doCheck = false;
         });
 
         # Shared Library Extension
         libExt = if pkgs.stdenv.isDarwin then "dylib" else "so";
 
-        # Generate config files
-        # CHANGED: Now accepts explicit `capabilities` list because moduleDef no longer contains artifacts.
-        mkConfig = { moduleDef, capabilities ? [], extraInputs ? [] }: 
-          pkgs.writeText "${moduleDef.name}-config.json" (builtins.toJSON {
-            module_name = moduleDef.name;
-            module = "${moduleDef.wasm}/lib/${moduleDef.name}.wasm";
-            capabilities = map (cap: "${cap.hostPlugin}/lib/lib${cap.name}.${libExt}") capabilities;
-            input = extraInputs;
-          });
-
-        # Test Config 1: Basic Module (Reporter)
-        config1 = mkConfig {
-          moduleDef = modules.basic;
-          capabilities = [];
-          extraInputs = [
-            { input = "Hello World from Host"; }
-            { input = "This is a second input"; }
-          ];
-        };
-
-        # Test Config 2: CPU + HTTP
-        config2 = mkConfig {
-          moduleDef = modules.basic_capability; 
-          capabilities = [ capabilities.cpu_client capabilities.http_client ];
-          extraInputs = [
-            { input = "https://httpbin.org/get"; }
-            { input = "this should fail"; }
-          ];
-        };
-
-        # Test Config 3: Serial
-        config3 = mkConfig {
-          moduleDef = modules.struct_io;
-          capabilities = [ capabilities.serial_client ];
-          extraInputs = [
-            {
-              input = {
-                port = "/dev/ttyUSB0";
-                baud = 9600;
-                command = "AT";
-              };
-            }
-          ];
-        };
-
       in {
         packages = {
-          inherit harness;
+          inherit pyroduct;
           
           # Export capabilities (using updated names from definition)
           rag = capabilities.rag.hostPlugin;
@@ -149,33 +102,9 @@
           basic_capability = modules.basic_capability.wasm;
           rag_capability = modules.rag_capability.wasm;
           struct_io = modules.struct_io.wasm;
-          
-          default = harness;
         };
 
         lib = { inherit myLib; };
-
-        apps.run-tests = flake-utils.lib.mkApp {
-          drv = pkgs.writeShellScriptBin "run-tests" ''
-            echo "==================================="
-            echo "Testing Module 1 (Basic/Reporter)"
-            echo "Config: ${config1}"
-            ${harness}/bin/harness ${config1}
-            echo ""
-
-            echo "==================================="
-            echo "Testing Module 2 (CPU + HTTP)"
-            echo "Config: ${config2}"
-            ${harness}/bin/harness ${config2}
-            echo ""
-            
-            echo "==================================="
-            echo "Testing Module 3 (Serial)"
-            echo "Config: ${config3}"
-            ${harness}/bin/harness ${config3}
-            echo ""
-          '';
-        };
 
         apps.generate-cargo-toml = flake-utils.lib.mkApp {
           drv = myLib.mkGenerateCargoTomlScript (myLib.collectGenerationTargets {
@@ -183,12 +112,8 @@
           });
         };
 
-        apps.generate-capabilities = flake-utils.lib.mkApp {
-          drv = myLib.mkWriteCapabilitiesScript (lib.attrValues capabilities);
-        };
-
         devShells.default = craneLibNightly.devShell {
-          packages = [ nightlyToolchain ];
+          packages = [ nightlyToolchain pyroduct ];
           RUST_SRC_PATH = "${nightlyToolchain}/lib/rustlib/src/rust/library";
           CARGO = "${nightlyToolchain}/bin/cargo";
           RUSTUP_TOOLCHAIN = "${nightlyToolchain}";
@@ -204,7 +129,7 @@
             echo "Development shell loaded!"
             echo ""
             echo "Available commands:"
-            echo "  nix run .#generate-capabilities  - Generate crates file we can include"
+            echo "  pyroduct                       - Run the pyroduct CLI"
             echo "  nix run .#generate-cargo-toml  - Generate Cargo.toml files"
             echo "  nix run .#run-tests            - Run the test harness"
           '';

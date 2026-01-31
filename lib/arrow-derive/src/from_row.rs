@@ -7,6 +7,15 @@ use crate::deep_ref::map_type_to_ref;
 pub fn derive_with_path(input: TokenStream, import_location: Path) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
+    if !input.generics.params.is_empty() {
+        return syn::Error::new_spanned(
+            &input.generics,
+            "FromRow cannot be derived for structs with generic parameters (types, lifetimes, or consts)"
+        )
+        .to_compile_error()
+        .into();
+    }
+
     let struct_name = input.ident;
     let ref_struct_name = format_ident!("{}Ref", struct_name);
 
