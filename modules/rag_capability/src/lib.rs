@@ -17,9 +17,9 @@ struct SearchResultOutput {
     preview: String,
 }
 
-#[module(output = RagResponse)]
+#[module(output = response)]
 fn rag_search(query: &str) -> Result<RagResponse, String> {
-    let rag = RagClient::register()?;
+    let rag = RagClient.register()?;
     let results = rag.search(query.to_string())?;
 
     let splitter = TextSplitter::new(ChunkConfig::new(100));

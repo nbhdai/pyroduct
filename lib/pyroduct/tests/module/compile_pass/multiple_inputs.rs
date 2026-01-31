@@ -10,6 +10,4 @@ fn call(port: &str, baud: u32, command: &str, data: &[u8]) -> Result<Vec<u8>, St
     Ok(out)
 }
 
-fn main() {
-    let _ = call("/dev/tty", 9600, "AT", &[1, 2, 3]);
-}
+fn main() {}

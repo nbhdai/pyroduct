@@ -4,7 +4,7 @@ args@{
   name,
   version ? "0.1.0",
   src,
-  srcPath ? null,
+  srcPath ? "capabilities/${name}",
   ...
 }: 
 

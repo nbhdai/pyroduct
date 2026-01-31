@@ -9,6 +9,6 @@ myLib.buildModule {
   ];
   
   dependencies = [
-    { name = "text_splitters"; version = "0.15"; }
+    { name = "text-splitter"; version = "0.15"; }
   ];
 }

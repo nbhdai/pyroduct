@@ -14,7 +14,7 @@ struct HttpResponse {
     body: String,
 }
 
-#[module(output = "response")]
+#[module(output = response)]
 fn http_call(request: &HttpRequestRef<'_>) -> Result<HttpResponse, String> {
     let http = HttpClient.register()?;
     

@@ -13,7 +13,5 @@ myLib.buildCapability {
   moduleDependencies = [];
   
   # Dependencies needed on both sides
-  sharedDependencies = [
-    { name = "rkyv"; version = "0.8"; features = [ "std" ]; }
-  ];
+  sharedDependencies = [];
 }

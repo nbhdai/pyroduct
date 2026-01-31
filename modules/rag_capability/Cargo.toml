@@ -16,5 +16,5 @@ crate-type = ["cdylib"]
 [dependencies]
 pyroduct = { workspace = true }
 rag = { features = ["module"], path = "../../capabilities/rag" }
-text_splitters = "0.15"
+text-splitter = "0.15"
 tracing = "*"

@@ -2,7 +2,7 @@ use serial_client::SerialClient;
 
 use pyroduct::{module, FromRow, DeepRef, ToRow};
 
-#[module(output = "response")]
+#[module(output = response)]
 fn serial_command(command: &str, wait_response: bool) -> Result<String, String> {
     let serial = SerialClient {
         port_path: "/dev/ttyUSB0".to_string(),
