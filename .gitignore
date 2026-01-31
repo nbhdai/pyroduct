@@ -1,8 +1,8 @@
 target
 .DS_Store
 .direnv
-capabilities/**/Cargo.*
-modules/**/Cargo.*
+capabilities/**/Cargo.lock
+modules/**/Cargo.lock
 *.dylib
 *.interface
 *.cargo

@@ -1,0 +1,11 @@
+[package]
+name = "cpu_client"
+version = "0.1.0"
+edition = "2024"
+authors = ["nbhdai"]
+
+[workspace]
+members = []
+
+[dependencies.pyroduct]
+path = "../../../lib/pyroduct"
