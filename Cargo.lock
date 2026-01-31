@@ -473,7 +473,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b35204fbdc0b3f4446b89fc1ac2cf84a8a68971995d0bf2e925ec7cd960f9cb3"
 
 [[package]]
-name = "capability-derive"
+name = "capability-core"
 version = "0.1.0"
 dependencies = [
  "darling",
@@ -482,8 +482,22 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
- "tracing",
- "tracing-test",
+]
+
+[[package]]
+name = "capability-derive"
+version = "0.1.0"
+dependencies = [
+ "capability-core",
+ "syn",
+]
+
+[[package]]
+name = "capability-module"
+version = "0.1.0"
+dependencies = [
+ "capability-core",
+ "syn",
 ]
 
 [[package]]

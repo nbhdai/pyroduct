@@ -3,7 +3,9 @@ members = [
     "lib/harness",
     "lib/arrow-scalars",
     "lib/arrow-derive",
+    "lib/capability-core",
     "lib/capability-derive",
+    "lib/capability-module",
     "lib/module-derive",
     "lib/pyroduct", 
 

@@ -143,7 +143,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
                 })
             };
 
-            ::pyroduct::module::call::<__Input, #output_name, _>(input_ptr, input_len, call)
+            ::pyroduct::wasm_module::call::<__Input, #output_name, _>(input_ptr, input_len, call)
         }
 
         #(#fn_attrs)*

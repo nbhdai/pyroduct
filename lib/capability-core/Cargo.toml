@@ -1,12 +1,15 @@
 [package]
-name = "capability-derive"
+name = "capability-core"
 version = "0.1.0"
 authors = ["Sven Cattell"]
 edition = "2024"
 
-[lib]
-proc-macro = true
-
 [dependencies]
-capability-core = { path = "../capability-core" }
+proc-macro2 = "1.0"
+quote = "1.0"
 syn = { version = "2.0", features = ["full", "extra-traits", "parsing"] }
+darling = "0.20"
+heck = "0.5.0"
+
+[dev-dependencies]
+prettyplease = "0.2.37"

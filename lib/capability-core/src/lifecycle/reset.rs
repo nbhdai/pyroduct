@@ -147,7 +147,6 @@ mod tests {
     use quote::{format_ident, quote};
     use syn::{parse_quote, ImplItemFn};
 
-    #[tracing_test::traced_test]
     #[test]
     fn test_sync_server_reset_fn() {
         let server_ident = format_ident!("GreeterServer");
@@ -173,8 +172,6 @@ mod tests {
         crate::fmt::assert_code_eq_token(&result, &expected);
     }
 
-
-    #[tracing_test::traced_test]
     #[test]
     fn test_async_server_reset_fn() {
         let server_ident = format_ident!("GreeterServer");

@@ -176,11 +176,12 @@ impl CapabilityImpl {
 
         quote! {
             #server_impl
-            #client_impl
-            #wasm_imports
             #lifecycle_ffi
             #method_ffis
             #export_table
+
+            #client_impl
+            #wasm_imports
         }
     }
 
@@ -405,7 +406,14 @@ impl CapabilityImpl {
         quote! {
             pub mod wasm {
                 use super::*;
+                #[cfg(target_arch = "wasm32")]
                 #[link(wasm_import_module = "env")]
+                unsafe extern "C" {
+                    #new_client_decl
+                    #(#method_decls)*
+                }
+
+                #[cfg(not(target_arch = "wasm32"))]
                 unsafe extern "C" {
                     #new_client_decl
                     #(#method_decls)*

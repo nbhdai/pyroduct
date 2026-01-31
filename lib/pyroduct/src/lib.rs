@@ -3,7 +3,8 @@
 
 pub mod capability;
 pub mod host;
-pub mod module;
+
+pub mod wasm_module;
 
 pub mod capability_host;
 pub mod module_capability;

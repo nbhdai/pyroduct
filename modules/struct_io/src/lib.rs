@@ -1,6 +1,6 @@
 use http_client::{HttpClient, HttpClientMethods};
 
-use pyroduct::{module, FromRow, DeepRef, ToRow};
+use pyroduct::{wasm_module, FromRow, DeepRef, ToRow};
 
 #[derive(FromRow, DeepRef)]
 struct HttpRequest {
