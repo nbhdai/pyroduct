@@ -1,7 +1,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 use anyhow::Result;
-use capability_module::generate_client_code;
+use capability_module::ClientGenerator;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -18,18 +18,20 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    println!("reading capability from: {:?}", args.input);
-    
-    // Use the logic from lib.rs
-    let generated_code = generate_client_code(&args.input)?;
-
-    // Write to output
+    println!("Reading capability from: {:?}", args.input);
+    if !args.output.is_dir() {
+        anyhow::bail!("Output needs to be a directory");
+    }
     if let Some(parent) = args.output.parent() {
         fs_err::create_dir_all(parent)?;
     }
-    fs_err::write(&args.output, generated_code)?;
+    
+    let output = ClientGenerator::new(&args.input)
+        .out_dir(&args.output)
+        .generate("lib.rs")?;
 
-    println!("successfully wrote client to: {:?}", args.output);
+    // Write to output
+    println!("Successfully wrote client to: {:?}", output);
     
     Ok(())
 }
