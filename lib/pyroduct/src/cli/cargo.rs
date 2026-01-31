@@ -165,7 +165,7 @@ impl CapabilityManifest {
         #[allow(deprecated)]
         Manifest {
             package: self.capability.map(ensure_edition_2024),
-            workspace: None,
+            workspace: self.workspace,
             dependencies: final_deps,
             dev_dependencies: self.dev_dependencies,
             build_dependencies: self.build_dependencies,

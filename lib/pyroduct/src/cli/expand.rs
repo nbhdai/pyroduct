@@ -1,43 +1,14 @@
-use std::path::{Path, PathBuf};
-use std::io::Write;
-use anyhow::{Context, Result};
+use std::path::Path;
+use anyhow::Result;
 
-use capability_core::generate_client;
 use fs_err as fs;
 
 use crate::cli::cargo::{CapabilityManifest, ModuleManifest};
+use crate::cli::utils::InterfaceGenerator;
 
-pub struct InterfaceGenerator {
-    pub source_path: PathBuf,
-}
+// Assuming TarballBuilder and CapabilityManifest are available in this scope
+// from the previous refactoring.
 
-impl InterfaceGenerator {
-    pub fn new(source_path: impl AsRef<Path>) -> Self {
-        Self {
-            source_path: source_path.as_ref().to_path_buf(),
-        }
-    }
-
-    /// Generates the Rust client code and writes it to the destination path.
-    pub fn generate_rust_source(&self, dest_path: impl AsRef<Path>) -> Result<()> {
-        let content = std::fs::read_to_string(&self.source_path)
-            .with_context(|| format!("Failed to read capability source: {:?}", self.source_path))?;
-        let generated_code = generate_client(&content)?;
-        let dest = dest_path.as_ref();
-        if let Some(parent) = dest.parent() {
-            fs_err::create_dir_all(parent)?;
-        }
-
-        let mut out_file = fs_err::File::create(dest)
-            .with_context(|| format!("Failed to create output file: {:?}", dest))?;
-        
-        out_file.write_all(generated_code.as_bytes())?;
-        
-        let _ = std::process::Command::new("rustfmt").arg(dest).status();
-
-        Ok(())
-    }
-}
 
 pub fn expand(path: &Path) -> Result<()> {
     let cap_toml = path.join("Capability.toml");
@@ -123,24 +94,13 @@ fn expand_single(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn generate_interface_crate(input: &Path, output: &Path, cap_manifest: CapabilityManifest) -> Result<()> {
-    fs::create_dir_all(output)?;
-
-    let module_manifest = cap_manifest.to_interface_manifest();
-    let cargo_out = toml::to_string_pretty(&module_manifest)?;
-    fs::write(output.join("Cargo.toml"), cargo_out)?;
-    println!("  ✓ Wrote interface/Cargo.toml");
-
-    let source_rs = input.join("src").join("lib.rs");
-    let dest_rs = output.join("src").join("lib.rs");
-
-    if !source_rs.exists() {
-        anyhow::bail!("Source file not found: {:?}", source_rs);
-    }
-
-    let generator = InterfaceGenerator::new(source_rs);
-    generator.generate_rust_source(dest_rs)?;
-    println!("  ✓ Wrote interface/src/lib.rs");
-
+fn generate_interface_crate(
+    input: &Path, 
+    output: &Path, 
+    cap_manifest: CapabilityManifest
+) -> Result<()> {
+    let generator = InterfaceGenerator::new(input, &cap_manifest)?;
+    generator.write_to_disk(output)?;
+    
     Ok(())
 }
