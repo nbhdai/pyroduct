@@ -13,6 +13,11 @@ members = [
     "capabilities/cpu_client",
     "capabilities/serial_client",
 
+    "capabilities/rag/module",
+    "capabilities/http_client/module",
+    "capabilities/cpu_client/module",
+    "capabilities/serial_client/module",
+
     "modules/basic",
     "modules/basic_capability",
     "modules/rag_capability",

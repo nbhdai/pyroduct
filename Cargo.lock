@@ -731,6 +731,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cpu_client-module"
+version = "0.1.0"
+dependencies = [
+ "pyroduct",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1438,6 +1445,13 @@ version = "0.1.0"
 dependencies = [
  "pyroduct",
  "reqwest",
+]
+
+[[package]]
+name = "http_client-module"
+version = "0.1.0"
+dependencies = [
+ "pyroduct",
 ]
 
 [[package]]
@@ -2427,6 +2441,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rag-module"
+version = "0.1.0"
+dependencies = [
+ "pyroduct",
+]
+
+[[package]]
 name = "rag_capability"
 version = "0.1.0"
 dependencies = [
@@ -2915,6 +2936,13 @@ dependencies = [
  "pyroduct",
  "tokio",
  "tokio-serial",
+]
+
+[[package]]
+name = "serial_client-module"
+version = "0.1.0"
+dependencies = [
+ "pyroduct",
 ]
 
 [[package]]

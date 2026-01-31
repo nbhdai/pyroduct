@@ -418,12 +418,6 @@ impl CapabilityImpl {
                     #new_client_decl
                     #(#method_decls)*
                 }
-
-                #[cfg(not(target_arch = "wasm32"))]
-                unsafe extern "C" {
-                    #new_client_decl
-                    #(#method_decls)*
-                }
             }
         }
     }

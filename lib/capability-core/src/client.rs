@@ -19,6 +19,22 @@ impl CapClient {
             ));
         }
 
+        // 2. Strip existing attributes to prevent conflicts/loops
+        input.attrs.retain(|attr| {
+            // Check for simple usage: #[client] or #[rkyv]
+            if attr.path().is_ident("client") || attr.path().is_ident("rkyv") {
+                return false;
+            }
+            // Check for fully qualified usage: #[pyroduct::client]
+            if attr.path().segments.len() == 2 
+               && attr.path().segments[0].ident == "pyroduct" 
+               && attr.path().segments[1].ident == "client" 
+            {
+                return false;
+            }
+            true
+        });
+
         // 2. Decorate with Rkyv attributes
         let rkyv_crate: Attribute = parse_quote!(
             #[rkyv(crate = ::pyroduct::rkyv)]

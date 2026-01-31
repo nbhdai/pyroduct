@@ -1,0 +1,8 @@
+[package]
+name = "rag-module"
+version = "0.1.0"
+edition = "2024"
+authors = ["nbhdai"]
+
+[dependencies.pyroduct]
+workspace = true
