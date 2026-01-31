@@ -1,8 +1,6 @@
-use serial_client::SerialClient;
+use serial_client::{SerialClient, SerialClientMethods};
 
-use pyroduct::{module, FromRow, DeepRef, ToRow};
-
-#[module(output = response)]
+#[pyroduct::module(output = response)]
 fn serial_command(command: &str, wait_response: bool) -> Result<String, String> {
     let serial = SerialClient {
         port_path: "/dev/ttyUSB0".to_string(),
@@ -10,7 +8,7 @@ fn serial_command(command: &str, wait_response: bool) -> Result<String, String> 
     
     serial.open()?;
     
-    let bytes_written = serial.write_line(command.to_string())? as u32;
+    serial.write_line(command.to_string())? as u32;
     
     let response = if wait_response {
         serial.read_line()?

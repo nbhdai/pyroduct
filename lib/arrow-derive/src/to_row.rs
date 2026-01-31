@@ -1,9 +1,8 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, GenericArgument, PathArguments, Type, TypePath, parse_macro_input};
+use syn::{Data, DeriveInput, GenericArgument, Path, PathArguments, Type, TypePath, parse_macro_input};
 
-pub fn derive(input: TokenStream) -> TokenStream {
-    let import_location = super::import_path();
+pub fn derive_with_path(input: TokenStream, import_location: Path) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
     let struct_name = input.ident;
@@ -31,7 +30,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         let name_str = name.to_string();
         let ty = &f.ty;
 
-        let conversion = generate_conversion_ref(quote!(self.#name), ty);
+        let conversion = generate_conversion_ref(quote!(self.#name), ty, &import_location);
 
         quote! {
             (#name_str, #conversion)
@@ -55,8 +54,8 @@ pub fn derive(input: TokenStream) -> TokenStream {
 fn generate_conversion_ref(
     field_expr: proc_macro2::TokenStream,
     ty: &Type,
+    import_location: &Path,
 ) -> proc_macro2::TokenStream {
-    let import_location = super::import_path();
     match ty {
         Type::Path(TypePath { path, .. }) => {
             let segment = path.segments.last().unwrap();

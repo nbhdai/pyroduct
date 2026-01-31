@@ -14,8 +14,7 @@ pub mod errors;
 use std::path::Display;
 
 pub use arrow_scalars::{deep_ref::DeepRef, from_row::FromRow, to_row::ToRow};
-
-pub use arrow_derive::{DeepRef, FromRow, ToRow};
+pub use arrow_derive::{DeepRefPyroduct as DeepRef, FromRowPyroduct as FromRow, ToRowPyroduct as ToRow};
 
 pub use serde;
 pub use rkyv;

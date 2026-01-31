@@ -1,11 +1,10 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Data, DeriveInput, parse_macro_input};
+use syn::{Data, DeriveInput, Path, parse_macro_input};
 
 use crate::deep_ref::map_type_to_ref;
 
-pub fn derive(input: TokenStream) -> TokenStream {
-    let import_location = super::import_path();
+pub fn derive_with_path(input: TokenStream, import_location: Path) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
     let struct_name = input.ident;

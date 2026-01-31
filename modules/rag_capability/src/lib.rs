@@ -1,15 +1,15 @@
-use rag::RagClient;
-use pyroduct::{module, ToRow};
-// Importing from the external 'text_splitters' crate
-use text_splitters::{ChunkConfig, TextSplitter};
+use rag::{RagClient, RagClientMethods};
 
-#[derive(ToRow)]
+// Importing from the external 'text_splitters' crate
+use text_splitter::{ChunkConfig, TextSplitter};
+
+#[derive(pyroduct::ToRow)]
 struct RagResponse {
     query: String,
     results: Vec<SearchResultOutput>,
 }
 
-#[derive(ToRow)]
+#[derive(pyroduct::ToRow)]
 struct SearchResultOutput {
     id: String,
     content: String,
@@ -17,7 +17,7 @@ struct SearchResultOutput {
     preview: String,
 }
 
-#[module(output = response)]
+#[pyroduct::module(output = response)]
 fn rag_search(query: &str) -> Result<RagResponse, String> {
     let rag = RagClient.register()?;
     let results = rag.search(query.to_string())?;
