@@ -169,10 +169,10 @@ pub fn package_capability(path: &Path, output: &Path) -> Result<()> {
     println!("✓ Created {}", cargo_archive_path.display());
 
     // 4. Create .capability archive (module directory contents)
-    let module_manifest = cap_manifest.clone().to_module_manifest();
+    let module_manifest = cap_manifest.clone().to_interface_manifest();
     let module_cargo_content = toml::to_string_pretty(&module_manifest)?;
 
-    let cap_archive_name = format!("{}-{}.capability", name, version);
+    let cap_archive_name = format!("{}-{}.interface", name, version);
     let cap_archive_path = output.join(&cap_archive_name);
 
     let file = fs::File::create(&cap_archive_path)?;

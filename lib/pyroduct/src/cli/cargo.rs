@@ -133,7 +133,7 @@ impl CapabilityManifest {
         }
     }
 
-    pub fn to_module_manifest(self) -> Manifest {
+    pub fn to_interface_manifest(self) -> Manifest {
         let mut final_deps = BTreeMap::new();
 
         let pyroduct = match self.pyroduct.clone() {
@@ -162,7 +162,7 @@ impl CapabilityManifest {
 
         let mut package = self.capability.clone();
         if let Some(pkg) = &mut package {
-            pkg.name = format!("{}-module", pkg.name);
+            pkg.name = format!("{}-interface", pkg.name);
         }
 
         let final_features = self.features.clone();
@@ -306,7 +306,7 @@ impl ModuleManifest {
                     }
 
                     if let Some(path) = d.path.as_mut() {
-                        *path = format!("{path}/module");
+                        *path = format!("{path}/interface");
                     }
                     
                     d.optional = make_optional;
@@ -320,7 +320,8 @@ impl ModuleManifest {
                     Dependency::Inherited(d)
                 }
             };
-            target_map.insert(name.clone(), new_dep);
+            
+            target_map.insert(format!("{}-interface", name), new_dep);
         }
     }
 }

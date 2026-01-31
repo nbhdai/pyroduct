@@ -15,20 +15,22 @@ arrow-derive = { path = "../arrow-derive", default-features = false, features = 
 module-derive = { path = "../module-derive" }
 capability-derive = { path = "../capability-derive" }
 
-
 rkyv = "0.8.13"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.22"
-async-ffi = "0.5.0"
-futures = "0.3.31"
-tokio = { version = "1.49.0", features = ["full"] }
 thiserror = "2.0.17"
-pin-project = "1.1.10"
-libloading = "0.9.0"
-wasmtime = "40.0.1"
 serde = "1.0.228"
 serde_json = "1.0.149"
 anyhow = "1.0.100"
+
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+wasmtime = "40.0.1"
+pin-project = "1.1.10"
+async-ffi = "0.5.0"
+libloading = "0.9.0"
+tokio = { version = "1.49.0", features = ["full"] }
+futures = "0.3.31"
 
 capability-core = { path = "../capability-core" }
 fs-err = "2.9"

@@ -1,12 +1,16 @@
 #![deny(improper_ctypes)]
 #![deny(improper_ctypes_definitions)]
 
+#[cfg(not(target_arch = "wasm32"))]
 pub mod capability;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod host;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod capability_host;
 
+#[cfg(target_arch = "wasm32")]
 pub mod wasm_module;
 
-pub mod capability_host;
 pub mod module_capability;
 pub mod module_host;
 

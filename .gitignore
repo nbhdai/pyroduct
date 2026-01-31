@@ -4,5 +4,7 @@ target
 capabilities/**/Cargo.*
 modules/**/Cargo.*
 *.dylib
-*.capability
+*.interface
 *.cargo
+*.wasm
+*.module

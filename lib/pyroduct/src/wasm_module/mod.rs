@@ -1,4 +1,3 @@
-#[cfg(target_arch = "wasm32")]
 pub mod logging;
 
 pub use tracing;
@@ -155,7 +154,6 @@ where
     O: ToRow,
     F: FnOnce(&C::Ref<'a>) -> Result<O, String>,
 {
-    #[cfg(target_arch = "wasm32")]
     logging::init_logging();
     register_ffi_panic_hook();
     clear_last_panic();

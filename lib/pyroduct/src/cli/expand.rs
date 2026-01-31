@@ -97,7 +97,7 @@ fn expand_single(path: &Path) -> Result<()> {
     match (cap_toml_path.exists(), mod_toml_path.exists()) {
         (true, true) => anyhow::bail!("Both 'Capability.toml' and 'Module.toml' found."),
         (true, false) => {
-            let module_path = path.join("module");
+            let module_path = path.join("interface");
             let manifest_str = fs::read_to_string(&cap_toml_path)?;
             let cap_manifest: CapabilityManifest = toml::from_str(&manifest_str)?;
 
@@ -106,7 +106,7 @@ fn expand_single(path: &Path) -> Result<()> {
             fs::write(&cargo_toml_path, output_str)?;
             println!("  ✓ Wrote Cargo.toml");
 
-            generate_module_crate(path, &module_path, cap_manifest)?;
+            generate_interface_crate(path, &module_path, cap_manifest)?;
         },
         (false, true) => {
             let manifest_str = fs::read_to_string(&mod_toml_path)?;
@@ -123,13 +123,13 @@ fn expand_single(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn generate_module_crate(input: &Path, output: &Path, cap_manifest: CapabilityManifest) -> Result<()> {
+fn generate_interface_crate(input: &Path, output: &Path, cap_manifest: CapabilityManifest) -> Result<()> {
     fs::create_dir_all(output)?;
 
-    let module_manifest = cap_manifest.to_module_manifest();
+    let module_manifest = cap_manifest.to_interface_manifest();
     let cargo_out = toml::to_string_pretty(&module_manifest)?;
     fs::write(output.join("Cargo.toml"), cargo_out)?;
-    println!("  ✓ Wrote module/Cargo.toml");
+    println!("  ✓ Wrote interface/Cargo.toml");
 
     let source_rs = input.join("src").join("lib.rs");
     let dest_rs = output.join("src").join("lib.rs");
@@ -140,7 +140,7 @@ fn generate_module_crate(input: &Path, output: &Path, cap_manifest: CapabilityMa
 
     let generator = ModuleGenerator::new(source_rs);
     generator.generate_rust_source(dest_rs)?;
-    println!("  ✓ Wrote module/src/lib.rs");
+    println!("  ✓ Wrote interface/src/lib.rs");
 
     Ok(())
 }
