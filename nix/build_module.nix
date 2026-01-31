@@ -36,7 +36,7 @@ in {
     src = srcWithCargoToml;
     cargoExtraArgs = "--target wasm32-unknown-unknown -p ${name}";
     doCheck = false;
-    
+    cargoVendorDir = null;
     installPhase = ''
       mkdir -p $out/lib
       cp target/wasm32-unknown-unknown/release/*.wasm $out/lib/

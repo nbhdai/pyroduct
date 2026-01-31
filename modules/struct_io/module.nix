@@ -1,11 +1,11 @@
-{ myLib, capabilities }:
+{ myLib }:
 
 myLib.buildModule {
-  name = "proto_module";
+  name = "struct_io";
   src = ./.;
   
   capabilities = [
-    capabilities.serial_client
+    { path = "../../capabilities/http_client"; }
   ];
   
   dependencies = [

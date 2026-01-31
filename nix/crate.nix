@@ -5,19 +5,21 @@ let
   toToml = import ./to-toml.nix { inherit lib; };
 
   # --- Shared Helper: mkDep ---
-  mkDep = { name, version ? null, path ? null, optional ? false, features ? [], ... }:
+mkDep = { name, optional ? false, features ? [], ... }@args:
     let
-      base = {}
-        // (if path != null then { inherit path; } else {})
-        // (if version != null then { inherit version; } else {});
+      base = builtins.removeAttrs args [ "name" "optional" "features" ];
+
+      # 2. Add back optional/features if needed
       withOptional = if optional then base // { optional = true; } else base;
       withFeatures = if features != [] then withOptional // { inherit features; } else withOptional;
     in 
-      if withFeatures == { version = version; } then version
+      # 3. Optimization: If the only key is 'version', just return the string "1.2.3"
+      #    Otherwise, return the full table { version = "..."; features = [...]; }
+      if (builtins.attrNames withFeatures == [ "version" ]) then withFeatures.version
       else withFeatures;
 
   # --- 1. Import the TOML Generators ---
-  makeCapabilityToml = import ./capability_toml.nix {
+  makeCapabilityToml = import ./toml_capability.nix {
     inherit lib toToml mkDep pyroductDep;
   };
   

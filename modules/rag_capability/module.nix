@@ -1,11 +1,11 @@
-{ myLib, capabilities }:
+{ myLib }:
 
 myLib.buildModule {
-  name = "proto_module";
+  name = "rag_capability";
   src = ./.;
   
   capabilities = [
-    capabilities.rag
+    { path = "../../capabilities/rag"; }
   ];
   
   dependencies = [

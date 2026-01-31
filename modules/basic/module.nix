@@ -1,7 +1,7 @@
-{ myLib, capabilities }:
+{ myLib }:
 
 myLib.buildModule {
-  name = "proto_module";
+  name = "basic";
   src = ./.;
   
   capabilities = [

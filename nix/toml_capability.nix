@@ -15,9 +15,17 @@
 let
   # --- Dependency Formatting ---
   formatDep = dep: 
-    if builtins.isString dep then { name = dep; version = "*"; }
-    else if builtins.isAttrs dep then dep
-    else throw "Invalid dependency format";
+    if builtins.isAttrs dep then dep
+    # Check if string looks like a path (starts with . or /)
+    else if builtins.isString dep then
+      if (builtins.substring 0 1 dep == ".") || (builtins.substring 0 1 dep == "/") then
+        # It is a path string: "../thingie"
+        # We infer the name from the filename: name = "thingie", path = "../thingie"
+        { name = baseNameOf dep; path = dep; }
+      else
+        # It is a crate name: "serde"
+        { name = dep; version = "*"; }
+    else throw "Invalid dependency format: ${builtins.typeOf dep}";
 
   hostDeps = map formatDep hostDependencies;
   moduleDeps = map formatDep moduleDependencies;

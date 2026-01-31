@@ -40,7 +40,7 @@
           pyroductDep = { workspace = true; };
         };
 
-        # Build all capabilities first
+        # Build all capabilities
         capabilities = {
           rag = (import ./capabilities/rag/capability.nix { inherit myLib; });
           cpu_client = (import ./capabilities/cpu_client/capability.nix { inherit myLib; });
@@ -50,13 +50,13 @@
 
         # Build all modules
         modules = {
-          basic = (import ./modules/basic/module.nix { inherit myLib capabilities; });
-          basic_capability = (import ./modules/basic_capability/module.nix { inherit myLib capabilities; });
-          rag_capability = (import ./modules/rag_capability/module.nix { inherit myLib capabilities; });
-          struct_io = (import ./modules/struct_io/module.nix { inherit myLib capabilities; });
+          basic = (import ./modules/basic/module.nix { inherit myLib; });
+          basic_capability = (import ./modules/basic_capability/module.nix { inherit myLib; });
+          rag_capability = (import ./modules/rag_capability/module.nix { inherit myLib; });
+          struct_io = (import ./modules/struct_io/module.nix { inherit myLib; });
         };
 
-        # Build the harness (still using traditional approach for now)
+        # Build the harness
         src = craneLibNative.cleanCargoSource ./.;
         commonArgs = {
           inherit src;
@@ -68,7 +68,8 @@
         nativeArtifacts = craneLibNative.buildDepsOnly (commonArgs // {
           pname = "pyroduct-native-deps";
           version = "0.0.1";
-          cargoExtraArgs = "--workspace --exclude proto_module --exclude proto_module_2 --exclude proto_module_3";
+          # Exclude the workspace members that are WASM modules
+          cargoExtraArgs = "--workspace --exclude basic --exclude basic_capability --exclude rag_capability --exclude struct_io";
         });
 
         harness = craneLibNative.buildPackage (commonArgs // {
@@ -81,32 +82,40 @@
         # Shared Library Extension
         libExt = if pkgs.stdenv.isDarwin then "dylib" else "so";
 
-        # Generate config files using the new module/capability structure
-        mkConfig = { moduleDef, extraInputs ? [] }: pkgs.writeText "${moduleDef.name}-config.json" (builtins.toJSON {
-          module_name = moduleDef.name;
-          module = "${moduleDef.wasm}/lib/${moduleDef.name}.wasm";
-          capabilities = map (cap: "${cap.hostPlugin}/lib/lib${cap.name}.${libExt}") moduleDef.capabilities;
-          input = extraInputs;
-        });
+        # Generate config files
+        # CHANGED: Now accepts explicit `capabilities` list because moduleDef no longer contains artifacts.
+        mkConfig = { moduleDef, capabilities ? [], extraInputs ? [] }: 
+          pkgs.writeText "${moduleDef.name}-config.json" (builtins.toJSON {
+            module_name = moduleDef.name;
+            module = "${moduleDef.wasm}/lib/${moduleDef.name}.wasm";
+            capabilities = map (cap: "${cap.hostPlugin}/lib/lib${cap.name}.${libExt}") capabilities;
+            input = extraInputs;
+          });
 
+        # Test Config 1: Basic Module (Reporter)
         config1 = mkConfig {
-          moduleDef = modules.proto_module;
+          moduleDef = modules.basic;
+          capabilities = [];
           extraInputs = [
             { input = "Hello World from Host"; }
             { input = "This is a second input"; }
           ];
         };
 
+        # Test Config 2: CPU + HTTP
         config2 = mkConfig {
-          moduleDef = modules.proto_module_2;
+          moduleDef = modules.basic_capability; 
+          capabilities = [ capabilities.cpu_client capabilities.http_client ];
           extraInputs = [
             { input = "https://httpbin.org/get"; }
             { input = "this should fail"; }
           ];
         };
 
+        # Test Config 3: Serial
         config3 = mkConfig {
-          moduleDef = modules.proto_module_3;
+          moduleDef = modules.struct_io;
+          capabilities = [ capabilities.serial_client ];
           extraInputs = [
             {
               input = {
@@ -122,27 +131,26 @@
         packages = {
           inherit harness;
           
-          # Export individual capabilities
-          proto_reporter = capabilities.proto_reporter.hostPlugin;
-          proto_cpu_info = capabilities.proto_cpu_info.hostPlugin;
-          proto_http_client = capabilities.proto_http_client.hostPlugin;
-          proto_serial_client = capabilities.proto_serial_client.hostPlugin;
+          # Export capabilities (using updated names from definition)
+          rag = capabilities.rag.hostPlugin;
+          cpu_client = capabilities.cpu_client.hostPlugin;
+          http_client = capabilities.http_client.hostPlugin;
+          serial_client = capabilities.serial_client.hostPlugin;
           
-          # Export individual modules
-          proto_module = modules.proto_module.wasm;
-          proto_module_2 = modules.proto_module_2.wasm;
-          proto_module_3 = modules.proto_module_3.wasm;
+          basic = modules.basic.wasm;
+          basic_capability = modules.basic_capability.wasm;
+          rag_capability = modules.rag_capability.wasm;
+          struct_io = modules.struct_io.wasm;
           
           default = harness;
         };
 
-        # Expose the library for external use
         lib = { inherit myLib; };
 
         apps.run-tests = flake-utils.lib.mkApp {
           drv = pkgs.writeShellScriptBin "run-tests" ''
             echo "==================================="
-            echo "Testing Module 1 (Reporter)"
+            echo "Testing Module 1 (Basic/Reporter)"
             echo "Config: ${config1}"
             ${harness}/bin/harness ${config1}
             echo ""
@@ -161,19 +169,6 @@
           '';
         };
 
-        # Debug app to show generated Cargo.toml files
-        apps.show-cargo-toml = flake-utils.lib.mkApp {
-          drv = pkgs.writeShellScriptBin "show-cargo-toml" ''
-            echo "=== proto_reporter Cargo.toml ==="
-            echo "${capabilities.proto_reporter.cargoTomlContent}"
-            echo ""
-            echo "=== proto_module Cargo.toml ==="
-            echo "${modules.proto_module.cargoTomlContent}"
-            echo ""
-          '';
-        };
-
-        # Generate Cargo.toml files for IDE/linting support
         apps.generate-cargo-toml = flake-utils.lib.mkApp {
           drv = myLib.mkGenerateCargoTomlScript (myLib.collectGenerationTargets {
             inherit capabilities modules;
@@ -182,7 +177,6 @@
 
         devShells.default = craneLibNightly.devShell {
           packages = [ nightlyToolchain ];
-          
           RUST_SRC_PATH = "${nightlyToolchain}/lib/rustlib/src/rust/library";
           CARGO = "${nightlyToolchain}/bin/cargo";
           RUSTUP_TOOLCHAIN = "${nightlyToolchain}";
@@ -198,8 +192,7 @@
             echo "Development shell loaded!"
             echo ""
             echo "Available commands:"
-            echo "  nix run .#generate-cargo-toml  - Generate Cargo.toml files for IDE support"
-            echo "  nix run .#show-cargo-toml      - Preview generated Cargo.toml content"
+            echo "  nix run .#generate-cargo-toml  - Generate Cargo.toml files"
             echo "  nix run .#run-tests            - Run the test harness"
           '';
         };

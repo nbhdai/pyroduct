@@ -30,7 +30,7 @@ CARGO_TOML_EOF
     inherit version;
     src = srcWithCargoToml;
     cargoExtraArgs = "--features host -p ${name}";
-    
+    cargoVendorDir = null;
     installPhase = ''
       mkdir -p $out/lib
       cp target/release/*.so $out/lib/ 2>/dev/null || \
