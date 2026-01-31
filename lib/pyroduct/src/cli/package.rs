@@ -168,6 +168,7 @@ fn package_capability(ctx: &ProjectContext, manifest: CapabilityManifest) -> Res
     // Add documentation
     if let Some(json_bytes) = generate_rustdoc_json(ctx)? {
         cap_tar.add_bytes("interface.json", &json_bytes)?;
+        fs::write(ctx.root.join("interface.json"), &json_bytes)?;
     }
 
     cap_tar.finish()?;

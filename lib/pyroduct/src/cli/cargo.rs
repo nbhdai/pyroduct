@@ -249,7 +249,7 @@ impl ModuleManifest {
         let mut final_deps = BTreeMap::new();
         final_deps.insert("pyroduct".to_string(), self.pyroduct.clone());
         final_deps.extend(self.dependencies.clone().into_iter());
-        self.augment_deps(&mut final_deps, &self.capabilities, true);
+        self.augment_deps(&mut final_deps, &self.capabilities);
         
         #[allow(deprecated)]
         Manifest {
@@ -277,7 +277,6 @@ impl ModuleManifest {
         &self, 
         target_map: &mut DepsSet, 
         source_map: &DepsSet, 
-        make_optional: bool
     ) {
         let registry_url = Some("sparse+http://pyroduct.io/capabilities".to_string());
 
@@ -286,12 +285,10 @@ impl ModuleManifest {
                 // 1) Simple -> Detailed with registry + optional flag
                 Dependency::Simple(ver) => Dependency::Detailed(Box::new(DependencyDetail {
                     version: Some(ver.clone()),
-                    optional: make_optional,
                     registry: registry_url.clone(),
                     ..Default::default()
                 })),
 
-                // 2) Detailed -> Add registry only if NOT path or git
                 Dependency::Detailed(detail) => {
                     let mut d = detail.clone();
                     
@@ -299,19 +296,16 @@ impl ModuleManifest {
                     if d.path.is_none() && d.git.is_none() && d.registry.is_none() {
                         d.registry = registry_url.clone();
                     }
-
+                    // if it is a path, it's a path to the capability and we expand the interface in this folder
                     if let Some(path) = d.path.as_mut() {
                         *path = format!("{path}/interface");
                     }
                     
-                    d.optional = make_optional;
                     Dependency::Detailed(d)
                 },
 
-                // 3) Inherited -> Pass through (optional flag still applied if needed)
                 Dependency::Inherited(inherited) => {
-                    let mut d = inherited.clone();
-                    d.optional = make_optional;
+                    let d = inherited.clone();
                     Dependency::Inherited(d)
                 }
             };

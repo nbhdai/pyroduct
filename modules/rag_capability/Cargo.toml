@@ -16,7 +16,6 @@ path = "../../lib/pyroduct"
 
 [dependencies.rag]
 path = "../../capabilities/rag/interface"
-optional = true
 
 [target.wasm32-unknown-unknown.dependencies]
 

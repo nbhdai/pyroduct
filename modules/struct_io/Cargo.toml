@@ -6,7 +6,6 @@ authors = ["nbhdai"]
 
 [dependencies.http_client]
 path = "../../capabilities/http_client/interface"
-optional = true
 
 [dependencies.pyroduct]
 path = "../../lib/pyroduct"
