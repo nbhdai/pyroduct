@@ -2,3 +2,7 @@ target
 .DS_Store
 .direnv
 capabilities/**/Cargo.*
+modules/**/Cargo.*
+*.dylib
+*.capability
+*.cargo

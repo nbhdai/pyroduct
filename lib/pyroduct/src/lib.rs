@@ -238,9 +238,9 @@ pub struct ModIdentity {
 }
 
 impl CapIdentity {
-    pub fn from<'a, P: Into<&'a std::path::Path>>(p: P) -> Self {
+    pub fn from<P: AsRef<std::path::Path>>(p: P) -> Self {
         Self {
-            path: std::sync::Arc::from(p.into()),
+            path: std::sync::Arc::from(p.as_ref()),
         }
     }
 
@@ -259,9 +259,9 @@ impl CapIdentity {
 }
 
 impl ModIdentity {
-    pub fn from<'a, P: Into<&'a std::path::Path>>(p: P) -> Self {
+    pub fn from<P: AsRef<std::path::Path>>(p: P) -> Self {
         Self {
-            path: std::sync::Arc::from(p.into()),
+            path: std::sync::Arc::from(p.as_ref()),
         }
     }
 

@@ -1,16 +1,20 @@
 [package]
 name = "cpu_client"
 version = "0.1.0"
-edition = "2015"
+edition = "2024"
 authors = ["nbhdai"]
 
 [workspace]
 members = []
 
 [dependencies.pyroduct]
-workspace = true
+path = "../../lib/pyroduct"
 
 [features]
 capability = []
 default = []
 module = []
+
+[lib]
+crate-type = ["cdylib"]
+required-features = []

@@ -19,3 +19,7 @@ optional = true
 capability = ["dep:reqwest"]
 default = []
 module = []
+
+[lib]
+crate-type = ["cdylib"]
+required-features = []

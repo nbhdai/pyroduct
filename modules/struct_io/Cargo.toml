@@ -12,4 +12,8 @@ path = "../../capabilities/http_client/module"
 optional = true
 
 [dependencies.pyroduct]
-workspace = true
+path = "../../lib/pyroduct"
+
+[lib]
+crate-type = ["cdylib"]
+required-features = []

@@ -121,7 +121,7 @@ impl CapabilityManifest {
             target: self.target,
             features: final_features,
             patch: self.patch,
-            lib: self.lib,
+            lib: ensure_cdylib(self.lib),
             profile: self.profile,
             badges: self.badges,
             bin: self.bin,
@@ -266,7 +266,7 @@ impl ModuleManifest {
             target: self.target,
             features: BTreeMap::default(),
             patch: self.patch,
-            lib: self.lib,
+            lib: ensure_cdylib(self.lib),
             profile: self.profile,
             badges: self.badges,
             bin: self.bin,
@@ -328,6 +328,23 @@ impl ModuleManifest {
 fn ensure_edition_2024<Metadata>(mut package: Package<Metadata>) -> Package<Metadata> {
     package.edition = Inheritable::Set(Edition::E2024);
     package
+}
+
+fn ensure_cdylib(lib: Option<Product>) -> Option<Product> {
+    let lib = if let Some(mut lib) = lib {
+        if !lib.crate_type.iter().any(|s| s.as_str() == "cdylib") {
+            lib.crate_type.push("cdylib".to_string());
+            lib
+        } else {
+            lib
+        }
+    } else {
+        Product {
+            crate_type: vec!["cdylib".to_string()],
+            ..Default::default()
+        }
+    };
+    Some(lib)
 }
 
 #[cfg(test)]

@@ -8,4 +8,8 @@ authors = ["nbhdai"]
 members = []
 
 [dependencies.pyroduct]
-workspace = true
+path = "../../lib/pyroduct"
+
+[lib]
+crate-type = ["cdylib"]
+required-features = []
