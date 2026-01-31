@@ -6,6 +6,8 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 use fs_err as fs;
 
+use crate::cli::cargo::ModuleManifest;
+
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Args {
@@ -16,23 +18,12 @@ struct Args {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Generates the Cargo.toml for the Capability crate itself.
-    /// Usage: pyroduct-gen manifest --root ./capability
-    Manifest {
-        /// The root directory containing Capability.toml
-        #[arg(long, default_value = ".")]
-        root: PathBuf,
-    },
-    
-    /// Generates the separate capability_module crate (Cargo.toml + src/lib.rs).
-    /// Usage: pyroduct-gen module --input ./capability --output ./capability_module
-    Module {
-        /// The root directory of the source capability (must contain Capability.toml and src/lib.rs)
-        #[arg(short, long)]
-        input: PathBuf,
-
-        /// The destination directory for the generated module
-        #[arg(short, long)]
-        output: PathBuf,
+    /// Usage: pyroduct expand ./capability
+    Expand {
+        /// The root directory of the source capability
+        // By leaving out 'long' and 'short', this becomes a positional argument
+        #[arg(value_name = "DIRECTORY")] 
+        path: PathBuf,
     },
 }
 
@@ -40,8 +31,7 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     match args.command {
-        Commands::Manifest { root } => generate_capability_manifest(&root),
-        Commands::Module { input, output } => generate_module_crate(&input, &output),
+        Commands::Expand { path } => expand_capability(&path),
     }
 }
 
@@ -49,27 +39,49 @@ fn main() -> Result<()> {
 // Command Logic
 // ----------------------------------------------------------------------------
 
-fn generate_capability_manifest(root: &Path) -> Result<()> {
-    println!("Generating Capability Manifest for: {:?}", root);
+fn expand_capability(path: &Path) -> Result<()> {
+    println!("Generating Capability Manifest for: {:?}", path);
     
-    let cap_toml_path = root.join("Capability.toml");
-    let cargo_toml_path = root.join("Cargo.toml");
+    let cap_toml_path = path.join("Capability.toml");
+    let mod_toml_path = path.join("Module.toml");
+    let cargo_toml_path = path.join("Cargo.toml");
+    match (cap_toml_path.exists(), mod_toml_path.exists()) {
+        (true, true) => anyhow::bail!("Both 'Capability.toml' and 'Module.toml' found."),
+        (true, false) => {
+            println!("Expanding capability");
+            let module_path = path.join("module");
+            let manifest_str = fs::read_to_string(&cap_toml_path)?;
+            let cap_manifest: CapabilityManifest = toml::from_str(&manifest_str)?;
 
-    let manifest_str = fs::read_to_string(&cap_toml_path)?;
-    let cap_manifest: CapabilityManifest = toml::from_str(&manifest_str)?;
+            let standard_manifest = cap_manifest.to_capability_manifest();
+            let output_str = toml::to_string_pretty(&standard_manifest)?;
+            fs::write(cargo_toml_path, output_str)?;
+            println!("✓ Wrote Cargo.toml");
 
-    let standard_manifest = cap_manifest.to_capability_manifest();
-    let output_str = toml::to_string_pretty(&standard_manifest)?;
+            generate_module_crate(path, &module_path)?;
+        },
+        (false, true) => {
+            println!("Expanding module");
+            let manifest_str = fs::read_to_string(&cap_toml_path)?;
+            let cap_manifest: ModuleManifest = toml::from_str(&manifest_str)?;
 
-    fs::write(cargo_toml_path, output_str)?;
-    println!("✓ Wrote Cargo.toml");
+            let standard_manifest = cap_manifest.to_cargo();
+            let output_str = toml::to_string_pretty(&standard_manifest)?;
+            fs::write(cargo_toml_path, output_str)?;
+            println!("✓ Wrote Cargo.toml");
+        },
+        (false, false) => anyhow::bail!("Neither 'Capability.toml' or 'Module.toml' found."),
+    }
+    
+
+    
+
+    
     Ok(())
 }
 
 fn generate_module_crate(input: &Path, output: &Path) -> Result<()> {
     println!("Generating Module Crate...");
-    println!("  Input:  {:?}", input);
-    println!("  Output: {:?}", output);
 
     fs::create_dir_all(output)?;
 

@@ -5,22 +5,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use toml::Value;
 
-// ============================================================================
-// 1. THE CUSTOM SCHEMA (Exactly as you requested)
-// ============================================================================
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct CapabilityManifest<Metadata = Value> {
-    pub package: Option<Package<Metadata>>,
+    pub capability: Option<Package<Metadata>>,
     pub workspace: Option<Workspace<Metadata>>,
-
     #[serde(default = "default_pyroduct")]
     pub pyroduct: Dependency,
-
     #[serde(default)]
     pub dependencies: CapabilityDependencies,
-
     #[serde(default)]
     pub dev_dependencies: DepsSet,
     #[serde(default)]
@@ -29,13 +22,52 @@ pub struct CapabilityManifest<Metadata = Value> {
     pub target: TargetDepsSet,
     #[serde(default)]
     pub features: FeatureSet,
-    
     #[serde(default)]
     #[deprecated(note = "Cargo recommends patch instead")]
     pub replace: DepsSet,
     #[serde(default)]
     pub patch: PatchSet,
-    
+    pub lib: Option<Product>,
+    #[serde(default)]
+    pub profile: Profiles,
+    #[serde(default)]
+    pub badges: Badges,
+    #[serde(default)]
+    pub bin: Vec<Product>,
+    #[serde(default)]
+    pub bench: Vec<Product>,
+    #[serde(default)]
+    pub test: Vec<Product>,
+    #[serde(default)]
+    pub example: Vec<Product>,
+    #[serde(default)]
+    pub lints: Inheritable<LintGroups>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ModuleManifest<Metadata = Value> {
+    pub module: Option<Package<Metadata>>,
+    pub workspace: Option<Workspace<Metadata>>,
+    #[serde(default = "default_pyroduct")]
+    pub pyroduct: Dependency,
+    #[serde(default)]
+    pub capabilities: DepsSet,
+    #[serde(default)]
+    pub dependencies: DepsSet,
+    #[serde(default)]
+    pub dev_dependencies: DepsSet,
+    #[serde(default)]
+    pub build_dependencies: DepsSet,
+    #[serde(default)]
+    pub target: TargetDepsSet,
+    #[serde(default)]
+    pub features: FeatureSet,
+    #[serde(default)]
+    #[deprecated(note = "Cargo recommends patch instead")]
+    pub replace: DepsSet,
+    #[serde(default)]
+    pub patch: PatchSet,
     pub lib: Option<Product>,
     #[serde(default)]
     pub profile: Profiles,
@@ -68,10 +100,6 @@ pub struct CapabilityDependencies {
     pub shared: DepsSet,
 }
 
-// ============================================================================
-// 2. LOGIC TO AUGMENT & CONVERT
-// ============================================================================
-
 impl CapabilityManifest {
     /// Reads from a file string, processes logic, and returns a standard Manifest 
     /// ready for serialization.
@@ -79,19 +107,10 @@ impl CapabilityManifest {
         let mut final_deps = BTreeMap::new();
         final_deps.insert("pyroduct".to_string(), self.pyroduct.clone());
         final_deps.extend(self.dependencies.shared.clone().into_iter());
-        
-        // 1. Augment and merge dependencies
-        // Host: Optional = true
         self.augment_deps(&mut final_deps, &self.dependencies.host, true);
-        
-        // Module: Optional = true
         self.augment_deps(&mut final_deps, &self.dependencies.module, true);
-        // 2. Create Requisite Features
         let final_features = self.create_requisite_features(&self.features);
 
-        // 3. Construct Standard Manifest
-        // We move fields over. Note: Manifest uses `Option` for some fields 
-        // where your struct might rely on defaults, so we map carefully.
         #[allow(deprecated)]
         Manifest {
             package: self.package,
@@ -215,9 +234,78 @@ impl CapabilityManifest {
     }
 }
 
-// ============================================================================
-// 3. USAGE EXAMPLE / TESTS
-// ============================================================================
+impl ModuleManifest {
+    pub fn to_cargo(self) -> Manifest {
+        let mut final_deps = BTreeMap::new();
+        final_deps.insert("pyroduct".to_string(), self.pyroduct.clone());
+        final_deps.extend(self.dependencies.clone().into_iter());
+        self.augment_deps(&mut final_deps, &self.capabilities, true);
+        
+        #[allow(deprecated)]
+        Manifest {
+            package: self.package,
+            workspace: self.workspace,
+            dependencies: final_deps,
+            dev_dependencies: self.dev_dependencies,
+            build_dependencies: self.build_dependencies,
+            target: self.target,
+            features: BTreeMap::default(),
+            patch: self.patch,
+            lib: self.lib,
+            profile: self.profile,
+            badges: self.badges,
+            bin: self.bin,
+            bench: self.bench,
+            test: self.test,
+            example: self.example,
+            lints: self.lints,
+            replace: BTreeMap::default(),
+        }
+    }
+
+    fn augment_deps(
+        &self, 
+        target_map: &mut DepsSet, 
+        source_map: &DepsSet, 
+        make_optional: bool
+    ) {
+        let registry_url = Some("sparse+http://pyroduct.io/capabilities".to_string());
+
+        for (name, dep) in source_map {
+            let new_dep = match dep {
+                // 1) Simple -> Detailed with registry + optional flag
+                Dependency::Simple(ver) => Dependency::Detailed(Box::new(DependencyDetail {
+                    version: Some(ver.clone()),
+                    optional: make_optional,
+                    registry: registry_url.clone(),
+                    ..Default::default()
+                })),
+
+                // 2) Detailed -> Add registry only if NOT path or git
+                Dependency::Detailed(detail) => {
+                    let mut d = detail.clone();
+                    
+                    // Logic: If it's not a local path and not a git repo, apply the registry
+                    if d.path.is_none() && d.git.is_none() && d.registry.is_none() {
+                        d.registry = registry_url.clone();
+                    }
+                    
+                    d.optional = make_optional;
+                    Dependency::Detailed(d)
+                },
+
+                // 3) Inherited -> Pass through (optional flag still applied if needed)
+                Dependency::Inherited(inherited) => {
+                    let mut d = inherited.clone();
+                    d.optional = make_optional;
+                    Dependency::Inherited(d)
+                }
+            };
+            target_map.insert(name.clone(), new_dep);
+        }
+    }
+
+}
 
 #[cfg(test)]
 mod tests {

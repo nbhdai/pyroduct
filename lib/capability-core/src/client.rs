@@ -1,5 +1,4 @@
 //! #[capability_client] - Marks a struct as client-side state
-
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Attribute, ItemStruct, Result, Visibility, parse_quote};
@@ -11,7 +10,7 @@ pub struct CapClient {
 
 impl CapClient {
     pub fn new(mut input: ItemStruct) -> Result<Self> {
-        // 1. Validate Visibility (Must be pub)
+        // 1. Validate Visibility
         if !matches!(input.vis, Visibility::Public(_)) {
             return Err(syn::Error::new_spanned(
                 &input.vis,
@@ -19,39 +18,110 @@ impl CapClient {
             ));
         }
 
-        // 2. Strip existing attributes to prevent conflicts/loops
-        input.attrs.retain(|attr| {
-            // Check for simple usage: #[client] or #[rkyv]
-            if attr.path().is_ident("client") || attr.path().is_ident("rkyv") {
-                return false;
-            }
-            // Check for fully qualified usage: #[pyroduct::client]
-            if attr.path().segments.len() == 2 
-               && attr.path().segments[0].ident == "pyroduct" 
-               && attr.path().segments[1].ident == "client" 
-            {
-                return false;
-            }
-            true
-        });
+        // 2. Detect Configuration and Existing Attributes
+        let (has_manual_flag, client_attr_index) = parse_client_config(&input.attrs)?;
+        let has_manual_attrs = check_manual_rkyv(&input.attrs)?;
 
-        // 2. Decorate with Rkyv attributes
-        let rkyv_crate: Attribute = parse_quote!(
-            #[rkyv(crate = ::pyroduct::rkyv)]
-        );
-        let rkyv_derive: Attribute = parse_quote!(
-            #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Serialize, ::pyroduct::rkyv::Deserialize)]
-        );
-        input.attrs.insert(0, rkyv_crate);
-        input.attrs.insert(0, rkyv_derive);
+        // 3. Validate Logic
+        if has_manual_flag && !has_manual_attrs {
+            return Err(syn::Error::new_spanned(
+                &input,
+                "#[client(manual_rkyv)] is set, but no manual #[rkyv] or Derive attributes were found on the struct.",
+            ));
+        }
+
+        if !has_manual_flag && has_manual_attrs {
+            return Err(syn::Error::new_spanned(
+                &input,
+                "Manual #[rkyv] attributes detected, but 'manual_rkyv' option was not set.\n\
+                 Either remove the manual attributes to use auto-generation, or add #[pyroduct::client(manual_rkyv)].",
+            ));
+        }
+
+        // 4. Clean up the Marker Attribute
+        // We always remove the #[client] / #[pyroduct::client] attribute so it doesn't 
+        // trigger again in the generated code and cause conflicts.
+        if let Some(idx) = client_attr_index {
+            input.attrs.remove(idx);
+        }
+
+        // 5. Inject Defaults (only if NOT manual)
+        if !has_manual_flag {
+            let rkyv_crate: Attribute = parse_quote!(
+                #[rkyv(crate = ::pyroduct::rkyv)]
+            );
+            let rkyv_derive: Attribute = parse_quote!(
+                #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Serialize, ::pyroduct::rkyv::Deserialize)]
+            );
+            input.attrs.insert(0, rkyv_crate);
+            input.attrs.insert(0, rkyv_derive);
+        }
+
         Ok(Self { input })
     }
 
-    /// Generates the final code.
     pub fn expand(&self) -> TokenStream {
         let input = &self.input;
         quote! { #input }
     }
+}
+
+/// Helper: Parses #[pyroduct::client(manual_rkyv)]
+/// Returns: (is_manual_set, index_of_attribute)
+fn parse_client_config(attrs: &[Attribute]) -> Result<(bool, Option<usize>)> {
+    for (i, attr) in attrs.iter().enumerate() {
+        // Match #[client] or #[pyroduct::client]
+        if is_client_attr(attr) {
+            let mut is_manual = false;
+            if attr.meta.require_list().is_ok() {
+                attr.parse_nested_meta(|meta| {
+                    if meta.path.is_ident("manual_rkyv") {
+                        is_manual = true;
+                        Ok(())
+                    } else {
+                        // Strict check: error on unknown options to prevent typos
+                        Err(meta.error("Unknown client option. Supported: manual_rkyv"))
+                    }
+                })?;
+            }
+
+            return Ok((is_manual, Some(i)));
+        }
+    }
+    Ok((false, None))
+}
+
+/// Helper: Checks for #[rkyv] or derived Archive/Serialize/Deserialize
+fn check_manual_rkyv(attrs: &[Attribute]) -> Result<bool> {
+    for attr in attrs {
+        // Check for #[rkyv(...)]
+        if attr.path().is_ident("rkyv") {
+            return Ok(true);
+        }
+        
+        // Check for #[derive(...)] containing Archive, etc.
+        if attr.path().is_ident("derive") {
+            let mut found_rkyv_trait = false;
+            attr.parse_nested_meta(|meta| {
+                if let Some(ident) = meta.path.segments.last().map(|s| &s.ident) {
+                    if ident == "Archive" || ident == "Serialize" || ident == "Deserialize" {
+                        found_rkyv_trait = true;
+                    }
+                }
+                Ok(())
+            })?;
+
+            if found_rkyv_trait {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn is_client_attr(attr: &Attribute) -> bool {
+    attr.path().is_ident("client") || 
+    (attr.path().segments.len() == 2 && attr.path().segments[0].ident == "pyroduct" && attr.path().segments[1].ident == "client")
 }
 
 #[cfg(test)]

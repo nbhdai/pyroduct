@@ -1,0 +1,11 @@
+[module]
+authors = ["nbhdai"]
+edition = "2024"
+name = "struct_io"
+version = "0.1.0"
+
+[capabilities]
+http_client = { path = "../../capabilities/http_client" }
+
+[dependencies]
+

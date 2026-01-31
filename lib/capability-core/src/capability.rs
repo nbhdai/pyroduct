@@ -410,9 +410,8 @@ impl CapabilityImpl {
             .collect();
 
         quote! {
-            pub mod wasm {
+            mod wasm {
                 use super::*;
-                #[cfg(target_arch = "wasm32")]
                 #[link(wasm_import_module = "env")]
                 unsafe extern "C" {
                     #new_client_decl

@@ -1,0 +1,9 @@
+[module]
+authors = ["nbhdai"]
+edition = "2024"
+name = "basic"
+version = "0.1.0"
+
+[capabilities]
+
+[dependencies]

@@ -1,4 +1,4 @@
-[package]
+[capability]
 authors = ["nbhdai"]
 edition = "2024"
 name = "cpu_client"
