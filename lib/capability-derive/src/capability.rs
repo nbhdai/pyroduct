@@ -206,7 +206,7 @@ impl CapabilityImpl {
         }
     }
 
-fn generate_client_impl(&self) -> TokenStream {
+    fn generate_client_impl(&self) -> TokenStream {
         let client = &self.ident.client_tn;
         let module = format_ident!("wasm");
 
@@ -452,7 +452,7 @@ mod tests {
                 type Config = MyConfig;
                 type Client = SimpleClient;
 
-                fn new(config: &MyConfig) -> Self { Self }
+                fn new(config: Option<MyConfig>) -> Self { Self }
                 fn reset(&mut self) {}
                 fn new_client(&self, client: &SimpleClient) {}
             }
@@ -475,7 +475,7 @@ mod tests {
                 type Config = MyConfig;
                 type Client = SimpleClient;
 
-                fn new(config: &OtherConfig) -> Self { Self }
+                fn new(config: Option<OtherConfig>) -> Self { Self }
                 fn reset(&mut self) {}
                 fn new_client(&self, client: &SimpleClient) {}
             }
@@ -484,7 +484,7 @@ mod tests {
         let input: ItemImpl = parse2(code).unwrap();
         let err = CapabilityImpl::new(input).unwrap_err();
         println!("{}", err);
-        assert!(err.to_string().contains("Type mismatch. Expected 'MyConfig' based on macro attribute, found 'OtherConfig'"));
+        assert!(err.to_string().contains("Type mismatch. Expected 'Option<MyConfig>' based on macro attribute, found 'Option<OtherConfig>'"));
     }
 
     #[test]
@@ -581,6 +581,7 @@ mod tests {
         crate::fmt::assert_code_eq_token(&output, &expected);
     }
 
+
     #[test]
     fn test_generate_client_impl_integration() {
         // 1. Define Input
@@ -589,7 +590,7 @@ mod tests {
                 type Client = MyClient;
                 type Config = MyConfig;
 
-                fn new(config: &MyConfig) -> Self { Self }
+                fn new(config: Option<MyConfig>) -> Self { Self }
                 fn reset(&mut self) {}
                 fn new_client(&self, client: &MyClient) {}
                 fn get_info(&self, client: &MyClient) -> u32 { 0 }
@@ -611,20 +612,14 @@ mod tests {
                 pub fn register(self) -> ::pyroduct::module_capability::Client<Self> {
                     let __config_buf = ::pyroduct::rkyv::to_bytes::<::pyroduct::rkyv::rancor::Error>(&self)
                         .expect("Failed to serialize config");
-
-                    let new_self = ::pyroduct::module_capability::Client {
-                        data: self,
-                        __config_buf,
-                    };
                     
                     ::pyroduct::module_capability::access::call_from_wasm::<
-                        MyClient,
                         (),
                         (),
                         _
                     >(
                         "__my_state__new_client",
-                        Some(&self),
+                        Some(&__config_buf),
                         None,
                         |client_state_ptr: *const u8,
                          client_state_len: usize,
@@ -640,7 +635,7 @@ mod tests {
                             }
                         }
                     );
-                    new_self
+                    ::pyroduct::module_capability::Client::new(self, __config_buf)
                 }
             }
             pub trait MyClientMethods {
@@ -648,15 +643,14 @@ mod tests {
                 fn get_other_info(&self, data: f32) -> u32;
             }
             impl MyClientMethods for ::pyroduct::module_capability::Client<MyClient> {
-                pub fn get_info(&self) -> u32 {
+                fn get_info(&self) -> u32 {
                     ::pyroduct::module_capability::access::call_from_wasm::<
-                        MyClient,
                         (),
                         u32,
                         _
                     >(
                         "__my_state__get_info",
-                        Some(&self),
+                        Some(self.buffer()),
                         None,
                         |client_state_ptr: *const u8,
                          client_state_len: usize,
@@ -674,15 +668,14 @@ mod tests {
                     )
                 }
 
-                pub fn get_other_info(&self, data: f32) -> u32 {
+                fn get_other_info(&self, data: f32) -> u32 {
                     ::pyroduct::module_capability::access::call_from_wasm::<
-                        MyClient,
                         f32,
                         u32,
                         _
                     >(
                         "__my_state__get_other_info",
-                        Some(&self),
+                        Some(self.buffer()),
                         Some(&data),
                         |client_state_ptr: *const u8,
                          client_state_len: usize,
@@ -742,20 +735,14 @@ mod tests {
                     
                     let __config_buf = ::pyroduct::rkyv::to_bytes::<::pyroduct::rkyv::rancor::Error>(&self)
                         .expect("Failed to serialize config");
-
-                    let new_self = ::pyroduct::module_capability::Client {
-                        data: self,
-                        __config_buf,
-                    };
                     
                     let ffi_result = ::pyroduct::module_capability::access::call_from_wasm::<
-                        AdvancedClient,
                         (),
                         Result<(), MyError>,
                         _
                     >(
                         "__advanced_struct__new_client",
-                        Some(&self),
+                        Some(&__config_buf),
                         None,
                         |client_state_ptr: *const u8,
                          client_state_len: usize,
@@ -773,7 +760,7 @@ mod tests {
                     );
 
                     match ffi_result {
-                        Ok(_) => Ok(new_self),
+                        Ok(_) => Ok(::pyroduct::module_capability::Client::new(self, __config_buf)),
                         Err(e) => Err(e.into()),
                     }
                 }
@@ -781,8 +768,8 @@ mod tests {
             pub trait AdvancedClientMethods {
                 fn process(&self, val: u32, flag: bool) -> Result<u32, MyError>;
             }
-            impl ::pyroduct::module_capability::Client<AdvancedClient> {
-                pub fn process(&self, val: u32, flag: bool) -> Result<u32, MyError> {
+            impl AdvancedClientMethods for ::pyroduct::module_capability::Client<AdvancedClient> {
+                fn process(&self, val: u32, flag: bool) -> Result<u32, MyError> {
                     #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
                     #[rkyv(crate = ::pyroduct::rkyv)]
                     struct __AdvancedStruct__Process__Input {
@@ -791,13 +778,12 @@ mod tests {
                     }
 
                     ::pyroduct::module_capability::access::call_from_wasm::<
-                        AdvancedClient,
                         __AdvancedStruct__Process__Input,
                         Result<u32, MyError>,
                         _
                     >(
                         "__advanced_struct__process",
-                        Some(&self),
+                        Some(self.buffer()),
                         Some(&__AdvancedStruct__Process__Input { val, flag }),
                         |client_state_ptr: *const u8,
                          client_state_len: usize,

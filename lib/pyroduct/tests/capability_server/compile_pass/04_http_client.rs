@@ -37,3 +37,5 @@ impl HttpServer {
         Ok(format!("POST {} bytes to {}", body.len(), url))
     }
 }
+
+fn main() {}

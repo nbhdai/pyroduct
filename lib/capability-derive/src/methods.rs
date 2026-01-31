@@ -210,7 +210,6 @@ impl ImplMethod {
         let output = &self.output;
 
         let ffi = self.build_ffi();
-        let struct_def = ffi.generate_input_struct();
         let wasm_call = ffi.generate_wasm_call(Some(module));
 
         let args: Vec<_> = self.inputs.iter().map(|(n, t)| quote!(#n: #t)).collect();
@@ -218,7 +217,6 @@ impl ImplMethod {
         quote! {
             #(#attrs)*
             fn #name(&self, #(#args),*) #output {
-                #struct_def
                 #wasm_call
             }
         }

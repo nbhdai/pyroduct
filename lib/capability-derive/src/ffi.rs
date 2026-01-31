@@ -107,6 +107,7 @@ impl CapabilityFuncFFI {
     /// Generate the host-side FFI function
     pub fn generate_capability_ffi(&self) -> TokenStream {
         let fn_ffi_name = self.fn_ffi_name();
+        let input_struct = self.generate_input_struct();
 
         // Determine the helper function based on what's present (in "sci" order)
         let helper_fn = self.determine_helper_fn();
@@ -139,6 +140,8 @@ impl CapabilityFuncFFI {
         };
 
         quote! {
+            #input_struct
+
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn #fn_ffi_name #func_lifetime(
                 client_state_ptr: *const u8,
@@ -190,11 +193,14 @@ impl CapabilityFuncFFI {
         }
     }
 
-    /// Generate the client-side WASM wrapper
+    /// Generate the client-side WASM wrapper (includes input struct definition)
     pub fn generate_wasm_call(&self, module: Option<&Ident>) -> TokenStream {
         let trace_name = self.trace_name().to_string();
         let fn_wasm_name = self.fn_wasm_name();
         let return_type = return_to_type(&self.return_type);
+
+        // Generate input struct definition if needed (for client side)
+        let input_struct_def = self.generate_input_struct();
 
         // Determine input type and serialization
         let (input_type, input_expr) = self.determine_input_serialization();
@@ -216,6 +222,7 @@ impl CapabilityFuncFFI {
         };
 
         quote! {
+            #input_struct_def
             ::pyroduct::module_capability::access::call_from_wasm::<
                 #input_type,
                 #return_type,
@@ -458,7 +465,6 @@ mod tests {
             fn func() {
                 ::pyroduct::module_capability::access::call_from_wasm::<
                     (),
-                    (),
                     u32,
                     _,
                 >(
@@ -533,7 +539,6 @@ mod tests {
         let output_module = quote! {
             fn func() {
                 ::pyroduct::module_capability::access::call_from_wasm::<
-                    (),
                     String,
                     u32,
                     _,
@@ -580,8 +585,8 @@ mod tests {
         };
 
         let output_struct = quote! {
-            #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
-            #[rkyv(crate = ::pyroduct::rkyv)]
+                #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
+                #[rkyv(crate = ::pyroduct::rkyv)]
             struct __TestSyncMulti__Input {
                 pub a: i32,
                 pub b: i32,
@@ -591,6 +596,13 @@ mod tests {
         crate::fmt::assert_code_eq_token(&struct_tokens, &output_struct);
 
         let output_capability = quote! {
+                #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
+                #[rkyv(crate = ::pyroduct::rkyv)]
+            struct __TestSyncMulti__Input {
+                pub a: i32,
+                pub b: i32,
+            }
+
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn __test_sync_multi__ffi(
                 client_state_ptr: *const u8,
@@ -618,8 +630,14 @@ mod tests {
 
         let output_module = quote! {
             fn func() {
+                #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
+                #[rkyv(crate = ::pyroduct::rkyv)]
+                struct __TestSyncMulti__Input {
+                    pub a: i32,
+                    pub b: i32,
+                }
+
                 ::pyroduct::module_capability::access::call_from_wasm::<
-                    (),
                     __TestSyncMulti__Input,
                     u32,
                     _,
@@ -693,13 +711,12 @@ mod tests {
         let output_module = quote! {
             fn func() {
                 ::pyroduct::module_capability::access::call_from_wasm::<
-                    MockClient,
                     (),
                     u32,
                     _,
                 >(
                     "__mock_server__test_async_client",
-                    Some(&self),
+                    Some(self.buffer()),
                     None,
                     |client_state_ptr: *const u8,
                     client_state_len: usize,
@@ -768,13 +785,12 @@ mod tests {
         let output_module = quote! {
             fn func() {
                 ::pyroduct::module_capability::access::call_from_wasm::<
-                    MockClient,
                     i32,
                     u32,
                     _,
                 >(
                     "__mock_server__test_sync_client_input",
-                    Some(&self),
+                    Some(self.buffer()),
                     Some(&x),
                     |client_state_ptr: *const u8,
                     client_state_len: usize,
@@ -815,8 +831,8 @@ mod tests {
 
         // Struct: should be empty for single input
         let output_struct = quote! {
-            #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
-            #[rkyv(crate = ::pyroduct::rkyv)]
+                #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
+                #[rkyv(crate = ::pyroduct::rkyv)]
             struct __MockServer__TestSciMulti__Input {
                 pub a: i32,
                 pub b: i32,
@@ -825,6 +841,13 @@ mod tests {
         crate::fmt::assert_code_eq_token(&struct_tokens, &output_struct);
 
         let output_capability = quote! {
+                #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
+                #[rkyv(crate = ::pyroduct::rkyv)]
+            struct __MockServer__TestSciMulti__Input {
+                pub a: i32,
+                pub b: i32,
+            }
+
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn __mock_server__test_sci_multi__ffi<'a>(
                 client_state_ptr: *const u8,
@@ -858,14 +881,20 @@ mod tests {
 
         let output_module = quote! {
             fn func() {
+                #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
+                #[rkyv(crate = ::pyroduct::rkyv)]
+                struct __MockServer__TestSciMulti__Input {
+                    pub a: i32,
+                    pub b: i32,
+                }
+
                 ::pyroduct::module_capability::access::call_from_wasm::<
-                    MockClient,
                     __MockServer__TestSciMulti__Input,
                     u32,
                     _,
                 >(
                     "__mock_server__test_sci_multi",
-                    Some(&self),
+                    Some(self.buffer()),
                     Some(&__MockServer__TestSciMulti__Input { a , b }),
                     |client_state_ptr: *const u8,
                     client_state_len: usize,

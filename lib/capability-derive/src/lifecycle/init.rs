@@ -88,7 +88,7 @@ impl InitFn {
                                             Some(())
                                         } else {
                                             return Err(Error::new_spanned(
-                                                inner_ty,
+                                                &pt.ty,
                                                 format!("Type mismatch. Expected 'Option<{}>' based on macro attribute, found 'Option<{}>'", expected_str, inner_str)
                                             ));
                                         }
@@ -142,9 +142,9 @@ impl InitFn {
         let init_name = format_ident!("__{}__ffi_init", server_snake);
 
         // Determine config type and closure body
-        // Note: The user expects Option<T>, so we wrap the deserialized config in Some()
+        // The safe_lifecycle functions expect Option<T> to be passed through
         let (config_type, closure) = if let Some(t) = &self.config_type {
-            (quote!(#t), quote!(|config| #server::new(Some(config))))
+            (quote!(#t), quote!(|config| #server::new(config)))
         } else {
             (
                 quote!(::pyroduct::capability::safe_lifecycle::EmptyConfig),
@@ -154,7 +154,7 @@ impl InitFn {
 
         if self.is_async {
             let async_closure = if self.config_type.is_some() {
-                 quote!(|config| async move { #server::new(Some(config)).await })
+                 quote!(|config| async move { #server::new(config).await })
             } else {
                  quote!(|_| async move { #server::new().await })
             };
@@ -262,7 +262,7 @@ mod tests {
         let server_ident = format_ident!("GreeterServer");
         let result = init_fn.generate_ffi(&server_ident);
 
-        // Note: Closure now calls new(Some(config))
+        // Note: Closure now calls new(config) directly (config is already Option<T>)
         let expected = quote! {
             #[unsafe(no_mangle)]
             pub extern "C" fn __greeter_server__ffi_init(
@@ -273,7 +273,7 @@ mod tests {
                     ::pyroduct::capability::safe_lifecycle::execute_safe_init::<GreeterConfig, GreeterServer, _>(
                         config_ptr,
                         config_len,
-                        |config| GreeterServer::new(Some(config))
+                        |config| GreeterServer::new(config)
                     )
                 }
             }
@@ -310,7 +310,7 @@ mod tests {
                     ::pyroduct::capability::safe_lifecycle::execute_safe_async_init::<'a, GreeterConfig, GreeterServer, _, _>(
                         config_ptr,
                         config_len,
-                        |config| async move { GreeterServer::new(Some(config)).await }
+                        |config| async move { GreeterServer::new(config).await }
                     )
                 }
             }

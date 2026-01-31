@@ -68,7 +68,7 @@ fn test_lifecycle_panic_recovery() {
     let bytes = serde_json::to_vec(&config).unwrap();
 
     // A closure that deliberately panics
-    let panicking_init = |_config: TestConfig| -> usize {
+    let panicking_init = |_config: Option<TestConfig>| -> usize {
         panic!("Deliberate crash in init");
     };
 
@@ -120,7 +120,7 @@ fn test_bridge_handles_lifecycle_panic() {
     // 2. Run the "Plugin" side logic which panics
     // This simulates the plugin crashing during init
     let raw_ffi_result = unsafe {
-        execute_safe_init(bytes.as_ptr(), bytes.len(), |_: TestConfig| -> usize {
+        execute_safe_init(bytes.as_ptr(), bytes.len(), |_: Option<TestConfig>| -> usize {
             panic!("Catastrophic failure in plugin init");
         })
     };
@@ -216,7 +216,7 @@ fn test_bridge_handles_deserialization_failure() {
     let garbage = vec![0u8, 255, 12, 33]; // Invalid rkyv data for a vector
 
     let raw_ffi_result = unsafe {
-        execute_safe_init(garbage.as_ptr(), garbage.len(), |_: TestConfig| -> usize {
+        execute_safe_init(garbage.as_ptr(), garbage.len(), |_: Option<TestConfig>| -> usize {
             0
         })
     };

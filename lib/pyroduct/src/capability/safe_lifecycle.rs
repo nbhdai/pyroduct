@@ -19,8 +19,11 @@ use crate::{
 /// For new that doesn't have a config.
 #[derive(serde::Deserialize)]
 pub struct EmptyConfig {}
+
 // --- Sync Wrappers ---
 
+/// Safe wrapper for Sync Init functions.
+/// The closure receives `Option<C>` directly.
 #[tracing::instrument(skip(init_fn))]
 pub unsafe fn execute_safe_init<C, S, F>(
     config_ptr: *const u8,
@@ -28,24 +31,23 @@ pub unsafe fn execute_safe_init<C, S, F>(
     init_fn: F,
 ) -> FfiInitResult
 where
-    C: serde::Deserialize<'static>,
+    C: serde::de::DeserializeOwned,
     S: 'static,
-    F: FnOnce(C) -> S + panic::UnwindSafe,
+    F: FnOnce(Option<C>) -> S + panic::UnwindSafe,
 {
     trace!("execute_safe_init: entering");
-    if config_ptr.is_null() {
-        return FfiInitResult::err(make_error_output(FfiError::NullPointer(Phase::Init)).output);
-    }
-    if config_len == 0 {
-        return FfiInitResult::err(make_error_output(FfiError::ZeroLength(Phase::Init)).output);
-    }
-    let config_bytes = unsafe { std::slice::from_raw_parts(config_ptr, config_len) };
-
-    let config = match serde_json::from_slice::<C>(config_bytes) {
-        Ok(config) => config,
-        Err(error) => {
-            let ffi_error = FfiError::DeserializationFailed(error.to_string(), Phase::Init);
-            return FfiInitResult::err(make_error_output(ffi_error).output);
+    
+    // Deserialize as Option<C> - the JSON can be null or the actual config
+    let config: Option<C> = if config_ptr.is_null() || config_len == 0 {
+        None
+    } else {
+        let config_bytes = unsafe { std::slice::from_raw_parts(config_ptr, config_len) };
+        match serde_json::from_slice::<Option<C>>(config_bytes) {
+            Ok(config) => config,
+            Err(error) => {
+                let ffi_error = FfiError::DeserializationFailed(error.to_string(), Phase::Init);
+                return FfiInitResult::err(make_error_output(ffi_error).output);
+            }
         }
     };
 
@@ -106,6 +108,7 @@ where
 
 /// Safe wrapper for Async Init functions.
 /// Returns FfiBorrowedFutureObjectResult.
+/// The closure receives `Option<C>` directly.
 #[tracing::instrument(skip(init_fn))]
 pub unsafe fn execute_safe_async_init<'a, C, S, Fut, F>(
     config_ptr: *const u8,
@@ -113,32 +116,26 @@ pub unsafe fn execute_safe_async_init<'a, C, S, Fut, F>(
     init_fn: F,
 ) -> FfiBorrowedFutureObjectResult<'a>
 where
-    C: serde::Deserialize<'static> + Send + 'static,
+    C: serde::de::DeserializeOwned + Send + 'static,
     S: Send + 'static,
     Fut: std::future::Future<Output = S> + Send + 'a,
     F: FnOnce(Option<C>) -> Fut + Send + 'a,
 {
     trace!("execute_safe_async_init: entering");
 
-    if config_ptr.is_null() {
-        return FfiBorrowedFutureObjectResult::EarlyError(FfiInitResult::err(
-            make_error_output(FfiError::NullPointer(Phase::Init)).output,
-        ));
-    }
-    if config_len == 0 {
-        return FfiBorrowedFutureObjectResult::EarlyError(FfiInitResult::err(
-            make_error_output(FfiError::ZeroLength(Phase::Init)).output,
-        ));
-    }
-    let config_bytes = unsafe { std::slice::from_raw_parts(config_ptr, config_len) };
-
-    let config = match serde_json::from_slice::<Option<C>>(config_bytes) {
-        Ok(config) => config,
-        Err(error) => {
-            let ffi_error = FfiError::DeserializationFailed(error.to_string(), Phase::Init);
-            return FfiBorrowedFutureObjectResult::EarlyError(FfiInitResult::err(
-                make_error_output(ffi_error).output,
-            ));
+    // Deserialize as Option<C> - the JSON can be null or the actual config
+    let config: Option<C> = if config_ptr.is_null() || config_len == 0 {
+        None
+    } else {
+        let config_bytes = unsafe { std::slice::from_raw_parts(config_ptr, config_len) };
+        match serde_json::from_slice::<Option<C>>(config_bytes) {
+            Ok(config) => config,
+            Err(error) => {
+                let ffi_error = FfiError::DeserializationFailed(error.to_string(), Phase::Init);
+                return FfiBorrowedFutureObjectResult::EarlyError(FfiInitResult::err(
+                    make_error_output(ffi_error).output,
+                ));
+            }
         }
     };
 
@@ -177,7 +174,7 @@ pub unsafe fn execute_safe_async_reset<'a, S, Fut, F>(
 where
     S: Send + 'static,
     Fut: std::future::Future<Output = ()> + Send + 'a,
-    F: FnOnce(&mut S) -> Fut + Send + 'a,
+    F: FnOnce(&'a mut S) -> Fut + Send + 'a,
 {
     trace!("execute_safe_async_reset: entering");
 
