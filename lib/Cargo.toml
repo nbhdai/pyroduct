@@ -10,12 +10,12 @@ members = [
 ]
 
 default-members = [
-    # "lib/harness",
-    "lib/arrow-scalars",
-    "lib/arrow-derive",
-    "lib/capability-derive",
-    "lib/module-derive",
-    "lib/pyroduct",
+    # "harness",
+    "arrow-scalars",
+    "arrow-derive",
+    "capability-derive",
+    "module-derive",
+    "pyroduct",
 ]
 resolver = "2"
 
@@ -25,5 +25,5 @@ authors = ["Sven Cattell"]
 edition = "2024"
 
 [workspace.dependencies]
-arrow-scalars = { path = "lib/arrow-scalars" }
-pyroduct = { path = "lib/pyroduct" }
+arrow-scalars = { path = "arrow-scalars" }
+pyroduct = { path = "pyroduct" }

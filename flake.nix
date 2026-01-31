@@ -35,32 +35,24 @@
         craneLibNightly = (crane.mkLib pkgs).overrideToolchain nightlyToolchain;
 
         # Build the harness
-        src = lib.cleanSourceWith {
-          src = craneLibNative.cleanCargoSource ./.;
+        pyroSrc = lib.cleanSourceWith {
+          src = craneLibNative.cleanCargoSource ./lib;
           filter = path: type:
             (craneLibNative.filterCargoSources path type)
             || (lib.hasSuffix ".stderr" path);
         };
-        commonArgs = {
-          inherit src;
+        commonPyroArgs = {
+          src = pyroSrc;
           strictDeps = true;
           buildInputs = with pkgs; [ openssl ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.systemd ];
           nativeBuildInputs = with pkgs; [ pkg-config ];
         };
 
-        nativeArtifacts = craneLibNative.buildDepsOnly (commonArgs // {
-          pname = "pyroduct-native-deps";
-          version = "0.0.1";
-          # Exclude the workspace members that are WASM modules
-          cargoExtraArgs = "--workspace --exclude basic --exclude basic_capability --exclude rag_capability --exclude struct_io";
-        });
-
-        pyroduct = craneLibNative.buildPackage (commonArgs // {
+        pyroduct = craneLibNative.buildPackage (commonPyroArgs // {
           pname = "pyroduct";
           version = "0.1.0";
-          cargoArtifacts = nativeArtifacts;
-          cargoExtraArgs = "-p pyroduct";
           doCheck = false;
+          cargoExtraArgs = "-p pyroduct";
         });
 
         # Shared Library Extension
