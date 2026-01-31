@@ -93,8 +93,8 @@ impl CapabilityFuncFFI {
             let fields: Vec<_> = params.iter().map(|(n, t)| quote! { pub #n: #t }).collect();
 
             quote! {
-                #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-                #[rkyv(compare(PartialEq), derive(Debug))]
+                #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
+                #[rkyv(crate = ::pyroduct::rkyv)]
                 struct #input_struct_name {
                     #(#fields),*
                 }
@@ -580,8 +580,8 @@ mod tests {
         };
 
         let output_struct = quote! {
-            #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-            #[rkyv(compare(PartialEq), derive(Debug))]
+            #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
+            #[rkyv(crate = ::pyroduct::rkyv)]
             struct __TestSyncMulti__Input {
                 pub a: i32,
                 pub b: i32,
@@ -815,8 +815,8 @@ mod tests {
 
         // Struct: should be empty for single input
         let output_struct = quote! {
-            #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-            #[rkyv(compare(PartialEq), derive(Debug))]
+            #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
+            #[rkyv(crate = ::pyroduct::rkyv)]
             struct __MockServer__TestSciMulti__Input {
                 pub a: i32,
                 pub b: i32,

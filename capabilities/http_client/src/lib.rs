@@ -5,7 +5,7 @@ pub struct HttpConfig {
     pub allowed_endpoints: Vec<AllowedEndpoint>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[pyroduct::config]
 pub struct AllowedEndpoint {
     pub url: String,
     pub methods: Vec<String>, // "GET", "POST", etc.

@@ -241,7 +241,7 @@ fn generate_client_impl(&self) -> TokenStream {
 
             quote! {
                 pub fn register(self) -> #return_sig {
-                    let __config_buf = ::rkyv::to_bytes::<::rkyv::rancor::Error>(&self)
+                    let __config_buf = ::pyroduct::rkyv::to_bytes::<::pyroduct::rkyv::rancor::Error>(&self)
                         .expect("Failed to serialize config");
                     
                     #body
@@ -609,7 +609,7 @@ mod tests {
         let expected = quote! {
             impl MyClient {
                 pub fn register(self) -> ::pyroduct::module_capability::Client<Self> {
-                    let __config_buf = ::rkyv::to_bytes::<::rkyv::rancor::Error>(&self)
+                    let __config_buf = ::pyroduct::rkyv::to_bytes::<::pyroduct::rkyv::rancor::Error>(&self)
                         .expect("Failed to serialize config");
 
                     let new_self = ::pyroduct::module_capability::Client {
@@ -740,7 +740,7 @@ mod tests {
             impl AdvancedClient {
                 pub fn register(self) -> Result<::pyroduct::module_capability::Client<Self>, MyError> {
                     
-                    let __config_buf = ::rkyv::to_bytes::<::rkyv::rancor::Error>(&self)
+                    let __config_buf = ::pyroduct::rkyv::to_bytes::<::pyroduct::rkyv::rancor::Error>(&self)
                         .expect("Failed to serialize config");
 
                     let new_self = ::pyroduct::module_capability::Client {
@@ -783,8 +783,8 @@ mod tests {
             }
             impl ::pyroduct::module_capability::Client<AdvancedClient> {
                 pub fn process(&self, val: u32, flag: bool) -> Result<u32, MyError> {
-                    #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-                    #[rkyv(compare(PartialEq), derive(Debug))]
+                    #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
+                    #[rkyv(crate = ::pyroduct::rkyv)]
                     struct __AdvancedStruct__Process__Input {
                         pub val: u32,
                         pub flag: bool

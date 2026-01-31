@@ -16,6 +16,9 @@ use std::path::Display;
 pub use arrow_scalars::{deep_ref::DeepRef, from_row::FromRow, to_row::ToRow};
 
 pub use arrow_derive::{DeepRef, FromRow, ToRow};
+
+pub use serde;
+pub use rkyv;
 pub use arrow_scalars;
 pub use tracing;
 
@@ -88,7 +91,6 @@ pub use tracing;
 /// ```
 pub use module_derive::module;
 
-pub use rkyv;
 
 /// Marks a struct as configuration for a capability.
 ///

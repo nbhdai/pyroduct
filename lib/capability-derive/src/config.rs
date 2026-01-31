@@ -18,11 +18,14 @@ impl CapConfig {
                 "capability_config structs must be public",
             ));
         }
-
+        let serde_crate: Attribute = parse_quote!(
+            #[serde(crate = "::pyroduct::serde")]
+        );
         // 2. Decorate with Serde attributes
         let serde_derive: Attribute = parse_quote!(
-            #[derive(::serde::Serialize, ::serde::Deserialize)]
+            #[derive(::pyroduct::serde::Serialize, ::pyroduct::serde::Deserialize)]
         );
+        input.attrs.insert(0, serde_crate);
         input.attrs.insert(0, serde_derive);
         Ok(Self { input })
     }
@@ -63,7 +66,8 @@ mod tests {
         // 3. Define Expected Output
         // Just adds the derives.
         let expected = quote! {
-            #[derive(::serde::Serialize, ::serde::Deserialize)]
+            #[derive(::pyroduct::serde::Serialize, ::pyroduct::serde::Deserialize)]
+            #[serde(crate = "::pyroduct::serde")]
             pub struct MyConfig {
                 pub host: String,
                 pub port: u16,
@@ -89,7 +93,8 @@ mod tests {
         // 3. Define Expected Output
         // Derives added, generics preserved, debug preserved.
         let expected = quote! {
-            #[derive(::serde::Serialize, ::serde::Deserialize)]
+            #[derive(::pyroduct::serde::Serialize, ::pyroduct::serde::Deserialize)]
+            #[serde(crate = "::pyroduct::serde")]
             #[derive(Clone, Debug)]
             pub struct GenericConfig<T> {
                 pub options: T,
@@ -111,7 +116,8 @@ mod tests {
 
         // 3. Define Expected Output
         let expected = quote! {
-            #[derive(::serde::Serialize, ::serde::Deserialize)]
+            #[derive(::pyroduct::serde::Serialize, ::pyroduct::serde::Deserialize)]
+            #[serde(crate = "::pyroduct::serde")]
             pub struct TupleConfig(String, u32);
         };
 

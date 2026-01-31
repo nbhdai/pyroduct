@@ -5,7 +5,7 @@ pub struct RagConfig {
     pub top_k: usize,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[pyroduct::config]
 pub struct RagDocument {
     pub id: String,
     pub content: String,
