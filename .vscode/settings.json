@@ -1,4 +1,7 @@
 {
+  "rust-analyzer.linkedProjects": [
+    "./lib/Cargo.toml"
+  ],
   "rust-analyzer.check.allTargets": true,
   "rust-analyzer.check.features": "all",
   "rust-analyzer.server.extraEnv": {

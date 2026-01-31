@@ -12,5 +12,3 @@ reqwest = { version = "0.13.1", features = ["json"] }
 [dependencies.module]
 
 [dependencies.shared]
-
-[workspace]

@@ -17,5 +17,3 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [target.wasm32-unknown-unknown]
 rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
-
-[workspace]

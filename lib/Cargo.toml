@@ -1,12 +1,12 @@
 [workspace]
 members = [ 
-    "lib/harness",
-    "lib/arrow-scalars",
-    "lib/arrow-derive",
-    "lib/capability-core",
-    "lib/capability-derive",
-    "lib/module-derive",
-    "lib/pyroduct", 
+    "harness",
+    "arrow-scalars",
+    "arrow-derive",
+    "capability-core",
+    "capability-derive",
+    "module-derive",
+    "pyroduct", 
 ]
 
 default-members = [

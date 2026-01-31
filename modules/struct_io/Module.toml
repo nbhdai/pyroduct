@@ -11,5 +11,3 @@ path = "../../lib/pyroduct"
 http_client = { path = "../../capabilities/http_client" }
 
 [dependencies]
-
-[workspace]

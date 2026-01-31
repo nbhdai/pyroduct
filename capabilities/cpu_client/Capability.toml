@@ -11,5 +11,3 @@ path = "../../lib/pyroduct"
 [dependencies.module]
 
 [dependencies.shared]
-
-[workspace]
