@@ -34,28 +34,6 @@
         craneLibWasm = (crane.mkLib pkgs).overrideToolchain wasmToolchain;
         craneLibNightly = (crane.mkLib pkgs).overrideToolchain nightlyToolchain;
 
-        # Import our custom library
-        myLib = import ./nix/crate.nix {
-          inherit lib pkgs craneLibNative craneLibWasm;
-          pyroductDep = { workspace = true; };
-        };
-
-        # Build all capabilities
-        capabilities = {
-          rag = (import ./capabilities/rag/capability.nix { inherit myLib; });
-          cpu_client = (import ./capabilities/cpu_client/capability.nix { inherit myLib; });
-          http_client = (import ./capabilities/http_client/capability.nix { inherit myLib; });
-          serial_client = (import ./capabilities/serial_client/capability.nix { inherit myLib; });
-        };
-
-        # Build all modules
-        modules = {
-          basic = (import ./modules/basic/module.nix { inherit myLib; });
-          basic_capability = (import ./modules/basic_capability/module.nix { inherit myLib; });
-          rag_capability = (import ./modules/rag_capability/module.nix { inherit myLib; });
-          struct_io = (import ./modules/struct_io/module.nix { inherit myLib; });
-        };
-
         # Build the harness
         src = lib.cleanSourceWith {
           src = craneLibNative.cleanCargoSource ./.;
@@ -91,20 +69,7 @@
       in {
         packages = {
           inherit pyroduct;
-          
-          # Export capabilities (using updated names from definition)
-          rag = capabilities.rag.hostPlugin;
-          cpu_client = capabilities.cpu_client.hostPlugin;
-          http_client = capabilities.http_client.hostPlugin;
-          serial_client = capabilities.serial_client.hostPlugin;
-          
-          basic = modules.basic.wasm;
-          basic_capability = modules.basic_capability.wasm;
-          rag_capability = modules.rag_capability.wasm;
-          struct_io = modules.struct_io.wasm;
         };
-
-        lib = { inherit myLib; };
 
         apps.generate-cargo-toml = flake-utils.lib.mkApp {
           drv = myLib.mkGenerateCargoTomlScript (myLib.collectGenerationTargets {
@@ -130,7 +95,6 @@
             echo ""
             echo "Available commands:"
             echo "  pyroduct                       - Run the pyroduct CLI"
-            echo "  nix run .#generate-cargo-toml  - Generate Cargo.toml files"
             echo "  nix run .#run-tests            - Run the test harness"
           '';
         };

@@ -113,7 +113,7 @@ impl CapabilityManifest {
 
         #[allow(deprecated)]
         Manifest {
-            package: self.package,
+            package: self.capability,
             workspace: self.workspace,
             dependencies: final_deps,
             dev_dependencies: self.dev_dependencies,
@@ -145,7 +145,7 @@ impl CapabilityManifest {
 
         // 3. Pyroduct
 
-        let mut package = self.package.clone();
+        let mut package = self.capability.clone();
         if let Some(pkg) = &mut package {
             pkg.name = format!("{}-module", pkg.name);
         }
@@ -243,7 +243,7 @@ impl ModuleManifest {
         
         #[allow(deprecated)]
         Manifest {
-            package: self.package,
+            package: self.module,
             workspace: self.workspace,
             dependencies: final_deps,
             dev_dependencies: self.dev_dependencies,

@@ -3,13 +3,12 @@ use std::io::Write;
 use anyhow::{Context, Result};
 
 pub mod cargo;
+pub mod package;
 
-// NOTE: You need to expose the parsing logic from capability-core or duplicate the structs here.
-// For this example, we assume `capability_core` is available.
 use capability_core::generate_client;
 
 pub struct ModuleGenerator {
-    source_path: PathBuf,
+    pub source_path: PathBuf,
 }
 
 impl ModuleGenerator {
@@ -24,7 +23,6 @@ impl ModuleGenerator {
         let content = std::fs::read_to_string(&self.source_path)
             .with_context(|| format!("Failed to read capability source: {:?}", self.source_path))?;
         let generated_code = generate_client(&content)?;
-        // Ensure parent dir exists
         let dest = dest_path.as_ref();
         if let Some(parent) = dest.parent() {
             fs_err::create_dir_all(parent)?;
@@ -35,7 +33,6 @@ impl ModuleGenerator {
         
         out_file.write_all(generated_code.as_bytes())?;
         
-        // Format with rustfmt if available (optional polish)
         let _ = std::process::Command::new("rustfmt").arg(dest).status();
 
         Ok(())

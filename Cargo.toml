@@ -27,17 +27,7 @@ default-members = [
     "lib/arrow-derive",
     "lib/capability-derive",
     "lib/module-derive",
-    "lib/pyroduct", 
-
-    # "capabilities/cpu_client", 
-    # "capabilities/http_client", 
-    # "capabilities/reporter", 
-    # "capabilities/serial_client", 
-    # 
-    # "modules/basic",
-    # "modules/basic_capability",
-    # "modules/dual_capability",
-    # "modules/state_capability",
+    "lib/pyroduct",
 ]
 resolver = "2"
 

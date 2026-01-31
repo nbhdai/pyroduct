@@ -20,10 +20,18 @@ enum Commands {
     /// Generates the Cargo.toml for the Capability crate itself.
     /// Usage: pyroduct expand ./capability
     Expand {
-        /// The root directory of the source capability
-        // By leaving out 'long' and 'short', this becomes a positional argument
         #[arg(value_name = "DIRECTORY")] 
         path: PathBuf,
+    },
+    /// Packages a module or capability into distributable archives.
+    /// For modules: creates a .module archive
+    /// For capabilities: creates both .cargo and .capability archives
+    Package {
+        #[arg(value_name = "DIRECTORY")]
+        path: PathBuf,
+        /// Output directory (defaults to input directory)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
 }
 
@@ -32,12 +40,9 @@ fn main() -> Result<()> {
 
     match args.command {
         Commands::Expand { path } => expand_capability(&path),
+        Commands::Package { path, output } => cli::package::package(&path, output.as_deref()),
     }
 }
-
-// ----------------------------------------------------------------------------
-// Command Logic
-// ----------------------------------------------------------------------------
 
 fn expand_capability(path: &Path) -> Result<()> {
     println!("Generating Capability Manifest for: {:?}", path);
@@ -53,49 +58,39 @@ fn expand_capability(path: &Path) -> Result<()> {
             let manifest_str = fs::read_to_string(&cap_toml_path)?;
             let cap_manifest: CapabilityManifest = toml::from_str(&manifest_str)?;
 
-            let standard_manifest = cap_manifest.to_capability_manifest();
+            let standard_manifest = cap_manifest.clone().to_capability_manifest();
             let output_str = toml::to_string_pretty(&standard_manifest)?;
-            fs::write(cargo_toml_path, output_str)?;
+            fs::write(&cargo_toml_path, output_str)?;
             println!("✓ Wrote Cargo.toml");
 
-            generate_module_crate(path, &module_path)?;
+            generate_module_crate(path, &module_path, cap_manifest)?;
         },
         (false, true) => {
             println!("Expanding module");
-            let manifest_str = fs::read_to_string(&cap_toml_path)?;
-            let cap_manifest: ModuleManifest = toml::from_str(&manifest_str)?;
+            let manifest_str = fs::read_to_string(&mod_toml_path)?;
+            let mod_manifest: ModuleManifest = toml::from_str(&manifest_str)?;
 
-            let standard_manifest = cap_manifest.to_cargo();
+            let standard_manifest = mod_manifest.to_cargo();
             let output_str = toml::to_string_pretty(&standard_manifest)?;
             fs::write(cargo_toml_path, output_str)?;
             println!("✓ Wrote Cargo.toml");
         },
         (false, false) => anyhow::bail!("Neither 'Capability.toml' or 'Module.toml' found."),
     }
-    
 
-    
-
-    
     Ok(())
 }
 
-fn generate_module_crate(input: &Path, output: &Path) -> Result<()> {
+fn generate_module_crate(input: &Path, output: &Path, cap_manifest: CapabilityManifest) -> Result<()> {
     println!("Generating Module Crate...");
 
     fs::create_dir_all(output)?;
-
-    // 1. Generate Module Cargo.toml
-    let cap_toml_path = input.join("Capability.toml");
-    let manifest_str = fs::read_to_string(&cap_toml_path)?;
-    let cap_manifest: CapabilityManifest = toml::from_str(&manifest_str)?;
 
     let module_manifest = cap_manifest.to_module_manifest();
     let cargo_out = toml::to_string_pretty(&module_manifest)?;
     fs::write(output.join("Cargo.toml"), cargo_out)?;
     println!("✓ Wrote module/Cargo.toml");
 
-    // 2. Generate Module Source (lib.rs)
     let source_rs = input.join("src").join("lib.rs");
     let dest_rs = output.join("src").join("lib.rs");
 
