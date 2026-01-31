@@ -3,7 +3,7 @@ pub struct SerialConfig {
     pub allowed_ports: Vec<AllowedPort>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[pyroduct::config]
 pub struct AllowedPort {
     pub path: String,
     pub baud_rate: u32,

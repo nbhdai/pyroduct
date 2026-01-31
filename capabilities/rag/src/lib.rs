@@ -107,8 +107,8 @@ impl RagServer {
     }
 }
 
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone)]
-#[rkyv(compare(PartialEq), derive(Debug))]
+
+#[pyroduct::client]
 pub struct SearchResult {
     pub id: String,
     pub content: String,

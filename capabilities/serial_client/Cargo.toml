@@ -14,10 +14,11 @@ version = "0.1.0"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-capability = ["dep:reqwest"]
+capability = ["dep:tokio", "dep:tokio-serial"]
 default = []
 module = []
 
 [dependencies]
 pyroduct = { workspace = true }
-reqwest = { features = ["json"], optional = true, version = "0.13.1" }
+tokio = { features = ["full"], optional = true, version = "1.49.0" }
+tokio-serial = { optional = true, version = "5.4.1" }

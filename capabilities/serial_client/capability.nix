@@ -6,7 +6,8 @@ myLib.buildCapability {
   
   # Dependencies only needed on the host side (native plugin)
   hostDependencies = [
-    { name = "reqwest"; version = "0.13.1"; features = [ "json" ]; }
+    { name = "tokio"; version = "1.49.0"; features = ["full"]; }
+    { name = "tokio-serial"; version = "5.4.1"; }
   ];
   
   # Dependencies only needed on the module side (wasm)
