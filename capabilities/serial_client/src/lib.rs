@@ -5,18 +5,20 @@ use tokio_serial::SerialPortBuilderExt; // Crucial trait for open_native_async
 // --- Configuration Structs ---
 
 #[pyroduct::config]
-#[derive(Clone, Debug)]
-pub struct SerialConfig {
-    pub allowed_ports: Vec<AllowedPort>,
-}
-
-#[pyroduct::config]
 #[derive(Clone, Debug, PartialEq)]
 pub struct AllowedPort {
     pub path: String,
     pub baud_rate: u32,
     pub timeout_ms: u64,
 }
+
+#[pyroduct::config]
+#[derive(Clone, Debug)]
+pub struct SerialConfig {
+    pub allowed_ports: Vec<AllowedPort>,
+}
+
+
 
 // --- Client Struct ---
 

@@ -1,14 +1,15 @@
 // Async capability - HTTP client with URL allowlist
-#[pyroduct::config]
-pub struct HttpConfig {
-    pub timeout_ms: u64,
-    pub allowed_endpoints: Vec<AllowedEndpoint>,
-}
 
 #[pyroduct::config]
 pub struct AllowedEndpoint {
     pub url: String,
     pub methods: Vec<String>, // "GET", "POST", etc.
+}
+
+#[pyroduct::config]
+pub struct HttpConfig {
+    pub timeout_ms: u64,
+    pub allowed_endpoints: Vec<AllowedEndpoint>,
 }
 
 #[pyroduct::client]

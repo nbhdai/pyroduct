@@ -18,10 +18,12 @@ impl CapConfig {
                 "capability_config structs must be public",
             ));
         }
+
+        // 2. Add cfg(feature = "capability") gate
         let serde_crate: Attribute = parse_quote!(
             #[serde(crate = "::pyroduct::serde")]
         );
-        // 2. Decorate with Serde attributes
+        // 3. Decorate with Serde attributes
         let serde_derive: Attribute = parse_quote!(
             #[derive(::pyroduct::serde::Serialize, ::pyroduct::serde::Deserialize)]
         );
@@ -64,8 +66,9 @@ mod tests {
         let output = expand_config(code);
 
         // 3. Define Expected Output
-        // Just adds the derives.
+        // Adds cfg gate and serde derives.
         let expected = quote! {
+            #[cfg(feature = "capability")]
             #[derive(::pyroduct::serde::Serialize, ::pyroduct::serde::Deserialize)]
             #[serde(crate = "::pyroduct::serde")]
             pub struct MyConfig {
@@ -93,6 +96,7 @@ mod tests {
         // 3. Define Expected Output
         // Derives added, generics preserved, debug preserved.
         let expected = quote! {
+            #[cfg(feature = "capability")]
             #[derive(::pyroduct::serde::Serialize, ::pyroduct::serde::Deserialize)]
             #[serde(crate = "::pyroduct::serde")]
             #[derive(Clone, Debug)]
@@ -116,6 +120,7 @@ mod tests {
 
         // 3. Define Expected Output
         let expected = quote! {
+            #[cfg(feature = "capability")]
             #[derive(::pyroduct::serde::Serialize, ::pyroduct::serde::Deserialize)]
             #[serde(crate = "::pyroduct::serde")]
             pub struct TupleConfig(String, u32);
