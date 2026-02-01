@@ -34,9 +34,11 @@ impl CpuClient {
     }
 }
 pub trait CpuClientMethods {
+    #[doc = " Returns the number of vcpus the host machine has"]
     fn get_cpu_count(&self) -> u32;
 }
 impl CpuClientMethods for ::pyroduct::module_capability::Client<CpuClient> {
+    #[doc = " Returns the number of vcpus the host machine has"]
     fn get_cpu_count(&self) -> u32 {
         ::pyroduct::module_capability::access::call_from_wasm::<(), u32, _>(
             "__cpu_server__get_cpu_count",

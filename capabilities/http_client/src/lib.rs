@@ -1,20 +1,28 @@
 // Async capability - HTTP client with URL allowlist
 
+/// Defines a specific URL pattern and the HTTP methods permitted for that pattern.
 #[pyroduct::config]
 pub struct AllowedEndpoint {
+    /// The URL or prefix pattern (e.g., "https://api.example.com/*").
     pub url: String,
-    pub methods: Vec<String>, // "GET", "POST", etc.
+    /// The HTTP verbs allowed for this endpoint (e.g., "GET", "POST").
+    pub methods: Vec<String>,
 }
 
+/// Configuration for the HTTP Server capability, including timeouts and security constraints.
 #[pyroduct::config]
 pub struct HttpConfig {
+    /// Maximum time in milliseconds to wait for a request to complete.
     pub timeout_ms: u64,
+    /// A list of endpoints that the client is permitted to access.
     pub allowed_endpoints: Vec<AllowedEndpoint>,
 }
 
+/// The Pyroduct interface item representing the HTTP Client.
 #[pyroduct::interface_item]
 pub struct HttpClient;
 
+/// The internal state of the HTTP Server capability.
 pub struct HttpServer {
     timeout: std::time::Duration,
     allowed_endpoints: Vec<AllowedEndpoint>,
@@ -26,6 +34,8 @@ impl HttpServer {
     type Config = HttpConfig;
     type Error = String;
     
+    /// Initializes a new HttpServer instance. 
+    /// If no config is provided, defaults to a 30-second timeout and an empty allowlist.
     async fn new(config: Option<HttpConfig>) -> Self {
         let config = config.unwrap_or(HttpConfig {
             timeout_ms: 30000,
@@ -37,28 +47,34 @@ impl HttpServer {
         }
     }
     
+    /// Resets the capability state.
     async fn reset(&mut self) {}
     
+    /// Validates and prepares a new client instance.
     fn new_client(&self, _client: &HttpClient) -> Result<(), String> {
         Ok(())
     }
     
+    /// Performs an asynchronous GET request if the URL and method are allowed.
     async fn get(&self, _client: &HttpClient, url: String) -> Result<String, String> {
         self.check_allowed(&url, "GET")?;
         // Simulated async HTTP request
         Ok(format!("GET response from {}", url))
     }
     
+    /// Performs an asynchronous POST request with a body if the URL and method are allowed.
     async fn post(&self, _client: &HttpClient, url: String, body: String) -> Result<String, String> {
         self.check_allowed(&url, "POST")?;
         Ok(format!("POST {} bytes to {}", body.len(), url))
     }
     
+    /// Performs an asynchronous PUT request with a body if the URL and method are allowed.
     async fn put(&self, _client: &HttpClient, url: String, body: String) -> Result<String, String> {
         self.check_allowed(&url, "PUT")?;
         Ok(format!("PUT {} bytes to {}", body.len(), url))
     }
     
+    /// Performs an asynchronous DELETE request if the URL and method are allowed.
     async fn delete(&self, _client: &HttpClient, url: String) -> Result<String, String> {
         self.check_allowed(&url, "DELETE")?;
         Ok(format!("DELETE {}", url))
@@ -89,19 +105,16 @@ impl HttpServer {
 }
 
 fn url_matches(url: &str, pattern: &str) -> bool {
-    // Exact match
     if url == pattern {
         return true;
     }
-    
-    // Prefix match with wildcard (e.g., "https://api.example.com/*")
+
     if let Some(prefix) = pattern.strip_suffix("/*") {
         if url.starts_with(prefix) {
             return true;
         }
     }
-    
-    // Prefix match (e.g., "https://api.example.com/v1/users" matches "https://api.example.com/v1/users/123")
+
     if url.starts_with(pattern) && url[pattern.len()..].starts_with('/') {
         return true;
     }

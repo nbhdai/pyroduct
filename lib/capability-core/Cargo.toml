@@ -5,7 +5,7 @@ authors = ["Sven Cattell"]
 edition = "2024"
 
 [dependencies]
-proc-macro2 = "1.0"
+proc-macro2 = { version ="1.0",  features = ["span-locations"] }
 quote = "1.0"
 syn = { version = "2.0", features = ["full", "extra-traits", "parsing"] }
 darling = "0.20"

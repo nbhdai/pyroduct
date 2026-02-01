@@ -7,6 +7,7 @@ use pyroduct;
     :: pyroduct :: rkyv :: Deserialize,
 )]
 # [rkyv (crate = :: pyroduct :: rkyv)]
+#[doc = " The Pyroduct interface item representing the HTTP Client."]
 pub struct HttpClient;
 impl HttpClient {
     pub fn register(self) -> Result<::pyroduct::module_capability::Client<Self>, String> {
@@ -41,12 +42,17 @@ impl HttpClient {
     }
 }
 pub trait HttpClientMethods {
+    #[doc = " Performs an asynchronous GET request if the URL and method are allowed."]
     fn get(&self, url: String) -> Result<String, String>;
+    #[doc = " Performs an asynchronous POST request with a body if the URL and method are allowed."]
     fn post(&self, url: String, body: String) -> Result<String, String>;
+    #[doc = " Performs an asynchronous PUT request with a body if the URL and method are allowed."]
     fn put(&self, url: String, body: String) -> Result<String, String>;
+    #[doc = " Performs an asynchronous DELETE request if the URL and method are allowed."]
     fn delete(&self, url: String) -> Result<String, String>;
 }
 impl HttpClientMethods for ::pyroduct::module_capability::Client<HttpClient> {
+    #[doc = " Performs an asynchronous GET request if the URL and method are allowed."]
     fn get(&self, url: String) -> Result<String, String> {
         ::pyroduct::module_capability::access::call_from_wasm::<String, Result<String, String>, _>(
             "__http_server__get",
@@ -67,6 +73,7 @@ impl HttpClientMethods for ::pyroduct::module_capability::Client<HttpClient> {
             },
         )
     }
+    #[doc = " Performs an asynchronous POST request with a body if the URL and method are allowed."]
     fn post(&self, url: String, body: String) -> Result<String, String> {
         #[derive(
             :: pyroduct :: rkyv :: Archive,
@@ -101,6 +108,7 @@ impl HttpClientMethods for ::pyroduct::module_capability::Client<HttpClient> {
             },
         )
     }
+    #[doc = " Performs an asynchronous PUT request with a body if the URL and method are allowed."]
     fn put(&self, url: String, body: String) -> Result<String, String> {
         #[derive(
             :: pyroduct :: rkyv :: Archive,
@@ -135,6 +143,7 @@ impl HttpClientMethods for ::pyroduct::module_capability::Client<HttpClient> {
             },
         )
     }
+    #[doc = " Performs an asynchronous DELETE request if the URL and method are allowed."]
     fn delete(&self, url: String) -> Result<String, String> {
         ::pyroduct::module_capability::access::call_from_wasm::<String, Result<String, String>, _>(
             "__http_server__delete",

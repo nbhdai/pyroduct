@@ -128,8 +128,8 @@ fn check_manual_rkyv(attrs: &[Attribute]) -> Result<bool> {
 }
 
 fn is_client_attr(attr: &Attribute) -> bool {
-    attr.path().is_ident("interface") || 
-    (attr.path().segments.len() == 2 && attr.path().segments[0].ident == "pyroduct" && attr.path().segments[1].ident == "interface")
+    attr.path().is_ident("interface_item") || 
+    (attr.path().segments.len() == 2 && attr.path().segments[0].ident == "pyroduct" && attr.path().segments[1].ident == "interface_item")
 }
 
 #[cfg(test)]

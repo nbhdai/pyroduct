@@ -206,7 +206,7 @@ pub fn package(path: &Path, output: Option<&Path>) -> Result<()> {
     if !errors.is_empty() {
         eprintln!("\nErrors encountered:");
         for (p, e) in &errors {
-            eprintln!("  {:?}: {}", p, e);
+            eprintln!("  {:?}: {:#}", path, e);
         }
         bail!("{} packaging(s) failed", errors.len());
     }

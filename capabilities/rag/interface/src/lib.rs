@@ -7,6 +7,7 @@ use pyroduct;
     :: pyroduct :: rkyv :: Deserialize,
 )]
 # [rkyv (crate = :: pyroduct :: rkyv)]
+#[doc = " The Pyroduct interface item for the RAG Client."]
 pub struct RagClient;
 impl RagClient {
     pub fn register(self) -> Result<::pyroduct::module_capability::Client<Self>, String> {
@@ -41,10 +42,15 @@ impl RagClient {
     }
 }
 pub trait RagClientMethods {
+    #[doc = " Searches the document store using cosine similarity and returns the top_k results."]
+    #[doc = " The query is embedded in real-time before comparison."]
     fn search(&self, query: String) -> Result<Vec<SearchResult>, String>;
+    #[doc = " Searches the document store and allows the caller to override the default `k` value."]
     fn search_with_k(&self, query: String, k: usize) -> Result<Vec<SearchResult>, String>;
 }
 impl RagClientMethods for ::pyroduct::module_capability::Client<RagClient> {
+    #[doc = " Searches the document store using cosine similarity and returns the top_k results."]
+    #[doc = " The query is embedded in real-time before comparison."]
     fn search(&self, query: String) -> Result<Vec<SearchResult>, String> {
         ::pyroduct::module_capability::access::call_from_wasm::<
             String,
@@ -69,6 +75,7 @@ impl RagClientMethods for ::pyroduct::module_capability::Client<RagClient> {
             },
         )
     }
+    #[doc = " Searches the document store and allows the caller to override the default `k` value."]
     fn search_with_k(&self, query: String, k: usize) -> Result<Vec<SearchResult>, String> {
         #[derive(
             :: pyroduct :: rkyv :: Archive,
@@ -134,8 +141,12 @@ mod wasm {
     :: pyroduct :: rkyv :: Deserialize,
 )]
 # [rkyv (crate = :: pyroduct :: rkyv)]
+#[doc = " A search result containing the matched document and its relevance score."]
 pub struct SearchResult {
+    #[doc = " The identifier of the matched document."]
     pub id: String,
+    #[doc = " The text content of the match."]
     pub content: String,
+    #[doc = " The similarity score (higher is more relevant)."]
     pub score: f32,
 }
