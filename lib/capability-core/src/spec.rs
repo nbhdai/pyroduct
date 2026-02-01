@@ -7,6 +7,16 @@ use syn::{Attribute, Expr, Lit, Meta};
 
 use crate::capability::CapabilityImpl;
 use crate::client::CapInterfaceItem;
+use crate::config::CapConfig;
+
+/// The root specification object for a Config
+#[derive(Serialize)]
+pub struct ConfigSpec {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub fields: HashMap<String, FieldDef>,
+}
 
 /// The root specification object
 #[derive(Serialize)]
@@ -149,6 +159,24 @@ impl SpecBuilder {
 
     pub fn build(&self) -> anyhow::Result<String> {
         serde_json::to_string_pretty(&self.spec).map_err(|e| anyhow::anyhow!(e))
+    }
+}
+
+pub struct ConfigSpecBuilder;
+
+impl ConfigSpecBuilder {
+    pub fn build(config: &CapConfig) -> anyhow::Result<String> {
+        let name = config.input.ident.to_string();
+        let description = extract_doc_string(&config.input.attrs);
+        let fields = parse_struct_fields(&config.input.fields);
+
+        let spec = ConfigSpec {
+            name,
+            description,
+            fields,
+        };
+        
+        serde_json::to_string_pretty(&spec).map_err(|e| anyhow::anyhow!(e))
     }
 }
 

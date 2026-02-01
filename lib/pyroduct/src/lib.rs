@@ -111,20 +111,20 @@ pub use module_derive::module;
 #[cfg(not(target_arch = "wasm32"))]
 pub use capability_derive::config;
 
-/// Marks a struct as client-side state for a capability.
+/// Marks a struct as interface-side struct for a capability. Can be used in inputs or as a client.
 ///
-/// Adds rkyv serialization/deserialization derives so the client state can be
+/// Adds rkyv serialization/deserialization derives so the item can be
 /// passed efficiently across the WASM/FFI boundary using zero-copy deserialization.
 ///
 /// # Example
 /// ```rust
-/// #[pyroduct::client]
+/// #[pyroduct::interface_item]
 /// pub struct SerialHandle {
 ///     pub id: u64,
 /// }
 /// ```
 #[cfg(not(target_arch = "wasm32"))]
-pub use capability_derive::client;
+pub use capability_derive::interface_item;
 
 
 /// Defines a capability implementation with lifecycle methods and callable functions.

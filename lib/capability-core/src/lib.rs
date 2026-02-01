@@ -3,7 +3,7 @@
 use anyhow::Context;
 use syn::parse_file;
 
-use crate::{capability::CapabilityImpl, client::CapInterfaceItem};
+use crate::{capability::CapabilityImpl, client::CapInterfaceItem, config::CapConfig};
 
 pub mod config;
 pub mod client;
@@ -15,8 +15,8 @@ pub mod lifecycle;
 pub mod capability;
 pub mod spec;
 
-/// For generating the client lib.rs
-pub fn generate_client(content: &String) -> anyhow::Result<(String, String)> {
+/// For generating the interface lib.rs
+pub fn generate_interface(content: &String) -> anyhow::Result<(String, String, Option<String>)> {
     let file = parse_file(&content)
             .context("Failed to parse capability source file")?;
 
@@ -27,7 +27,8 @@ pub fn generate_client(content: &String) -> anyhow::Result<(String, String)> {
     };
 
     let mut capability = None;
-    let mut clients = Vec::new();
+    let mut interfaces = Vec::new();
+    let mut config = None;
     for item in file.items {
         match item {
             syn::Item::Impl(item_impl) => {
@@ -39,11 +40,15 @@ pub fn generate_client(content: &String) -> anyhow::Result<(String, String)> {
                 }
             }
             syn::Item::Struct(item_struct) => {
-                if has_attr(&item_struct.attrs, "client") {
-                    let client = CapInterfaceItem::new(item_struct, false)
+                if has_attr(&item_struct.attrs, "interface_item") {
+                    let interface = CapInterfaceItem::new(item_struct, false)
                             .map_err(|e| anyhow::anyhow!("{}", e))?;
-                    generated_code.extend(client.expand());
-                    clients.push(client);
+                    generated_code.extend(interface.expand());
+                    interfaces.push(interface);
+                } else if has_attr(&item_struct.attrs, "config") {
+                    let found_config = CapConfig::new(item_struct, config::DocRec::StructDoc)
+                            .map_err(|e| anyhow::anyhow!("{}", e))?;
+                    config = Some(found_config);
                 }
             }
             _ => {}
@@ -54,14 +59,19 @@ pub fn generate_client(content: &String) -> anyhow::Result<(String, String)> {
     } else {
         anyhow::bail!("No capability found");
     };
-    for client in clients {
-        spec_builder.append(&client);
+    for interface in interfaces {
+        spec_builder.append(&interface);
     }
     let spec = spec_builder.build()?;
 
-    Ok((generated_code.to_string(), spec))
-}
+    let config = if let Some(cap) = config {
+        Some(spec::ConfigSpecBuilder::build(&cap)?)
+    } else {
+        None
+    };
 
+    Ok((generated_code.to_string(), spec, config))
+}
 
 fn has_attr(attrs: &[syn::Attribute], name: &str) -> bool {
     attrs.iter().any(|a| {

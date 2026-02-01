@@ -105,6 +105,7 @@ pub struct InterfaceGenerator {
     cargo_toml_content: String,
     lib_rs_content: String,
     doc_string: String,
+    config_string: Option<String>,
 }
 
 impl InterfaceGenerator {
@@ -123,13 +124,14 @@ impl InterfaceGenerator {
         let original_source = fs::read_to_string(&source_path)
             .with_context(|| format!("Failed to read source: {:?}", source_path))?;
             
-        let (lib_rs_content, doc_string) = capability_core::generate_client(&original_source)
+        let (lib_rs_content, doc_string, config_string) = capability_core::generate_interface(&original_source)
             .context("Failed to generate client code")?;
 
         Ok(Self {
             cargo_toml_content,
             lib_rs_content,
             doc_string,
+            config_string,
         })
     }
 
@@ -160,5 +162,9 @@ impl InterfaceGenerator {
 
     pub fn spec(&self) -> &str {
         &self.doc_string
+    }
+
+    pub fn config(&self) -> Option<&str> {
+        self.config_string.as_ref().map(|s| s.as_str())
     }
 }

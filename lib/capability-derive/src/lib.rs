@@ -9,12 +9,13 @@
 //! 3. **Client state only** - `#[capability_client]` struct + `#[capability(stateless)]` trait
 //! 4. **Both states** - `#[capability_client]` struct + `#[capability]` trait + `#[capability_server]` struct
 
+use capability_core::config::{DocRec, CapConfig};
 use proc_macro::TokenStream;
 
 /// Marks a struct as client-side state.
 /// Adds rkyv serialization and the internal configuration buffer.
 #[proc_macro_attribute]
-pub fn client(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn interface_item(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemStruct);
     match capability_core::client::CapInterfaceItem::new(input, false) {
         Ok(client) => client.expand().into(),
@@ -27,7 +28,7 @@ pub fn client(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn config(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemStruct);
-    match capability_core::config::CapConfig::new(input) {
+    match CapConfig::new(input, DocRec::NoReq) {
         Ok(config) => config.expand().into(),
         Err(e) => e.to_compile_error().into(),
     }

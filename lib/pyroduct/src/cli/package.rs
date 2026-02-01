@@ -120,20 +120,26 @@ fn package_capability(ctx: &ProjectContext, manifest: CapabilityManifest) -> Res
     println!("✓ Compiled {}", dest_lib.display());
 
     // 4. Create Source Archive (.cargo)
-    let mut tar = TarballBuilder::new(ctx.archive_path("cargo"))?;
-    tar.add_bytes("Cargo.toml", cargo_toml_content.as_bytes())?;
-    tar.add_dir(&ctx.root.join("src"), "src")?;
-    tar.finish()?;
+    let mut cap_tar = TarballBuilder::new(ctx.archive_path("cargo"))?;
+    cap_tar.add_bytes("Cargo.toml", cargo_toml_content.as_bytes())?;
+    cap_tar.add_dir(&ctx.root.join("src"), "src")?;
 
     // 5. Create Interface Archive (.interface)
-    let mut cap_tar = TarballBuilder::new(ctx.archive_path("interface"))?;
+    let mut interface_tar = TarballBuilder::new(ctx.archive_path("interface"))?;
     let interface = InterfaceGenerator::new(ctx.root, &manifest)?;
-    interface.add_to_archive(&mut cap_tar)?;
+    interface.add_to_archive(&mut interface_tar)?;
 
-    // Add documentation
-    cap_tar.add_bytes("interface.json", interface.spec().as_bytes())?;
+    // 6. Add documentation
+    interface_tar.add_bytes("interface.json", interface.spec().as_bytes())?;
     fs::write(ctx.root.join("interface.json"), interface.spec())?;
 
+    // 7. Generate config spec
+    if let Some(spec) = interface.config() {
+        cap_tar.add_bytes("config.json", spec.as_bytes())?;
+        fs::write(ctx.root.join("config.json"), spec)?;
+    }
+
+    interface_tar.finish()?;
     cap_tar.finish()?;
     Ok(())
 }
