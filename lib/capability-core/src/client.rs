@@ -1,20 +1,28 @@
-//! #[capability_client] - Marks a struct as client-side state
+//! #[interface] - Marks a struct as client-side state
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Attribute, ItemStruct, Result, Visibility, parse_quote};
 
 #[derive(Debug, Clone)]
-pub struct CapClient {
+pub struct CapInterfaceItem {
     pub input: ItemStruct,
 }
 
-impl CapClient {
-    pub fn new(mut input: ItemStruct) -> Result<Self> {
+impl CapInterfaceItem {
+    pub fn new(mut input: ItemStruct, required_docs: bool) -> Result<Self> {
         // 1. Validate Visibility
         if !matches!(input.vis, Visibility::Public(_)) {
             return Err(syn::Error::new_spanned(
                 &input.vis,
-                "capability_client structs must be public",
+                "interface structs must be public",
+            ));
+        }
+
+        let has_docs = input.attrs.iter().any(|attr| attr.path().is_ident("doc"));
+        if !has_docs && required_docs {
+            return Err(syn::Error::new_spanned(
+                &input.ident,
+                "Client structs must have documentation (///) to generate API specs.",
             ));
         }
 
@@ -120,8 +128,8 @@ fn check_manual_rkyv(attrs: &[Attribute]) -> Result<bool> {
 }
 
 fn is_client_attr(attr: &Attribute) -> bool {
-    attr.path().is_ident("client") || 
-    (attr.path().segments.len() == 2 && attr.path().segments[0].ident == "pyroduct" && attr.path().segments[1].ident == "client")
+    attr.path().is_ident("interface") || 
+    (attr.path().segments.len() == 2 && attr.path().segments[0].ident == "pyroduct" && attr.path().segments[1].ident == "interface")
 }
 
 #[cfg(test)]
@@ -132,8 +140,8 @@ mod tests {
     /// Helper to expand the client macro from raw struct code.
     fn expand_client(code: TokenStream) -> TokenStream {
         let item = parse2(code).expect("Failed to parse struct input");
-        CapClient::new(item)
-            .expect("CapClient validation failed")
+        CapInterfaceItem::new(item, false)
+            .expect("CapInterfaceItem validation failed")
             .expand()
     }
 
@@ -215,11 +223,11 @@ mod tests {
             struct PrivateClient { id: u32 }
         };
         let item_vis = parse2(code_vis).unwrap();
-        let res_vis = CapClient::new(item_vis);
+        let res_vis = CapInterfaceItem::new(item_vis, false);
         assert!(res_vis.is_err());
         assert_eq!(
             res_vis.unwrap_err().to_string(),
-            "capability_client structs must be public"
+            "interface structs must be public"
         );
     }
 }

@@ -85,10 +85,9 @@
             echo "Development shell loaded!"
             echo ""
             echo "Available commands:"
-            echo "  cargo build -p pyroduct && cargo run -p pyroduct -- <args>  - Build and run latest pyroduct CLI"
+            echo "  pyroduct"
             echo "  nix run .#run-tests                                         - Run the test harness"
             echo ""
-            echo "Note: pyroduct CLI will compile from source on first use"
           '';
         };
       }

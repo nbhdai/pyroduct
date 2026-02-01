@@ -39,9 +39,18 @@ impl ImplMethod {
     pub fn parse(
         f: &ImplItemFn,
         class: &Rc<CapabilityIdent>,
+        required_docs: bool,
     ) -> syn::Result<Self> {
         let sig = &f.sig;
         let name = sig.ident.clone();
+
+        let has_docs = f.attrs.iter().any(|attr| attr.path().is_ident("doc"));
+        if !has_docs && required_docs {
+            return Err(Error::new_spanned(
+                &name,
+                "Capability methods must have documentation (///) to generate API specs.",
+            ));
+        }
 
         // 1. Validate &self or &mut self as first parameter
         let is_mutable_self = match sig.inputs.first() {
@@ -224,6 +233,13 @@ impl ImplMethod {
             }
         }
     }
+
+    pub fn doc_attrs(&self) -> Vec<&syn::Attribute> {
+        self.attrs
+            .iter()
+            .filter(|attr| attr.path().is_ident("doc"))
+            .collect()
+    }
 }
 
 fn validate_return_type(output: &ReturnType, target_error: &Type) -> syn::Result<ReturnType> {
@@ -328,7 +344,7 @@ mod tests {
         };
 
         // 2. Parse and Generate Output
-        let method = ImplMethod::parse(&f, &class).unwrap();
+        let method = ImplMethod::parse(&f, &class, false).unwrap();
         let output = method.generate_server_method();
 
         // 3. Define Expected Output
@@ -353,7 +369,7 @@ mod tests {
         };
 
         // 2. Parse and Generate Output
-        let method = ImplMethod::parse(&f, &class).unwrap();
+        let method = ImplMethod::parse(&f, &class, false).unwrap();
         let output = method.generate_client_method(&module);
 
         let output_str = output.to_string();
@@ -371,7 +387,7 @@ mod tests {
         };
 
         // 2. Parse and Generate
-        let method = ImplMethod::parse(&f, &class).unwrap();
+        let method = ImplMethod::parse(&f, &class, false).unwrap();
         let output = method.generate_server_method();
 
         // 3. Expected: parameter name 'c' is preserved in signature
@@ -392,7 +408,7 @@ mod tests {
         };
 
         // 2. Assert Error
-        let err = ImplMethod::parse(&f, &class).unwrap_err();
+        let err = ImplMethod::parse(&f, &class, false).unwrap_err();
         assert!(err.to_string().contains("not value self"));
     }
 }

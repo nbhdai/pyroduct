@@ -16,7 +16,7 @@ use proc_macro::TokenStream;
 #[proc_macro_attribute]
 pub fn client(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemStruct);
-    match capability_core::client::CapClient::new(input) {
+    match capability_core::client::CapInterfaceItem::new(input, false) {
         Ok(client) => client.expand().into(),
         Err(e) => e.to_compile_error().into(),
     }
@@ -39,7 +39,7 @@ pub fn config(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn capability(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemImpl);
-    match capability_core::capability::CapabilityImpl::new(input) {
+    match capability_core::capability::CapabilityImpl::new(input, false) {
         Ok(capability) => capability.expand_capability().into(),
         Err(e) => e.to_compile_error().into(),
     }

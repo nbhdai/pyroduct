@@ -2,6 +2,7 @@ target
 .DS_Store
 .direnv
 capabilities/**/Cargo.lock
+capabilities/**/*.json
 modules/**/Cargo.lock
 *.dylib
 *.interface

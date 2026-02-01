@@ -43,10 +43,12 @@ pub struct CapabilityImpl {
 
     // Other items (consts, etc.) - excluding type aliases
     pub other_items: Vec<ImplItem>,
+    pub attrs: Vec<syn::Attribute>,
+
 }
 
 impl CapabilityImpl {
-    pub fn new(input: ItemImpl) -> syn::Result<Self> {
+    pub fn new(input: ItemImpl, required_docs: bool) -> syn::Result<Self> {
         // 1. Extract state/server type name
         let state_tn = match &*input.self_ty {
             Type::Path(tp) => tp
@@ -69,6 +71,7 @@ impl CapabilityImpl {
                 "#[capability] cannot be used on trait implementations",
             ));
         }
+        let attrs = input.attrs.clone();
 
         // 3. First pass: collect types
         let mut client_tn: Option<Ident> = None;
@@ -151,7 +154,7 @@ impl CapabilityImpl {
         // 5. Second pass: parse methods with class context
         let methods: Result<Vec<_>, _> = method_fns
             .iter()
-            .map(|f| ImplMethod::parse(f, &ident))
+            .map(|f| ImplMethod::parse(f, &ident, required_docs))
             .collect();
         let methods = methods?;
 
@@ -162,6 +165,7 @@ impl CapabilityImpl {
             new_client_fn,
             methods,
             other_items,
+            attrs,
         })
     }
 
@@ -270,7 +274,10 @@ impl CapabilityImpl {
                 let name = &m.name;
                 let output = &m.output;
                 let args: Vec<_> = m.inputs.iter().map(|(n, t)| quote!(#n: #t)).collect();
+                let docs = m.doc_attrs();
+
                 quote! {
+                    #(#docs)*
                     fn #name(&self, #(#args),*) #output;
                 }
             })
@@ -441,7 +448,7 @@ mod tests {
         };
 
         let input: ItemImpl = parse2(code).unwrap();
-        let cap = CapabilityImpl::new(input).unwrap();
+        let cap = CapabilityImpl::new(input, false).unwrap();
 
         assert_eq!(cap.ident.state_tn.to_string(), "StatefulServer");
         assert_eq!(cap.ident.client_tn.to_string(), "SimpleClient");
@@ -466,7 +473,7 @@ mod tests {
         };
 
         let input: ItemImpl = parse2(code).unwrap();
-        let cap = CapabilityImpl::new(input).unwrap();
+        let cap = CapabilityImpl::new(input, false).unwrap();
 
         assert!(cap.init_fn.config_type.is_some());
         assert!(cap.ident.config_tn.is_some());
@@ -489,7 +496,7 @@ mod tests {
         };
 
         let input: ItemImpl = parse2(code).unwrap();
-        let err = CapabilityImpl::new(input).unwrap_err();
+        let err = CapabilityImpl::new(input, false).unwrap_err();
         println!("{}", err);
         assert!(err.to_string().contains("Type mismatch. Expected 'Option<MyConfig>' based on macro attribute, found 'Option<OtherConfig>'"));
     }
@@ -507,7 +514,7 @@ mod tests {
         };
 
         let input: ItemImpl = parse2(code).unwrap();
-        let cap = CapabilityImpl::new(input).unwrap();
+        let cap = CapabilityImpl::new(input, false).unwrap();
 
         assert!(cap.init_fn.is_async);
         assert!(cap.reset_fn.is_async);
@@ -528,7 +535,7 @@ mod tests {
         };
 
         let input: ItemImpl = parse2(code).unwrap();
-        let cap = CapabilityImpl::new(input).unwrap();
+        let cap = CapabilityImpl::new(input, false).unwrap();
 
         assert!(cap.ident.error_tn.is_some());
         assert!(cap.new_client_fn.error_type.is_some());
@@ -549,7 +556,7 @@ mod tests {
         };
 
         let input: ItemImpl = parse2(code).unwrap();
-        let cap = CapabilityImpl::new(input).unwrap();
+        let cap = CapabilityImpl::new(input, false).unwrap();
 
         let output = cap.generate_export_table();
 
@@ -607,7 +614,7 @@ mod tests {
 
         // 2. Parse
         let input: ItemImpl = parse2(code).unwrap();
-        let cap = CapabilityImpl::new(input).unwrap();
+        let cap = CapabilityImpl::new(input, false).unwrap();
 
         // 3. Generate Output
         let output = cap.generate_client_impl();
@@ -728,7 +735,7 @@ mod tests {
 
         // 2. Parse
         let input: ItemImpl = parse2(code).unwrap();
-        let cap = CapabilityImpl::new(input).unwrap();
+        let cap = CapabilityImpl::new(input, false).unwrap();
 
         // 3. Generate Output
         let output = cap.generate_client_impl();

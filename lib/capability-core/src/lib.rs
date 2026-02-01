@@ -1,18 +1,9 @@
-//! Capability Derive Macros
-//!
 //! This crate provides proc macros to generate FFI boilerplate for capabilities.
-//!
-//! # Patterns Supported
-//!
-//! 1. **Stateless functions** - `#[capability_function]` on standalone functions
-//! 2. **Host state only** - `#[capability]` trait + `#[capability_server]` struct
-//! 3. **Client state only** - `#[capability_client]` struct + `#[capability(stateless)]` trait
-//! 4. **Both states** - `#[capability_client]` struct + `#[capability]` trait + `#[capability_server]` struct
 
 use anyhow::Context;
 use syn::parse_file;
 
-use crate::{capability::CapabilityImpl, client::CapClient};
+use crate::{capability::CapabilityImpl, client::CapInterfaceItem};
 
 pub mod config;
 pub mod client;
@@ -22,9 +13,10 @@ pub mod utils;
 pub mod methods;
 pub mod lifecycle;
 pub mod capability;
+pub mod spec;
 
 /// For generating the client lib.rs
-pub fn generate_client(content: &String) -> anyhow::Result<String> {
+pub fn generate_client(content: &String) -> anyhow::Result<(String, String)> {
     let file = parse_file(&content)
             .context("Failed to parse capability source file")?;
 
@@ -34,27 +26,40 @@ pub fn generate_client(content: &String) -> anyhow::Result<String> {
         use pyroduct;
     };
 
+    let mut capability = None;
+    let mut clients = Vec::new();
     for item in file.items {
         match item {
             syn::Item::Impl(item_impl) => {
                 if has_attr(&item_impl.attrs, "capability") {
-                    let cap = CapabilityImpl::new(item_impl)
+                    let cap = CapabilityImpl::new(item_impl, true)
                             .map_err(|e| anyhow::anyhow!("{}", e))?;
                     generated_code.extend(cap.expand_module()); 
+                    capability = Some(cap);
                 }
             }
             syn::Item::Struct(item_struct) => {
                 if has_attr(&item_struct.attrs, "client") {
-                    let client = CapClient::new(item_struct)
+                    let client = CapInterfaceItem::new(item_struct, false)
                             .map_err(|e| anyhow::anyhow!("{}", e))?;
                     generated_code.extend(client.expand());
+                    clients.push(client);
                 }
             }
             _ => {}
         }
     }
+    let mut spec_builder = if let Some(cap) = capability {
+        spec::SpecBuilder::new(&cap)
+    } else {
+        anyhow::bail!("No capability found");
+    };
+    for client in clients {
+        spec_builder.append(&client);
+    }
+    let spec = spec_builder.build()?;
 
-    Ok(generated_code.to_string())
+    Ok((generated_code.to_string(), spec))
 }
 
 

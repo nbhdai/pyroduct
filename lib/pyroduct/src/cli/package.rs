@@ -90,41 +90,6 @@ fn package_module(ctx: &ProjectContext, manifest: ModuleManifest) -> Result<()> 
 // Capability Packaging
 // ============================================================
 
-fn generate_rustdoc_json(ctx: &ProjectContext) -> Result<Option<Vec<u8>>> {
-    let module_dir = ctx.root.join("module");
-    if !module_dir.exists() {
-        println!("  Skipping rustdoc: no module/ directory");
-        return Ok(None);
-    }
-
-    println!("Generating rustdoc JSON...");
-    let module_pkg_name = format!("{}-module", ctx.name.replace('_', "-"));
-    
-    // We use output() instead of run_cargo_command because we need to handle failure gracefully
-    let output = Command::new("cargo")
-        .args(["+nightly", "rustdoc", "-p", &module_pkg_name, "--", "-Z", "unstable-options", "--output-format", "json"])
-        .current_dir(ctx.root)
-        .output()
-        .context("Failed to run cargo rustdoc (is nightly installed?)")?;
-
-    if !output.status.success() {
-        eprintln!("Warning: rustdoc JSON generation failed:\n{}", String::from_utf8_lossy(&output.stderr));
-        return Ok(None);
-    }
-
-    let target_dir = get_target_dir(ctx.root)?;
-    let json_name = format!("{}.json", module_pkg_name.replace('-', "_"));
-    let json_path = target_dir.join("doc").join(json_name);
-
-    if json_path.exists() {
-        let content = fs::read(&json_path)?;
-        println!("✓ Generated interface.json ({} bytes)", content.len());
-        Ok(Some(content))
-    } else {
-        Ok(None)
-    }
-}
-
 fn package_capability(ctx: &ProjectContext, manifest: CapabilityManifest) -> Result<()> {
     println!("Packaging capability: {:?}", ctx.root);
 
@@ -166,10 +131,8 @@ fn package_capability(ctx: &ProjectContext, manifest: CapabilityManifest) -> Res
     interface.add_to_archive(&mut cap_tar)?;
 
     // Add documentation
-    if let Some(json_bytes) = generate_rustdoc_json(ctx)? {
-        cap_tar.add_bytes("interface.json", &json_bytes)?;
-        fs::write(ctx.root.join("interface.json"), &json_bytes)?;
-    }
+    cap_tar.add_bytes("interface.json", interface.spec().as_bytes())?;
+    fs::write(ctx.root.join("interface.json"), interface.spec())?;
 
     cap_tar.finish()?;
     Ok(())

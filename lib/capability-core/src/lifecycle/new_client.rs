@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Error, FnArg, GenericArgument, Ident, ImplItemFn, Pat, PathArguments, ReturnType, Type};
+use syn::{Error, FnArg, GenericArgument, Ident, ImplItemFn, PathArguments, ReturnType, Type};
 
 use crate::ffi::CapabilityFuncFFI;
 use crate::paths::CapabilityIdent;
@@ -79,20 +79,6 @@ impl NewClientFn {
 
         let client_type = match sig.inputs.iter().nth(1) {
             Some(FnArg::Typed(pt)) => {
-                // Validate parameter name
-                if let Pat::Ident(pi) = &*pt.pat {
-                    // Allow any name starting with _ or "client"
-                    let name = pi.ident.to_string();
-                    if !name.starts_with('_') && name != "client" {
-                        return Err(Error::new_spanned(
-                            &pi.ident,
-                            "Parameter should be named 'client' or '_client'",
-                        ));
-                    }
-                } else {
-                    return Err(Error::new_spanned(&pt.pat, "Expected simple identifier"));
-                }
-
                 // Extract the type (should be a reference)
                 let ty = &*pt.ty;
                 if let Type::Reference(r) = ty {

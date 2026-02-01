@@ -104,6 +104,7 @@ impl TarballBuilder {
 pub struct InterfaceGenerator {
     cargo_toml_content: String,
     lib_rs_content: String,
+    doc_string: String,
 }
 
 impl InterfaceGenerator {
@@ -122,12 +123,13 @@ impl InterfaceGenerator {
         let original_source = fs::read_to_string(&source_path)
             .with_context(|| format!("Failed to read source: {:?}", source_path))?;
             
-        let lib_rs_content = capability_core::generate_client(&original_source)
+        let (lib_rs_content, doc_string) = capability_core::generate_client(&original_source)
             .context("Failed to generate client code")?;
 
         Ok(Self {
             cargo_toml_content,
             lib_rs_content,
+            doc_string,
         })
     }
 
@@ -154,5 +156,9 @@ impl InterfaceGenerator {
         tar.add_bytes("Cargo.toml", self.cargo_toml_content.as_bytes())?;
         tar.add_bytes("src/lib.rs", self.lib_rs_content.as_bytes())?;
         Ok(())
+    }
+
+    pub fn spec(&self) -> &str {
+        &self.doc_string
     }
 }
