@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tar::Builder;
 
-use crate::cli::cargo::CapabilityManifest;
+use crate::cargo::CapabilityManifest;
 
 /// Central context to reduce argument passing
 pub struct ProjectContext<'a> {

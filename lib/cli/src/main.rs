@@ -1,4 +1,8 @@
-mod cli;
+pub mod cargo;
+pub mod package;
+pub mod expand;
+pub mod utils;
+pub mod run;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -30,13 +34,25 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+    /// Runs the pipeline with the given config against the given data
+    Run {
+        /// Path to the harness config TOML file
+        #[arg(value_name = "CONFIG")]
+        config: PathBuf,
+
+        /// Input data as JSON string, or a file path
+        #[arg(short, long)]
+        input: Option<String>,
+    }
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let args = Args::parse();
 
     match args.command {
-        Commands::Expand { path } => cli::expand::expand(&path),
-        Commands::Package { path, output } => cli::package::package(&path, output.as_deref()),
+        Commands::Expand { path } => expand::expand(&path),
+        Commands::Package { path, output } => package::package(&path, output.as_deref()),
+        Commands::Run { config, input } => run::run(&config, input.as_ref().map(|s| s.as_str())).await,
     }
 }

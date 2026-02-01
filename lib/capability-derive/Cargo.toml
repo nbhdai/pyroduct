@@ -8,5 +8,5 @@ edition = "2024"
 proc-macro = true
 
 [dependencies]
-capability-core = { path = "../capability-core" }
-syn = { version = "2.0", features = ["full", "extra-traits", "parsing"] }
+capability-core.workspace = true
+syn.workspace = true

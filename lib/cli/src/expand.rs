@@ -3,8 +3,8 @@ use anyhow::Result;
 
 use fs_err as fs;
 
-use crate::cli::cargo::{CapabilityManifest, ModuleManifest};
-use crate::cli::utils::InterfaceGenerator;
+use crate::cargo::{CapabilityManifest, ModuleManifest};
+use crate::utils::InterfaceGenerator;
 
 pub fn expand(path: &Path) -> Result<()> {
     let cap_toml = path.join("Capability.toml");

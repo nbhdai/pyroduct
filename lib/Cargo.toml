@@ -1,21 +1,24 @@
 [workspace]
 members = [ 
-    "harness",
+    "error",
     "arrow-scalars",
     "arrow-derive",
+    "arrow-file",
     "capability-core",
     "capability-derive",
     "module-derive",
-    "pyroduct", 
+    "pyroduct",
+    "cli",
 ]
 
 default-members = [
-    # "harness",
     "arrow-scalars",
     "arrow-derive",
+    "arrow-file",
     "capability-derive",
     "module-derive",
     "pyroduct",
+    "cli",
 ]
 resolver = "2"
 
@@ -27,3 +30,58 @@ edition = "2024"
 [workspace.dependencies]
 arrow-scalars = { path = "arrow-scalars" }
 pyroduct = { path = "pyroduct" }
+capability-core = { path = "capability-core" }
+capability-derive = { path = "capability-derive" }
+arrow-derive = { path = "arrow-derive" }
+module-derive = { path = "module-derive" }
+pyroduct-error = { path = "error" }
+
+# Errors and reporting
+anyhow = "1.0.100"
+thiserror = "2.0.17"
+tracing = "0.1.44"
+tracing-subscriber = "0.3.22"
+tracing-test = "0.2.5"
+
+# Serialization
+rkyv = "0.8.13"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+serde_yaml = "1.0.149"
+toml = "0.9.11"
+half = { version = "2.7.1", features = ["serde", "rkyv"] }
+
+# Arrow 
+arrow = "57.2.0"
+parquet = "57.2.0"
+arrow-schema = { version = "57.2.0" , features = [ "serde" ]}
+
+# I/O and hashing
+bytes = "1.11.0"
+memmap2 = "0.9.9"
+sha2 = "0.10.9"
+tempfile = "3.24.0"
+fs-err = "2.9"
+tar = "0.4.44"
+flate2 = "1.1.8"
+
+# ClI and TUI
+clap = { version = "4.5", features = ["derive"] }
+
+# Async and ffi
+wasmtime = "40.0.1"
+pin-project = "1.1.10"
+libloading = "0.9.0"
+tokio = { version = "1.49.0", features = ["full"] }
+futures = "0.3.31"
+async-ffi = "0.5.0"
+
+# Macro & Expansion
+cargo_toml = "0.22.3"
+proc-macro2 = { version ="1.0",  features = ["span-locations"] }
+quote = "1.0"
+syn = { version = "2.0", features = ["full", "extra-traits", "parsing"] }
+heck = "0.5.0"
+prettyplease = "0.2.37"
+trybuild = "1.0"
+macrotest = "1.0"

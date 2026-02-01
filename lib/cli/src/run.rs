@@ -1,37 +1,11 @@
-use anyhow::Result;
-use arrow_scalars::ArrowRow;
-use clap::Parser;
-use fs_err as fs;
-use pyroduct::host::{Capabilities, CapabilityDefinition, CompiledModule, HarnessConfig};
-use pyroduct::ModIdentity;
 use std::path::{Path, PathBuf};
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use fs_err as fs;
+use anyhow::Result;
+use pyroduct::{ModIdentity, arrow_scalars::ArrowRow, host::{Capabilities, CapabilityDefinition, CompiledModule, HarnessConfig}};
 use wasmtime::{Config, Engine};
 
-#[derive(Parser, Debug)]
-#[command(author, version, about = "Run a WASM module with capabilities")]
-struct Args {
-    /// Path to the harness config TOML file
-    #[arg(value_name = "CONFIG")]
-    config: PathBuf,
 
-    /// Input data as JSON string
-    #[arg(short, long)]
-    input: Option<String>,
-}
-
-fn main() -> Result<()> {
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
-        .init();
-
-    let args = Args::parse();
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(run(&args.config, args.input.as_deref()))
-}
-
-async fn run(config_path: &Path, input_json: Option<&str>) -> Result<()> {
+pub async fn run(config_path: &Path, input_json: Option<&str>) -> Result<()> {
     tracing::info!("Loading config from {:?}", config_path);
 
     let config_str = fs::read_to_string(config_path)?;

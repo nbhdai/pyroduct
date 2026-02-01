@@ -3,7 +3,7 @@ use fs_err as fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::cli::utils::{InterfaceGenerator, ProjectContext, TarballBuilder};
+use crate::utils::{InterfaceGenerator, ProjectContext, TarballBuilder};
 
 use super::cargo::{CapabilityManifest, ModuleManifest};
 
@@ -170,7 +170,7 @@ fn package_single(path: &Path, output: Option<&Path>) -> Result<()> {
         let ctx = ProjectContext::new(path, output_dir, &pkg.name, pkg.version());
         package_module(&ctx, manifest)
     } else {
-        bail!("Neither Capability.toml nor Module.toml found in {:?}", path);
+        bail!("Neither Capability.toml nor Module.toml found in {:?}", path)
     }
 }
 
@@ -206,7 +206,7 @@ pub fn package(path: &Path, output: Option<&Path>) -> Result<()> {
     if !errors.is_empty() {
         eprintln!("\nErrors encountered:");
         for (p, e) in &errors {
-            eprintln!("  {:?}: {:#}", path, e);
+            eprintln!("  {:?}: {:#}", p, e);
         }
         bail!("{} packaging(s) failed", errors.len());
     }

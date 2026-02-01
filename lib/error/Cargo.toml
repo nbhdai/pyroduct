@@ -1,0 +1,9 @@
+[package]
+name = "pyroduct-error"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+rkyv.workspace = true

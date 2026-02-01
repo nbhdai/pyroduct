@@ -1,8 +1,8 @@
 [package]
 name = "pyroduct"
-version = "0.1.0"
-authors = ["Sven Cattell"]
-edition = "2024"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
 
 [features]
 capability = []
@@ -15,31 +15,23 @@ arrow-scalars = { path = "../arrow-scalars", default-features = false, features 
 arrow-derive = { path = "../arrow-derive", default-features = false, features = ["pyroduct"] }
 
 module-derive = { path = "../module-derive" }
-rkyv = "0.8.13"
-tracing = "0.1.44"
-tracing-subscriber = "0.3.22"
-thiserror = "2.0.17"
-serde = "1.0.228"
-serde_json = "1.0.149"
-anyhow = "1.0.100"
+rkyv.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
 
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 capability-derive = { path = "../capability-derive" }
-wasmtime = "40.0.1"
-pin-project = "1.1.10"
-async-ffi = "0.5.0"
-libloading = "0.9.0"
-tokio = { version = "1.49.0", features = ["full"] }
-futures = "0.3.31"
-
-capability-core = { path = "../capability-core" }
-fs-err = "2.9"
-toml = "0.9.11"
-cargo_toml = "0.22.3"
-clap = { version = "4.5", features = ["derive"] }
-tar = "0.4.44"
-flate2 = "1.1.8"
+wasmtime.workspace = true
+pin-project.workspace = true
+async-ffi.workspace = true
+libloading.workspace = true
+tokio.workspace = true
+futures.workspace = true
 
 [dev-dependencies]
 tracing-test = "0.2.5"
