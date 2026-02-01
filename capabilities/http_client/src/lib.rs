@@ -12,7 +12,7 @@ pub struct HttpConfig {
     pub allowed_endpoints: Vec<AllowedEndpoint>,
 }
 
-#[pyroduct::client]
+#[pyroduct::interface_item]
 pub struct HttpClient;
 
 pub struct HttpServer {

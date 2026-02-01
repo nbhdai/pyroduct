@@ -6,10 +6,6 @@ use fs_err as fs;
 use crate::cli::cargo::{CapabilityManifest, ModuleManifest};
 use crate::cli::utils::InterfaceGenerator;
 
-// Assuming TarballBuilder and CapabilityManifest are available in this scope
-// from the previous refactoring.
-
-
 pub fn expand(path: &Path) -> Result<()> {
     let cap_toml = path.join("Capability.toml");
     let mod_toml = path.join("Module.toml");
@@ -50,7 +46,7 @@ pub fn expand(path: &Path) -> Result<()> {
     if !errors.is_empty() {
         eprintln!("\nErrors encountered:");
         for (path, err) in &errors {
-            eprintln!("  {:?}: {}", path, err);
+            eprintln!("  {:?}: Failed to generate client code\n{}", path, err);
         }
         anyhow::bail!("{} expansion(s) failed", errors.len());
     }

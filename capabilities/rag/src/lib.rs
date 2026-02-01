@@ -11,7 +11,7 @@ pub struct RagDocument {
     pub content: String,
 }
 
-#[pyroduct::client]
+#[pyroduct::interface_item]
 pub struct RagClient;
 
 struct EmbeddedDocument {
@@ -108,7 +108,7 @@ impl RagServer {
 }
 
 
-#[pyroduct::client]
+#[pyroduct::interface_item]
 pub struct SearchResult {
     pub id: String,
     pub content: String,

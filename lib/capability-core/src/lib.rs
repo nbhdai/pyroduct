@@ -15,9 +15,45 @@ pub mod lifecycle;
 pub mod capability;
 pub mod spec;
 
+/// Format a syn::Error with source context
+fn format_syn_error(source: &str, err: syn::Error) -> anyhow::Error {
+    let span = err.span();
+    let start = span.start();
+    let msg = err.to_string();
+    
+    let lines: Vec<&str> = source.lines().collect();
+    let line_num = start.line;
+    let col = start.column;
+    
+    let mut output = String::new();
+    output.push_str(&format!("error: {}\n", msg));
+    output.push_str(&format!("  --> src/lib.rs:{}:{}\n", line_num, col + 1));
+    output.push_str("   |\n");
+    
+    // Show context: line before, error line, line after
+    let start_line = line_num.saturating_sub(2);
+    let end_line = (line_num + 1).min(lines.len());
+    
+    for i in start_line..end_line {
+        let line_content = lines.get(i).unwrap_or(&"");
+        let display_num = i + 1;
+        
+        if display_num == line_num {
+            output.push_str(&format!("{:3} | {}\n", display_num, line_content));
+            // Add caret pointing to the column
+            output.push_str(&format!("    | {}^\n", " ".repeat(col)));
+        } else {
+            output.push_str(&format!("{:3} | {}\n", display_num, line_content));
+        }
+    }
+    output.push_str("   |\n");
+    
+    anyhow::anyhow!("{}", output)
+}
+
 /// For generating the interface lib.rs
-pub fn generate_interface(content: &String) -> anyhow::Result<(String, String, Option<String>)> {
-    let file = parse_file(&content)
+pub fn generate_interface(content: &str) -> anyhow::Result<(String, String, Option<String>)> {
+    let file = parse_file(content)
             .context("Failed to parse capability source file")?;
 
     let mut generated_code = quote::quote! {
@@ -34,7 +70,7 @@ pub fn generate_interface(content: &String) -> anyhow::Result<(String, String, O
             syn::Item::Impl(item_impl) => {
                 if has_attr(&item_impl.attrs, "capability") {
                     let cap = CapabilityImpl::new(item_impl, true)
-                            .map_err(|e| anyhow::anyhow!("{}", e))?;
+                            .map_err(|e| format_syn_error(content, e))?;
                     generated_code.extend(cap.expand_module()); 
                     capability = Some(cap);
                 }
@@ -42,12 +78,12 @@ pub fn generate_interface(content: &String) -> anyhow::Result<(String, String, O
             syn::Item::Struct(item_struct) => {
                 if has_attr(&item_struct.attrs, "interface_item") {
                     let interface = CapInterfaceItem::new(item_struct, false)
-                            .map_err(|e| anyhow::anyhow!("{}", e))?;
+                            .map_err(|e| format_syn_error(content, e))?;
                     generated_code.extend(interface.expand());
                     interfaces.push(interface);
                 } else if has_attr(&item_struct.attrs, "config") {
                     let found_config = CapConfig::new(item_struct, config::DocRec::StructDoc)
-                            .map_err(|e| anyhow::anyhow!("{}", e))?;
+                            .map_err(|e| format_syn_error(content, e))?;
                     config = Some(found_config);
                 }
             }
