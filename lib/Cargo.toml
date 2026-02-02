@@ -8,7 +8,7 @@ members = [
     "capability-derive",
     "module-derive",
     "pyroduct",
-    "cli",
+    "cli", "module-core",
 ]
 
 default-members = [
@@ -34,6 +34,7 @@ pyroduct = { path = "pyroduct" }
 capability-core = { path = "capability-core" }
 capability-derive = { path = "capability-derive" }
 arrow-derive = { path = "arrow-derive" }
+module-core = { path = "module-core" }
 module-derive = { path = "module-derive" }
 pyroduct-error = { path = "error" }
 

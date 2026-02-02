@@ -389,7 +389,7 @@ impl CapabilityImpl {
         let static_strs: Vec<_> = all_ffis
             .iter()
             .map(|ffi| {
-                let trace_name = ffi.trace_name().to_string();
+                let trace_name = ffi.fn_wasm_name().to_string();
                 let static_name = ffi.trace_name_static();
                 quote! { const #static_name: &'static str = #trace_name; }
             })
@@ -438,6 +438,7 @@ impl CapabilityImpl {
     }
 
     fn generate_wasm_imports(&self) -> TokenStream {
+        let cap_id = self.ident.cap_id();
         let new_client_decl = self
             .new_client_fn
             .build_ffi(&self.ident)
@@ -452,7 +453,7 @@ impl CapabilityImpl {
         quote! {
             mod wasm {
                 use super::*;
-                #[link(wasm_import_module = "env")]
+                #[link(wasm_import_module = #cap_id)]
                 unsafe extern "C" {
                     #new_client_decl
                     #(#method_decls)*

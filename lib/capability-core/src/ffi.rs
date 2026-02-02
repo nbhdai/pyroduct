@@ -169,7 +169,7 @@ impl CapabilityFuncFFI {
 
     pub fn generate_vtable_entry(&self) -> TokenStream {
         let fn_ffi_name = self.fn_ffi_name();
-        let fn_wasm_name = self.fn_wasm_name();
+        let wasm_name_ident = self.trace_name_static();
 
         let func_variant = if self.is_async {
             quote! {
@@ -185,8 +185,8 @@ impl CapabilityFuncFFI {
             ::pyroduct::capability_host::ffi::FunctionExport {
                 capability: CAPABILITY_NAME_VERSION.as_ptr(),
                 capability_len: CAPABILITY_NAME_VERSION.len(),
-                name: #fn_wasm_name.as_ptr(),
-                name_len: #fn_wasm_name.len(),
+                name: #wasm_name_ident.as_ptr(),
+                name_len: #wasm_name_ident.len(),
                 func: #func_variant,
             }
         }

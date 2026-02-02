@@ -1576,12 +1576,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "module-derive"
+name = "module-core"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "module-derive"
+version = "0.1.0"
+dependencies = [
+ "module-core",
 ]
 
 [[package]]
