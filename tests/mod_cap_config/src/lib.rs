@@ -2,7 +2,7 @@
 //!
 //! Module that transforms input strings using the async transform capability.
 
-use cap_config::TransformClient;
+use cap_config::{TransformClient, TransformClientMethods};
 
 #[pyroduct::module(output = (original, transformed, transform_count))]
 pub fn call(input: &str) -> Result<(String, String, u64), String> {

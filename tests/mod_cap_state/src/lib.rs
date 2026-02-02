@@ -2,7 +2,7 @@
 //!
 //! Simple module that increments a counter and returns the result.
 
-use cap_state::CounterClient;
+use cap_state::{CounterClient, CounterClientMethods};
 
 #[pyroduct::module(output = (count, incremented))]
 pub fn call(input: &str) -> Result<(u64, u64), String> {

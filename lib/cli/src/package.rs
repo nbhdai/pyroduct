@@ -104,7 +104,7 @@ fn package_module(ctx: &ProjectContext, manifest: ModuleManifest, cargo_args: &[
         bail!("Could not find compiled WASM: {}", built_wasm.display());
     }
 
-    let dest_wasm = ctx.output_dir.join(&wasm_filename);
+    let dest_wasm = ctx.output_dir.join("mod.wasm");
     fs::copy(&built_wasm, &dest_wasm)?;
     println!("✓ Compiled {}", dest_wasm.display());
 
@@ -142,14 +142,14 @@ fn package_capability(ctx: &ProjectContext, manifest: CapabilityManifest, cargo_
 
     // 3. Locate and Copy Artifact
     let target_dir = get_target_dir(ctx.root)?;
-    let lib_filename = format!("lib.{}", dylib_extension());
+    let lib_filename = format!("lib{}.{}",ctx.normalized_name(), dylib_extension());
     let built_lib = target_dir.join("release").join(&lib_filename);
 
     if !built_lib.exists() {
         bail!("Could not find compiled binary: {}", built_lib.display());
     }
 
-    let dest_lib = ctx.output_dir.join(&lib_filename);
+    let dest_lib = ctx.output_dir.join(format!("lib.{}", dylib_extension()));
     fs::copy(&built_lib, &dest_lib)?;
     println!("✓ Compiled {}", dest_lib.display());
 
@@ -165,12 +165,12 @@ fn package_capability(ctx: &ProjectContext, manifest: CapabilityManifest, cargo_
 
     // 6. Add documentation
     interface_tar.add_bytes("interface.json", interface.spec().as_bytes())?;
-    fs::write(ctx.root.join("interface.json"), interface.spec())?;
+    fs::write(ctx.output_dir.join("interface.json"), interface.spec())?;
 
     // 7. Generate config spec
     if let Some(spec) = interface.config() {
         cap_tar.add_bytes("config.json", spec.as_bytes())?;
-        fs::write(ctx.root.join("config.json"), spec)?;
+        fs::write(ctx.output_dir.join("config.json"), spec)?;
     }
 
     interface_tar.finish()?;

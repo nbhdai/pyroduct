@@ -1,80 +1,110 @@
-//! Test capability 1: Simple counter capability
+//! Test capability 2: Async string transform capability
 //!
-//! Provides basic stateful operations for testing capability lifecycle and method calls.
+//! Provides async operations for testing async capability lifecycle and method calls.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::HashMap;
+use std::sync::Mutex;
 
 #[pyroduct::interface_item]
-pub struct CounterClient {
-    pub start_value: u64,
+pub struct TransformClient {
+    pub prefix: String,
 }
 
 #[pyroduct::config]
 /// Required doc
-pub struct CounterConfig {
-    pub max_value: u64,
+pub struct TransformConfig {
+    pub uppercase: bool,
+    pub suffix: String,
 }
 
-pub struct CounterServer {
-    max_value: u64,
-    call_count: AtomicU64,
+pub struct TransformServer {
+    uppercase: bool,
+    suffix: String,
+    transform_log: Mutex<Vec<String>>,
 }
 
 #[pyroduct::capability]
-impl CounterServer {
-    type Client = CounterClient;
-    type Config = CounterConfig;
+impl TransformServer {
+    type Client = TransformClient;
+    type Config = TransformConfig;
     type Error = String;
 
-    /// Initialize the counter server with optional max value config
-    fn new(config: Option<CounterConfig>) -> Self {
-        let max_value = config.map(|c| c.max_value).unwrap_or(u64::MAX);
+    /// Initialize with async setup
+    async fn new(config: Option<TransformConfig>) -> Self {
+        let config = config.unwrap_or(TransformConfig {
+            uppercase: false,
+            suffix: String::new(),
+        });
         Self {
-            max_value,
-            call_count: AtomicU64::new(0),
+            uppercase: config.uppercase,
+            suffix: config.suffix,
+            transform_log: Mutex::new(Vec::new()),
         }
     }
 
-    /// Reset call count between pipeline invocations
-    fn reset(&mut self) {
-        self.call_count.store(0, Ordering::SeqCst);
+    /// Clear transform log between invocations
+    async fn reset(&mut self) {
+        if let Ok(mut log) = self.transform_log.lock() {
+            log.clear();
+        }
     }
 
-    /// Validate client start value
-    fn new_client(&self, client: &CounterClient) -> Result<(), String> {
-        if client.start_value > self.max_value {
-            return Err(format!(
-                "start_value {} exceeds max_value {}",
-                client.start_value, self.max_value
-            ));
+    /// Validate client prefix
+    fn new_client(&self, client: &TransformClient) -> Result<(), String> {
+        if client.prefix.len() > 100 {
+            return Err("Prefix too long".to_string());
         }
         Ok(())
     }
 
-    /// Increment and return the current count
-    fn increment(&self, client: &CounterClient) -> Result<u64, String> {
-        let count = self.call_count.fetch_add(1, Ordering::SeqCst);
-        let value = client.start_value.saturating_add(count);
-        if value > self.max_value {
-            Err(format!("Counter exceeded max_value {}", self.max_value))
-        } else {
-            Ok(value)
+    /// Transform a string with prefix, optional uppercase, and suffix
+    async fn transform(&self, client: &TransformClient, input: String) -> Result<String, String> {
+        let mut result = format!("{}{}", client.prefix, input);
+        if self.uppercase {
+            result = result.to_uppercase();
         }
+        result.push_str(&self.suffix);
+
+        if let Ok(mut log) = self.transform_log.lock() {
+            log.push(result.clone());
+        }
+
+        Ok(result)
     }
 
-    /// Get current count without incrementing
-    fn get_count(&self, _client: &CounterClient) -> Result<u64, String> {
-        Ok(self.call_count.load(Ordering::SeqCst))
+    /// Get the number of transforms performed
+    fn get_transform_count(&self, _client: &TransformClient) -> Result<usize, String> {
+        self.transform_log
+            .lock()
+            .map(|log| log.len())
+            .map_err(|_| "Lock poisoned".to_string())
     }
 
-    /// Add a value to the counter
-    fn add(&self, client: &CounterClient, value: u64) -> Result<u64, String> {
-        let current = client.start_value.saturating_add(self.call_count.load(Ordering::SeqCst));
-        let result = current.saturating_add(value);
-        if result > self.max_value {
-            Err(format!("Result {} exceeds max_value {}", result, self.max_value))
-        } else {
-            Ok(result)
+    /// Batch transform multiple strings
+    async fn batch_transform(
+        &self,
+        client: &TransformClient,
+        inputs: Vec<String>,
+    ) -> Result<Vec<String>, String> {
+        let mut results = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            let mut result = format!("{}{}", client.prefix, input);
+            if self.uppercase {
+                result = result.to_uppercase();
+            }
+            result.push_str(&self.suffix);
+            results.push(result);
         }
+
+        if let Ok(mut log) = self.transform_log.lock() {
+            log.extend(results.clone());
+        }
+
+        Ok(results)
+    }
+
+    /// Echo back input (for testing passthrough)
+    fn echo(&self, _client: &TransformClient, input: String) -> Result<String, String> {
+        Ok(input)
     }
 }
