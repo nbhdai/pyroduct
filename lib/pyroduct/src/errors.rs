@@ -133,6 +133,7 @@ enum ErrorKind {
     NotFound,
     LogicPanic,
     IoError,
+    LoadingError,
     LinkingError,
     Infrastructure, // Added for "I fucked up" scenarios
     Unknown,
@@ -142,6 +143,7 @@ enum ErrorKind {
 enum InnerError {
     Capability(CapIdentity, FfiError),
     Module(ModIdentity, FfiError),
+    CapabilityLoading(CapIdentity, String),
     CapabilityLinking(CapIdentity, String),
     ModuleLinking(ModIdentity, String),
     ModuleUnknown(ModIdentity, String),
@@ -182,6 +184,15 @@ impl PyroductError {
             kind,
             inner: InnerError::Capability(ident.clone(), inner),
             location,
+        }
+    }
+
+    /// Create a new user-facing error for capability dynamic library loading/linking failures
+    pub fn from_capability_loading(ident: &CapIdentity, error: impl fmt::Display) -> Self {
+        Self {
+            kind: ErrorKind::LoadingError,
+            inner: InnerError::CapabilityLoading(ident.clone(), error.to_string()),
+            location: None,
         }
     }
 
@@ -302,7 +313,9 @@ impl PyroductError {
         match &self.inner {
             InnerError::NotFound(_) => Path::new("./."),
             InnerError::Infrastructure(_) => Path::new("HOST_INFRASTRUCTURE"),
-            InnerError::Capability(ident, _) | InnerError::CapabilityLinking(ident, _) => {
+            InnerError::Capability(ident, _) 
+            | InnerError::CapabilityLinking(ident, _)
+            | InnerError::CapabilityLoading(ident, _) => {
                 &ident.path
             }
             InnerError::Module(ident, _)
@@ -320,7 +333,9 @@ impl PyroductError {
         match &self.inner {
             InnerError::NotFound(name) => &name,
             InnerError::Infrastructure(_) => "Host Infrastructure",
-            InnerError::Capability(ident, _) | InnerError::CapabilityLinking(ident, _) => {
+            InnerError::Capability(ident, _) 
+            | InnerError::CapabilityLinking(ident, _)
+            | InnerError::CapabilityLoading(ident, _) => {
                 &ident.name()
             }
             InnerError::Module(ident, _)
@@ -347,6 +362,9 @@ impl PyroductError {
             }
             InnerError::Module(path, e) => {
                 format!("Module at {:?}: {:?}", path, e)
+            }
+            InnerError::CapabilityLoading(path, e) => {
+                format!("Capability loading at {:?}: {}", path, e)
             }
             InnerError::CapabilityLinking(path, e) => {
                 format!("Capability linking at {:?}: {}", path, e)
@@ -399,6 +417,13 @@ impl fmt::Display for PyroductError {
                 }
                 write!(f, ": {}", self.inner)?;
             }
+            ErrorKind::LoadingError => {
+                write!(f, "{} experienced a loading error", self.name())?;
+                if let Some(loc) = &self.location {
+                    write!(f, " (detected at {})", loc)?;
+                }
+                write!(f, ": {}", self.inner)?;
+            }
             ErrorKind::LinkingError => {
                 write!(f, "{} experienced a linking error", self.name())?;
                 if let Some(loc) = &self.location {
@@ -432,6 +457,9 @@ impl fmt::Display for InnerError {
             }
             InnerError::Module(path, e) => {
                 write!(f, "{} (module: {})", e, path.display())
+            }
+            InnerError::CapabilityLoading(path, e) => {
+                write!(f, "{} (capability: {})", e, path.display())
             }
             InnerError::CapabilityLinking(path, e) => {
                 write!(f, "{} (capability: {})", e, path.display())

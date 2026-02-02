@@ -45,7 +45,7 @@ impl Capability {
             path: path.as_ref().into(),
         };
         let library = unsafe { Library::new(path.as_ref()) }
-            .map_err(|e| PyroductError::from_capability_linking(&ident, e.to_string()))?;
+            .map_err(|e| PyroductError::from_capability_loading(&ident, e.to_string()))?;
 
         let capability_span =
             tracing::span!(tracing::Level::INFO, "CAPABILITY", name = &ident.name());
@@ -53,8 +53,8 @@ impl Capability {
         let span_id = all_spans.len();
         all_spans.push(capability_span);
 
-        let manifest_fn: Symbol<CapabilityRegisterFn> = unsafe { library.get(b"plugin_manifest") }
-            .map_err(|e| PyroductError::from_capability_linking(&ident, e.to_string()))?;
+        let manifest_fn: Symbol<CapabilityRegisterFn> = unsafe { library.get(b"capability_manifest") }
+            .map_err(|e| PyroductError::from_capability_loading(&ident, format!("Unable to get the manifest symbol: {e}")))?;
 
         let export = unsafe { manifest_fn(span_id as u64, log_callback) };
 

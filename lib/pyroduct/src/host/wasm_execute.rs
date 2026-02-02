@@ -433,10 +433,10 @@ mod integration_tests {
     async fn test_capability_state_preservation() -> PyroductResult<()> {
         let mut caps = Capabilities::new();
         // Use the counter capability from tests/cap_config
-        let cap_path = Path::new("../../tests/cap_config/src/lib.rs"); // Adjusted for local dev paths
+        let cap_path = Path::new("../../tests/cap_config/artifacts/lib.dylib"); // Adjusted for local dev paths
         caps.load("counter", cap_path)?;
 
-        let wasm_path = Path::new("../../tests/mod_cap_config/target/wasm32-unknown-unknown/release/mod_cap_config.wasm");
+        let wasm_path = Path::new("../../tests/mod_cap_config/artifacts/mod.wasm");
         let wasm_bytes = std::fs::read(wasm_path).unwrap();
         
         let mod_ident = ModIdentity::from(wasm_path);
@@ -468,10 +468,10 @@ mod integration_tests {
     async fn test_capability_configuration_respect() -> PyroductResult<()> {
         let mut caps = Capabilities::new();
         // Use the transform capability from tests/cap_state
-        let cap_path = Path::new("../../tests/cap_state/src/lib.rs");
+        let cap_path = Path::new("../../tests/cap_state/artifacts/lib.dylib");
         caps.load("transform", cap_path)?;
 
-        let wasm_path = Path::new("../../tests/mod_cap_state/target/wasm32-unknown-unknown/release/mod_cap_state.wasm");
+        let wasm_path = Path::new("../../tests/mod_cap_state/artifacts/mod.wasm");
         let wasm_bytes = std::fs::read(wasm_path).unwrap();
         
         let mod_ident = ModIdentity::from(wasm_path);

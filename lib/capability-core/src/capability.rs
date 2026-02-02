@@ -1,5 +1,3 @@
-//! #[capability] on impl blocks - Unified capability definition
-//!
 //! Transforms:
 //! ```ignore
 //! #[pyroduct::capability]
@@ -386,7 +384,23 @@ impl CapabilityImpl {
         let init_export = self.init_fn.generate_export(server);
         let reset_export = self.reset_fn.generate_export(server);
 
-        let plugin_exports_name = format_ident!("{}__EXPORT", class_name_static);
+        let capability_manifest_fn = quote! {
+            #[unsafe(no_mangle)]
+            pub extern "C" fn capability_manifest<'a>(
+                id: u64,
+                log_callback: ::pyroduct::capability_host::ffi::LogCallback,
+            ) -> ::pyroduct::capability_host::ffi::ClassExport<'a> {
+                ::pyroduct::capability::init_logging(id, log_callback);
+
+                ::pyroduct::capability_host::ffi::ClassExport {
+                    len: #exports_array_name.len(),
+                    ptr: #exports_array_name.as_ptr() as *mut _,
+                    init: #init_export,
+                    drop: ::pyroduct::capability_host::ffi::ClassDropFn::Sync(#drop_name),
+                    reset: #reset_export,
+                }
+            }
+        };
 
         quote! {
             const #class_name_static: &'static str = #class_name_string;
@@ -396,14 +410,7 @@ impl CapabilityImpl {
                 #(#exports),*
             ];
 
-            const #plugin_exports_name: ::pyroduct::capability_host::ffi::ClassExport =
-                ::pyroduct::capability_host::ffi::ClassExport {
-                    ptr: #exports_array_name.as_ptr(),
-                    init: #init_export,
-                    drop: ::pyroduct::capability_host::ffi::ClassDropFn::Sync(#drop_name),
-                    reset: #reset_export,
-                    len: #exports_array_name.len(),
-                };
+            #capability_manifest_fn
         }
     }
 
@@ -582,14 +589,21 @@ mod tests {
                 }
             ];
 
-            const __TEST_SERVER__EXPORT: ::pyroduct::capability_host::ffi::ClassExport = 
+            #[unsafe(no_mangle)]
+            pub extern "C" fn capability_manifest<'a>(
+                id: u64,
+                log_callback: ::pyroduct::capability_host::ffi::LogCallback,
+            ) -> ::pyroduct::capability_host::ffi::ClassExport<'a> {
+                ::pyroduct::capability::init_logging(id, log_callback);
+
                 ::pyroduct::capability_host::ffi::ClassExport {
-                    ptr: __TEST_SERVER__METHODS.as_ptr(),
+                    len: __TEST_SERVER__METHODS.len(),
+                    ptr: __TEST_SERVER__METHODS.as_ptr() as *mut _,
                     init: ::pyroduct::capability_host::ffi::ClassInitFn::Sync(__test_server__ffi_init),
                     drop: ::pyroduct::capability_host::ffi::ClassDropFn::Sync(__test_server__ffi_drop),
                     reset: ::pyroduct::capability_host::ffi::ClassResetFn::Sync(__test_server__ffi_reset),
-                    len: __TEST_SERVER__METHODS.len(),
-                };
+                }
+            }
         };
 
         crate::fmt::assert_code_eq_token(&output, &expected);
