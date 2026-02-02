@@ -1,0 +1,12 @@
+[module]
+name = "mod_cap_state"
+version = "0.1.0"
+authors = ["nbhdai"]
+
+[pyroduct]
+path = "../../lib/pyroduct"
+
+[capabilities]
+cap_state.path = "../cap_state"
+
+[dependencies]

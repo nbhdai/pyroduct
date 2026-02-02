@@ -46,7 +46,12 @@ pub fn expand(path: &Path) -> Result<()> {
     if !errors.is_empty() {
         eprintln!("\nErrors encountered:");
         for (path, err) in &errors {
-            eprintln!("  {:?}: Failed to generate client code\n{}", path, err);
+            eprintln!("  {:?}: {}", path, err);
+            let mut source = err.source();
+            while let Some(cause) = source {
+                eprintln!("    caused by: {}", cause);
+                source = cause.source();
+            }
         }
         anyhow::bail!("{} expansion(s) failed", errors.len());
     }

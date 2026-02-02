@@ -11,6 +11,7 @@ pub struct TransformClient {
 }
 
 #[pyroduct::config]
+/// Required doc
 pub struct TransformConfig {
     pub uppercase: bool,
     pub suffix: String,

@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::utils::{InterfaceGenerator, ProjectContext, TarballBuilder};
-
 use super::cargo::{CapabilityManifest, ModuleManifest};
 
 fn get_target_dir(path: &Path) -> Result<PathBuf> {
@@ -29,15 +28,44 @@ fn dylib_extension() -> &'static str {
     else { "so" }
 }
 
-fn run_cargo_command(path: &Path, args: &[&str], error_ctx: &str) -> Result<()> {
+fn run_cargo_command(
+    path: &Path, 
+    tool_args: &[&str], 
+    user_args: &[String], 
+    error_ctx: &str
+) -> Result<()> {
+    // 1. Identify flags in the tool_args to prevent user overrides
+    // We look for things like "--release" or "--target"
+    let restricted_flags: std::collections::HashSet<_> = tool_args
+        .iter()
+        .filter(|arg| arg.starts_with('-'))
+        .map(|arg| arg.split('=').next().unwrap_or(arg))
+        .collect();
+
+    // 2. Check user_args for conflicts
+    for user_arg in user_args {
+        if user_arg.starts_with('-') {
+            let flag_key = user_arg.split('=').next().unwrap_or(user_arg);
+            if restricted_flags.contains(flag_key) {
+                bail!(
+                    "Conflict detected: User argument '{}' overrides internal tool flag '{}'", 
+                    user_arg, 
+                    flag_key
+                );
+            }
+        }
+    }
+
+    // 3. Combine and execute
     let status = Command::new("cargo")
-        .args(args)
+        .args(tool_args)
+        .args(user_args)
         .current_dir(path)
         .status()
         .context(error_ctx.to_string())?;
 
     if !status.success() {
-        bail!("Cargo command failed: {} {:?}", status, args);
+        bail!("Cargo command failed with status {}. Args: {:?} {:?}", status, tool_args, user_args);
     }
     Ok(())
 }
@@ -46,7 +74,7 @@ fn run_cargo_command(path: &Path, args: &[&str], error_ctx: &str) -> Result<()> 
 // Module Packaging
 // ============================================================
 
-fn package_module(ctx: &ProjectContext, manifest: ModuleManifest) -> Result<()> {
+fn package_module(ctx: &ProjectContext, manifest: ModuleManifest, cargo_args: &[String]) -> Result<()> {
     println!("Packaging module: {:?}", ctx.root);
 
     // 1. Generate Cargo.toml
@@ -54,11 +82,14 @@ fn package_module(ctx: &ProjectContext, manifest: ModuleManifest) -> Result<()> 
     fs::write(ctx.root.join("Cargo.toml"), &cargo_toml_content)?;
     println!("✓ Wrote Cargo.toml");
 
-    // 2. Build WASM
+    // 2. Build WASM with pass-through args
     println!("Compiling WASM module...");
+    let build_args = vec!["build", "--release", "--target", "wasm32-unknown-unknown", "-p", &ctx.name];
+
     run_cargo_command(
         ctx.root,
-        &["build", "--release", "--target", "wasm32-unknown-unknown", "-p", &ctx.name],
+        &build_args,
+        cargo_args,
         "Failed to run cargo build"
     )?;
 
@@ -90,7 +121,7 @@ fn package_module(ctx: &ProjectContext, manifest: ModuleManifest) -> Result<()> 
 // Capability Packaging
 // ============================================================
 
-fn package_capability(ctx: &ProjectContext, manifest: CapabilityManifest) -> Result<()> {
+fn package_capability(ctx: &ProjectContext, manifest: CapabilityManifest, cargo_args: &[String]) -> Result<()> {
     println!("Packaging capability: {:?}", ctx.root);
 
     // 1. Generate Cargo.toml
@@ -98,11 +129,14 @@ fn package_capability(ctx: &ProjectContext, manifest: CapabilityManifest) -> Res
     fs::write(ctx.root.join("Cargo.toml"), &cargo_toml_content)?;
     println!("✓ Wrote Cargo.toml");
 
-    // 2. Build Dynamic Library
+    // 2. Build Dynamic Library with pass-through args
     println!("Compiling capability binary...");
+    let build_args = vec!["build", "--release", "--features", "capability", "-p", &ctx.name];
+
     run_cargo_command(
         ctx.root,
-        &["build", "--release", "--features", "capability", "-p", &ctx.name],
+        &build_args,
+        cargo_args,
         "Failed to run cargo build"
     )?;
 
@@ -148,7 +182,7 @@ fn package_capability(ctx: &ProjectContext, manifest: CapabilityManifest) -> Res
 // Entry Points
 // ============================================================
 
-fn package_single(path: &Path, output: Option<&Path>) -> Result<()> {
+fn package_single(path: &Path, output: Option<&Path>, cargo_args: &[String]) -> Result<()> {
     let output_dir = output.unwrap_or(path);
     fs::create_dir_all(output_dir)?;
 
@@ -163,21 +197,21 @@ fn package_single(path: &Path, output: Option<&Path>) -> Result<()> {
         let manifest: CapabilityManifest = toml::from_str(&fs::read_to_string(&cap_toml)?)?;
         let pkg = manifest.capability.as_ref().context("Package section missing in Capability.toml")?;
         let ctx = ProjectContext::new(path, output_dir, &pkg.name, pkg.version());
-        package_capability(&ctx, manifest)
+        package_capability(&ctx, manifest, cargo_args)
     } else if mod_toml.exists() {
         let manifest: ModuleManifest = toml::from_str(&fs::read_to_string(&mod_toml)?)?;
         let pkg = manifest.module.as_ref().context("Module section missing in Module.toml")?;
         let ctx = ProjectContext::new(path, output_dir, &pkg.name, pkg.version());
-        package_module(&ctx, manifest)
+        package_module(&ctx, manifest, cargo_args)
     } else {
         bail!("Neither Capability.toml nor Module.toml found in {:?}", path)
     }
 }
 
-pub fn package(path: &Path, output: Option<&Path>) -> Result<()> {
+pub fn package(path: &Path, output: Option<&Path>, cargo_args: &[String]) -> Result<()> {
     // 1. Direct package mode
     if path.join("Capability.toml").exists() || path.join("Module.toml").exists() {
-        return package_single(path, output);
+        return package_single(path, output, cargo_args);
     }
 
     // 2. Recursive scan mode
@@ -193,7 +227,7 @@ pub fn package(path: &Path, output: Option<&Path>) -> Result<()> {
 
         if subpath.join("Capability.toml").exists() || subpath.join("Module.toml").exists() {
             found_any = true;
-            if let Err(e) = package_single(&subpath, output) {
+            if let Err(e) = package_single(&subpath, output, cargo_args) {
                 errors.push((subpath, e));
             }
         }

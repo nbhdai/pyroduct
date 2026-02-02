@@ -4,6 +4,10 @@ target
 capabilities/**/Cargo.lock
 capabilities/**/*.json
 modules/**/Cargo.lock
+tests/**/*.json
+tests/**/Cargo.*
+tests/cap*/interface
+
 *.dylib
 *.interface
 *.cargo

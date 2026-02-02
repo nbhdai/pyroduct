@@ -37,6 +37,10 @@ enum Commands {
         path: PathBuf,
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// Pass additional arguments to cargo build
+        #[arg(last = true)]
+        cargo_args: Vec<String>,
     },
     /// Runs the pipeline. 
     /// Automatically detects if INPUT is a file path (Batch Mode) or a JSON string (Single Mode).
@@ -66,7 +70,7 @@ async fn main() -> Result<()> {
     match args.command {
         Commands::Init { path, cap } => init::init(path, cap),
         Commands::Expand { path } => expand::expand(&path),
-        Commands::Package { path, output } => package::package(&path, output.as_deref()),
+        Commands::Package { path, output, cargo_args } => package::package(&path, output.as_deref(), &cargo_args),
         Commands::Run { 
             config, 
             input, 

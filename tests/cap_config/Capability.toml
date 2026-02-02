@@ -1,5 +1,5 @@
 [capability]
-name = "cap_state"
+name = "cap_config"
 version = "0.1.0"
 authors = ["nbhdai"]
 
