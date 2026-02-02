@@ -4,7 +4,6 @@ use heck::AsPascalCase;
 use std::path::{Path, PathBuf};
 
 pub fn init(path: Option<PathBuf>, is_cap: bool) -> Result<()> {
-    // 1. Determine root directory and project name
     let (root, name) = match path {
         Some(p) => {
             let name = p
@@ -27,12 +26,9 @@ pub fn init(path: Option<PathBuf>, is_cap: bool) -> Result<()> {
             (p, name)
         }
     };
-
-    // 2. Create src directory
     let src_dir = root.join("src");
     fs::create_dir_all(&src_dir).context("Failed to create src directory")?;
 
-    // 3. Generate content
     if is_cap {
         create_capability(&root, &src_dir, &name)?;
         println!("Created capability '{}' at {:?}", name, root);
