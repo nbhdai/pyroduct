@@ -89,7 +89,6 @@
             echo ""
             echo "Available commands:"
             echo "  pyroduct"
-            echo "  nix run .#run-tests                                         - Run the test harness"
             echo ""
           '';
         };

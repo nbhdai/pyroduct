@@ -108,6 +108,7 @@ impl TarballBuilder {
 }
 
 pub struct InterfaceGenerator {
+    root_path: PathBuf,
     cargo_toml_content: String,
     lib_rs_content: String,
     doc_string: String,
@@ -136,6 +137,7 @@ impl InterfaceGenerator {
                 .context("Failed to generate client code")?;
 
         Ok(Self {
+            root_path: root_path.to_path_buf(),
             cargo_toml_content,
             lib_rs_content,
             doc_string,
@@ -145,40 +147,40 @@ impl InterfaceGenerator {
 
     /// Helper to generate a lockfile string by creating a temporary cargo project.
     fn generate_lockfile_content(&self) -> Result<String> {
-        // Create a unique temporary directory
-        let temp_dir = std::env::temp_dir()
-            .join(format!("pyroduct-interface-gen-{}", std::process::id()));
-        
+        // Create a unique temporary directory INSIDE the project root.
+        // This ensures relative paths in Cargo.toml resolve correctly.
+        let temp_dir = self
+            .root_path
+            .join(format!(".interface-gen-{}", std::process::id()));
+
         if temp_dir.exists() {
             fs::remove_dir_all(&temp_dir)?;
         }
         fs::create_dir_all(&temp_dir)?;
 
-        // Write Cargo.toml and stub lib.rs so cargo doesn't complain
-        fs::write(temp_dir.join("Cargo.toml"), &self.cargo_toml_content)?;
-        let src_dir = temp_dir.join("src");
-        fs::create_dir_all(&src_dir)?;
-        fs::write(src_dir.join("lib.rs"), &self.lib_rs_content)?;
+        // Wrap operations in a closure to ensure cleanup runs even if errors occur
+        let result = {
+            fs::write(temp_dir.join("Cargo.toml"), &self.cargo_toml_content)?;
+            let src_dir = temp_dir.join("src");
+            fs::create_dir_all(&src_dir)?;
+            fs::write(src_dir.join("lib.rs"), &self.lib_rs_content)?;
 
-        // Run cargo generate-lockfile
-        let status = Command::new("cargo")
-            .arg("generate-lockfile")
-            .current_dir(&temp_dir)
-            .status()
-            .context("Failed to run cargo generate-lockfile")?;
+            let status = Command::new("cargo")
+                .arg("generate-lockfile")
+                .current_dir(&temp_dir)
+                .status()
+                .context("Failed to run cargo generate-lockfile")?;
 
-        let content = if status.success() {
-            fs::read_to_string(temp_dir.join("Cargo.lock"))?
-        } else {
-            // Cleanup before returning error
-            fs::remove_dir_all(&temp_dir)?;
-            anyhow::bail!("cargo generate-lockfile failed");
+            if !status.success() {
+                anyhow::bail!("cargo generate-lockfile failed");
+            }
+
+            Ok(fs::read_to_string(temp_dir.join("Cargo.lock"))?)
         };
 
-        // Cleanup
-        fs::remove_dir_all(&temp_dir)?;
-        
-        Ok(content)
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        result
     }
 
     /// Writes the generated crate to a physical directory on disk.
@@ -217,9 +219,8 @@ impl InterfaceGenerator {
     pub fn add_to_archive(&self, tar: &mut TarballBuilder, lockfile: bool) -> Result<()> {
         tar.add_bytes("Cargo.toml", self.cargo_toml_content.as_bytes())?;
         tar.add_bytes("src/lib.rs", self.lib_rs_content.as_bytes())?;
-        
-        if lockfile {
 
+        if lockfile {
             // Attempt to generate and add the lockfile
             match self.generate_lockfile_content() {
                 Ok(lock_content) => {
@@ -227,7 +228,10 @@ impl InterfaceGenerator {
                 }
                 Err(e) => {
                     // We warn but do not fail the entire package operation if network/cargo fails
-                    eprintln!("  ! Warning: Could not generate Cargo.lock for archive: {}", e);
+                    eprintln!(
+                        "  ! Warning: Could not generate Cargo.lock for archive: {}",
+                        e
+                    );
                 }
             }
         }

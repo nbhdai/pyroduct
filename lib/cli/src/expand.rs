@@ -10,15 +10,14 @@ use capability_core::generate_capability;
 use module_core::generate_module;
 
 pub fn expand(path: &Path, wat_mode: bool, lockfile: bool) -> Result<()> {
-    if wat_mode {
-        return expand_wat(path);
-    }
+    let is_cap = path.join("Capability.toml").exists();
+    let is_mod = path.join("Module.toml").exists();
 
-    let cap_toml = path.join("Capability.toml");
-    let mod_toml = path.join("Module.toml");
-
-    if cap_toml.exists() || mod_toml.exists() {
+    if (is_cap || is_mod) && !wat_mode {
         return expand_single(path, lockfile);
+    }
+    if is_mod && wat_mode {
+        wat_project(path)?;
     }
 
     // No manifest found, try expanding subdirectories
@@ -38,20 +37,34 @@ pub fn expand(path: &Path, wat_mode: bool, lockfile: bool) -> Result<()> {
             continue;
         }
 
-        let sub_cap = subpath.join("Capability.toml");
-        let sub_mod = subpath.join("Module.toml");
+        let is_cap = subpath.join("Capability.toml").exists();
+        let is_mod = subpath.join("Module.toml").exists();
 
-        if sub_cap.exists() || sub_mod.exists() {
+        if (is_cap || is_mod) && !wat_mode {
             found_any = true;
             if let Err(e) = expand_single(&subpath, lockfile) {
-                errors.push((subpath, e));
+                errors.push((subpath.clone(), e));
+            }
+        }
+        if is_mod && wat_mode {
+            match wat_project(&subpath) {
+                Ok(true) => found_any = true,
+                Ok(false) => {},
+                Err(e) => errors.push((subpath, e)),
             }
         }
     }
 
-    if !found_any {
+    if !found_any && !wat_mode {
         anyhow::bail!(
             "No Capability.toml or Module.toml found in {:?} or its subdirectories",
+            path
+        );
+    }
+
+    if !found_any && wat_mode {
+        anyhow::bail!(
+            "No Module.toml found in {:?} or its subdirectories",
             path
         );
     }
@@ -72,60 +85,17 @@ pub fn expand(path: &Path, wat_mode: bool, lockfile: bool) -> Result<()> {
     Ok(())
 }
 
-fn expand_wat(path: &Path) -> Result<()> {
-    // 1. Direct mode: If this is a module, process it
-    if path.join("Module.toml").exists() {
-        return wat_project(path);
-    }
 
-    // 2. Recursive scan mode
-    println!("No Module.toml found in {:?}, scanning subdirectories...", path);
-
-    let mut found_any = false;
-    let mut errors = Vec::new();
-
-    for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        let subpath = entry.path();
-
-        if !subpath.is_dir() {
-            continue;
-        }
-
-        if subpath.join("Module.toml").exists() {
-            found_any = true;
-            if let Err(e) = wat_project(&subpath) {
-                errors.push((subpath, e));
-            }
-        }
-    }
-
-    if !found_any {
-        anyhow::bail!(
-            "No Module.toml found in {:?} or its subdirectories",
-            path
-        );
-    }
-
-    if !errors.is_empty() {
-        eprintln!("\nErrors encountered:");
-        for (p, e) in &errors {
-            eprintln!("  {:?}: {:#}", p, e);
-        }
-        anyhow::bail!("{} wat conversion(s) failed", errors.len());
-    }
-
-    Ok(())
-}
-
-fn wat_project(path: &Path) -> Result<()> {
+fn wat_project(path: &Path) -> Result<bool> {
     let wasm_path = path.join("artifacts").join("mod.wasm");
     if wasm_path.exists() {
         wat(&wasm_path)?;
+        println!("  ✓ Wrote artifacts/mod.wat");
+        Ok(true)
     } else {
         println!("  x No WASM binary found at {:?}", wasm_path);
+        Ok(false)
     }
-    Ok(())
 }
 
 fn expand_single(path: &Path, lockfile: bool) -> Result<()> {
@@ -197,7 +167,7 @@ fn generate_capability_artifacts(path: &Path, cap_manifest: &CapabilityManifest)
     let content = fs::read_to_string(&src_path)?;
     let (cap_name, cap_version) = cap_manifest.name_version()?;
 
-    let (generated_code, _spec, _config) = generate_capability(&content, &cap_name, &cap_version)?;
+    let generated_code = generate_capability(&content, &cap_name, &cap_version)?;
 
     fs::create_dir_all(&artifacts_dir)?;
     fs::write(&output_path, generated_code)?;

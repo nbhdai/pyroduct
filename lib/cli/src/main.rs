@@ -34,11 +34,11 @@ enum Commands {
         path: PathBuf,
 
         /// Convert WASM binaries to WAT format
-        #[arg(long)]
+        #[arg(short,long)]
         wat: bool,
 
         /// Generates the Cargo.lock files
-        #[arg(long)]
+        #[arg(short,long, default_value = "true")]
         lockfile: bool,
     },
     Package {

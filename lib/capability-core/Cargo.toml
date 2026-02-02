@@ -17,6 +17,4 @@ anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
-
-[dev-dependencies]
 prettyplease.workspace = true

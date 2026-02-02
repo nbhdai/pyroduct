@@ -108,8 +108,8 @@ pub fn generate_interface(
     } else {
         None
     };
-
-    Ok((generated_code.to_string(), spec, config))
+    let code: syn::File = syn::parse2(generated_code)?;
+    Ok((prettyplease::unparse(&code), spec, config))
 }
 
 /// For generating the capability lib.rs (host-side code)
@@ -117,7 +117,7 @@ pub fn generate_capability(
     content: &str,
     cap_name: &str,
     cap_version: &str,
-) -> anyhow::Result<(String, String, Option<String>)> {
+) -> anyhow::Result<String> {
     let file = parse_file(content).context("Failed to parse capability source file")?;
 
     let mut generated_code = quote::quote! {
@@ -126,9 +126,6 @@ pub fn generate_capability(
         use pyroduct;
     };
 
-    let mut capability = None;
-    let mut interfaces = Vec::new();
-    let mut config = None;
     for item in file.items {
         match item {
             syn::Item::Impl(item_impl) => {
@@ -136,7 +133,6 @@ pub fn generate_capability(
                     let cap = CapabilityImpl::new(item_impl, true, cap_name, cap_version)
                         .map_err(|e| format_syn_error(content, e))?;
                     generated_code.extend(cap.expand_capability());
-                    capability = Some(cap);
                 }
             }
             syn::Item::Struct(item_struct) => {
@@ -144,34 +140,18 @@ pub fn generate_capability(
                     let interface = CapInterfaceItem::new(item_struct, false)
                         .map_err(|e| format_syn_error(content, e))?;
                     generated_code.extend(interface.expand());
-                    interfaces.push(interface);
                 } else if has_attr(&item_struct.attrs, "config") {
                     let found_config = CapConfig::new(item_struct, config::DocRec::StructDoc)
                         .map_err(|e| format_syn_error(content, e))?;
                     generated_code.extend(found_config.expand());
-                    config = Some(found_config);
                 }
             }
             _ => {}
         }
     }
-    let mut spec_builder = if let Some(cap) = capability {
-        spec::SpecBuilder::new(&cap)
-    } else {
-        anyhow::bail!("No capability found");
-    };
-    for interface in interfaces {
-        spec_builder.append(&interface);
-    }
-    let spec = spec_builder.build()?;
 
-    let config = if let Some(cap) = config {
-        Some(spec::ConfigSpecBuilder::build(&cap)?)
-    } else {
-        None
-    };
-
-    Ok((generated_code.to_string(), spec, config))
+    let code: syn::File = syn::parse2(generated_code)?;
+    Ok(prettyplease::unparse(&code))
 }
 
 fn has_attr(attrs: &[syn::Attribute], name: &str) -> bool {
