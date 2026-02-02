@@ -264,10 +264,11 @@ mod tests {
         ]);
         let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input_row).unwrap();
         
+        // This is memory managed by the wasm module, as we are both host and wasm in this test we hold it.
         let mut input_vec = input_bytes.into_vec();
         let input_ptr = input_vec.as_mut_ptr();
         let input_len = input_vec.len();
-        std::mem::forget(input_vec); 
+        
 
         let user_logic = |input: &UserInputRef<'_>| -> Result<UserOutput, String> {
             assert_eq!(input.name, "Alice");
@@ -305,6 +306,7 @@ mod tests {
         }
 
         unsafe { dealloc(out_ptr, out_len) }
+        // input_vec is dropped here naturally
     }
 
     #[test]
@@ -314,10 +316,12 @@ mod tests {
             ("age", ArrowValue::from(10i32)),
         ]);
         let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input_row).unwrap();
+        
+        // Keep the vector alive - don't forget it
         let mut input_vec = input_bytes.into_vec();
         let input_ptr = input_vec.as_mut_ptr();
         let input_len = input_vec.len();
-        std::mem::forget(input_vec);
+        // Don't forget - let it live through the test
 
         let user_logic = |_: &UserInputRef<'_>| -> Result<UserOutput, String> {
             panic!("Something went terribly wrong!");
@@ -345,5 +349,6 @@ mod tests {
         }
 
         unsafe { dealloc(out_ptr, out_len) };
+        // input_vec is dropped here naturally
     }
 }
