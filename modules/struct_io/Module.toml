@@ -8,6 +8,6 @@ version = "0.1.0"
 path = "../../lib/pyroduct"
 
 [capabilities]
-http_client = { path = "../../capabilities/http_client" }
+http = { path = "../../capabilities/http" }
 
 [dependencies]

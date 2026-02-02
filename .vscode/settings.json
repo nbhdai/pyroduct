@@ -1,6 +1,16 @@
 {
   "rust-analyzer.linkedProjects": [
-    "./lib/Cargo.toml"
+    "./lib/Cargo.toml",
+    "./modules/basic/Cargo.toml",
+    "./modules/rag/Cargo.toml",
+    "./modules/struct_io/Cargo.toml",
+    "./capabilities/cpu/Cargo.toml",
+    "./capabilities/http/Cargo.toml",
+    "./capabilities/rag/Cargo.toml",
+    "./tests/cap_state/Cargo.toml",
+    "./tests/cap_config/Cargo.toml",
+    "./tests/mod_cap_state/Cargo.toml",
+    "./tests/mod_cap_config/Cargo.toml",
   ],
   "rust-analyzer.check.allTargets": true,
   "rust-analyzer.check.features": "all",
