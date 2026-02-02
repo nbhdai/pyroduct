@@ -32,6 +32,14 @@ enum Commands {
     Expand {
         #[arg(value_name = "DIRECTORY")]
         path: PathBuf,
+
+        /// Convert WASM binaries to WAT format
+        #[arg(long)]
+        wat: bool,
+
+        /// Generates the Cargo.lock files
+        #[arg(long)]
+        lockfile: bool,
     },
     Package {
         #[arg(value_name = "DIRECTORY")]
@@ -75,7 +83,7 @@ async fn main() -> Result<()> {
 
     match args.command {
         Commands::Init { path, cap } => init::init(path, cap),
-        Commands::Expand { path } => expand::expand(&path),
+        Commands::Expand { path , wat, lockfile} => expand::expand(&path, wat, lockfile),
         Commands::Package {
             path,
             output,

@@ -192,7 +192,7 @@ fn package_capability(
     // 5. Create Interface Archive (.interface)
     let mut interface_tar = TarballBuilder::new(ctx.archive_path("interface"))?;
     let interface = InterfaceGenerator::new(ctx.root, &manifest)?;
-    interface.add_to_archive(&mut interface_tar)?;
+    interface.add_to_archive(&mut interface_tar, true)?;
 
     // 6. Add documentation
     interface_tar.add_bytes("interface.json", interface.spec().as_bytes())?;

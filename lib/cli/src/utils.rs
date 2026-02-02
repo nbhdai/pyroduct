@@ -143,9 +143,47 @@ impl InterfaceGenerator {
         })
     }
 
+    /// Helper to generate a lockfile string by creating a temporary cargo project.
+    fn generate_lockfile_content(&self) -> Result<String> {
+        // Create a unique temporary directory
+        let temp_dir = std::env::temp_dir()
+            .join(format!("pyroduct-interface-gen-{}", std::process::id()));
+        
+        if temp_dir.exists() {
+            fs::remove_dir_all(&temp_dir)?;
+        }
+        fs::create_dir_all(&temp_dir)?;
+
+        // Write Cargo.toml and stub lib.rs so cargo doesn't complain
+        fs::write(temp_dir.join("Cargo.toml"), &self.cargo_toml_content)?;
+        let src_dir = temp_dir.join("src");
+        fs::create_dir_all(&src_dir)?;
+        fs::write(src_dir.join("lib.rs"), &self.lib_rs_content)?;
+
+        // Run cargo generate-lockfile
+        let status = Command::new("cargo")
+            .arg("generate-lockfile")
+            .current_dir(&temp_dir)
+            .status()
+            .context("Failed to run cargo generate-lockfile")?;
+
+        let content = if status.success() {
+            fs::read_to_string(temp_dir.join("Cargo.lock"))?
+        } else {
+            // Cleanup before returning error
+            fs::remove_dir_all(&temp_dir)?;
+            anyhow::bail!("cargo generate-lockfile failed");
+        };
+
+        // Cleanup
+        fs::remove_dir_all(&temp_dir)?;
+        
+        Ok(content)
+    }
+
     /// Writes the generated crate to a physical directory on disk.
-    /// Also runs rustfmt on the generated source.
-    pub fn write_to_disk(&self, output_dir: &Path) -> Result<()> {
+    /// Also runs rustfmt on the generated source and generates a lockfile.
+    pub fn write_to_disk(&self, output_dir: &Path, lockfile: bool) -> Result<()> {
         fs::create_dir_all(output_dir)?;
 
         fs::write(output_dir.join("Cargo.toml"), &self.cargo_toml_content)?;
@@ -158,13 +196,42 @@ impl InterfaceGenerator {
 
         println!("  ✓ Wrote interface/src/lib.rs");
         let _ = Command::new("rustfmt").arg(&lib_path).status();
+        if lockfile {
+            // Generate lockfile in place
+            let status = Command::new("cargo")
+                .arg("generate-lockfile")
+                .current_dir(output_dir)
+                .status()
+                .context("Failed to run cargo generate-lockfile")?;
+
+            if status.success() {
+                println!("  ✓ Generated interface/Cargo.lock");
+            } else {
+                eprintln!("  ! Warning: Failed to generate interface/Cargo.lock");
+            }
+        }
 
         Ok(())
     }
 
-    pub fn add_to_archive(&self, tar: &mut TarballBuilder) -> Result<()> {
+    pub fn add_to_archive(&self, tar: &mut TarballBuilder, lockfile: bool) -> Result<()> {
         tar.add_bytes("Cargo.toml", self.cargo_toml_content.as_bytes())?;
         tar.add_bytes("src/lib.rs", self.lib_rs_content.as_bytes())?;
+        
+        if lockfile {
+
+            // Attempt to generate and add the lockfile
+            match self.generate_lockfile_content() {
+                Ok(lock_content) => {
+                    tar.add_bytes("Cargo.lock", lock_content.as_bytes())?;
+                }
+                Err(e) => {
+                    // We warn but do not fail the entire package operation if network/cargo fails
+                    eprintln!("  ! Warning: Could not generate Cargo.lock for archive: {}", e);
+                }
+            }
+        }
+
         Ok(())
     }
 

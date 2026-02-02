@@ -9,12 +9,16 @@ use crate::utils::InterfaceGenerator;
 use capability_core::generate_capability;
 use module_core::generate_module;
 
-pub fn expand(path: &Path) -> Result<()> {
+pub fn expand(path: &Path, wat_mode: bool, lockfile: bool) -> Result<()> {
+    if wat_mode {
+        return expand_wat(path);
+    }
+
     let cap_toml = path.join("Capability.toml");
     let mod_toml = path.join("Module.toml");
 
     if cap_toml.exists() || mod_toml.exists() {
-        return expand_single(path);
+        return expand_single(path, lockfile);
     }
 
     // No manifest found, try expanding subdirectories
@@ -39,7 +43,7 @@ pub fn expand(path: &Path) -> Result<()> {
 
         if sub_cap.exists() || sub_mod.exists() {
             found_any = true;
-            if let Err(e) = expand_single(&subpath) {
+            if let Err(e) = expand_single(&subpath, lockfile) {
                 errors.push((subpath, e));
             }
         }
@@ -68,7 +72,63 @@ pub fn expand(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn expand_single(path: &Path) -> Result<()> {
+fn expand_wat(path: &Path) -> Result<()> {
+    // 1. Direct mode: If this is a module, process it
+    if path.join("Module.toml").exists() {
+        return wat_project(path);
+    }
+
+    // 2. Recursive scan mode
+    println!("No Module.toml found in {:?}, scanning subdirectories...", path);
+
+    let mut found_any = false;
+    let mut errors = Vec::new();
+
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let subpath = entry.path();
+
+        if !subpath.is_dir() {
+            continue;
+        }
+
+        if subpath.join("Module.toml").exists() {
+            found_any = true;
+            if let Err(e) = wat_project(&subpath) {
+                errors.push((subpath, e));
+            }
+        }
+    }
+
+    if !found_any {
+        anyhow::bail!(
+            "No Module.toml found in {:?} or its subdirectories",
+            path
+        );
+    }
+
+    if !errors.is_empty() {
+        eprintln!("\nErrors encountered:");
+        for (p, e) in &errors {
+            eprintln!("  {:?}: {:#}", p, e);
+        }
+        anyhow::bail!("{} wat conversion(s) failed", errors.len());
+    }
+
+    Ok(())
+}
+
+fn wat_project(path: &Path) -> Result<()> {
+    let wasm_path = path.join("artifacts").join("mod.wasm");
+    if wasm_path.exists() {
+        wat(&wasm_path)?;
+    } else {
+        println!("  x No WASM binary found at {:?}", wasm_path);
+    }
+    Ok(())
+}
+
+fn expand_single(path: &Path, lockfile: bool) -> Result<()> {
     println!("Expanding: {:?}", path);
 
     let cap_toml_path = path.join("Capability.toml");
@@ -88,7 +148,7 @@ fn expand_single(path: &Path) -> Result<()> {
             println!("  ✓ Wrote Cargo.toml");
 
             generate_capability_artifacts(path, &cap_manifest)?;
-            generate_interface_crate(path, &module_path, cap_manifest)?;
+            generate_interface_crate(path, &module_path, cap_manifest, lockfile)?;
         }
         (false, true) => {
             let manifest_str = fs::read_to_string(&mod_toml_path)?;
@@ -116,9 +176,10 @@ fn generate_interface_crate(
     input: &Path,
     output: &Path,
     cap_manifest: CapabilityManifest,
+    lockfile: bool,
 ) -> Result<()> {
     let generator = InterfaceGenerator::new(input, &cap_manifest)?;
-    generator.write_to_disk(output)?;
+    generator.write_to_disk(output, lockfile)?;
 
     Ok(())
 }

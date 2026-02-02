@@ -7,7 +7,7 @@
     "./modules/cap_state/Cargo.toml",
     "./modules/cap_config/Cargo.toml",
     "./capabilities/cpu/Cargo.toml",
-    "./capabilities/http/Cargo.toml",
+    "./capabilities/httpc/Cargo.toml",
     "./capabilities/rag/Cargo.toml",
     "./capabilities/state/Cargo.toml",
     "./capabilities/config/Cargo.toml"

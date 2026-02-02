@@ -5,9 +5,6 @@ capabilities/**/interface
 capabilities/**/Cargo.*
 capabilities/**/*.json
 modules/**/Cargo.*
-tests/**/interface
-tests/**/Cargo.*
-tests/cap*/interface
 
 artifacts
 result
