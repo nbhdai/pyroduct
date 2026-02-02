@@ -1,7 +1,5 @@
 
-//! Test capability 1: Simple counter capability
-//!
-//! Provides basic stateful operations for testing capability lifecycle and method calls.
+//! Provides basic stateful operations for demonstrating capability lifecycle and method calls.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 

@@ -1,8 +1,4 @@
-//! Test capability 2: Async string transform capability
-//!
 //! Provides async operations for testing async capability lifecycle and method calls.
-
-use std::collections::HashMap;
 use std::sync::Mutex;
 
 #[pyroduct::interface_item]

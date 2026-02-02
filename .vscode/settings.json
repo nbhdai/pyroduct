@@ -4,15 +4,14 @@
     "./modules/basic/Cargo.toml",
     "./modules/rag/Cargo.toml",
     "./modules/struct_io/Cargo.toml",
+    "./modules/cap_state/Cargo.toml",
+    "./modules/cap_config/Cargo.toml",
     "./capabilities/cpu/Cargo.toml",
     "./capabilities/http/Cargo.toml",
     "./capabilities/rag/Cargo.toml",
-    "./tests/cap_state/Cargo.toml",
-    "./tests/cap_config/Cargo.toml",
-    "./tests/mod_cap_state/Cargo.toml",
-    "./tests/mod_cap_config/Cargo.toml",
+    "./capabilities/state/Cargo.toml",
+    "./capabilities/config/Cargo.toml"
   ],
-  "rust-analyzer.check.allTargets": true,
   "rust-analyzer.check.features": "all",
   "rust-analyzer.server.extraEnv": {
     "RUST_ANALYZER_SLOW_OP_THRESHOLD": "500"

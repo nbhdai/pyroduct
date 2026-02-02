@@ -1,8 +1,7 @@
-//! Test module 2: Uses test_cap2 transform capability
-//!
-//! Module that transforms input strings using the async transform capability.
+//! The behavior of this module changes based on the configuration 
+//! of the linked capability
 
-use cap_config::{TransformClient, TransformClientMethods};
+use config::{TransformClient, TransformClientMethods};
 
 #[pyroduct::module(output = (original, transformed, transform_count))]
 pub fn call(input: &str) -> Result<(String, String, u64), String> {

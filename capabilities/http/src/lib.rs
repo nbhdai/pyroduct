@@ -24,7 +24,7 @@ pub struct HttpClient;
 
 /// The internal state of the HTTP Server capability.
 pub struct HttpServer {
-    timeout: std::time::Duration,
+    _timeout: std::time::Duration,
     allowed_endpoints: Vec<AllowedEndpoint>,
 }
 
@@ -42,7 +42,7 @@ impl HttpServer {
             allowed_endpoints: Vec::new(),
         });
         Self {
-            timeout: std::time::Duration::from_millis(config.timeout_ms),
+            _timeout: std::time::Duration::from_millis(config.timeout_ms),
             allowed_endpoints: config.allowed_endpoints,
         }
     }

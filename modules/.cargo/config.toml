@@ -1,0 +1,3 @@
+[build]
+target-dir = "../target"
+target = "wasm32-unknown-unknown"

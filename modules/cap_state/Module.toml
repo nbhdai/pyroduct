@@ -1,13 +1,12 @@
 [module]
-name = "mod_cap_config"
+name = "cap_state"
 version = "0.1.0"
-edition = "2024"
 authors = ["nbhdai"]
 
 [pyroduct]
 path = "../../lib/pyroduct"
 
 [capabilities]
-cap_config.path = "../cap_config"
+state.path = "../state"
 
 [dependencies]

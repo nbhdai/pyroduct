@@ -1,0 +1,13 @@
+[capability]
+name = "config"
+version = "0.1.0"
+authors = ["nbhdai"]
+
+[pyroduct]
+path = "../../lib/pyroduct"
+
+[dependencies.host]
+
+[dependencies.module]
+
+[dependencies.shared]
