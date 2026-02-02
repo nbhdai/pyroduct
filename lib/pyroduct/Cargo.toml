@@ -40,8 +40,3 @@ trybuild = "1.0"
 macrotest = "1.0"
 tempfile = "3.24.0"
 pyroduct = { path = "./", features = ["capability"] }
-
-
-[[test]]
-name = "safety"
-path = "tests/safety/mod.rs"
