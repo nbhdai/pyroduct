@@ -46,24 +46,24 @@ pub fn dump_dylib_symbols(artifact_path: &Path) -> Result<()> {
 
 /// Heuristic to filter out mangled names and compiler internals
 fn is_noise(name: &str) -> bool {
-    // Rust/C++ mangled names (ZN...)
+    // 1. Rust/C++ mangled names often look like _ZN... or __ZN...
     if name.contains("_ZN") || name.contains("__ZN") { return true; }
     
-    // Rust runtime/panic/allocation internals
+    // 2. Rust runtime/panic/allocation internals
     if name.contains("rust_eh_") 
         || name.contains("__rust_") 
         || name.contains("rust_begin_unwind") 
         || name.contains("__rdl_") { 
         return true; 
     }
-    
-    // System/Linker symbols
+    // 3. System/Linker symbols (Global Offset Table, BSS, etc.)
     if name == "_init" || name == "_fini" || name == "__bss_start" || name == "_edata" || name == "_end" {
         return true;
     }
-
-    // On macOS, symbols often start with `_`. We accept `_MyFunc`, but usually reject `__SystemThing`
-    if name.starts_with("__") { return true; }
+    // 4. Macos System prefix filter
+    if name.starts_with("__") { 
+        return true; 
+    }
 
     false
 }

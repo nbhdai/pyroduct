@@ -10,14 +10,14 @@ use crate::utils::InterfaceGenerator;
 use capability_core::generate_capability;
 use module_core::generate_module;
 
-pub fn expand(path: &Path, wat_mode: bool, lockfile: bool) -> Result<()> {
+pub fn expand(path: &Path, bin_mode: bool, lockfile: bool) -> Result<()> {
     let is_cap = path.join("Capability.toml").exists();
     let is_mod = path.join("Module.toml").exists();
 
-    if (is_cap || is_mod) && !wat_mode {
+    if (is_cap || is_mod) && !bin_mode {
         return expand_single(path, lockfile);
     }
-    if wat_mode {
+    if bin_mode {
         let mut expanded_something = false;
         
         if is_mod {
@@ -53,20 +53,20 @@ pub fn expand(path: &Path, wat_mode: bool, lockfile: bool) -> Result<()> {
         let is_cap = subpath.join("Capability.toml").exists();
         let is_mod = subpath.join("Module.toml").exists();
 
-        if (is_cap || is_mod) && !wat_mode {
+        if (is_cap || is_mod) && !bin_mode {
             found_any = true;
             if let Err(e) = expand_single(&subpath, lockfile) {
                 errors.push((subpath.clone(), e));
             }
         }
-        if is_mod && wat_mode {
+        if is_mod && bin_mode {
             match wat_project(&subpath) {
                 Ok(true) => found_any = true,
                 Ok(false) => {},
                 Err(e) => errors.push((subpath.clone(), e)),
             }
         }
-        if is_cap && wat_mode {
+        if is_cap && bin_mode {
             match dylib_project(&subpath) {
                 Ok(true) => found_any = true,
                 Ok(false) => {},
@@ -75,14 +75,14 @@ pub fn expand(path: &Path, wat_mode: bool, lockfile: bool) -> Result<()> {
         }
     }
 
-    if !found_any && !wat_mode {
+    if !found_any && !bin_mode {
         anyhow::bail!(
             "No Capability.toml or Module.toml found in {:?} or its subdirectories",
             path
         );
     }
 
-    if !found_any && wat_mode {
+    if !found_any && bin_mode {
         anyhow::bail!(
             "No Module.toml found in {:?} or its subdirectories",
             path
