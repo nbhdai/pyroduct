@@ -8,12 +8,11 @@ use cap_config::{TransformClient, TransformClientMethods};
 pub fn call(input: &str) -> Result<(String, String, u64), String> {
     let client = TransformClient {
         prefix: "[TEST] ".to_string(),
-    };
-    client.register()?;
+    }.register()?;
 
     let original = input.to_string();
     let transformed = client.transform(input.to_string())?;
-    let transform_count = client.get_transform_count()?;
+    let transform_count = client.get_transform_count()? as u64;
 
     Ok((original, transformed, transform_count))
 }
