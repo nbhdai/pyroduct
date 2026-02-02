@@ -11,39 +11,6 @@ use rkyv::{
 
 pub type PackedWasmSlicePtr = u64;
 
-pub fn slice_to_wasm_slice<T: 'static + AsRef<[u8]>>(bytes: &T) -> PackedWasmSlicePtr {
-    let bytes_ptr = bytes.as_ref().as_ptr();
-    let len = bytes.as_ref().len();
-
-    // PACKING: ptr (low 32 bits) | len (high 32 bits)
-    let ptr_val = bytes_ptr as u32 as u64;
-    let len_val = (len as u32 as u64) << 32;
-
-    let packed = ptr_val | len_val;
-    packed
-}
-
-pub fn wasm_ptr_to_slice(wasm_slice: PackedWasmSlicePtr) -> Option<(usize, usize)> {
-    tracing::info!("WASM execution finished. Decoding result...");
-    let output_ptr = (wasm_slice & 0xFFFFFFFF) as usize;
-    let len = (wasm_slice >> 32) as usize;
-
-    let start = output_ptr;
-    let end = output_ptr + len;
-
-    match start.cmp(&end) {
-        std::cmp::Ordering::Less => Some((start, end)),
-        std::cmp::Ordering::Equal => {
-            tracing::error!(start, end, "Length is 0");
-            None
-        }
-        std::cmp::Ordering::Greater => {
-            tracing::error!(start, end, "Start past the length");
-            None
-        }
-    }
-}
-
 pub fn call_from_wasm<I, O, F>(
     capability: &'static str,
     client_state: Option<&AlignedVec>,

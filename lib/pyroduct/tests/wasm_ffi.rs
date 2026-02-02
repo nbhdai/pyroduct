@@ -63,12 +63,6 @@ impl ToRow for UserOutput {
     }
 }
 
-fn unpack_ptr(packed: u64) -> (*mut u8, usize) {
-    let ptr = (packed & 0xFFFFFFFF) as usize;
-    let len = (packed >> 32) as usize;
-    (ptr as *mut u8, len)
-}
-
 #[test]
 fn test_ffi_call_happy_path() {
     let input_row = ArrowRow::from([
@@ -92,10 +86,9 @@ fn test_ffi_call_happy_path() {
         })
     };
 
-    let packed_result = call::<UserInput, UserOutput, _>(input_ptr, input_len, user_logic);
+    let (out_ptr, out_len) = call::<UserInput, UserOutput, _>(input_ptr, input_len, user_logic);
 
-    let (out_ptr, out_len) = unpack_ptr(packed_result);
-    let out_slice = unsafe { std::slice::from_raw_parts(out_ptr, out_len) };
+    let out_slice = unsafe { std::slice::from_raw_parts(out_ptr, out_len as usize) };
     type ReturnType<'a> = Result<ArrowRow<'a>, String>;
     let archived =
         rkyv::access::<<ReturnType as rkyv::Archive>::Archived, rkyv::rancor::Error>(out_slice)
@@ -115,7 +108,7 @@ fn test_ffi_call_happy_path() {
         Err(e) => panic!("FFI call returned logic error: {}", e),
     }
 
-    unsafe { dealloc(out_ptr, out_len) }
+    unsafe { dealloc(out_ptr, out_len as usize) }
     // input_vec is dropped here naturally
 }
 
@@ -137,10 +130,9 @@ fn test_ffi_call_logic_panic() {
         panic!("Something went terribly wrong!");
     };
 
-    let packed_result = call::<UserInput, UserOutput, _>(input_ptr, input_len, user_logic);
+    let (out_ptr, out_len) = call::<UserInput, UserOutput, _>(input_ptr, input_len, user_logic);
 
-    let (out_ptr, out_len) = unpack_ptr(packed_result);
-    let out_slice = unsafe { std::slice::from_raw_parts(out_ptr, out_len) };
+    let out_slice = unsafe { std::slice::from_raw_parts(out_ptr, out_len as usize) };
 
     let archived = rkyv::access::<ArchivedFfiError, rkyv::rancor::Error>(out_slice)
         .expect("Output should be a valid FfiError archive");
@@ -154,5 +146,5 @@ fn test_ffi_call_logic_panic() {
         _ => panic!("Expected ModuleLogicPanicked, got {:?}", error),
     }
 
-    unsafe { dealloc(out_ptr, out_len) };
+    unsafe { dealloc(out_ptr, out_len as usize) };
 }

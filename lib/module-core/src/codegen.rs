@@ -68,7 +68,7 @@ pub fn expand(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStream> {
 
     let expanded = quote! {
         #[unsafe(no_mangle)]
-        pub extern "C" fn exter_call(input_ptr: *mut u8, input_len: usize) -> u64 {
+        pub extern "C" fn exter_call(input_ptr: *mut u8, input_len: usize) -> (*const u8, u32) {
             #[derive(::pyroduct::FromRow, ::pyroduct::DeepRef)]
             struct __Input {
                 #(#input_fields,)*

@@ -5,7 +5,6 @@ use crate::errors::PyroductError;
 use crate::host::capability::Capabilities;
 use crate::host::pipeline::PipelineDef;
 use crate::host::wasm_bridge::HarnessState;
-use crate::module_capability::access::wasm_ptr_to_slice;
 use crate::{ModIdentity, PyroductResult};
 use arrow::array::RecordBatch;
 use arrow_scalars::{ArrowRow, Rowable};
@@ -25,7 +24,7 @@ pub struct Harness {
     instance: Instance,
     memory: Memory,
     alloc_func: TypedFunc<i32, i32>,
-    call_func: TypedFunc<(i32, i32), u64>,
+    call_func: TypedFunc<(i32, i32), (i32, i32)>,
 }
 
 impl Harness {
@@ -97,7 +96,7 @@ impl Harness {
                 )
             })?;
         let call_func = instance
-            .get_typed_func::<(i32, i32), u64>(&mut store, "exter_call")
+            .get_typed_func::<(i32, i32), (i32, i32)>(&mut store, "exter_call")
             .map_err(|err| {
                 PyroductError::from_module_linking(
                     &ident,
@@ -154,7 +153,7 @@ impl Harness {
             })?;
 
         debug!("Invoking WASM export 'exter_call'...");
-        let packed_result = self
+        let (start, len) = self
             .call_func
             .call_async(&mut self.store, (ptr, data.len() as i32))
             .await
@@ -167,29 +166,17 @@ impl Harness {
                 })
             })?;
 
-        let slice = match wasm_ptr_to_slice(packed_result) {
-            Some((start, end)) => {
-                let memory = self.memory.data(&self.store);
-
-                if end > memory.len() {
-                    let msg = format!(
-                        "Result pointer out of bounds! Memory: {}, End: {}",
-                        memory.len(),
-                        end
-                    );
-                    error!("{}", msg);
-                    return Err(PyroductError::from_module_memory(&self.ident, msg));
-                }
-
-                &memory[start..end]
-            }
-            None => {
-                return Err(PyroductError::from_module_memory(
-                    &self.ident,
-                    "Result pointer weird",
-                ));
-            }
-        };
+        let memory = self.memory.data(&self.store);
+        if (start + len) as usize > memory.len() {
+            let msg = format!(
+                "Result pointer out of bounds! Memory: {}, End: {}",
+                memory.len(),
+                start + len
+            );
+            error!("{}", msg);
+            return Err(PyroductError::from_module_memory(&self.ident, msg));
+        }
+        let slice = &memory[start as usize..(start + len) as usize];
 
         // Access the archived Result<ArrowRow, String>
         type ReturnType<'a> = Result<ArrowRow<'a>, String>;

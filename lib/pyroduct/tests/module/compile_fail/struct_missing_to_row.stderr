@@ -12,7 +12,7 @@ help: the trait `ToRow` is not implemented for `NoToRow`
 note: required by a bound in `pyroduct::wasm_module::call`
  --> src/wasm_module/mod.rs
   |
-  | pub fn call<'a, C, O, F>(input_ptr: *mut u8, input_len: usize, func: F) -> u64
+  | pub fn call<'a, C, O, F>(input_ptr: *mut u8, input_len: usize, func: F) -> (*const u8, u32)
   |        ---- required by a bound in this function
 ...
   |     O: ToRow,

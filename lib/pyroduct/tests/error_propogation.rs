@@ -33,14 +33,6 @@ fn create_test_ident() -> CapIdentity {
     CapIdentity::from(Path::new("/test/error_prop.so"))
 }
 
-fn serialize_rkyv<T: rkyv::Serialize<rkyv::ser::serializers::AllocSerializer<256>>>(
-    val: &T,
-) -> Vec<u8> {
-    rkyv::to_bytes::<rkyv::rancor::Error>(val)
-        .unwrap()
-        .into_vec()
-}
-
 fn deserialize_ffi_error(result: FfiResult) -> FfiError {
     assert!(result.tag != 0, "Expected error result");
     let bytes = unsafe {
@@ -61,8 +53,9 @@ fn test_sci_call_null_state_pointer() {
     let input = TestInput {
         command: "test".into(),
     };
-    let client_bytes = serialize_rkyv(&client);
-    let input_bytes = serialize_rkyv(&input);
+
+    let client_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&client).unwrap().into_vec();
+    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input).unwrap().into_vec();
 
     let result = sci_call::<TestState, TestClient, TestInput, TestOutput, _>(
         client_bytes.as_ptr(),
@@ -90,7 +83,7 @@ fn test_sci_call_null_client_pointer() {
     let input = TestInput {
         command: "test".into(),
     };
-    let input_bytes = serialize_rkyv(&input);
+    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input).unwrap().into_vec();
 
     let result = sci_call::<TestState, TestClient, TestInput, TestOutput, _>(
         std::ptr::null(), // NULL client pointer
@@ -116,7 +109,7 @@ fn test_sci_call_null_input_pointer() {
 
     let mut state = TestState { initialized: true };
     let client = TestClient { id: 1 };
-    let client_bytes = serialize_rkyv(&client);
+    let client_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&client).unwrap().into_vec();
 
     let result = sci_call::<TestState, TestClient, TestInput, TestOutput, _>(
         client_bytes.as_ptr(),
@@ -145,7 +138,7 @@ fn test_sci_call_invalid_client_bytes() {
     let input = TestInput {
         command: "test".into(),
     };
-    let input_bytes = serialize_rkyv(&input);
+    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input).unwrap().into_vec();
 
     let result = sci_call::<TestState, TestClient, TestInput, TestOutput, _>(
         garbage_client.as_ptr(),
@@ -174,8 +167,8 @@ fn test_sci_call_logic_panic_propagation() {
     let input = TestInput {
         command: "crash".into(),
     };
-    let client_bytes = serialize_rkyv(&client);
-    let input_bytes = serialize_rkyv(&input);
+    let client_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&client).unwrap().into_vec();
+    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input).unwrap().into_vec();
 
     let result = sci_call::<TestState, TestClient, TestInput, TestOutput, _>(
         client_bytes.as_ptr(),
@@ -209,7 +202,7 @@ fn test_i_call_success() {
     let input = TestInput {
         command: "hello".into(),
     };
-    let input_bytes = serialize_rkyv(&input);
+    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input).unwrap().into_vec();
 
     let result = i_call::<TestInput, TestOutput, _>(
         std::ptr::null(),
