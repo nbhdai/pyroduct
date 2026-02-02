@@ -61,7 +61,7 @@ impl Capability {
 
         let export = unsafe { manifest_fn(span_id as u64, log_callback) };
 
-        let class = CapClass::new(&ident, &export);
+        let class = CapClass::new(&ident, &export)?;
 
         Ok(Self {
             _library: library,

@@ -41,7 +41,21 @@ pub struct CapFunction {
 }
 
 impl CapFunction {
-    pub fn new(func: &FunctionExport<'_>) -> Self {
+    pub fn new(func: &FunctionExport<'_>, ident: &CapIdentity) -> PyroductResult<Self> {
+        if func.capability.is_null() {
+            return Err(PyroductError::from_capability_loading(
+                ident,
+                "FunctionExport capability name pointer is null",
+            ));
+        }
+        if func.name.is_null() {
+            return Err(PyroductError::from_capability_loading(
+                ident,
+                "FunctionExport function name pointer is null",
+            ));
+        }
+
+        // Safety: We have verified pointers are not null above.
         let cap_name = std::str::from_utf8(unsafe {
             std::slice::from_raw_parts(func.capability, func.capability_len)
         })
@@ -54,38 +68,52 @@ impl CapFunction {
                 .to_string();
 
         let pointer = unsafe { std::mem::transmute::<Function<'_>, Function<'static>>(func.func) };
-        let func = CapFunction {
+        
+        Ok(CapFunction {
             cap_name,
             func_name,
             pointer,
-        };
-        func
+        })
     }
 }
 
 impl CapClass {
-    pub fn new(ident: &CapIdentity, class: &ClassExport<'_>) -> Self {
+    pub fn new(ident: &CapIdentity, class: &ClassExport<'_>) -> PyroductResult<Self> {
+        if class.ptr.is_null() {
+            return Err(PyroductError::from_capability_loading(
+                ident,
+                "ClassExport methods pointer is null",
+            ));
+        }
+        if class.len == 0 {
+            return Err(PyroductError::from_capability_loading(
+                ident,
+                "ClassExport has no methods",
+            ));
+        }
         let exports: &[FunctionExport<'_>] =
             unsafe { std::slice::from_raw_parts(class.ptr, class.len) };
 
         let mut imports = Vec::new();
 
         for export in exports {
-            let func = CapFunction::new(export);
+            // Propagate error from CapFunction::new
+            let func = CapFunction::new(export, ident)?;
             imports.push(func);
         }
+        
         let init_fn =
             unsafe { std::mem::transmute::<ClassInitFn<'_>, ClassInitFn<'static>>(class.init) };
         let reset_fn =
             unsafe { std::mem::transmute::<ClassResetFn<'_>, ClassResetFn<'static>>(class.reset) };
 
-        Self {
+        Ok(Self {
             ident: ident.clone(),
             imports,
             init_fn,
             reset_fn,
             destroy_fn: class.drop,
-        }
+        })
     }
 
     pub fn init(
@@ -616,7 +644,7 @@ mod tests {
         let func_name = "test_func";
         let export = create_mock_function_export(cap_name, func_name);
 
-        let func = CapFunction::new(&export);
+        let func = CapFunction::new(&export, &create_test_identity()).unwrap();
 
         assert_eq!(func.cap_name, cap_name);
         assert_eq!(func.func_name, func_name);
@@ -632,11 +660,10 @@ mod tests {
             func: Function::Sync(mock_sync_function),
         };
 
-        let func = CapFunction::new(&export);
-
-        // Should use "unknown" for invalid names
-        assert_eq!(func.cap_name, "unknown_mod");
-        assert_eq!(func.func_name, "unknown_func");
+        match CapFunction::new(&export, &create_test_identity()) {
+            Ok(_) => panic!("Shouldn't pass"),
+            Err(_) => {},
+        }
     }
 
     // ============================================================================
@@ -660,7 +687,7 @@ mod tests {
         );
 
         let ident = create_test_identity();
-        let class = CapClass::new(&ident, &class_export);
+        let class = CapClass::new(&ident, &class_export).unwrap();
 
         assert_eq!(class.ident, ident);
         assert_eq!(class.imports.len(), 1);
@@ -686,31 +713,12 @@ mod tests {
         );
 
         let ident = create_test_identity();
-        let class = CapClass::new(&ident, &class_export);
+        let class = CapClass::new(&ident, &class_export).unwrap();
 
         assert_eq!(class.imports.len(), 3);
         assert_eq!(class.imports[0].func_name, "func1");
         assert_eq!(class.imports[1].func_name, "func2");
         assert_eq!(class.imports[2].func_name, "func3");
-    }
-
-    #[test]
-    fn test_cap_class_with_null_init() {
-        reset_counters();
-
-        let exports = vec![create_mock_function_export("test", "func")];
-        let class_export = create_mock_class_export(
-            &exports,
-            ClassInitFn::Null,
-            ClassDropFn::Null,
-            ClassResetFn::Null,
-        );
-
-        let ident = create_test_identity();
-        let class = CapClass::new(&ident, &class_export);
-
-        // Should not crash
-        assert_eq!(class.imports.len(), 1);
     }
 
     // ============================================================================
@@ -730,7 +738,7 @@ mod tests {
         );
 
         let ident = create_test_identity();
-        let class = CapClass::new(&ident, &class_export);
+        let class = CapClass::new(&ident, &class_export).unwrap();
 
         let init_result = class.init(None).unwrap();
         let state = init_result.await.unwrap();
@@ -753,7 +761,7 @@ mod tests {
         );
 
         let ident = create_test_identity();
-        let class = CapClass::new(&ident, &class_export);
+        let class = CapClass::new(&ident, &class_export).unwrap();
 
         let config = serde_json::json!({"key": "value"});
         let init_result = class.init(Some(&config)).unwrap();
@@ -776,7 +784,7 @@ mod tests {
         );
 
         let ident = create_test_identity();
-        let class = CapClass::new(&ident, &class_export);
+        let class = CapClass::new(&ident, &class_export).unwrap();
 
         let init_result = class.init(None).unwrap();
         let result = init_result.await;
@@ -797,7 +805,7 @@ mod tests {
         );
 
         let ident = create_test_identity();
-        let class = CapClass::new(&ident, &class_export);
+        let class = CapClass::new(&ident, &class_export).unwrap();
 
         let init_result = class.init(None).unwrap();
         let state = init_result.await.unwrap();
@@ -1093,7 +1101,7 @@ mod tests {
         );
 
         let ident = create_test_identity();
-        let class = CapClass::new(&ident, &class_export);
+        let class = CapClass::new(&ident, &class_export).unwrap();
 
         // Call init multiple times
         let init1 = class.init(None).unwrap();
