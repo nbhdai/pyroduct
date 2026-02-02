@@ -58,6 +58,9 @@
           cargoArtifacts = pyroductDeps;
           doCheck = false;
           cargoExtraArgs = "-p pyroduct-cli";
+          postInstall = ''
+            mv $out/bin/pyroduct-cli $out/bin/pyroduct
+          '';
         });
 
         # Shared Library Extension

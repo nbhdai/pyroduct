@@ -5,7 +5,7 @@
 use test_cap2::TransformClient;
 
 #[pyroduct::module(output = (original, transformed, transform_count))]
-pub fn call(input: &str) -> Result<(String, String, usize), String> {
+pub fn call(input: &str) -> Result<(String, String, u64), String> {
     let client = TransformClient {
         prefix: "[TEST] ".to_string(),
     };
