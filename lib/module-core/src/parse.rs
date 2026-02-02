@@ -1,5 +1,8 @@
-use syn::{Ident, Result, Token, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated};
-
+use syn::{
+    Ident, Result, Token, parenthesized,
+    parse::{Parse, ParseStream},
+    punctuated::Punctuated,
+};
 
 /// The three supported output patterns
 pub enum OutputSpec {

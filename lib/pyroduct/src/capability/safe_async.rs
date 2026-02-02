@@ -32,7 +32,7 @@ pub fn get_runtime() -> &'static Runtime {
     })
 }
 
-pub(crate) fn execute_safe_async<'a, Fut, O>(fut: Fut) -> FfiBorrowedFutureResult<'a>
+pub fn execute_safe_async<'a, Fut, O>(fut: Fut) -> FfiBorrowedFutureResult<'a>
 where
     Fut: std::future::Future<Output = O> + Send + 'a,
     O: Archive + std::panic::RefUnwindSafe + Send + 'static,

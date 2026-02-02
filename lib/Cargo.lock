@@ -1904,6 +1904,7 @@ dependencies = [
  "macrotest",
  "module-derive",
  "pin-project",
+ "pyroduct",
  "rkyv",
  "serde",
  "serde_json",

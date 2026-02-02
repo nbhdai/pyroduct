@@ -5,7 +5,7 @@ pub struct HttpConfig {
 }
 
 
-#[pyroduct::client]
+#[pyroduct::interface_item]
 pub struct HttpClient;
 
 pub struct HttpServer {

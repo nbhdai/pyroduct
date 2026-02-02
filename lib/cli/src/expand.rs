@@ -19,11 +19,11 @@ pub fn expand(path: &Path, bin_mode: bool, lockfile: bool) -> Result<()> {
     }
     if bin_mode {
         let mut expanded_something = false;
-        
+
         if is_mod {
             expanded_something |= wat_project(path)?;
         }
-        
+
         if is_cap {
             expanded_something |= dylib_project(path)?;
         }
@@ -62,14 +62,14 @@ pub fn expand(path: &Path, bin_mode: bool, lockfile: bool) -> Result<()> {
         if is_mod && bin_mode {
             match wat_project(&subpath) {
                 Ok(true) => found_any = true,
-                Ok(false) => {},
+                Ok(false) => {}
                 Err(e) => errors.push((subpath.clone(), e)),
             }
         }
         if is_cap && bin_mode {
             match dylib_project(&subpath) {
                 Ok(true) => found_any = true,
-                Ok(false) => {},
+                Ok(false) => {}
                 Err(e) => errors.push((subpath, e)),
             }
         }
@@ -83,10 +83,7 @@ pub fn expand(path: &Path, bin_mode: bool, lockfile: bool) -> Result<()> {
     }
 
     if !found_any && bin_mode {
-        anyhow::bail!(
-            "No Module.toml found in {:?} or its subdirectories",
-            path
-        );
+        anyhow::bail!("No Module.toml found in {:?} or its subdirectories", path);
     }
 
     if !errors.is_empty() {
@@ -131,14 +128,19 @@ fn dylib_project(path: &Path) -> Result<bool> {
         if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
             if ["dylib", "so", "dll"].contains(&ext) {
                 // Ensure we don't try to parse the symbols file itself or other garbage
-                if !path.file_stem().unwrap_or_default().to_string_lossy().contains("symbols") {
-                     symbols::dump_dylib_symbols(&path)?;
-                     found = true;
+                if !path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .contains("symbols")
+                {
+                    symbols::dump_dylib_symbols(&path)?;
+                    found = true;
                 }
             }
         }
     }
-    
+
     if found {
         Ok(true)
     } else {
@@ -203,7 +205,6 @@ fn generate_interface_crate(
     Ok(())
 }
 
-
 fn generate_capability_artifacts(path: &Path, cap_manifest: &CapabilityManifest) -> Result<()> {
     let src_path = path.join("src/lib.rs");
     let artifacts_dir = path.join("artifacts");
@@ -245,7 +246,6 @@ fn generate_module_artifacts(path: &Path) -> Result<()> {
     Ok(())
 }
 
-
 pub fn wat(input: &Path) -> anyhow::Result<()> {
     use std::io::Write;
     let output = input.with_extension("wat");
@@ -261,7 +261,6 @@ pub fn wat(input: &Path) -> anyhow::Result<()> {
 
     let wat = wasmprinter::print_bytes(&wasm_bytes)
         .map_err(|e| anyhow::anyhow!("Failed to convert WASM to WAT: {}", e))?;
-
 
     // Write the WAT output
     let mut file = fs_err::File::create(&output)?;

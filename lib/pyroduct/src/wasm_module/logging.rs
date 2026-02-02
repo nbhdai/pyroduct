@@ -1,14 +1,15 @@
 use std::sync::Once;
 
-#[cfg(not(test))]
+#[cfg(target_arch = "wasm32")]
 #[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_log(ptr: *const u8, len: usize);
 }
 
 // MOCK: If testing, provide a dummy implementation to satisfy the linker.
-#[cfg(test)]
-unsafe extern "C" fn host_log(ptr: *const u8, len: usize) {
+#[cfg(any(test, not(target_arch = "wasm32")))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn host_log(ptr: *const u8, len: usize) {
     let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
     if let Ok(s) = std::str::from_utf8(slice) {
         println!("[HOST LOG MOCK]: {}", s);
@@ -36,7 +37,7 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for HostLogger {
 }
 
 static INIT: Once = Once::new();
-#[cfg(not(test))]
+#[cfg(target_arch = "wasm32")]
 pub fn init_logging() {
     INIT.call_once(|| {
         tracing_subscriber::fmt()
@@ -46,5 +47,5 @@ pub fn init_logging() {
             .init();
     });
 }
-#[cfg(test)]
+#[cfg(any(test, not(target_arch = "wasm32")))]
 pub fn init_logging() {}

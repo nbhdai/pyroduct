@@ -1,5 +1,5 @@
-pub mod class;
 pub mod capability;
+pub mod class;
 pub mod ffi_bridge;
 pub mod pipeline;
 pub mod wasm_bridge;

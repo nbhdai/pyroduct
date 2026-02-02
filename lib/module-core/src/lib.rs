@@ -4,8 +4,8 @@ mod parse;
 use proc_macro2::TokenStream;
 use syn::parse2;
 
-pub use parse::ModuleAttrs;
 pub use codegen::expand;
+pub use parse::ModuleAttrs;
 
 /// For generating module code from source content (used by build tools)
 pub fn generate_module(content: &str) -> anyhow::Result<String> {
@@ -23,11 +23,11 @@ pub fn generate_module(content: &str) -> anyhow::Result<String> {
                 if has_module_attr(&item_fn.attrs) {
                     let attr = extract_module_attr(&item_fn.attrs)?;
                     let config: ModuleAttrs = parse2(attr)?;
-                    
+
                     // Clone the function without the #[module] attribute
                     let mut clean_fn = item_fn.clone();
                     clean_fn.attrs.retain(|a| !is_module_attr(a));
-                    
+
                     let expanded = expand(config, clean_fn)
                         .map_err(|e| anyhow::anyhow!("Failed to expand module: {}", e))?;
                     generated_code.extend(expanded);
@@ -45,8 +45,6 @@ pub fn generate_module(content: &str) -> anyhow::Result<String> {
 
     Ok(generated_code.to_string())
 }
-
-
 
 fn has_module_attr(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|a| is_module_attr(a))
@@ -73,7 +71,9 @@ fn extract_module_attr(attrs: &[syn::Attribute]) -> anyhow::Result<TokenStream> 
                     return Ok(list.tokens.clone());
                 }
                 syn::Meta::Path(_) => {
-                    return Err(anyhow::anyhow!("Module attribute requires arguments: #[module(output = ...)]"));
+                    return Err(anyhow::anyhow!(
+                        "Module attribute requires arguments: #[module(output = ...)]"
+                    ));
                 }
                 syn::Meta::NameValue(_) => {
                     return Err(anyhow::anyhow!("Invalid module attribute format"));

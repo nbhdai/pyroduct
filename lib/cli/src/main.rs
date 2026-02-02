@@ -1,11 +1,11 @@
 pub mod cargo;
+pub mod clean;
 pub mod expand;
 pub mod init;
 pub mod package;
 pub mod run;
-pub mod utils;
-pub mod clean;
 pub mod symbols;
+pub mod utils;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -35,11 +35,11 @@ enum Commands {
         path: PathBuf,
 
         /// Convert WASM binaries to WAT format and gets the symbols from libraries
-        #[arg(short,long)]
+        #[arg(short, long)]
         bin: bool,
 
         /// Generates the Cargo.lock files
-        #[arg(short,long, default_value = "true")]
+        #[arg(short, long, default_value = "true")]
         lockfile: bool,
     },
     Package {
@@ -84,7 +84,11 @@ async fn main() -> Result<()> {
 
     match args.command {
         Commands::Init { path, cap } => init::init(path, cap),
-        Commands::Expand { path , bin, lockfile} => expand::expand(&path, bin, lockfile),
+        Commands::Expand {
+            path,
+            bin,
+            lockfile,
+        } => expand::expand(&path, bin, lockfile),
         Commands::Package {
             path,
             output,

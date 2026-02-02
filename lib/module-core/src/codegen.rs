@@ -1,11 +1,8 @@
 use proc_macro2::{Span, TokenStream};
-use syn::{FnArg, Ident, ItemFn, Pat, Result, ReturnType, Type, parse_quote};
 use quote::quote;
+use syn::{FnArg, Ident, ItemFn, Pat, Result, ReturnType, Type, parse_quote};
 
 use crate::parse::{ModuleAttrs, OutputSpec};
-
-
-
 
 pub fn expand(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStream> {
     let fn_name = &input_fn.sig.ident;

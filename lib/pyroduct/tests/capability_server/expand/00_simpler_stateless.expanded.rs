@@ -83,7 +83,7 @@ impl StatefulServer {
     }
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn __stateful_server__ffi_init(
+pub extern "C" fn p__stateful_server__ffi_init(
     config_ptr: *const u8,
     config_len: usize,
 ) -> ::pyroduct::capability_host::ffi::FfiInitResult {
@@ -96,13 +96,13 @@ pub extern "C" fn __stateful_server__ffi_init(
     }
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn __stateful_server__ffi_drop(state: *mut std::ffi::c_void) {
+pub unsafe extern "C" fn p__stateful_server__ffi_drop(state: *mut std::ffi::c_void) {
     if !state.is_null() {
         drop(unsafe { Box::from_raw(state as *mut StatefulServer) });
     }
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn __stateful_server__ffi_reset(
+pub unsafe extern "C" fn p__stateful_server__ffi_reset(
     state: *mut std::ffi::c_void,
 ) -> ::pyroduct::capability_host::ffi::FfiResult {
     ::pyroduct::capability::safe_lifecycle::execute_safe_reset::<
@@ -111,7 +111,7 @@ pub unsafe extern "C" fn __stateful_server__ffi_reset(
     >(state, |state| state.reset())
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn __stateful_server__new_client__ffi(
+pub unsafe extern "C" fn p__stateful_server__new_client__ffi(
     client_state_ptr: *const u8,
     client_state_len: usize,
     input_ptr: *const u8,
@@ -133,7 +133,7 @@ pub unsafe extern "C" fn __stateful_server__new_client__ffi(
     )
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn __stateful_server__call__ffi(
+pub unsafe extern "C" fn p__stateful_server__call__ffi(
     client_state_ptr: *const u8,
     client_state_len: usize,
     input_ptr: *const u8,
@@ -154,40 +154,48 @@ pub unsafe extern "C" fn __stateful_server__call__ffi(
         |state, client| state.call(&client),
     )
 }
-const __STATEFUL_SERVER: &'static str = "__stateful_server";
-const __STATEFUL_SERVER__NEW_CLIENT: &'static str = "__stateful_server__new_client";
-const __STATEFUL_SERVER__CALL: &'static str = "__stateful_server__call";
-const __STATEFUL_SERVER__METHODS: [::pyroduct::capability_host::ffi::FunctionExport; 2usize] = [
+const CAPABILITY_NAME_VERSION: &'static str = "pyroduct-tests:0.0.0";
+const p__STATEFUL_SERVER: &'static str = "p__stateful_server";
+const p__STATEFUL_SERVER__NEW_CLIENT: &'static str = "p__stateful_server__new_client__wasm";
+const p__STATEFUL_SERVER__CALL: &'static str = "p__stateful_server__call__wasm";
+const p__STATEFUL_SERVER__METHODS: [::pyroduct::capability_host::ffi::FunctionExport; 2usize] = [
     ::pyroduct::capability_host::ffi::FunctionExport {
-        module: __STATEFUL_SERVER.as_ptr(),
-        module_len: __STATEFUL_SERVER.len(),
-        name: __STATEFUL_SERVER__NEW_CLIENT.as_ptr(),
-        name_len: __STATEFUL_SERVER__NEW_CLIENT.len(),
+        capability: CAPABILITY_NAME_VERSION.as_ptr(),
+        capability_len: CAPABILITY_NAME_VERSION.len(),
+        name: p__STATEFUL_SERVER__NEW_CLIENT.as_ptr(),
+        name_len: p__STATEFUL_SERVER__NEW_CLIENT.len(),
         func: ::pyroduct::capability_host::ffi::Function::Sync(
-            __stateful_server__new_client__ffi,
+            p__stateful_server__new_client__ffi,
         ),
     },
     ::pyroduct::capability_host::ffi::FunctionExport {
-        module: __STATEFUL_SERVER.as_ptr(),
-        module_len: __STATEFUL_SERVER.len(),
-        name: __STATEFUL_SERVER__CALL.as_ptr(),
-        name_len: __STATEFUL_SERVER__CALL.len(),
+        capability: CAPABILITY_NAME_VERSION.as_ptr(),
+        capability_len: CAPABILITY_NAME_VERSION.len(),
+        name: p__STATEFUL_SERVER__CALL.as_ptr(),
+        name_len: p__STATEFUL_SERVER__CALL.len(),
         func: ::pyroduct::capability_host::ffi::Function::Sync(
-            __stateful_server__call__ffi,
+            p__stateful_server__call__ffi,
         ),
     },
 ];
-const __STATEFUL_SERVER__EXPORT: ::pyroduct::capability_host::ffi::ClassExport = ::pyroduct::capability_host::ffi::ClassExport {
-    ptr: __STATEFUL_SERVER__METHODS.as_ptr(),
-    init: ::pyroduct::capability_host::ffi::ClassInitFn::Sync(
-        __stateful_server__ffi_init,
-    ),
-    drop: ::pyroduct::capability_host::ffi::ClassDropFn::Sync(
-        __stateful_server__ffi_drop,
-    ),
-    reset: ::pyroduct::capability_host::ffi::ClassResetFn::Sync(
-        __stateful_server__ffi_reset,
-    ),
-    len: __STATEFUL_SERVER__METHODS.len(),
-};
+#[unsafe(no_mangle)]
+pub extern "C" fn capability_manifest<'a>(
+    id: u64,
+    log_callback: ::pyroduct::capability_host::ffi::LogCallback,
+) -> ::pyroduct::capability_host::ffi::ClassExport<'a> {
+    ::pyroduct::capability::init_logging(id, log_callback);
+    ::pyroduct::capability_host::ffi::ClassExport {
+        len: p__STATEFUL_SERVER__METHODS.len(),
+        ptr: p__STATEFUL_SERVER__METHODS.as_ptr() as *mut _,
+        init: ::pyroduct::capability_host::ffi::ClassInitFn::Sync(
+            p__stateful_server__ffi_init,
+        ),
+        drop: ::pyroduct::capability_host::ffi::ClassDropFn::Sync(
+            p__stateful_server__ffi_drop,
+        ),
+        reset: ::pyroduct::capability_host::ffi::ClassResetFn::Sync(
+            p__stateful_server__ffi_reset,
+        ),
+    }
+}
 fn main() {}

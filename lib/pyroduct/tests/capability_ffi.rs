@@ -1,11 +1,11 @@
-use super::safe_async::execute_safe_async;
-use super::safe_io::get_input;
-use super::safe_lifecycle::{execute_safe_init, execute_safe_reset};
-use crate::CapIdentity;
-use crate::capability_host::ffi::FfiBorrowedFutureResult;
-use crate::errors::FfiError;
-use crate::host::ffi_bridge::{AsyncExecFuture, ExecutionResultBridge, InitResultBridge};
-use crate::module_capability::panic::register_ffi_panic_hook;
+use pyroduct::CapIdentity;
+use pyroduct::capability::safe_async::execute_safe_async;
+use pyroduct::capability::safe_io::get_input;
+use pyroduct::capability::safe_lifecycle::{execute_safe_init, execute_safe_reset};
+use pyroduct::capability_host::ffi::FfiBorrowedFutureResult;
+use pyroduct::errors::FfiError;
+use pyroduct::host::ffi_bridge::{AsyncExecFuture, ExecutionResultBridge, InitResultBridge};
+use pyroduct::module_capability::panic::register_ffi_panic_hook;
 use std::path::Path;
 use std::ptr;
 

@@ -9,8 +9,11 @@ pub fn clean(path: &Path) -> Result<()> {
     }
 
     // 2. Recursive scan mode
-    println!("No manifest found in {:?}, scanning subdirectories...", path);
-    
+    println!(
+        "No manifest found in {:?}, scanning subdirectories...",
+        path
+    );
+
     let mut cleaned_any = false;
     let mut errors = Vec::new();
 

@@ -1,6 +1,6 @@
-
-use pyroduct::arrow_scalars::{ArrowRow, ArrowValue}; 
-use pyroduct::errors::ArchivedFfiError;
+use pyroduct::arrow_scalars::{ArrowRow, ArrowValue};
+use pyroduct::errors::{ArchivedFfiError, FfiError};
+use pyroduct::wasm_module::{call, dealloc};
 use pyroduct::{DeepRef, FromRow, ToRow};
 
 struct UserInput {
@@ -76,45 +76,42 @@ fn test_ffi_call_happy_path() {
         ("age", ArrowValue::from(30i32)),
     ]);
     let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input_row).unwrap();
-    
+
     // This is memory managed by the wasm module, as we are both host and wasm in this test we hold it.
     let mut input_vec = input_bytes.into_vec();
     let input_ptr = input_vec.as_mut_ptr();
     let input_len = input_vec.len();
-    
 
     let user_logic = |input: &UserInputRef<'_>| -> Result<UserOutput, String> {
         assert_eq!(input.name, "Alice");
         assert_eq!(input.age, 30);
-        
+
         Ok(UserOutput {
             greeting: format!("Hello, {}!", input.name),
             is_adult: input.age >= 18,
         })
     };
 
-    let packed_result = call::<UserInput, UserOutput, _>(
-        input_ptr, 
-        input_len, 
-        user_logic
-    );
+    let packed_result = call::<UserInput, UserOutput, _>(input_ptr, input_len, user_logic);
 
     let (out_ptr, out_len) = unpack_ptr(packed_result);
     let out_slice = unsafe { std::slice::from_raw_parts(out_ptr, out_len) };
     type ReturnType<'a> = Result<ArrowRow<'a>, String>;
-    let archived = rkyv::access::<<ReturnType as rkyv::Archive>::Archived, rkyv::rancor::Error>(out_slice)
-        .expect("Failed to access result archive");
-        
-    let result: Result<ArrowRow, String> = rkyv::deserialize::<_, rkyv::rancor::Error>(archived).unwrap();
+    let archived =
+        rkyv::access::<<ReturnType as rkyv::Archive>::Archived, rkyv::rancor::Error>(out_slice)
+            .expect("Failed to access result archive");
+
+    let result: Result<ArrowRow, String> =
+        rkyv::deserialize::<_, rkyv::rancor::Error>(archived).unwrap();
 
     match result {
         Ok(row) => {
             let greeting = row.get("greeting").expect("Missing greeting");
             assert_eq!(greeting, &ArrowValue::from("Hello, Alice!"));
-            
+
             let is_adult = row.get("is_adult").expect("Missing is_adult");
             assert_eq!(is_adult, &ArrowValue::from(true));
-        },
+        }
         Err(e) => panic!("FFI call returned logic error: {}", e),
     }
 
@@ -129,7 +126,7 @@ fn test_ffi_call_logic_panic() {
         ("age", ArrowValue::from(10i32)),
     ]);
     let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input_row).unwrap();
-    
+
     // Keep the vector alive - don't forget it
     let mut input_vec = input_bytes.into_vec();
     let input_ptr = input_vec.as_mut_ptr();
@@ -140,24 +137,20 @@ fn test_ffi_call_logic_panic() {
         panic!("Something went terribly wrong!");
     };
 
-    let packed_result = call::<UserInput, UserOutput, _>(
-        input_ptr, 
-        input_len, 
-        user_logic
-    );
+    let packed_result = call::<UserInput, UserOutput, _>(input_ptr, input_len, user_logic);
 
     let (out_ptr, out_len) = unpack_ptr(packed_result);
     let out_slice = unsafe { std::slice::from_raw_parts(out_ptr, out_len) };
 
     let archived = rkyv::access::<ArchivedFfiError, rkyv::rancor::Error>(out_slice)
         .expect("Output should be a valid FfiError archive");
-    
-    let error: crate::errors::FfiError = rkyv::deserialize::<_, rkyv::rancor::Error>(archived).unwrap();
+
+    let error: FfiError = rkyv::deserialize::<_, rkyv::rancor::Error>(archived).unwrap();
 
     match error {
-        crate::errors::FfiError::ModuleLogicPanicked(info) => {
+        FfiError::ModuleLogicPanicked(info) => {
             assert!(info.message.contains("Something went terribly wrong"));
-        },
+        }
         _ => panic!("Expected ModuleLogicPanicked, got {:?}", error),
     }
 

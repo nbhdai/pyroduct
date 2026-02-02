@@ -8,7 +8,6 @@ pub mod capability_host;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod host;
 
-#[cfg(any(test, target_arch = "wasm32"))]
 pub mod wasm_module;
 
 pub mod module_capability;

@@ -1,9 +1,7 @@
 use proc_macro::TokenStream;
 
 use module_core;
-use syn::{parse2, ItemFn};
-
-    
+use syn::{ItemFn, parse2};
 
 #[proc_macro_attribute]
 pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -11,7 +9,7 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
         Ok(attrs) => attrs,
         Err(error) => return error.to_compile_error().into(),
     };
-    let input_fn: ItemFn  = match parse2(item.into()) {
+    let input_fn: ItemFn = match parse2(item.into()) {
         Ok(attrs) => attrs,
         Err(error) => return error.to_compile_error().into(),
     };
