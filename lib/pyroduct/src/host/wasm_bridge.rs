@@ -10,7 +10,7 @@ use wasmtime::{Caller, Extern, Memory, TypedFunc};
 use crate::{
     ModIdentity, PyroductResult,
     errors::PyroductError,
-    host::{Capability, capability::ClassState},
+    host::{Capability, class::ClassState},
 };
 
 pub struct HarnessState {

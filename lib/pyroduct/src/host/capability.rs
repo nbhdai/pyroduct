@@ -5,7 +5,7 @@ use wasmtime::Linker;
 
 use crate::capability_host::ffi::CapabilityRegisterFn;
 use crate::errors::PyroductError;
-use crate::host::capability::class::CapabilityInit;
+use crate::host::class::{CapabilityInit, CapClass};
 use crate::host::pipeline::CapabilityDef;
 use crate::host::wasm_bridge::HarnessState;
 use crate::{CapIdentity, ModIdentity, PyroductResult};
@@ -13,8 +13,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 
-mod class;
-pub use class::{CapClass, ClassState};
 
 static LOG_CALLBACK_SPAN: RwLock<Vec<Span>> = RwLock::new(Vec::new());
 

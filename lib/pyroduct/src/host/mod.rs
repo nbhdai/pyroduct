@@ -1,3 +1,4 @@
+pub mod class;
 pub mod capability;
 pub mod ffi_bridge;
 pub mod pipeline;
