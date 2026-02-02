@@ -4,6 +4,7 @@ pub mod init;
 pub mod package;
 pub mod run;
 pub mod utils;
+pub mod clean;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -42,6 +43,11 @@ enum Commands {
         #[arg(last = true)]
         cargo_args: Vec<String>,
     },
+    /// Cleans generated artifacts (Cargo.toml, artifacts/, interface/, target/)
+    Clean {
+        #[arg(value_name = "DIRECTORY", default_value = ".")]
+        path: PathBuf,
+    },
     /// Runs the pipeline.
     /// Automatically detects if INPUT is a file path (Batch Mode) or a JSON string (Single Mode).
     Run {
@@ -75,6 +81,7 @@ async fn main() -> Result<()> {
             output,
             cargo_args,
         } => package::package(&path, output.as_deref(), &cargo_args),
+        Commands::Clean { path } => clean::clean(&path),
         Commands::Run {
             config,
             input,
