@@ -1,6 +1,6 @@
 [capability]
 authors = ["nbhdai"]
-name = "http_client"
+name = "httpc"
 version = "0.1.0"
 
 [pyroduct]

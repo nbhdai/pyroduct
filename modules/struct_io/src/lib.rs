@@ -1,4 +1,4 @@
-use http::{HttpClient, HttpClientMethods};
+use httpc::{HttpClient, HttpClientMethods};
 
 use pyroduct::{FromRow, DeepRef, ToRow};
 

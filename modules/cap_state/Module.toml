@@ -7,6 +7,6 @@ authors = ["nbhdai"]
 path = "../../lib/pyroduct"
 
 [capabilities]
-state.path = "../state"
+state.path = "../../capabilities/state"
 
 [dependencies]

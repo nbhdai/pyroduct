@@ -8,6 +8,6 @@ authors = ["nbhdai"]
 path = "../../lib/pyroduct"
 
 [capabilities]
-config.path = "../config"
+config.path = "../../capabilities/config"
 
 [dependencies]
