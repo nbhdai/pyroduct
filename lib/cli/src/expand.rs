@@ -6,6 +6,9 @@ use fs_err as fs;
 use crate::cargo::{CapabilityManifest, ModuleManifest};
 use crate::utils::InterfaceGenerator;
 
+use capability_core::generate_capability;
+use module_core::generate_module;
+
 pub fn expand(path: &Path) -> Result<()> {
     let cap_toml = path.join("Capability.toml");
     let mod_toml = path.join("Module.toml");
@@ -84,6 +87,7 @@ fn expand_single(path: &Path) -> Result<()> {
             fs::write(&cargo_toml_path, output_str)?;
             println!("  ✓ Wrote Cargo.toml");
 
+            generate_capability_artifacts(path, &cap_manifest)?;
             generate_interface_crate(path, &module_path, cap_manifest)?;
         }
         (false, true) => {
@@ -92,7 +96,14 @@ fn expand_single(path: &Path) -> Result<()> {
 
             let standard_manifest = mod_manifest.to_cargo();
             let output_str = toml::to_string_pretty(&standard_manifest)?;
+            generate_module_artifacts(path)?;
             fs::write(cargo_toml_path, output_str)?;
+
+            let wasm_artifact_path = path.join("artifact").join("mod.wasm");
+            if wasm_artifact_path.exists() {
+                wat(&wasm_artifact_path)?;
+            }
+
             println!("  ✓ Wrote Cargo.toml");
         }
         (false, false) => anyhow::bail!("Neither 'Capability.toml' nor 'Module.toml' found."),
@@ -108,6 +119,75 @@ fn generate_interface_crate(
 ) -> Result<()> {
     let generator = InterfaceGenerator::new(input, &cap_manifest)?;
     generator.write_to_disk(output)?;
+
+    Ok(())
+}
+
+
+fn generate_capability_artifacts(path: &Path, cap_manifest: &CapabilityManifest) -> Result<()> {
+    let src_path = path.join("src/lib.rs");
+    let artifacts_dir = path.join("artifacts");
+    let output_path = artifacts_dir.join("capability.rs");
+
+    if !src_path.exists() {
+        anyhow::bail!("Source file not found: {:?}", src_path);
+    }
+
+    let content = fs::read_to_string(&src_path)?;
+    let (cap_name, cap_version) = cap_manifest.name_version()?;
+
+    let (generated_code, _spec, _config) = generate_capability(&content, &cap_name, &cap_version)?;
+
+    fs::create_dir_all(&artifacts_dir)?;
+    fs::write(&output_path, generated_code)?;
+    println!("  ✓ Wrote artifacts/capability.rs");
+
+    Ok(())
+}
+
+fn generate_module_artifacts(path: &Path) -> Result<()> {
+    let src_path = path.join("src/lib.rs");
+    let artifacts_dir = path.join("artifacts");
+    let output_path = artifacts_dir.join("module.rs");
+
+    if !src_path.exists() {
+        anyhow::bail!("Source file not found: {:?}", src_path);
+    }
+
+    let content = fs::read_to_string(&src_path)?;
+
+    let generated_code = generate_module(&content)?;
+
+    fs::create_dir_all(&artifacts_dir)?;
+    fs::write(&output_path, generated_code)?;
+    println!("  ✓ Wrote artifacts/module.rs");
+
+    Ok(())
+}
+
+
+pub fn wat(input: &Path) -> anyhow::Result<()> {
+    use std::io::Write;
+    let output = input.with_extension("wat");
+
+    if input.extension().and_then(|e| e.to_str()) != Some("wasm") {
+        eprintln!(
+            "Warning: Input file '{}' does not have .wasm extension",
+            input.display()
+        );
+    }
+
+    let wasm_bytes = fs_err::read(&input)?;
+
+    let wat = wasmprinter::print_bytes(&wasm_bytes)
+        .map_err(|e| anyhow::anyhow!("Failed to convert WASM to WAT: {}", e))?;
+
+
+    // Write the WAT output
+    let mut file = fs_err::File::create(&output)?;
+    file.write_all(wat.as_bytes())?;
+
+    println!("Converted {} -> {}", input.display(), output.display());
 
     Ok(())
 }

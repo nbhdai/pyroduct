@@ -46,6 +46,23 @@ pub struct CapabilityManifest<Metadata = Value> {
     pub lints: Inheritable<LintGroups>,
 }
 
+impl CapabilityManifest {
+    pub fn name_version(&self) -> anyhow::Result<(String, String)> {
+        Ok(match &self.capability {
+            Some(Package {
+                name,
+                version: Inheritable::Set(version),
+                ..
+            }) => (name.clone(), version.clone()),
+            Some(Package {
+                version: Inheritable::Inherited,
+                ..
+            }) => anyhow::bail!("Pyroduct does not support inherited versions (yet!)"),
+            None => anyhow::bail!("[capability] section is missing"),
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct ModuleManifest<Metadata = Value> {

@@ -5,6 +5,7 @@ authors.workspace = true
 edition.workspace = true
 
 [dependencies]
+module-core.workspace = true
 capability-core.workspace = true
 pyroduct.workspace = true
 wasmtime.workspace = true
@@ -26,3 +27,4 @@ tokio.workspace = true
 
 tracing.workspace = true
 tracing-subscriber.workspace = true
+wasmprinter = "0.244.0"

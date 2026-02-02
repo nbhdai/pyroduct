@@ -1579,6 +1579,7 @@ dependencies = [
 name = "module-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "proc-macro2",
  "quote",
  "syn",
@@ -1589,6 +1590,7 @@ name = "module-derive"
 version = "0.1.0"
 dependencies = [
  "module-core",
+ "syn",
 ]
 
 [[package]]
@@ -1916,6 +1918,7 @@ dependencies = [
  "flate2",
  "fs-err",
  "heck",
+ "module-core",
  "pyroduct",
  "serde",
  "serde_json",
@@ -1924,6 +1927,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "wasmprinter 0.244.0",
  "wasmtime",
 ]
 
@@ -2834,6 +2838,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasmprinter"
+version = "0.244.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09390d7b2bd7b938e563e4bff10aa345ef2e27a3bc99135697514ef54495e68f"
+dependencies = [
+ "anyhow",
+ "termcolor",
+ "wasmparser 0.244.0",
+]
+
+[[package]]
 name = "wasmtime"
 version = "40.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2913,7 +2928,7 @@ dependencies = [
  "target-lexicon",
  "wasm-encoder 0.243.0",
  "wasmparser 0.243.0",
- "wasmprinter",
+ "wasmprinter 0.243.0",
  "wasmtime-internal-component-util",
 ]
 

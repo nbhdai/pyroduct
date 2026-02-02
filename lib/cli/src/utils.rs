@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use cargo_toml::{Inheritable, Package};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use fs_err as fs;
@@ -123,23 +122,11 @@ impl InterfaceGenerator {
         let cargo_toml_content = toml::to_string_pretty(&interface_manifest)
             .context("Failed to serialize interface manifest")?;
 
-        let (cap_name, cap_version) = match interface_manifest.package {
-            Some(Package {
-                name,
-                version: Inheritable::Set(version),
-                ..
-            }) => (name.clone(), version.clone()),
-            Some(Package {
-                version: Inheritable::Inherited,
-                ..
-            }) => anyhow::bail!("Pyroduct does not support inherited versions (yet!)"),
-            None => anyhow::bail!("[capability] section is missing"),
-        };
-
         let source_path = root_path.join("src").join("lib.rs");
         if !source_path.exists() {
             anyhow::bail!("Source file not found: {:?}", source_path);
         }
+        let (cap_name, cap_version) = manifest.name_version()?;
 
         let original_source = fs::read_to_string(&source_path)
             .with_context(|| format!("Failed to read source: {:?}", source_path))?;
