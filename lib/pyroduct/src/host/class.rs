@@ -68,12 +68,12 @@ impl CapFunction {
                 .to_string();
 
         let pointer = unsafe { std::mem::transmute::<Function<'_>, Function<'static>>(func.func) };
-        
-        Ok(CapFunction {
+        let func = CapFunction {
             cap_name,
             func_name,
             pointer,
-        })
+        };
+        Ok(func)
     }
 }
 
@@ -97,11 +97,9 @@ impl CapClass {
         let mut imports = Vec::new();
 
         for export in exports {
-            // Propagate error from CapFunction::new
             let func = CapFunction::new(export, ident)?;
             imports.push(func);
         }
-        
         let init_fn =
             unsafe { std::mem::transmute::<ClassInitFn<'_>, ClassInitFn<'static>>(class.init) };
         let reset_fn =
@@ -232,7 +230,7 @@ impl CapClass {
         caller.write(&output_vec).await
     }
 
-    pub fn link(&self, linker: &mut Linker<HarnessState>, cap_index: usize) -> PyroductResult<()> {
+    pub fn link(&self, linker: &mut Linker<HarnessState>, _span_index: usize, cap_index: usize) -> PyroductResult<()> {
         for func in self.imports.iter() {
             let cap = self.clone();
             let cap_name = func.cap_name.clone();
@@ -507,22 +505,34 @@ impl<'a> Future for AsyncInitFuture<'a> {
 mod tests {
     use super::*;
     use crate::capability_host::ffi::*;
+    use std::cell::RefCell;
     use std::ffi::c_void;
     use std::ptr;
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use crate::errors::FfiError;
 
     // ============================================================================
-    // Mock FFI Functions
+    // Mock FFI Functions & Thread-Local State
     // ============================================================================
 
-    static INIT_COUNTER: AtomicU32 = AtomicU32::new(0);
-    static DROP_COUNTER: AtomicU32 = AtomicU32::new(0);
-    static RESET_COUNTER: AtomicU32 = AtomicU32::new(0);
+    // We use thread_local variables instead of global Atomics to ensure that
+    // tests running in parallel do not interfere with each other's state.
+    #[derive(Default, Clone, Copy, Debug)]
+    struct MockCounters {
+        init: u32,
+        drop: u32,
+        reset: u32,
+    }
 
-    fn reset_counters() {
-        INIT_COUNTER.store(0, Ordering::SeqCst);
-        DROP_COUNTER.store(0, Ordering::SeqCst);
-        RESET_COUNTER.store(0, Ordering::SeqCst);
+    thread_local! {
+        static COUNTERS: RefCell<MockCounters> = RefCell::new(MockCounters::default());
+    }
+
+    fn reset_mock_counters() {
+        COUNTERS.with(|c| *c.borrow_mut() = MockCounters::default());
+    }
+
+    fn get_mock_counters() -> MockCounters {
+        COUNTERS.with(|c| *c.borrow())
     }
 
     // Mock state struct
@@ -533,23 +543,25 @@ mod tests {
 
     // Sync init that returns a valid state pointer
     unsafe extern "C" fn mock_sync_init(_config_ptr: *const u8, _config_len: usize) -> FfiInitResult {
-        INIT_COUNTER.fetch_add(1, Ordering::SeqCst);
+        COUNTERS.with(|c| c.borrow_mut().init += 1);
         let state = Box::new(MockState { value: 42 });
         FfiInitResult::ok(Box::into_raw(state) as *mut c_void)
     }
 
     // Sync init that returns an error
     unsafe extern "C" fn mock_sync_init_error(_config_ptr: *const u8, _config_len: usize) -> FfiInitResult {
-        let error_msg = b"Init failed";
-        let mut bytes = error_msg.to_vec();
+        let ffi_error = FfiError::DeserializationFailed("Init failed (Mock)".to_string(), crate::errors::Phase::Init);
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&ffi_error).unwrap().into_vec();
+        
+        let mut bytes = bytes; 
         let (ptr, len, cap) = (bytes.as_mut_ptr(), bytes.len(), bytes.capacity());
-        std::mem::forget(bytes);
+        std::mem::forget(bytes); 
         FfiInitResult::err(COutput { ptr, len, cap })
     }
 
     // Sync drop
     unsafe extern "C" fn mock_sync_drop(state: *mut c_void) {
-        DROP_COUNTER.fetch_add(1, Ordering::SeqCst);
+        COUNTERS.with(|c| c.borrow_mut().drop += 1);
         if !state.is_null() {
             let _ = unsafe { Box::from_raw(state as *mut MockState) };
         }
@@ -557,7 +569,7 @@ mod tests {
 
     // Sync reset
     unsafe extern "C" fn mock_sync_reset(state: *mut c_void) -> FfiResult {
-        RESET_COUNTER.fetch_add(1, Ordering::SeqCst);
+        COUNTERS.with(|c| c.borrow_mut().reset += 1);
         if state.is_null() {
             return FfiResult::full_err(COutput {
                 ptr: ptr::null(),
@@ -572,8 +584,10 @@ mod tests {
 
     // Sync reset that returns error
     unsafe extern "C" fn mock_sync_reset_error(_state: *mut c_void) -> FfiResult {
-        let error_msg = b"Reset failed";
-        let mut bytes = error_msg.to_vec();
+        let ffi_error = FfiError::DeserializationFailed("Reset failed (Mock)".to_string(), crate::errors::Phase::Reset);
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&ffi_error).unwrap().into_vec();
+
+        let mut bytes = bytes;
         let (ptr, len, cap) = (bytes.as_mut_ptr(), bytes.len(), bytes.capacity());
         std::mem::forget(bytes);
         FfiResult::full_err(COutput { ptr, len, cap })
@@ -640,18 +654,21 @@ mod tests {
 
     #[test]
     fn test_cap_function_creation() {
+        reset_mock_counters();
         let cap_name = "test_cap";
         let func_name = "test_func";
         let export = create_mock_function_export(cap_name, func_name);
+        let ident = create_test_identity();
 
-        let func = CapFunction::new(&export, &create_test_identity()).unwrap();
+        let func = CapFunction::new(&export, &ident).expect("Should succeed");
 
         assert_eq!(func.cap_name, cap_name);
         assert_eq!(func.func_name, func_name);
     }
 
     #[test]
-    fn test_cap_function_with_empty_names() {
+    fn test_cap_function_with_null_pointers_returns_error() {
+        reset_mock_counters();
         let export = FunctionExport {
             capability: ptr::null(),
             capability_len: 0,
@@ -659,11 +676,10 @@ mod tests {
             name_len: 0,
             func: Function::Sync(mock_sync_function),
         };
+        let ident = create_test_identity();
 
-        match CapFunction::new(&export, &create_test_identity()) {
-            Ok(_) => panic!("Shouldn't pass"),
-            Err(_) => {},
-        }
+        let result = CapFunction::new(&export, &ident);
+        assert!(result.is_err());
     }
 
     // ============================================================================
@@ -672,8 +688,7 @@ mod tests {
 
     #[test]
     fn test_cap_class_creation() {
-        reset_counters();
-
+        reset_mock_counters();
         let cap_name = "test_cap";
         let func_name = "test_func";
         let export = create_mock_function_export(cap_name, func_name);
@@ -687,7 +702,7 @@ mod tests {
         );
 
         let ident = create_test_identity();
-        let class = CapClass::new(&ident, &class_export).unwrap();
+        let class = CapClass::new(&ident, &class_export).expect("Should create class");
 
         assert_eq!(class.ident, ident);
         assert_eq!(class.imports.len(), 1);
@@ -697,8 +712,7 @@ mod tests {
 
     #[test]
     fn test_cap_class_with_multiple_functions() {
-        reset_counters();
-
+        reset_mock_counters();
         let exports = vec![
             create_mock_function_export("cap1", "func1"),
             create_mock_function_export("cap2", "func2"),
@@ -713,7 +727,7 @@ mod tests {
         );
 
         let ident = create_test_identity();
-        let class = CapClass::new(&ident, &class_export).unwrap();
+        let class = CapClass::new(&ident, &class_export).expect("Should create class");
 
         assert_eq!(class.imports.len(), 3);
         assert_eq!(class.imports[0].func_name, "func1");
@@ -727,8 +741,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cap_class_sync_init_success() {
-        reset_counters();
-
+        reset_mock_counters();
         let exports = vec![create_mock_function_export("test", "func")];
         let class_export = create_mock_class_export(
             &exports,
@@ -743,15 +756,14 @@ mod tests {
         let init_result = class.init(None).unwrap();
         let state = init_result.await.unwrap();
 
-        assert_eq!(INIT_COUNTER.load(Ordering::SeqCst), 1);
+        assert_eq!(get_mock_counters().init, 1);
         assert!(!state.ptr.is_null());
         assert_eq!(unsafe { (*(state.ptr as *const MockState)).value }, 42);
     }
 
     #[tokio::test]
     async fn test_cap_class_sync_init_with_config() {
-        reset_counters();
-
+        reset_mock_counters();
         let exports = vec![create_mock_function_export("test", "func")];
         let class_export = create_mock_class_export(
             &exports,
@@ -767,14 +779,13 @@ mod tests {
         let init_result = class.init(Some(&config)).unwrap();
         let state = init_result.await.unwrap();
 
-        assert_eq!(INIT_COUNTER.load(Ordering::SeqCst), 1);
+        assert_eq!(get_mock_counters().init, 1);
         assert!(!state.ptr.is_null());
     }
 
     #[tokio::test]
     async fn test_cap_class_sync_init_error() {
-        reset_counters();
-
+        reset_mock_counters();
         let exports = vec![create_mock_function_export("test", "func")];
         let class_export = create_mock_class_export(
             &exports,
@@ -786,16 +797,14 @@ mod tests {
         let ident = create_test_identity();
         let class = CapClass::new(&ident, &class_export).unwrap();
 
-        let init_result = class.init(None).unwrap();
-        let result = init_result.await;
+        let init_result = class.init(None);
 
-        assert!(result.is_err());
+        assert!(init_result.is_err());
     }
 
     #[tokio::test]
     async fn test_cap_class_null_init() {
-        reset_counters();
-
+        reset_mock_counters();
         let exports = vec![create_mock_function_export("test", "func")];
         let class_export = create_mock_class_export(
             &exports,
@@ -810,7 +819,7 @@ mod tests {
         let init_result = class.init(None).unwrap();
         let state = init_result.await.unwrap();
 
-        assert_eq!(INIT_COUNTER.load(Ordering::SeqCst), 0);
+        assert_eq!(get_mock_counters().init, 0);
         assert!(state.ptr.is_null());
     }
 
@@ -820,8 +829,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_class_state_reset_sync_success() {
-        reset_counters();
-
+        reset_mock_counters();
         let state_ptr = Box::into_raw(Box::new(MockState { value: 42 })) as *mut c_void;
         let mut state = ClassState {
             ident: create_test_identity(),
@@ -834,14 +842,13 @@ mod tests {
         let result = reset_result.await;
 
         assert!(result.is_ok());
-        assert_eq!(RESET_COUNTER.load(Ordering::SeqCst), 1);
+        assert_eq!(get_mock_counters().reset, 1);
         assert_eq!(unsafe { (*(state.ptr as *const MockState)).value }, 0);
     }
 
     #[tokio::test]
     async fn test_class_state_reset_sync_error() {
-        reset_counters();
-
+        reset_mock_counters();
         let state_ptr = Box::into_raw(Box::new(MockState { value: 42 })) as *mut c_void;
         let mut state = ClassState {
             ident: create_test_identity(),
@@ -858,8 +865,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_class_state_reset_null() {
-        reset_counters();
-
+        reset_mock_counters();
         let state_ptr = Box::into_raw(Box::new(MockState { value: 42 })) as *mut c_void;
         let mut state = ClassState {
             ident: create_test_identity(),
@@ -872,13 +878,12 @@ mod tests {
         let result = reset_result.await;
 
         assert!(result.is_ok());
-        assert_eq!(RESET_COUNTER.load(Ordering::SeqCst), 0);
+        assert_eq!(get_mock_counters().reset, 0);
     }
 
     #[test]
     fn test_class_state_drop() {
-        reset_counters();
-
+        reset_mock_counters();
         let state_ptr = Box::into_raw(Box::new(MockState { value: 42 })) as *mut c_void;
         {
             let _state = ClassState {
@@ -890,13 +895,12 @@ mod tests {
             // State dropped here
         }
 
-        assert_eq!(DROP_COUNTER.load(Ordering::SeqCst), 1);
+        assert_eq!(get_mock_counters().drop, 1);
     }
 
     #[test]
     fn test_class_state_drop_with_null_ptr() {
-        reset_counters();
-
+        reset_mock_counters();
         {
             let _state = ClassState {
                 ident: create_test_identity(),
@@ -907,14 +911,12 @@ mod tests {
             // State dropped here
         }
 
-        // Drop should be called but handle null pointer gracefully
-        assert_eq!(DROP_COUNTER.load(Ordering::SeqCst), 1);
+        assert_eq!(get_mock_counters().drop, 0);
     }
 
     #[test]
     fn test_class_state_drop_with_null_fn() {
-        reset_counters();
-
+        reset_mock_counters();
         let state_ptr = Box::into_raw(Box::new(MockState { value: 42 })) as *mut c_void;
         {
             let _state = ClassState {
@@ -926,8 +928,7 @@ mod tests {
             // State dropped here
         }
 
-        // No drop function, but shouldn't crash
-        assert_eq!(DROP_COUNTER.load(Ordering::SeqCst), 0);
+        assert_eq!(get_mock_counters().drop, 0);
         // Manual cleanup to prevent leak in test
         unsafe { drop(Box::from_raw(state_ptr as *mut MockState)) };
     }
@@ -938,8 +939,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_capability_init_sync_polling() {
-        reset_counters();
-
+        reset_mock_counters();
         let state_ptr = Box::into_raw(Box::new(MockState { value: 99 })) as *mut c_void;
         let init = CapabilityInit::Sync {
             ident: create_test_identity(),
@@ -957,8 +957,7 @@ mod tests {
     #[tokio::test]
     #[should_panic(expected = "Double await!")]
     async fn test_capability_init_sync_double_poll_panics() {
-        reset_counters();
-
+        reset_mock_counters();
         let state_ptr = Box::into_raw(Box::new(MockState { value: 99 })) as *mut c_void;
         let mut init = CapabilityInit::Sync {
             ident: create_test_identity(),
@@ -985,8 +984,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_capability_init_null() {
-        reset_counters();
-
+        reset_mock_counters();
         let init = CapabilityInit::Null(create_test_identity());
         let state = init.await.unwrap();
 
@@ -999,8 +997,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_capability_reset_sync_or_null_success() {
-        reset_counters();
-
+        reset_mock_counters();
         let reset = CapabilityReset::SyncOrNull(create_test_identity(), Some(Ok(())));
         let result = reset.await;
 
@@ -1009,8 +1006,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_capability_reset_sync_or_null_error() {
-        reset_counters();
-
+        reset_mock_counters();
         let error = PyroductError::from_infrastructure("Test error");
         let reset = CapabilityReset::SyncOrNull(create_test_identity(), Some(Err(error)));
         let result = reset.await;
@@ -1020,8 +1016,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_capability_reset_sync_or_null_double_poll() {
-        reset_counters();
-
+        reset_mock_counters();
         let mut reset = CapabilityReset::SyncOrNull(create_test_identity(), Some(Ok(())));
 
         use std::future::Future;
@@ -1053,8 +1048,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_states_independent_lifecycle() {
-        reset_counters();
-
+        reset_mock_counters();
+        
         let state1_ptr = Box::into_raw(Box::new(MockState { value: 1 })) as *mut c_void;
         let state2_ptr = Box::into_raw(Box::new(MockState { value: 2 })) as *mut c_void;
 
@@ -1080,18 +1075,19 @@ mod tests {
         assert_eq!(unsafe { (*(state1.ptr as *const MockState)).value }, 1);
         // State2 should be reset
         assert_eq!(unsafe { (*(state2.ptr as *const MockState)).value }, 0);
+        assert_eq!(get_mock_counters().reset, 1);
 
         drop(state1);
-        assert_eq!(DROP_COUNTER.load(Ordering::SeqCst), 1);
+        assert_eq!(get_mock_counters().drop, 1);
 
         drop(state2);
-        assert_eq!(DROP_COUNTER.load(Ordering::SeqCst), 2);
+        assert_eq!(get_mock_counters().drop, 2);
     }
 
     #[tokio::test]
     async fn test_cap_class_init_called_multiple_times() {
-        reset_counters();
-
+        reset_mock_counters();
+        
         let exports = vec![create_mock_function_export("test", "func")];
         let class_export = create_mock_class_export(
             &exports,
@@ -1110,7 +1106,7 @@ mod tests {
         let init2 = class.init(None).unwrap();
         let state2 = init2.await.unwrap();
 
-        assert_eq!(INIT_COUNTER.load(Ordering::SeqCst), 2);
+        assert_eq!(get_mock_counters().init, 2);
         assert_ne!(state1.ptr, state2.ptr); // Different instances
     }
 }

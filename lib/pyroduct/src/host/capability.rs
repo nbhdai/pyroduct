@@ -77,8 +77,8 @@ impl Capability {
         self.class.init(config)
     }
 
-    pub fn link(&self, linker: &mut Linker<HarnessState>) -> PyroductResult<()> {
-        self.class.link(linker, self.span_id)?;
+    pub fn link(&self, linker: &mut Linker<HarnessState>, cap_index: usize,) -> PyroductResult<()> {
+        self.class.link(linker, self.span_id, cap_index)?;
         Ok(())
     }
 }
@@ -122,12 +122,12 @@ impl Capabilities {
         names: impl Iterator<Item = &'a str>,
         linker: &mut Linker<HarnessState>,
     ) -> PyroductResult<()> {
-        for name in names {
+        for (cap_index, name) in names.enumerate() {
             let cap = self
                 .capabilities
                 .get(name)
                 .ok_or(PyroductError::missing_cap(name))?;
-            cap.link(linker)?;
+            cap.link(linker, cap_index)?;
         }
         Ok(())
     }
@@ -140,7 +140,7 @@ impl Capabilities {
         let mut inits = Vec::new();
         let mut capabilities = Vec::new();
 
-        for config in configs {
+        for (_cap_index, config) in configs.iter().enumerate() {
             let cap = self
                 .capabilities
                 .get(&config.name)

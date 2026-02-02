@@ -49,18 +49,22 @@ use crate::{
         panic::{clear_last_panic, recover_panic_info, register_ffi_panic_hook},
     },
 };
+
 #[unsafe(no_mangle)]
 pub extern "C" fn alloc(size: usize) -> *mut u8 {
-    let mut buf = Vec::with_capacity(size);
-    let ptr = buf.as_mut_ptr();
+    // Calculate capacity in u128 units (16 bytes)
+    let count = (size + 15) / 16;
+    let mut buf: Vec<u128> = Vec::with_capacity(count);
+    let ptr = buf.as_mut_ptr() as *mut u8;
     mem::forget(buf);
     ptr
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn dealloc(ptr: *mut u8, size: usize) {
+    let count = (size + 15) / 16;
     unsafe {
-        let _ = Vec::from_raw_parts(ptr, 0, size);
+        let _ = Vec::from_raw_parts(ptr as *mut u128, 0, count);
     }
 }
 
