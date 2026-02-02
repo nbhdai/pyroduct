@@ -1,16 +1,13 @@
 target
 .DS_Store
 .direnv
-capabilities/**/Cargo.lock
+capabilities/**/interface
+capabilities/**/Cargo.*
 capabilities/**/*.json
-modules/**/Cargo.lock
-tests/**/*.json
+modules/**/Cargo.*
+tests/**/interface
 tests/**/Cargo.*
 tests/cap*/interface
 
-*.dylib
-*.interface
-*.cargo
-*.wasm
-*.module
+artifacts
 result

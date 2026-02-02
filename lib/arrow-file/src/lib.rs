@@ -1,5 +1,6 @@
 use arrow::array::RecordBatch;
 use arrow::buffer::Buffer;
+use arrow::datatypes::{Field, Schema};
 use arrow::error::ArrowError;
 use arrow::ipc::{
     convert::fb_to_schema,
@@ -13,6 +14,7 @@ use memmap2::Mmap;
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
 use sha2::{Digest, Sha256};
+use tempfile::NamedTempFile;
 use std::fs::File;
 use std::io::{BufReader, Cursor, Seek, SeekFrom, Write};
 use std::ops::Deref;
@@ -30,6 +32,9 @@ use pyroduct_error::{PyroductError, Reportable, Retryable};
 
 #[derive(Debug, Error)]
 pub enum DataError {
+    #[error("Empty")]
+    Empty,
+
     #[error("I/O operation failed: {0}")]
     Io(#[from] std::io::Error),
 
@@ -393,17 +398,24 @@ impl ArrowIpc {
 // -----------------------------------------------------------------------------
 
 #[instrument(skip(data), fields(filename = %filename, size = data.len()))]
-pub async fn parse_data_to_batch(data: Vec<u8>, filename: &str) -> Result<ArrowIpc, DataError> {
+pub async fn parse_data_to_batch(data: Vec<u8>, filename: &str) -> Result<Vec<ArrowIpc>, DataError> {
     let filename = filename.to_owned();
     let result = spawn_blocking(move || inter_parse_data_to_batch(data, &filename)).await;
 
     match result {
-        Ok(inner) => inner,
+        Ok(Ok(inner)) => {
+            if inner.is_empty() || inner.iter().all(|b| b.num_rows() == 0) {
+                Err(DataError::Empty)
+            } else {
+                Ok(inner)
+            }
+        },
+        Ok(error) => error,
         Err(e) => Err(DataError::TaskJoin(e.to_string())),
     }
 }
 
-fn inter_parse_data_to_batch(data: Vec<u8>, filename: &str) -> Result<ArrowIpc, DataError> {
+fn inter_parse_data_to_batch(data: Vec<u8>, filename: &str) -> Result<Vec<ArrowIpc>, DataError> {
     let extension = Path::new(filename)
         .extension()
         .and_then(|s| s.to_str())
@@ -413,26 +425,55 @@ fn inter_parse_data_to_batch(data: Vec<u8>, filename: &str) -> Result<ArrowIpc, 
     match extension.as_str() {
         "ipc" | "arrow" => {
             info!("File detected as IPC/Arrow.");
-            ArrowIpc::try_from(data)
+            Ok(vec![ArrowIpc::try_from(data)?])
         }
         "csv" => {
             debug!("Parsing CSV...");
-            todo!("CSV Parsing implementation")
+            let mut temp_file = NamedTempFile::new()?;
+            temp_file.write_all(&data)?;
+            let path_str = temp_file.path().to_str().ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid Path")
+            })?;
+
+            let schema = csv::reader::infer_schema_from_files(
+                &[path_str.to_string()],
+                b',',
+                Some(100),
+                true,
+            )?;
+            let fields = schema
+                .fields()
+                .iter()
+                .map(|f| {
+                    Arc::new(Field::new(
+                        f.name().trim().to_owned(),
+                        f.data_type().to_owned(),
+                        true,
+                    ))
+                })
+                .collect::<Vec<_>>();
+            let schema = Schema::new(fields);
+
+            let file = File::open(temp_file.path())?;
+            let reader = csv::ReaderBuilder::new(schema.into())
+                .with_header(true)
+                .with_delimiter(b',')
+                .build(file)?;
+
+            let batches = reader.collect::<Result<Vec<_>, _>>()?;
+            batches.into_iter().map(ArrowIpc::from_batch).collect()
         }
         "json" => {
             debug!("Parsing JSON...");
             let mut cursor = Cursor::new(data);
             let (schema, _) = arrow_json::reader::infer_json_schema(BufReader::new(&mut cursor), None)?;
             cursor.seek(SeekFrom::Start(0))?;
-            let mut reader =
+            let reader =
                 arrow_json::ReaderBuilder::new(schema.into()).build(BufReader::new(cursor))?;
 
-            let first = reader.next().transpose()?;
-            if let Some(batch) = first {
-                ArrowIpc::from_batch(batch)
-            } else {
-                Err(DataError::InvalidContent("No JSON data found".into()))
-            }
+            reader.map(|r| {
+                ArrowIpc::from_batch(r?)
+            }).collect()
         }
         _ => Err(DataError::UnsupportedType(extension)),
     }
@@ -552,7 +593,8 @@ mod tests {
 
         let arrow_ipc = parse_data_to_batch(bytes, "test.csv")
             .await
-            .expect("Parsing failed");
+            .expect("Parsing failed")
+            .pop().unwrap();
 
         // Even though we loaded CSV, we requested the struct enforce IPC backing
         // So as_slice should return valid Arrow IPC bytes, not the CSV string.
@@ -576,7 +618,7 @@ mod tests {
         let result = parse_data_to_batch(bytes, "data.csv").await;
         assert!(result.is_ok());
 
-        let arrow_ipc = result.unwrap();
+        let arrow_ipc = result.unwrap().pop().unwrap();
 
         // Check Deref works
         assert_eq!(arrow_ipc.num_rows(), 2);
@@ -601,7 +643,7 @@ mod tests {
         let result = parse_data_to_batch(bytes, "data.json").await;
         assert!(result.is_ok());
 
-        let arrow_ipc = result.unwrap();
+        let arrow_ipc = result.unwrap().pop().unwrap();
         assert_eq!(arrow_ipc.num_rows(), 2);
     }
 
@@ -615,7 +657,7 @@ mod tests {
         let result = parse_data_to_batch(bytes, "file.arrow").await;
         assert!(result.is_ok());
 
-        let arrow_ipc = result.unwrap();
+        let arrow_ipc = result.unwrap().pop().unwrap();
 
         // 3. Verify data integrity
         assert_eq!(arrow_ipc.num_rows(), 2);
@@ -626,7 +668,7 @@ mod tests {
         // 1. Start with in-memory CSV
         let csv_data = "input,target\nmemory,disk";
         let bytes = csv_data.as_bytes().to_vec();
-        let mut arrow_ipc = parse_data_to_batch(bytes, "data.csv").await.unwrap();
+        let mut arrow_ipc = parse_data_to_batch(bytes, "data.csv").await.unwrap().pop().unwrap();
 
         // 2. Memmap it to a temp file
         let temp_file = NamedTempFile::new().unwrap();
@@ -702,7 +744,7 @@ mod tests {
     async fn test_empty_json() {
         let bytes = b"".to_vec();
         let result = parse_data_to_batch(bytes, "data.json").await;
-        assert!(result.is_err()); // infer_json_schema usually fails on empty
+        assert!(result.is_err());
     }
 
     #[tokio::test]

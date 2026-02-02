@@ -142,7 +142,7 @@ fn package_capability(ctx: &ProjectContext, manifest: CapabilityManifest, cargo_
 
     // 3. Locate and Copy Artifact
     let target_dir = get_target_dir(ctx.root)?;
-    let lib_filename = format!("lib{}.{}", ctx.normalized_name(), dylib_extension());
+    let lib_filename = format!("lib.{}", dylib_extension());
     let built_lib = target_dir.join("release").join(&lib_filename);
 
     if !built_lib.exists() {
@@ -183,9 +183,8 @@ fn package_capability(ctx: &ProjectContext, manifest: CapabilityManifest, cargo_
 // ============================================================
 
 fn package_single(path: &Path, output: Option<&Path>, cargo_args: &[String]) -> Result<()> {
-    let output_dir = output.unwrap_or(path);
-    fs::create_dir_all(output_dir)?;
-
+    let output_dir = output.map(|p| p.to_path_buf()).unwrap_or(path.join("artifacts"));
+    fs::create_dir_all(&output_dir)?;
     let cap_toml = path.join("Capability.toml");
     let mod_toml = path.join("Module.toml");
 
@@ -196,12 +195,13 @@ fn package_single(path: &Path, output: Option<&Path>, cargo_args: &[String]) -> 
     if cap_toml.exists() {
         let manifest: CapabilityManifest = toml::from_str(&fs::read_to_string(&cap_toml)?)?;
         let pkg = manifest.capability.as_ref().context("Package section missing in Capability.toml")?;
-        let ctx = ProjectContext::new(path, output_dir, &pkg.name, pkg.version());
+
+        let ctx = ProjectContext::new(path, output_dir.as_path(), &pkg.name, pkg.version());
         package_capability(&ctx, manifest, cargo_args)
     } else if mod_toml.exists() {
         let manifest: ModuleManifest = toml::from_str(&fs::read_to_string(&mod_toml)?)?;
         let pkg = manifest.module.as_ref().context("Module section missing in Module.toml")?;
-        let ctx = ProjectContext::new(path, output_dir, &pkg.name, pkg.version());
+        let ctx = ProjectContext::new(path, output_dir.as_path(), &pkg.name, pkg.version());
         package_module(&ctx, manifest, cargo_args)
     } else {
         bail!("Neither Capability.toml nor Module.toml found in {:?}", path)

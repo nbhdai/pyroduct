@@ -55,24 +55,27 @@ pub fn trusted_schema(row: &ArrowRow<'_>) -> Result<Schema, SchemaInferenceError
 /// 2. Inferring the data type for each field by observing all values for that key.
 /// 3. Coercing mixed types (e.g., Int32 and Float64 -> Float64) to a common compatible type.
 /// 4. Marking fields as nullable if they are missing from some rows or contain Null values.
-pub fn infer_schema(rows: &[ArrowRow<'_>]) -> Result<Schema, SchemaInferenceError> {
-    // We use a BTreeMap to keep fields sorted by name for deterministic schema output
+pub fn infer_schema(rows: &[ArrowRow<'_>]) -> Result<Arc<Schema>, SchemaInferenceError> {
     let mut field_map: BTreeMap<String, FieldAccumulator> = BTreeMap::new();
 
-    // 1. Scan all rows to gather fields and types
-    for row in rows {
+    for (i, row) in rows.iter().enumerate() {
         let mut row_keys: HashSet<&str> = HashSet::new();
 
         for (key, value) in row.iter() {
             row_keys.insert(key);
+            let is_new_field = !field_map.contains_key(key);
+            
             let accum = field_map
                 .entry(key.to_string())
                 .or_insert_with(FieldAccumulator::new);
             
+            if is_new_field && i > 0 {
+                accum.nullable = true;
+            }
+
             accum.observe_value(key, value)?;
         }
 
-        // 2. Mark fields missing in this row as nullable
         for (key, accum) in field_map.iter_mut() {
             if !row_keys.contains(key.as_str()) {
                 accum.nullable = true;
@@ -80,13 +83,12 @@ pub fn infer_schema(rows: &[ArrowRow<'_>]) -> Result<Schema, SchemaInferenceErro
         }
     }
 
-    // 3. Build final Fields
     let mut fields = Vec::with_capacity(field_map.len());
     for (name, accum) in field_map {
         fields.push(accum.build_field(&name)?);
     }
 
-    Ok(Schema::new(fields))
+    Ok(Arc::new(Schema::new(fields)))
 }
 
 // -----------------------------------------------------------------------------

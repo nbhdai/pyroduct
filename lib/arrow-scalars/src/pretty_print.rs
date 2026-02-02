@@ -1,7 +1,7 @@
 // arrow_row_display.rs
 
 use crate::{ArrowRow, ArrowValue, PrimitiveValueList};
-use std::fmt::{self, Write};
+use std::fmt;
 
 /// Controls how the ArrowRow is formatted for display.
 #[derive(Debug, Clone, Copy, PartialEq)]

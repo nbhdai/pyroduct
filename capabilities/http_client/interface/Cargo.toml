@@ -1,8 +1,0 @@
-[package]
-name = "http_client"
-version = "0.1.0"
-edition = "2024"
-authors = ["nbhdai"]
-
-[dependencies.pyroduct]
-path = "../../../lib/pyroduct"

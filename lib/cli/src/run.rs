@@ -5,6 +5,7 @@ use fs_err as fs;
 use anyhow::{Result, Context, anyhow};
 use clap::ValueEnum;
 
+use pyroduct::arrow_scalars::schema::infer_schema;
 use pyroduct::{
     arrow_scalars::{PreBatch, ArrowRow},
     host::{Capabilities, PipelineConfig, PipelineDef, Pipeline, PipelinePool},
@@ -102,10 +103,10 @@ pub async fn run_batch(
     let filename = input_file.file_name().unwrap_or_default().to_string_lossy();
     let bytes = fs::read(input_file).context("Failed to read input file")?;
     
-    let input_batch = parse_data_to_batch(bytes, &filename).await?.to_batch();
+    let input_batch = parse_data_to_batch(bytes, &filename).await?;
 
-    tracing::info!("Processing {} rows...", input_batch.num_rows());
-    let (successes, failures) = pool.process_batch(&input_batch).await?;
+    tracing::info!("Processing {} rows...", input_batch[0].num_rows());
+    let (successes, failures) = pool.process_batch(&input_batch[0].clone().to_batch()).await?;
 
     if !failures.is_empty() {
         if !output_dir.exists() { fs::create_dir_all(output_dir)?; }
@@ -129,7 +130,8 @@ pub async fn run_batch(
 
     if !successes.is_empty() {
         if !output_dir.exists() { fs::create_dir_all(output_dir)?; }
-        let mut prebatch = PreBatch::new(input_batch.schema());
+        let schema = infer_schema(&successes)?;
+        let mut prebatch = PreBatch::new(schema);
         for row in successes {
             prebatch.push(row).map_err(|e| anyhow!("Row reconstruction failed: {:?}", e))?;
         }
