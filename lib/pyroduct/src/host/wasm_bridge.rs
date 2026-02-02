@@ -1,4 +1,7 @@
-use std::{ffi::c_void, sync::{Arc, Mutex}};
+use std::{
+    ffi::c_void,
+    sync::{Arc, Mutex},
+};
 
 use futures::future::try_join_all;
 use tracing::error;

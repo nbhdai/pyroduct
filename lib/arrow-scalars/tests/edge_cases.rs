@@ -299,7 +299,7 @@ fn test_special_field_names() {
     struct SpecialNames {
         r#type: i32,      // Reserved keyword
         _underscore: i32, // Leading underscore
-        camelCase: i32, // Mixed case
+        camelCase: i32,   // Mixed case
     }
 
     let data = SpecialNames {

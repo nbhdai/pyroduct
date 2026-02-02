@@ -4,9 +4,9 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub mod capability;
 #[cfg(not(target_arch = "wasm32"))]
-pub mod host;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod capability_host;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod host;
 
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_module;
@@ -18,12 +18,14 @@ pub mod errors;
 
 use std::path::Display;
 
+pub use arrow_derive::{
+    DeepRefPyroduct as DeepRef, FromRowPyroduct as FromRow, ToRowPyroduct as ToRow,
+};
 pub use arrow_scalars::{deep_ref::DeepRef, from_row::FromRow, to_row::ToRow};
-pub use arrow_derive::{DeepRefPyroduct as DeepRef, FromRowPyroduct as FromRow, ToRowPyroduct as ToRow};
 
-pub use serde;
-pub use rkyv;
 pub use arrow_scalars;
+pub use rkyv;
+pub use serde;
 pub use tracing;
 
 /// Module Derive Macro
@@ -95,7 +97,6 @@ pub use tracing;
 /// ```
 pub use module_derive::module;
 
-
 /// Marks a struct as configuration for a capability.
 ///
 /// Adds serde serialization/deserialization derives so the config can be passed
@@ -125,7 +126,6 @@ pub use capability_derive::config;
 /// ```
 #[cfg(not(target_arch = "wasm32"))]
 pub use capability_derive::interface_item;
-
 
 /// Defines a capability implementation with lifecycle methods and callable functions.
 ///

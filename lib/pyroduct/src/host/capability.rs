@@ -53,8 +53,13 @@ impl Capability {
         let span_id = all_spans.len();
         all_spans.push(capability_span);
 
-        let manifest_fn: Symbol<CapabilityRegisterFn> = unsafe { library.get(b"capability_manifest") }
-            .map_err(|e| PyroductError::from_capability_loading(&ident, format!("Unable to get the manifest symbol: {e}")))?;
+        let manifest_fn: Symbol<CapabilityRegisterFn> =
+            unsafe { library.get(b"capability_manifest") }.map_err(|e| {
+                PyroductError::from_capability_loading(
+                    &ident,
+                    format!("Unable to get the manifest symbol: {e}"),
+                )
+            })?;
 
         let export = unsafe { manifest_fn(span_id as u64, log_callback) };
 
@@ -67,7 +72,10 @@ impl Capability {
         })
     }
 
-    pub fn init(&self, config: Option<&serde_json::Value>) -> PyroductResult<CapabilityInit<'static>> {
+    pub fn init(
+        &self,
+        config: Option<&serde_json::Value>,
+    ) -> PyroductResult<CapabilityInit<'static>> {
         self.class.init(config)
     }
 
@@ -76,8 +84,6 @@ impl Capability {
         Ok(())
     }
 }
-
-
 
 #[derive(Clone)]
 pub struct Capabilities {
@@ -97,9 +103,14 @@ impl Capabilities {
         Ok(())
     }
 
-    pub fn load_many<'a>(&mut self, names: impl Iterator<Item = &'a str>, paths: impl Iterator<Item = &'a Path>) -> PyroductResult<()> {
-        let capabilities = names.zip(paths)
-            .map(|(n,p)| {
+    pub fn load_many<'a>(
+        &mut self,
+        names: impl Iterator<Item = &'a str>,
+        paths: impl Iterator<Item = &'a Path>,
+    ) -> PyroductResult<()> {
+        let capabilities = names
+            .zip(paths)
+            .map(|(n, p)| {
                 let cap = unsafe { Arc::new(Capability::load(p)?) };
                 Ok((n.to_string(), cap))
             })
@@ -108,9 +119,16 @@ impl Capabilities {
         Ok(())
     }
 
-    pub fn link<'a>(&self, names: impl Iterator<Item = &'a str>, linker: &mut Linker<HarnessState>) -> PyroductResult<()> {
+    pub fn link<'a>(
+        &self,
+        names: impl Iterator<Item = &'a str>,
+        linker: &mut Linker<HarnessState>,
+    ) -> PyroductResult<()> {
         for name in names {
-            let cap = self.capabilities.get(name).ok_or(PyroductError::missing_cap(name))?;
+            let cap = self
+                .capabilities
+                .get(name)
+                .ok_or(PyroductError::missing_cap(name))?;
             cap.link(linker)?;
         }
         Ok(())
@@ -123,13 +141,16 @@ impl Capabilities {
     ) -> PyroductResult<HarnessState> {
         let mut inits = Vec::new();
         let mut capabilities = Vec::new();
-        
+
         for config in configs {
-            let cap = self.capabilities.get(&config.name).ok_or(PyroductError::missing_cap(&config.name))?;
+            let cap = self
+                .capabilities
+                .get(&config.name)
+                .ok_or(PyroductError::missing_cap(&config.name))?;
             inits.push(cap.init(config.config.as_ref())?);
             capabilities.push((config.name.clone(), cap.clone()));
         }
-        
+
         let states = try_join_all(inits).await?;
         Ok(HarnessState {
             module: module.clone(),

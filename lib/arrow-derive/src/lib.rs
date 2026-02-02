@@ -29,8 +29,6 @@ pub fn derive_to_arrow(input: TokenStream) -> TokenStream {
     to_row::derive_with_path(input, import_path())
 }
 
-
-
 #[proc_macro_derive(FromRowPyroduct)]
 pub fn derive_from_row_pyroduct(input: TokenStream) -> TokenStream {
     from_row::derive_with_path(input, parse_quote!(::pyroduct::arrow_scalars))

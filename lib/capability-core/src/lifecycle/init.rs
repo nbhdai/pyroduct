@@ -2,9 +2,7 @@
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{
-    Error, FnArg, GenericArgument, Ident, ImplItemFn, Pat, PathArguments, ReturnType, Type,
-};
+use syn::{Error, FnArg, GenericArgument, Ident, ImplItemFn, Pat, PathArguments, ReturnType, Type};
 
 use heck::AsSnakeCase;
 
@@ -14,7 +12,7 @@ pub struct InitFn {
     pub config_type: Option<Type>,
     pub body: syn::Block,
     pub attrs: Vec<syn::Attribute>,
-    pub arg_name: Option<Ident>, 
+    pub arg_name: Option<Ident>,
 }
 
 impl InitFn {
@@ -24,7 +22,10 @@ impl InitFn {
 
         // 1. Validate name
         if sig.ident != "new" {
-            return Err(Error::new_spanned(&sig.ident, "Expected function named 'new'"));
+            return Err(Error::new_spanned(
+                &sig.ident,
+                "Expected function named 'new'",
+            ));
         }
 
         // 2. Validate return type is Self
@@ -32,10 +33,7 @@ impl InitFn {
             ReturnType::Type(_, ty) => {
                 let ty_str = quote!(#ty).to_string().replace(" ", "");
                 if ty_str != "Self" {
-                    return Err(Error::new_spanned(
-                        &sig.output,
-                        "fn new must return Self",
-                    ));
+                    return Err(Error::new_spanned(&sig.output, "fn new must return Self"));
                 }
             }
             ReturnType::Default => {
@@ -60,8 +58,11 @@ impl InitFn {
                 if sig.inputs.len() != 1 {
                     return Err(Error::new_spanned(
                         &sig.inputs,
-                        format!("Macro attribute defined 'config = {}', so fn new must take exactly one argument: 'arg: Option<{}>'", 
-                        quote!(#expected_ty), quote!(#expected_ty))
+                        format!(
+                            "Macro attribute defined 'config = {}', so fn new must take exactly one argument: 'arg: Option<{}>'",
+                            quote!(#expected_ty),
+                            quote!(#expected_ty)
+                        ),
                     ));
                 }
 
@@ -71,7 +72,10 @@ impl InitFn {
                     if let Pat::Ident(pi) = &*pt.pat {
                         user_arg_name = Some(pi.ident.clone());
                     } else {
-                        return Err(Error::new_spanned(&pt.pat, "Expected simple identifier for argument"));
+                        return Err(Error::new_spanned(
+                            &pt.pat,
+                            "Expected simple identifier for argument",
+                        ));
                     }
 
                     // Check type is Option<T>
@@ -79,17 +83,23 @@ impl InitFn {
                         if let Some(segment) = tp.path.segments.last() {
                             if segment.ident == "Option" {
                                 if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                                    if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
+                                    if let Some(GenericArgument::Type(inner_ty)) = args.args.first()
+                                    {
                                         // Compare inner type with expected type
-                                        let inner_str = quote!(#inner_ty).to_string().replace(" ", "");
-                                        let expected_str = quote!(#expected_ty).to_string().replace(" ", "");
+                                        let inner_str =
+                                            quote!(#inner_ty).to_string().replace(" ", "");
+                                        let expected_str =
+                                            quote!(#expected_ty).to_string().replace(" ", "");
 
                                         if inner_str == expected_str {
                                             Some(())
                                         } else {
                                             return Err(Error::new_spanned(
                                                 &pt.ty,
-                                                format!("Type mismatch. Expected 'Option<{}>' based on macro attribute, found 'Option<{}>'", expected_str, inner_str)
+                                                format!(
+                                                    "Type mismatch. Expected 'Option<{}>' based on macro attribute, found 'Option<{}>'",
+                                                    expected_str, inner_str
+                                                ),
                                             ));
                                         }
                                     } else {
@@ -109,9 +119,12 @@ impl InitFn {
                     };
 
                     if valid_option.is_none() {
-                         return Err(Error::new_spanned(
+                        return Err(Error::new_spanned(
                             &pt.ty,
-                            format!("Config parameter must be 'Option<{}>'", quote!(#expected_ty)),
+                            format!(
+                                "Config parameter must be 'Option<{}>'",
+                                quote!(#expected_ty)
+                            ),
                         ));
                     }
                 }
@@ -154,9 +167,9 @@ impl InitFn {
 
         if self.is_async {
             let async_closure = if self.config_type.is_some() {
-                 quote!(|config| async move { #server::new(config).await })
+                quote!(|config| async move { #server::new(config).await })
             } else {
-                 quote!(|_| async move { #server::new().await })
+                quote!(|_| async move { #server::new().await })
             };
 
             quote! {
@@ -219,7 +232,11 @@ impl InitFn {
     pub fn generate_impl_method(&self) -> TokenStream {
         let attrs = &self.attrs;
         let body = &self.body;
-        let async_kw = if self.is_async { quote!(async) } else { quote!() };
+        let async_kw = if self.is_async {
+            quote!(async)
+        } else {
+            quote!()
+        };
 
         let params = if let Some(config) = &self.config_type {
             // Use the user's variable name, fallback to 'config' if something went weird
@@ -258,7 +275,7 @@ mod tests {
 
         // 3. Parse with validation
         let init_fn = InitFn::parse(Some(config_type), &item).expect("Parse failed");
-        
+
         let server_ident = format_ident!("GreeterServer");
         let result = init_fn.generate_ffi(&server_ident);
 
@@ -323,12 +340,13 @@ mod tests {
     fn test_arbitrary_arg_name() {
         let config_type: Type = parse_quote!(MyConfig);
         // User uses 'settings' instead of 'config'
-        let item: ImplItemFn = parse_quote! { 
-            fn new(settings: Option<MyConfig>) -> Self { Self } 
+        let item: ImplItemFn = parse_quote! {
+            fn new(settings: Option<MyConfig>) -> Self { Self }
         };
-        
-        let init_fn = InitFn::parse(Some(config_type), &item).expect("Should allow arbitrary names");
-        
+
+        let init_fn =
+            InitFn::parse(Some(config_type), &item).expect("Should allow arbitrary names");
+
         // Check if generate_impl_method preserves the name 'settings'
         let impl_code = init_fn.generate_impl_method();
         let impl_str = impl_code.to_string();
@@ -338,7 +356,7 @@ mod tests {
     #[test]
     fn test_validation_errors() {
         let config_type: Type = parse_quote!(MyConfig);
-        
+
         // Case: Not Option<T>
         let item: ImplItemFn = parse_quote! { fn new(c: MyConfig) -> Self { Self } };
         assert!(InitFn::parse(Some(config_type.clone()), &item).is_err());

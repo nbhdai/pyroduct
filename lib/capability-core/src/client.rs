@@ -47,7 +47,7 @@ impl CapInterfaceItem {
         }
 
         // 4. Clean up the Marker Attribute
-        // We always remove the #[client] / #[pyroduct::client] attribute so it doesn't 
+        // We always remove the #[client] / #[pyroduct::client] attribute so it doesn't
         // trigger again in the generated code and cause conflicts.
         if let Some(idx) = client_attr_index {
             input.attrs.remove(idx);
@@ -106,7 +106,7 @@ fn check_manual_rkyv(attrs: &[Attribute]) -> Result<bool> {
         if attr.path().is_ident("rkyv") {
             return Ok(true);
         }
-        
+
         // Check for #[derive(...)] containing Archive, etc.
         if attr.path().is_ident("derive") {
             let mut found_rkyv_trait = false;
@@ -128,8 +128,10 @@ fn check_manual_rkyv(attrs: &[Attribute]) -> Result<bool> {
 }
 
 fn is_client_attr(attr: &Attribute) -> bool {
-    attr.path().is_ident("interface_item") || 
-    (attr.path().segments.len() == 2 && attr.path().segments[0].ident == "pyroduct" && attr.path().segments[1].ident == "interface_item")
+    attr.path().is_ident("interface_item")
+        || (attr.path().segments.len() == 2
+            && attr.path().segments[0].ident == "pyroduct"
+            && attr.path().segments[1].ident == "interface_item")
 }
 
 #[cfg(test)]

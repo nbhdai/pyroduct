@@ -39,7 +39,7 @@ pub fn trusted_schema(row: &ArrowRow<'_>) -> Result<Schema, SchemaInferenceError
         .iter()
         .map(|(key, value)| {
             let dt = get_logical_type(value);
-            // In a trusted schema from a single row, we usually assume nullable=true 
+            // In a trusted schema from a single row, we usually assume nullable=true
             // to be safe for future rows, unless strictly specified otherwise.
             Field::new(key, dt, true)
         })
@@ -64,11 +64,11 @@ pub fn infer_schema(rows: &[ArrowRow<'_>]) -> Result<Arc<Schema>, SchemaInferenc
         for (key, value) in row.iter() {
             row_keys.insert(key);
             let is_new_field = !field_map.contains_key(key);
-            
+
             let accum = field_map
                 .entry(key.to_string())
                 .or_insert_with(FieldAccumulator::new);
-            
+
             if is_new_field && i > 0 {
                 accum.nullable = true;
             }
@@ -108,7 +108,11 @@ impl FieldAccumulator {
         }
     }
 
-    fn observe_value(&mut self, field_name: &str, value: &ArrowValue<'_>) -> Result<(), SchemaInferenceError> {
+    fn observe_value(
+        &mut self,
+        field_name: &str,
+        value: &ArrowValue<'_>,
+    ) -> Result<(), SchemaInferenceError> {
         if matches!(value, ArrowValue::Null) {
             self.nullable = true;
             return Ok(());
@@ -141,7 +145,7 @@ impl FieldAccumulator {
         // If we only saw nulls, we can't safely infer a type other than Null.
         // Some systems default to Utf8 here, but Arrow expects explicit types.
         let dt = self.data_type.unwrap_or(DataType::Null);
-        
+
         Ok(Field::new(name, dt, self.nullable))
     }
 }
@@ -164,30 +168,54 @@ fn get_logical_type(value: &ArrowValue<'_>) -> DataType {
         ArrowValue::F32(_) => DataType::Float32,
         ArrowValue::F64(_) => DataType::Float64,
         ArrowValue::Str(_) => DataType::Utf8, // Default to Utf8
-        ArrowValue::IntervalDayTime { .. } => DataType::Interval(arrow_schema::IntervalUnit::DayTime),
-        
-        ArrowValue::PrimitiveList(pl) => {
-             match pl {
-                 PrimitiveValueList::Bool(_) => DataType::List(Arc::new(Field::new("item", DataType::Boolean, true))),
-                 PrimitiveValueList::U8(_) => DataType::List(Arc::new(Field::new("item", DataType::UInt8, true))),
-                 PrimitiveValueList::U16(_) => DataType::List(Arc::new(Field::new("item", DataType::UInt16, true))),
-                 PrimitiveValueList::U32(_) => DataType::List(Arc::new(Field::new("item", DataType::UInt32, true))),
-                 PrimitiveValueList::U64(_) => DataType::List(Arc::new(Field::new("item", DataType::UInt64, true))),
-                 PrimitiveValueList::I8(_) => DataType::List(Arc::new(Field::new("item", DataType::Int8, true))),
-                 PrimitiveValueList::I16(_) => DataType::List(Arc::new(Field::new("item", DataType::Int16, true))),
-                 PrimitiveValueList::I32(_) => DataType::List(Arc::new(Field::new("item", DataType::Int32, true))),
-                 PrimitiveValueList::I64(_) => DataType::List(Arc::new(Field::new("item", DataType::Int64, true))),
-                 PrimitiveValueList::F16(_) => DataType::List(Arc::new(Field::new("item", DataType::Float16, true))),
-                 PrimitiveValueList::F32(_) => DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
-                 PrimitiveValueList::F64(_) => DataType::List(Arc::new(Field::new("item", DataType::Float64, true))),
-             }
+        ArrowValue::IntervalDayTime { .. } => {
+            DataType::Interval(arrow_schema::IntervalUnit::DayTime)
         }
-        
+
+        ArrowValue::PrimitiveList(pl) => match pl {
+            PrimitiveValueList::Bool(_) => {
+                DataType::List(Arc::new(Field::new("item", DataType::Boolean, true)))
+            }
+            PrimitiveValueList::U8(_) => {
+                DataType::List(Arc::new(Field::new("item", DataType::UInt8, true)))
+            }
+            PrimitiveValueList::U16(_) => {
+                DataType::List(Arc::new(Field::new("item", DataType::UInt16, true)))
+            }
+            PrimitiveValueList::U32(_) => {
+                DataType::List(Arc::new(Field::new("item", DataType::UInt32, true)))
+            }
+            PrimitiveValueList::U64(_) => {
+                DataType::List(Arc::new(Field::new("item", DataType::UInt64, true)))
+            }
+            PrimitiveValueList::I8(_) => {
+                DataType::List(Arc::new(Field::new("item", DataType::Int8, true)))
+            }
+            PrimitiveValueList::I16(_) => {
+                DataType::List(Arc::new(Field::new("item", DataType::Int16, true)))
+            }
+            PrimitiveValueList::I32(_) => {
+                DataType::List(Arc::new(Field::new("item", DataType::Int32, true)))
+            }
+            PrimitiveValueList::I64(_) => {
+                DataType::List(Arc::new(Field::new("item", DataType::Int64, true)))
+            }
+            PrimitiveValueList::F16(_) => {
+                DataType::List(Arc::new(Field::new("item", DataType::Float16, true)))
+            }
+            PrimitiveValueList::F32(_) => {
+                DataType::List(Arc::new(Field::new("item", DataType::Float32, true)))
+            }
+            PrimitiveValueList::F64(_) => {
+                DataType::List(Arc::new(Field::new("item", DataType::Float64, true)))
+            }
+        },
+
         ArrowValue::List(items) => {
             // Best effort inference for generic lists:
             // Scan items to find a common supertype.
             let mut common_type = DataType::Null;
-            
+
             for item in items {
                 let item_type = get_logical_type(item);
                 if common_type == DataType::Null {
@@ -195,8 +223,8 @@ fn get_logical_type(value: &ArrowValue<'_>) -> DataType {
                 } else if item_type != DataType::Null {
                     if let Some(coerced) = coerce_types(&common_type, &item_type) {
                         common_type = coerced;
-                    } 
-                    // If coercion fails inside get_logical_type, we might default to Null 
+                    }
+                    // If coercion fails inside get_logical_type, we might default to Null
                     // or keep the previous type. For now, we assume best effort.
                 }
             }
@@ -204,22 +232,26 @@ fn get_logical_type(value: &ArrowValue<'_>) -> DataType {
         }
 
         ArrowValue::Group(row) => {
-            let fields: Vec<Field> = row.iter().map(|(k, v)| {
-                Field::new(k, get_logical_type(v), true)
-            }).collect();
+            let fields: Vec<Field> = row
+                .iter()
+                .map(|(k, v)| Field::new(k, get_logical_type(v), true))
+                .collect();
             DataType::Struct(fields.into())
         }
 
         ArrowValue::MapInternal(_) => DataType::Map(
             Arc::new(Field::new(
                 "entries",
-                DataType::Struct(vec![
-                    Arc::new(Field::new("key", DataType::Utf8, false)), 
-                    Arc::new(Field::new("value", DataType::Null, true))
-                ].into()),
-                false
+                DataType::Struct(
+                    vec![
+                        Arc::new(Field::new("key", DataType::Utf8, false)),
+                        Arc::new(Field::new("value", DataType::Null, true)),
+                    ]
+                    .into(),
+                ),
+                false,
             )),
-            false
+            false,
         ),
     }
 }
@@ -234,68 +266,110 @@ fn coerce_types(t1: &DataType, t2: &DataType) -> Option<DataType> {
     match (t1, t2) {
         // --- Numerics ---
         (DataType::Null, other) | (other, DataType::Null) => Some(other.clone()),
-        
+
         // Signed Integers
-        (DataType::Int8, DataType::Int16) | (DataType::Int16, DataType::Int8) => Some(DataType::Int16),
-        (DataType::Int8, DataType::Int32) | (DataType::Int32, DataType::Int8) => Some(DataType::Int32),
-        (DataType::Int8, DataType::Int64) | (DataType::Int64, DataType::Int8) => Some(DataType::Int64),
-        
-        (DataType::Int16, DataType::Int32) | (DataType::Int32, DataType::Int16) => Some(DataType::Int32),
-        (DataType::Int16, DataType::Int64) | (DataType::Int64, DataType::Int16) => Some(DataType::Int64),
-        
-        (DataType::Int32, DataType::Int64) | (DataType::Int64, DataType::Int32) => Some(DataType::Int64),
+        (DataType::Int8, DataType::Int16) | (DataType::Int16, DataType::Int8) => {
+            Some(DataType::Int16)
+        }
+        (DataType::Int8, DataType::Int32) | (DataType::Int32, DataType::Int8) => {
+            Some(DataType::Int32)
+        }
+        (DataType::Int8, DataType::Int64) | (DataType::Int64, DataType::Int8) => {
+            Some(DataType::Int64)
+        }
+
+        (DataType::Int16, DataType::Int32) | (DataType::Int32, DataType::Int16) => {
+            Some(DataType::Int32)
+        }
+        (DataType::Int16, DataType::Int64) | (DataType::Int64, DataType::Int16) => {
+            Some(DataType::Int64)
+        }
+
+        (DataType::Int32, DataType::Int64) | (DataType::Int64, DataType::Int32) => {
+            Some(DataType::Int64)
+        }
 
         // Unsigned Integers
-        (DataType::UInt8, DataType::UInt16) | (DataType::UInt16, DataType::UInt8) => Some(DataType::UInt16),
-        (DataType::UInt8, DataType::UInt32) | (DataType::UInt32, DataType::UInt8) => Some(DataType::UInt32),
-        (DataType::UInt8, DataType::UInt64) | (DataType::UInt64, DataType::UInt8) => Some(DataType::UInt64),
-        
+        (DataType::UInt8, DataType::UInt16) | (DataType::UInt16, DataType::UInt8) => {
+            Some(DataType::UInt16)
+        }
+        (DataType::UInt8, DataType::UInt32) | (DataType::UInt32, DataType::UInt8) => {
+            Some(DataType::UInt32)
+        }
+        (DataType::UInt8, DataType::UInt64) | (DataType::UInt64, DataType::UInt8) => {
+            Some(DataType::UInt64)
+        }
+
         // Mixed Signed/Unsigned - Promote to Signed larger
-        (DataType::UInt32, DataType::Int32) | (DataType::Int32, DataType::UInt32) => Some(DataType::Int64),
-        (DataType::UInt64, DataType::Int64) | (DataType::Int64, DataType::UInt64) => Some(DataType::Int64), 
-        
+        (DataType::UInt32, DataType::Int32) | (DataType::Int32, DataType::UInt32) => {
+            Some(DataType::Int64)
+        }
+        (DataType::UInt64, DataType::Int64) | (DataType::Int64, DataType::UInt64) => {
+            Some(DataType::Int64)
+        }
+
         // Floats
-        (DataType::Float16, DataType::Float32) | (DataType::Float32, DataType::Float16) => Some(DataType::Float32),
-        (DataType::Float32, DataType::Float64) | (DataType::Float64, DataType::Float32) => Some(DataType::Float64),
-        
+        (DataType::Float16, DataType::Float32) | (DataType::Float32, DataType::Float16) => {
+            Some(DataType::Float32)
+        }
+        (DataType::Float32, DataType::Float64) | (DataType::Float64, DataType::Float32) => {
+            Some(DataType::Float64)
+        }
+
         // Int/Float mixing -> Float
-        (DataType::Int8, DataType::Float64) | (DataType::Float64, DataType::Int8) => Some(DataType::Float64),
-        (DataType::Int16, DataType::Float64) | (DataType::Float64, DataType::Int16) => Some(DataType::Float64),
-        (DataType::Int32, DataType::Float64) | (DataType::Float64, DataType::Int32) => Some(DataType::Float64),
-        (DataType::Int64, DataType::Float64) | (DataType::Float64, DataType::Int64) => Some(DataType::Float64),
-        
+        (DataType::Int8, DataType::Float64) | (DataType::Float64, DataType::Int8) => {
+            Some(DataType::Float64)
+        }
+        (DataType::Int16, DataType::Float64) | (DataType::Float64, DataType::Int16) => {
+            Some(DataType::Float64)
+        }
+        (DataType::Int32, DataType::Float64) | (DataType::Float64, DataType::Int32) => {
+            Some(DataType::Float64)
+        }
+        (DataType::Int64, DataType::Float64) | (DataType::Float64, DataType::Int64) => {
+            Some(DataType::Float64)
+        }
+
         // Strings
-        (DataType::Utf8, DataType::LargeUtf8) | (DataType::LargeUtf8, DataType::Utf8) => Some(DataType::LargeUtf8),
+        (DataType::Utf8, DataType::LargeUtf8) | (DataType::LargeUtf8, DataType::Utf8) => {
+            Some(DataType::LargeUtf8)
+        }
 
         // Lists
         (DataType::List(f1), DataType::List(f2)) => {
             let inner = coerce_types(f1.data_type(), f2.data_type())?;
             Some(DataType::List(Arc::new(Field::new("item", inner, true))))
         }
-        
+
         // Structs - Merge fields
         (DataType::Struct(f1), DataType::Struct(f2)) => {
             let mut merged_map = BTreeMap::new();
-            
+
             let mut add_fields = |fields: &[Arc<Field>]| {
                 for f in fields {
-                    merged_map.entry(f.name().clone()).or_insert_with(Vec::new).push(f.clone());
+                    merged_map
+                        .entry(f.name().clone())
+                        .or_insert_with(Vec::new)
+                        .push(f.clone());
                 }
             };
 
             add_fields(f1);
             add_fields(f2);
 
-            let merged_fields: Vec<Arc<Field>> = merged_map.into_iter().map(|(name, candidates)| {
-                // Coerce all candidates for this field
-                let mut iter = candidates.into_iter();
-                let first = iter.next().unwrap();
-                let final_type = iter.try_fold(first.data_type().clone(), |acc, f| {
-                    coerce_types(&acc, f.data_type())
-                })?;
-                
-                Some(Arc::new(Field::new(name, final_type, true)))
-            }).collect::<Option<Vec<_>>>()?; // If any field failed, fail struct merge
+            let merged_fields: Vec<Arc<Field>> = merged_map
+                .into_iter()
+                .map(|(name, candidates)| {
+                    // Coerce all candidates for this field
+                    let mut iter = candidates.into_iter();
+                    let first = iter.next().unwrap();
+                    let final_type = iter.try_fold(first.data_type().clone(), |acc, f| {
+                        coerce_types(&acc, f.data_type())
+                    })?;
+
+                    Some(Arc::new(Field::new(name, final_type, true)))
+                })
+                .collect::<Option<Vec<_>>>()?; // If any field failed, fail struct merge
 
             Some(DataType::Struct(merged_fields.into()))
         }
@@ -344,7 +418,7 @@ mod tests {
 
         let schema = infer_schema(&rows).unwrap();
         assert_eq!(schema.fields().len(), 2);
-        
+
         let field_a = schema.field_with_name("a").unwrap();
         assert_eq!(field_a.data_type(), &DataType::Int32);
         assert!(field_a.is_nullable());
@@ -371,7 +445,7 @@ mod tests {
         // Int8 + Int32 -> Int32
         let rows = vec![
             ArrowRow::from([("num", ArrowValue::I8(1))]),
-            ArrowRow::from([("num", ArrowValue::I32(1000))],),
+            ArrowRow::from([("num", ArrowValue::I32(1000))]),
         ];
         let schema = infer_schema(&rows).unwrap();
         assert_eq!(schema.field(0).data_type(), &DataType::Int32);

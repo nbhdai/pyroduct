@@ -1,5 +1,5 @@
-use std::path::Path;
 use anyhow::Result;
+use std::path::Path;
 
 use fs_err as fs;
 
@@ -15,15 +15,18 @@ pub fn expand(path: &Path) -> Result<()> {
     }
 
     // No manifest found, try expanding subdirectories
-    println!("No manifest found in {:?}, scanning subdirectories...", path);
-    
+    println!(
+        "No manifest found in {:?}, scanning subdirectories...",
+        path
+    );
+
     let mut found_any = false;
     let mut errors = Vec::new();
 
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let subpath = entry.path();
-        
+
         if !subpath.is_dir() {
             continue;
         }
@@ -40,7 +43,10 @@ pub fn expand(path: &Path) -> Result<()> {
     }
 
     if !found_any {
-        anyhow::bail!("No Capability.toml or Module.toml found in {:?} or its subdirectories", path);
+        anyhow::bail!(
+            "No Capability.toml or Module.toml found in {:?} or its subdirectories",
+            path
+        );
     }
 
     if !errors.is_empty() {
@@ -61,7 +67,7 @@ pub fn expand(path: &Path) -> Result<()> {
 
 fn expand_single(path: &Path) -> Result<()> {
     println!("Expanding: {:?}", path);
-    
+
     let cap_toml_path = path.join("Capability.toml");
     let mod_toml_path = path.join("Module.toml");
     let cargo_toml_path = path.join("Cargo.toml");
@@ -79,7 +85,7 @@ fn expand_single(path: &Path) -> Result<()> {
             println!("  ✓ Wrote Cargo.toml");
 
             generate_interface_crate(path, &module_path, cap_manifest)?;
-        },
+        }
         (false, true) => {
             let manifest_str = fs::read_to_string(&mod_toml_path)?;
             let mod_manifest: ModuleManifest = toml::from_str(&manifest_str)?;
@@ -88,7 +94,7 @@ fn expand_single(path: &Path) -> Result<()> {
             let output_str = toml::to_string_pretty(&standard_manifest)?;
             fs::write(cargo_toml_path, output_str)?;
             println!("  ✓ Wrote Cargo.toml");
-        },
+        }
         (false, false) => anyhow::bail!("Neither 'Capability.toml' nor 'Module.toml' found."),
     }
 
@@ -96,12 +102,12 @@ fn expand_single(path: &Path) -> Result<()> {
 }
 
 fn generate_interface_crate(
-    input: &Path, 
-    output: &Path, 
-    cap_manifest: CapabilityManifest
+    input: &Path,
+    output: &Path,
+    cap_manifest: CapabilityManifest,
 ) -> Result<()> {
     let generator = InterfaceGenerator::new(input, &cap_manifest)?;
     generator.write_to_disk(output)?;
-    
+
     Ok(())
 }

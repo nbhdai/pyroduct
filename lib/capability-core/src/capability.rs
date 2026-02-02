@@ -20,14 +20,14 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Error, Ident, ImplItem, ItemImpl, Type};
 
-use crate::methods::ImplMethod;
 use crate::lifecycle::{InitFn, NewClientFn, ResetFn};
+use crate::methods::ImplMethod;
 use crate::paths::CapabilityIdent;
 use crate::utils::extract_ident_from_type;
 
 /// Parsed capability from an impl block
 #[derive(Debug)]
-pub struct CapabilityImpl {    
+pub struct CapabilityImpl {
     // Identity storage
     pub ident: Rc<CapabilityIdent>,
 
@@ -42,25 +42,28 @@ pub struct CapabilityImpl {
     // Other items (consts, etc.) - excluding type aliases
     pub other_items: Vec<ImplItem>,
     pub attrs: Vec<syn::Attribute>,
-
 }
 
 impl CapabilityImpl {
-    pub fn new(input: ItemImpl, required_docs: bool) -> syn::Result<Self> {
+    pub fn new(
+        input: ItemImpl,
+        required_docs: bool,
+        cap_name: &str,
+        cap_semver: &str,
+    ) -> syn::Result<Self> {
         // 1. Extract state/server type name
-        let state_tn = match &*input.self_ty {
-            Type::Path(tp) => tp
-                .path
-                .get_ident()
-                .cloned()
-                .ok_or_else(|| Error::new_spanned(&input.self_ty, "Expected simple type name"))?,
-            _ => {
-                return Err(Error::new_spanned(
-                    &input.self_ty,
-                    "Expected simple type name",
-                ))
-            }
-        };
+        let state_tn =
+            match &*input.self_ty {
+                Type::Path(tp) => tp.path.get_ident().cloned().ok_or_else(|| {
+                    Error::new_spanned(&input.self_ty, "Expected simple type name")
+                })?,
+                _ => {
+                    return Err(Error::new_spanned(
+                        &input.self_ty,
+                        "Expected simple type name",
+                    ));
+                }
+            };
 
         // 2. Ensure no trait impl
         if input.trait_.is_some() {
@@ -75,7 +78,7 @@ impl CapabilityImpl {
         let mut client_tn: Option<Ident> = None;
         let mut config_tn: Option<Type> = None;
         let mut error_tn: Option<Type> = None;
-        
+
         let mut init_fn: Option<InitFn> = None;
         let mut reset_fn: Option<ResetFn> = None;
         let mut new_client_fn: Option<NewClientFn> = None;
@@ -99,12 +102,13 @@ impl CapabilityImpl {
             }
         }
 
-        let client_tn = client_tn.ok_or_else(|| {
-            Error::new_spanned(&state_tn, "Missing `type Client = ...;`")
-        })?;
+        let client_tn = client_tn
+            .ok_or_else(|| Error::new_spanned(&state_tn, "Missing `type Client = ...;`"))?;
 
         // Build identifiers
         let ident = Rc::new(CapabilityIdent {
+            pkg_name: cap_name.to_string(),
+            pkg_version: cap_semver.to_string(),
             state_tn,
             client_tn,
             config_tn,
@@ -140,14 +144,19 @@ impl CapabilityImpl {
         }
 
         let new_client_fn = new_client_fn.ok_or_else(|| {
-            Error::new_spanned(&ident.state_tn, "Missing `fn new_client(&self, client: &Client)`")
+            Error::new_spanned(
+                &ident.state_tn,
+                "Missing `fn new_client(&self, client: &Client)`",
+            )
         })?;
         let init_fn = init_fn.ok_or_else(|| {
-            Error::new_spanned(&ident.state_tn, "Missing `fn new() -> Self` or `fn new(config: &Config) -> Self`")
+            Error::new_spanned(
+                &ident.state_tn,
+                "Missing `fn new() -> Self` or `fn new(config: &Config) -> Self`",
+            )
         })?;
-        let reset_fn = reset_fn.ok_or_else(|| {
-            Error::new_spanned(&ident.state_tn, "Missing `fn reset(&mut self)`")
-        })?;
+        let reset_fn = reset_fn
+            .ok_or_else(|| Error::new_spanned(&ident.state_tn, "Missing `fn reset(&mut self)`"))?;
 
         // 5. Second pass: parse methods with class context
         let methods: Result<Vec<_>, _> = method_fns
@@ -182,7 +191,7 @@ impl CapabilityImpl {
         }
     }
 
-        /// Generate all output code
+    /// Generate all output code
     pub fn expand_module(&self) -> TokenStream {
         let wasm_imports = self.generate_wasm_imports();
         let client_impl = self.generate_client_impl();
@@ -200,7 +209,9 @@ impl CapabilityImpl {
         let new_client_method = self.new_client_fn.generate_impl_method();
         let other_items = &self.other_items;
 
-        let methods: Vec<_> = self.methods.iter()
+        let methods: Vec<_> = self
+            .methods
+            .iter()
             .map(|m| m.generate_server_method())
             .collect();
 
@@ -236,7 +247,7 @@ impl CapabilityImpl {
                              ),
                              Err(e) => Err(e.into()),
                          }
-                    }
+                    },
                 )
             } else {
                 (
@@ -244,7 +255,7 @@ impl CapabilityImpl {
                     quote! {
                         #wasm_call;
                         ::pyroduct::module_capability::Client::new(self, __config_buf)
-                    }
+                    },
                 )
             };
 
@@ -252,7 +263,7 @@ impl CapabilityImpl {
                 pub fn register(self) -> #return_sig {
                     let __config_buf = ::pyroduct::rkyv::to_bytes::<::pyroduct::rkyv::rancor::Error>(&self)
                         .expect("Failed to serialize config");
-                    
+
                     #body
                 }
             }
@@ -266,8 +277,10 @@ impl CapabilityImpl {
 
         // 2. Generate the trait with method signatures
         let trait_name = format_ident!("{}Methods", client);
-        
-        let trait_methods: Vec<_> = self.methods.iter()
+
+        let trait_methods: Vec<_> = self
+            .methods
+            .iter()
             .map(|m| {
                 let name = &m.name;
                 let output = &m.output;
@@ -288,7 +301,9 @@ impl CapabilityImpl {
         };
 
         // 3. Generate the trait implementation for Client<T>
-        let method_impls: Vec<_> = self.methods.iter()
+        let method_impls: Vec<_> = self
+            .methods
+            .iter()
             .map(|m| m.generate_client_method(&module))
             .collect();
 
@@ -311,7 +326,8 @@ impl CapabilityImpl {
         let init_ffi = self.init_fn.generate_ffi(server);
         let reset_ffi = self.reset_fn.generate_ffi(server);
         let drop_ffi = self.generate_drop_ffi();
-        let new_client_ffi = self.new_client_fn
+        let new_client_ffi = self
+            .new_client_fn
             .build_ffi(&self.ident)
             .generate_capability_ffi();
 
@@ -339,7 +355,9 @@ impl CapabilityImpl {
     }
 
     fn generate_method_ffis(&self) -> TokenStream {
-        let method_ffis: Vec<_> = self.methods.iter()
+        let method_ffis: Vec<_> = self
+            .methods
+            .iter()
             .map(|m| m.build_ffi().generate_capability_ffi())
             .collect();
 
@@ -349,6 +367,8 @@ impl CapabilityImpl {
     }
 
     fn generate_export_table(&self) -> TokenStream {
+        let cap_id = self.ident.cap_id();
+
         let server = &self.ident.state_tn;
         let server_snake = AsSnakeCase(server.to_string()).to_string();
         let server_upper = server_snake.to_uppercase();
@@ -360,21 +380,23 @@ impl CapabilityImpl {
 
         // Collect all FFIs
         let new_client_ffi = self.new_client_fn.build_ffi(&self.ident);
-        let method_ffis: Vec<_> = self.methods.iter()
-            .map(|m| m.build_ffi())
-            .collect();
+        let method_ffis: Vec<_> = self.methods.iter().map(|m| m.build_ffi()).collect();
 
         let all_ffis: Vec<_> = std::iter::once(&new_client_ffi)
             .chain(method_ffis.iter())
             .collect();
 
-        let static_strs: Vec<_> = all_ffis.iter().map(|ffi| {
-            let trace_name = ffi.trace_name().to_string();
-            let static_name = ffi.trace_name_static();
-            quote! { const #static_name: &'static str = #trace_name; }
-        }).collect();
+        let static_strs: Vec<_> = all_ffis
+            .iter()
+            .map(|ffi| {
+                let trace_name = ffi.trace_name().to_string();
+                let static_name = ffi.trace_name_static();
+                quote! { const #static_name: &'static str = #trace_name; }
+            })
+            .collect();
 
-        let exports: Vec<_> = all_ffis.iter()
+        let exports: Vec<_> = all_ffis
+            .iter()
             .map(|ffi| ffi.generate_vtable_entry())
             .collect();
 
@@ -403,6 +425,7 @@ impl CapabilityImpl {
         };
 
         quote! {
+            const CAPABILITY_NAME_VERSION: &'static str = #cap_id;
             const #class_name_static: &'static str = #class_name_string;
             #(#static_strs)*
 
@@ -415,11 +438,14 @@ impl CapabilityImpl {
     }
 
     fn generate_wasm_imports(&self) -> TokenStream {
-        let new_client_decl = self.new_client_fn
+        let new_client_decl = self
+            .new_client_fn
             .build_ffi(&self.ident)
             .generate_client_wasm();
 
-        let method_decls: Vec<_> = self.methods.iter()
+        let method_decls: Vec<_> = self
+            .methods
+            .iter()
             .map(|m| m.build_ffi().generate_client_wasm())
             .collect();
 
@@ -455,7 +481,7 @@ mod tests {
         };
 
         let input: ItemImpl = parse2(code).unwrap();
-        let cap = CapabilityImpl::new(input, false).unwrap();
+        let cap = CapabilityImpl::new(input, false, "cap_name", "0.1.0").unwrap();
 
         assert_eq!(cap.ident.state_tn.to_string(), "StatefulServer");
         assert_eq!(cap.ident.client_tn.to_string(), "SimpleClient");
@@ -480,11 +506,11 @@ mod tests {
         };
 
         let input: ItemImpl = parse2(code).unwrap();
-        let cap = CapabilityImpl::new(input, false).unwrap();
+        let cap = CapabilityImpl::new(input, false, "cap_name", "0.1.0").unwrap();
 
         assert!(cap.init_fn.config_type.is_some());
         assert!(cap.ident.config_tn.is_some());
-        
+
         let cfg = cap.ident.config_tn.as_ref().unwrap();
         assert_eq!(quote!(#cfg).to_string(), "MyConfig");
     }
@@ -503,7 +529,7 @@ mod tests {
         };
 
         let input: ItemImpl = parse2(code).unwrap();
-        let err = CapabilityImpl::new(input, false).unwrap_err();
+        let err = CapabilityImpl::new(input, false, "cap_name", "0.1.0").unwrap_err();
         println!("{}", err);
         assert!(err.to_string().contains("Type mismatch. Expected 'Option<MyConfig>' based on macro attribute, found 'Option<OtherConfig>'"));
     }
@@ -521,7 +547,7 @@ mod tests {
         };
 
         let input: ItemImpl = parse2(code).unwrap();
-        let cap = CapabilityImpl::new(input, false).unwrap();
+        let cap = CapabilityImpl::new(input, false, "cap_name", "0.1.0").unwrap();
 
         assert!(cap.init_fn.is_async);
         assert!(cap.reset_fn.is_async);
@@ -542,7 +568,7 @@ mod tests {
         };
 
         let input: ItemImpl = parse2(code).unwrap();
-        let cap = CapabilityImpl::new(input, false).unwrap();
+        let cap = CapabilityImpl::new(input, false, "cap_name", "0.1.0").unwrap();
 
         assert!(cap.ident.error_tn.is_some());
         assert!(cap.new_client_fn.error_type.is_some());
@@ -563,11 +589,13 @@ mod tests {
         };
 
         let input: ItemImpl = parse2(code).unwrap();
-        let cap = CapabilityImpl::new(input, false).unwrap();
+        let cap = CapabilityImpl::new(input, false, "cap_name", "0.1.0").unwrap();
 
         let output = cap.generate_export_table();
 
         let expected = quote! {
+            const CAPABILITY_NAME_VERSION: &'static str = "cap_name:0.1.0";
+            const __TEST_SERVER: &'static str = "__test_server";
             const __TEST_SERVER: &'static str = "__test_server";
             const __TEST_SERVER__NEW_CLIENT: &'static str = "__test_server__new_client";
             const __TEST_SERVER__GET_VALUE: &'static str = "__test_server__get_value";
@@ -609,7 +637,6 @@ mod tests {
         crate::fmt::assert_code_eq_token(&output, &expected);
     }
 
-
     #[test]
     fn test_generate_client_impl_integration() {
         // 1. Define Input
@@ -628,7 +655,7 @@ mod tests {
 
         // 2. Parse
         let input: ItemImpl = parse2(code).unwrap();
-        let cap = CapabilityImpl::new(input, false).unwrap();
+        let cap = CapabilityImpl::new(input, false, "cap_name", "0.1.0").unwrap();
 
         // 3. Generate Output
         let output = cap.generate_client_impl();
@@ -640,7 +667,7 @@ mod tests {
                 pub fn register(self) -> ::pyroduct::module_capability::Client<Self> {
                     let __config_buf = ::pyroduct::rkyv::to_bytes::<::pyroduct::rkyv::rancor::Error>(&self)
                         .expect("Failed to serialize config");
-                    
+
                     ::pyroduct::module_capability::access::call_from_wasm::<
                         (),
                         (),
@@ -655,9 +682,9 @@ mod tests {
                          input_len: usize| {
                             unsafe {
                                 wasm::__my_state__new_client__wasm(
-                                    client_state_ptr, 
-                                    client_state_len, 
-                                    input_ptr, 
+                                    client_state_ptr,
+                                    client_state_len,
+                                    input_ptr,
                                     input_len
                                 )
                             }
@@ -686,9 +713,9 @@ mod tests {
                          input_len: usize| {
                             unsafe {
                                 wasm::__my_state__get_info__wasm(
-                                    client_state_ptr, 
-                                    client_state_len, 
-                                    input_ptr, 
+                                    client_state_ptr,
+                                    client_state_len,
+                                    input_ptr,
                                     input_len
                                 )
                             }
@@ -711,9 +738,9 @@ mod tests {
                          input_len: usize| {
                             unsafe {
                                 wasm::__my_state__get_other_info__wasm(
-                                    client_state_ptr, 
-                                    client_state_len, 
-                                    input_ptr, 
+                                    client_state_ptr,
+                                    client_state_len,
+                                    input_ptr,
                                     input_len
                                 )
                             }
@@ -749,7 +776,7 @@ mod tests {
 
         // 2. Parse
         let input: ItemImpl = parse2(code).unwrap();
-        let cap = CapabilityImpl::new(input, false).unwrap();
+        let cap = CapabilityImpl::new(input, false, "cap_name", "0.1.0").unwrap();
 
         // 3. Generate Output
         let output = cap.generate_client_impl();
@@ -760,10 +787,10 @@ mod tests {
         let expected = quote! {
             impl AdvancedClient {
                 pub fn register(self) -> Result<::pyroduct::module_capability::Client<Self>, MyError> {
-                    
+
                     let __config_buf = ::pyroduct::rkyv::to_bytes::<::pyroduct::rkyv::rancor::Error>(&self)
                         .expect("Failed to serialize config");
-                    
+
                     let ffi_result = ::pyroduct::module_capability::access::call_from_wasm::<
                         (),
                         Result<(), MyError>,
@@ -778,9 +805,9 @@ mod tests {
                          input_len: usize| {
                             unsafe {
                                 wasm::__advanced_struct__new_client__wasm(
-                                    client_state_ptr, 
-                                    client_state_len, 
-                                    input_ptr, 
+                                    client_state_ptr,
+                                    client_state_len,
+                                    input_ptr,
                                     input_len
                                 )
                             }
@@ -819,9 +846,9 @@ mod tests {
                          input_len: usize| {
                             unsafe {
                                 wasm::__advanced_struct__process__wasm(
-                                    client_state_ptr, 
-                                    client_state_len, 
-                                    input_ptr, 
+                                    client_state_ptr,
+                                    client_state_len,
+                                    input_ptr,
                                     input_len
                                 )
                             }

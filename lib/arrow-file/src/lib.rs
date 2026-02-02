@@ -4,7 +4,7 @@ use arrow::datatypes::{Field, Schema};
 use arrow::error::ArrowError;
 use arrow::ipc::{
     convert::fb_to_schema,
-    reader::{read_footer_length, FileDecoder},
+    reader::{FileDecoder, read_footer_length},
     root_as_footer,
     writer::FileWriter,
 };
@@ -14,12 +14,12 @@ use memmap2::Mmap;
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
 use sha2::{Digest, Sha256};
-use tempfile::NamedTempFile;
 use std::fs::File;
 use std::io::{BufReader, Cursor, Seek, SeekFrom, Write};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tempfile::NamedTempFile;
 use thiserror::Error;
 use tokio::task::spawn_blocking;
 use tracing::{debug, info, instrument, warn};
@@ -110,14 +110,8 @@ pub fn record_batch_to_bytes(batch: &RecordBatch) -> Result<Vec<u8>, DataError> 
 fn get_chunk_path(base_path: &Path, chunk_index: Option<usize>) -> PathBuf {
     match chunk_index {
         Some(idx) => {
-            let stem = base_path
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy();
-            let ext = base_path
-                .extension()
-                .unwrap_or_default()
-                .to_string_lossy();
+            let stem = base_path.file_stem().unwrap_or_default().to_string_lossy();
+            let ext = base_path.extension().unwrap_or_default().to_string_lossy();
             let parent = base_path.parent().unwrap_or_else(|| Path::new("."));
             if ext.is_empty() {
                 parent.join(format!("{}_part_{}", stem, idx))
@@ -135,15 +129,12 @@ fn get_chunk_path(base_path: &Path, chunk_index: Option<usize>) -> PathBuf {
 
 /// Writes a list of RecordBatches to a single Parquet file.
 #[instrument(skip(batches, path), level = "debug")]
-pub fn write_parquet<P: AsRef<Path>>(
-    batches: &[RecordBatch],
-    path: P,
-) -> Result<(), DataError> {
+pub fn write_parquet<P: AsRef<Path>>(batches: &[RecordBatch], path: P) -> Result<(), DataError> {
     if batches.is_empty() {
         return Ok(());
     }
     let schema = batches[0].schema();
-    
+
     let file = File::create(path)?;
     let props = WriterProperties::builder().build();
     let mut writer = ArrowWriter::try_new(file, schema, Some(props))?;
@@ -176,12 +167,14 @@ pub fn write_csv<P: AsRef<Path>>(
     let mut current_writer: Option<csv::Writer<File>> = None;
     let mut current_file_idx = 0;
     let mut current_chunk_rows = 0;
-    
+
     // Iterate over logic slices
     // We use a helper iterator/logic to drive the writer
     let effective_chunk_size = chunk_size.unwrap_or(usize::MAX);
     if effective_chunk_size == 0 {
-        return Err(DataError::InvalidContent("Chunk size cannot be zero".into()));
+        return Err(DataError::InvalidContent(
+            "Chunk size cannot be zero".into(),
+        ));
     }
 
     for batch in batches {
@@ -189,7 +182,11 @@ pub fn write_csv<P: AsRef<Path>>(
         while offset < batch.num_rows() {
             // 1. Ensure Writer Exists
             if current_writer.is_none() {
-                let suffix = if chunk_size.is_some() { Some(current_file_idx) } else { None };
+                let suffix = if chunk_size.is_some() {
+                    Some(current_file_idx)
+                } else {
+                    None
+                };
                 let out_path = get_chunk_path(path.as_ref(), suffix);
                 let file = File::create(&out_path)?;
                 current_writer = Some(csv::WriterBuilder::new().with_header(true).build(file));
@@ -243,7 +240,9 @@ pub fn write_jsonl<P: AsRef<Path>>(
 
     let effective_chunk_size = chunk_size.unwrap_or(usize::MAX);
     if effective_chunk_size == 0 {
-        return Err(DataError::InvalidContent("Chunk size cannot be zero".into()));
+        return Err(DataError::InvalidContent(
+            "Chunk size cannot be zero".into(),
+        ));
     }
 
     for batch in batches {
@@ -251,7 +250,11 @@ pub fn write_jsonl<P: AsRef<Path>>(
         while offset < batch.num_rows() {
             // 1. Ensure Writer Exists
             if current_writer.is_none() {
-                let suffix = if chunk_size.is_some() { Some(current_file_idx) } else { None };
+                let suffix = if chunk_size.is_some() {
+                    Some(current_file_idx)
+                } else {
+                    None
+                };
                 let out_path = get_chunk_path(path.as_ref(), suffix);
                 let file = File::create(&out_path)?;
                 current_writer = Some(arrow_json::LineDelimitedWriter::new(file));
@@ -292,7 +295,6 @@ pub fn write_jsonl<P: AsRef<Path>>(
 
     Ok(paths)
 }
-
 
 // -----------------------------------------------------------------------------
 // 4. ArrowIpc Struct
@@ -398,7 +400,10 @@ impl ArrowIpc {
 // -----------------------------------------------------------------------------
 
 #[instrument(skip(data), fields(filename = %filename, size = data.len()))]
-pub async fn parse_data_to_batch(data: Vec<u8>, filename: &str) -> Result<Vec<ArrowIpc>, DataError> {
+pub async fn parse_data_to_batch(
+    data: Vec<u8>,
+    filename: &str,
+) -> Result<Vec<ArrowIpc>, DataError> {
     let filename = filename.to_owned();
     let result = spawn_blocking(move || inter_parse_data_to_batch(data, &filename)).await;
 
@@ -409,7 +414,7 @@ pub async fn parse_data_to_batch(data: Vec<u8>, filename: &str) -> Result<Vec<Ar
             } else {
                 Ok(inner)
             }
-        },
+        }
         Ok(error) => error,
         Err(e) => Err(DataError::TaskJoin(e.to_string())),
     }
@@ -466,14 +471,13 @@ fn inter_parse_data_to_batch(data: Vec<u8>, filename: &str) -> Result<Vec<ArrowI
         "json" => {
             debug!("Parsing JSON...");
             let mut cursor = Cursor::new(data);
-            let (schema, _) = arrow_json::reader::infer_json_schema(BufReader::new(&mut cursor), None)?;
+            let (schema, _) =
+                arrow_json::reader::infer_json_schema(BufReader::new(&mut cursor), None)?;
             cursor.seek(SeekFrom::Start(0))?;
             let reader =
                 arrow_json::ReaderBuilder::new(schema.into()).build(BufReader::new(cursor))?;
 
-            reader.map(|r| {
-                ArrowIpc::from_batch(r?)
-            }).collect()
+            reader.map(|r| ArrowIpc::from_batch(r?)).collect()
         }
         _ => Err(DataError::UnsupportedType(extension)),
     }
@@ -531,7 +535,6 @@ fn parse_footer_and_batch(buffer: Buffer) -> Result<RecordBatch, DataError> {
 // Tests
 // -----------------------------------------------------------------------------
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -541,7 +544,6 @@ mod tests {
     use std::fs::read_to_string;
     use std::sync::Arc;
     use tempfile::NamedTempFile;
-
 
     fn create_primary_batch(inputs: &[&str], targets: &[&str]) -> RecordBatch {
         let schema = Schema::new(vec![
@@ -594,7 +596,8 @@ mod tests {
         let arrow_ipc = parse_data_to_batch(bytes, "test.csv")
             .await
             .expect("Parsing failed")
-            .pop().unwrap();
+            .pop()
+            .unwrap();
 
         // Even though we loaded CSV, we requested the struct enforce IPC backing
         // So as_slice should return valid Arrow IPC bytes, not the CSV string.
@@ -668,7 +671,11 @@ mod tests {
         // 1. Start with in-memory CSV
         let csv_data = "input,target\nmemory,disk";
         let bytes = csv_data.as_bytes().to_vec();
-        let mut arrow_ipc = parse_data_to_batch(bytes, "data.csv").await.unwrap().pop().unwrap();
+        let mut arrow_ipc = parse_data_to_batch(bytes, "data.csv")
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
 
         // 2. Memmap it to a temp file
         let temp_file = NamedTempFile::new().unwrap();

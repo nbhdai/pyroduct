@@ -120,9 +120,13 @@ fn test_bridge_handles_lifecycle_panic() {
     // 2. Run the "Plugin" side logic which panics
     // This simulates the plugin crashing during init
     let raw_ffi_result = unsafe {
-        execute_safe_init(bytes.as_ptr(), bytes.len(), |_: Option<TestConfig>| -> usize {
-            panic!("Catastrophic failure in plugin init");
-        })
+        execute_safe_init(
+            bytes.as_ptr(),
+            bytes.len(),
+            |_: Option<TestConfig>| -> usize {
+                panic!("Catastrophic failure in plugin init");
+            },
+        )
     };
 
     // 3. Run the "Host" side bridge logic
@@ -216,9 +220,11 @@ fn test_bridge_handles_deserialization_failure() {
     let garbage = vec![0u8, 255, 12, 33]; // Invalid rkyv data for a vector
 
     let raw_ffi_result = unsafe {
-        execute_safe_init(garbage.as_ptr(), garbage.len(), |_: Option<TestConfig>| -> usize {
-            0
-        })
+        execute_safe_init(
+            garbage.as_ptr(),
+            garbage.len(),
+            |_: Option<TestConfig>| -> usize { 0 },
+        )
     };
 
     // 2. Decode on host

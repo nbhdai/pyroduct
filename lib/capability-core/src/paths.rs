@@ -10,6 +10,8 @@ use syn::{Ident, Type};
 /// Identity of the capability (State, Client, Error)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CapabilityIdent {
+    pub pkg_name: String,
+    pub pkg_version: String,
     /// The struct being implemented (e.g., "MyStruct")
     pub state_tn: Ident,
     /// The client type identifier (e.g., "MyClient")
@@ -24,6 +26,11 @@ impl CapabilityIdent {
     // ========================================================================
     // Method Paths
     // ========================================================================
+
+    /// Library identifier for a method (e.g., __my_trait__my_state__method_name)
+    pub fn cap_id(&self) -> String {
+        format!("{}:{}", self.pkg_name, self.pkg_version)
+    }
 
     /// Library identifier for a method (e.g., __my_trait__my_state__method_name)
     pub fn trace_name(&self, name: &Ident) -> Ident {

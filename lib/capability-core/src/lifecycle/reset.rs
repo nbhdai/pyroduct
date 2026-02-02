@@ -23,7 +23,10 @@ impl ResetFn {
 
         // 1. Validate name
         if sig.ident != "reset" {
-            return Err(Error::new_spanned(&sig.ident, "Expected function named 'reset'"));
+            return Err(Error::new_spanned(
+                &sig.ident,
+                "Expected function named 'reset'",
+            ));
         }
 
         // 2. Validate return type is () or default
@@ -70,10 +73,7 @@ impl ResetFn {
                 ));
             }
             None => {
-                return Err(Error::new_spanned(
-                    &sig,
-                    "fn reset must take &mut self",
-                ));
+                return Err(Error::new_spanned(&sig, "fn reset must take &mut self"));
             }
         }
 
@@ -132,7 +132,11 @@ impl ResetFn {
     pub fn generate_impl_method(&self) -> TokenStream {
         let attrs = &self.attrs;
         let body = &self.body;
-        let async_kw = if self.is_async { quote!(async) } else { quote!() };
+        let async_kw = if self.is_async {
+            quote!(async)
+        } else {
+            quote!()
+        };
 
         quote! {
             #(#attrs)*
@@ -145,7 +149,7 @@ impl ResetFn {
 mod tests {
     use super::*;
     use quote::{format_ident, quote};
-    use syn::{parse_quote, ImplItemFn};
+    use syn::{ImplItemFn, parse_quote};
 
     #[test]
     fn test_sync_server_reset_fn() {

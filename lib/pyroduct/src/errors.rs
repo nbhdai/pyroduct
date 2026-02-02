@@ -158,9 +158,7 @@ enum InnerError {
 
 impl PyroductError {
     /// Create a new user-facing error from a capability FfiError with explicit location
-    pub fn missing_cap(
-        name: &str,
-    ) -> Self {
+    pub fn missing_cap(name: &str) -> Self {
         Self {
             kind: ErrorKind::NotFound,
             inner: InnerError::NotFound(name.to_string()),
@@ -313,11 +311,9 @@ impl PyroductError {
         match &self.inner {
             InnerError::NotFound(_) => Path::new("./."),
             InnerError::Infrastructure(_) => Path::new("HOST_INFRASTRUCTURE"),
-            InnerError::Capability(ident, _) 
+            InnerError::Capability(ident, _)
             | InnerError::CapabilityLinking(ident, _)
-            | InnerError::CapabilityLoading(ident, _) => {
-                &ident.path
-            }
+            | InnerError::CapabilityLoading(ident, _) => &ident.path,
             InnerError::Module(ident, _)
             | InnerError::ModuleLinking(ident, _)
             | InnerError::ModuleUnknown(ident, _)
@@ -333,11 +329,9 @@ impl PyroductError {
         match &self.inner {
             InnerError::NotFound(name) => &name,
             InnerError::Infrastructure(_) => "Host Infrastructure",
-            InnerError::Capability(ident, _) 
+            InnerError::Capability(ident, _)
             | InnerError::CapabilityLinking(ident, _)
-            | InnerError::CapabilityLoading(ident, _) => {
-                &ident.name()
-            }
+            | InnerError::CapabilityLoading(ident, _) => &ident.name(),
             InnerError::Module(ident, _)
             | InnerError::ModuleLinking(ident, _)
             | InnerError::ModuleUnknown(ident, _)

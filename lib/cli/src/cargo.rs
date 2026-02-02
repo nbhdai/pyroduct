@@ -1,5 +1,7 @@
 use cargo_toml::{
-    Badges, Dependency, DependencyDetail, DepsSet, Edition, FeatureSet, Inheritable, InheritedDependencyDetail, LintGroups, Manifest, Package, PatchSet, Product, Profiles, TargetDepsSet, Workspace
+    Badges, Dependency, DependencyDetail, DepsSet, Edition, FeatureSet, Inheritable,
+    InheritedDependencyDetail, LintGroups, Manifest, Package, PatchSet, Product, Profiles,
+    TargetDepsSet, Workspace,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -86,7 +88,10 @@ pub struct ModuleManifest<Metadata = Value> {
 }
 
 fn default_pyroduct() -> Dependency {
-    Dependency::Inherited(InheritedDependencyDetail { workspace: true, ..Default::default() })
+    Dependency::Inherited(InheritedDependencyDetail {
+        workspace: true,
+        ..Default::default()
+    })
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
@@ -101,7 +106,7 @@ pub struct CapabilityDependencies {
 }
 
 impl CapabilityManifest {
-    /// Reads from a file string, processes logic, and returns a standard Manifest 
+    /// Reads from a file string, processes logic, and returns a standard Manifest
     /// ready for serialization.
     pub fn to_capability_manifest(self) -> Manifest {
         let mut final_deps = BTreeMap::new();
@@ -138,19 +143,19 @@ impl CapabilityManifest {
 
         let pyroduct = match self.pyroduct.clone() {
             // 1) Simple -> Detailed with registry + optional flag
-            p @ (Dependency::Simple(_) | Dependency::Inherited(_)) => {p},
+            p @ (Dependency::Simple(_) | Dependency::Inherited(_)) => p,
 
             // 2) Detailed -> Add registry only if NOT path or git
             Dependency::Detailed(detail) => {
                 let mut d = detail.clone();
-                
+
                 if let Some(path) = d.path.as_mut() {
                     *path = format!("../{path}");
                 }
                 Dependency::Detailed(d)
-            },
+            }
         };
-        
+
         // 1. Shared Dependencies (Required)
         final_deps.extend(self.dependencies.shared.clone().into_iter());
         final_deps.insert("pyroduct".to_string(), pyroduct);
@@ -186,12 +191,7 @@ impl CapabilityManifest {
 
     /// Helper: Augments dependencies with `optional = true` if requested
     /// and inserts them into the final map.
-    fn augment_deps(
-        &self, 
-        target_map: &mut DepsSet, 
-        source_map: &DepsSet, 
-        make_optional: bool
-    ) {
+    fn augment_deps(&self, target_map: &mut DepsSet, source_map: &DepsSet, make_optional: bool) {
         for (name, dep) in source_map {
             let new_dep = if make_optional {
                 match dep {
@@ -206,7 +206,7 @@ impl CapabilityManifest {
                         let mut d = detail.clone();
                         d.optional = true;
                         Dependency::Detailed(d)
-                    },
+                    }
                     // Inherited workspace deps also need to become detailed to hold the optional flag
                     Dependency::Inherited(inherited) => {
                         let mut d = inherited.clone();
@@ -226,17 +226,23 @@ impl CapabilityManifest {
         let mut new_features = existing_features.clone();
 
         // Generate "dep:xxx" entries for all Host dependencies
-        let capability_feature: Vec<String> = self.dependencies.host.keys()
+        let capability_feature: Vec<String> = self
+            .dependencies
+            .host
+            .keys()
             .map(|name| format!("dep:{}", name))
             .collect();
 
-        let module_feature: Vec<String> = self.dependencies.module.keys()
+        let module_feature: Vec<String> = self
+            .dependencies
+            .module
+            .keys()
             .map(|name| format!("dep:{}", name))
             .collect();
 
         new_features.insert("capability".to_string(), capability_feature);
         new_features.insert("module".to_string(), module_feature);
-        
+
         // Ensure default and module exist (if not provided in input)
         new_features.entry("default".to_string()).or_default();
 
@@ -250,7 +256,7 @@ impl ModuleManifest {
         final_deps.insert("pyroduct".to_string(), self.pyroduct.clone());
         final_deps.extend(self.dependencies.clone().into_iter());
         self.augment_deps(&mut final_deps, &self.capabilities);
-        
+
         #[allow(deprecated)]
         Manifest {
             package: self.module.map(ensure_edition_2024),
@@ -273,11 +279,7 @@ impl ModuleManifest {
         }
     }
 
-    fn augment_deps(
-        &self, 
-        target_map: &mut DepsSet, 
-        source_map: &DepsSet, 
-    ) {
+    fn augment_deps(&self, target_map: &mut DepsSet, source_map: &DepsSet) {
         let registry_url = Some("sparse+http://pyroduct.io/capabilities".to_string());
 
         for (name, dep) in source_map {
@@ -291,7 +293,7 @@ impl ModuleManifest {
 
                 Dependency::Detailed(detail) => {
                     let mut d = detail.clone();
-                    
+
                     // Logic: If it's not a local path and not a git repo, apply the registry
                     if d.path.is_none() && d.git.is_none() && d.registry.is_none() {
                         d.registry = registry_url.clone();
@@ -300,9 +302,9 @@ impl ModuleManifest {
                     if let Some(path) = d.path.as_mut() {
                         *path = format!("{path}/interface");
                     }
-                    
+
                     Dependency::Detailed(d)
-                },
+                }
 
                 Dependency::Inherited(inherited) => {
                     let d = inherited.clone();
@@ -371,13 +373,13 @@ serde = { version = "1.0", features = ["derive"] }
 
         // 3. Verify Dependencies
         let deps = &standard_manifest.dependencies;
-        
+
         // Check Host (converted to optional)
         match deps.get("tokio").unwrap() {
             Dependency::Detailed(d) => assert_eq!(d.optional, true),
             _ => panic!("tokio should be detailed"),
         }
-        
+
         // Check Shared (remains not optional)
         match deps.get("serde").unwrap() {
             Dependency::Detailed(d) => assert_eq!(d.optional, false),
@@ -390,11 +392,11 @@ serde = { version = "1.0", features = ["derive"] }
         // 4. Verify Features
         let features = &standard_manifest.features;
         let cap_feat = features.get("capability").unwrap();
-        
+
         assert!(cap_feat.contains(&"dep:tokio".to_string()));
         assert!(cap_feat.contains(&"dep:uuid".to_string()));
         // Module deps should NOT be in capability feature
-        assert!(!cap_feat.contains(&"dep:wasm-bindgen".to_string())); 
+        assert!(!cap_feat.contains(&"dep:wasm-bindgen".to_string()));
 
         // 5. Serialize back to String
         let output = toml::to_string_pretty(&standard_manifest).unwrap();

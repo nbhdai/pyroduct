@@ -1,8 +1,5 @@
 use quote::quote;
-use syn::{
-    Error, Ident, PathArguments, Result, ReturnType, Type, parse2,
-    token::RArrow,
-};
+use syn::{Error, Ident, PathArguments, Result, ReturnType, Type, parse2, token::RArrow};
 
 pub fn type_to_return(arg: &Type) -> ReturnType {
     ReturnType::Type(RArrow::default(), Box::new(arg.clone()))

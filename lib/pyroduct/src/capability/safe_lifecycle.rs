@@ -36,7 +36,7 @@ where
     F: FnOnce(Option<C>) -> S + panic::UnwindSafe,
 {
     trace!("execute_safe_init: entering");
-    
+
     // Deserialize as Option<C> - the JSON can be null or the actual config
     let config: Option<C> = if config_ptr.is_null() || config_len == 0 {
         None

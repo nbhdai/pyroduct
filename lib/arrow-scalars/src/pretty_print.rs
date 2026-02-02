@@ -35,11 +35,7 @@ impl<'a> fmt::Display for RowPrinter<'a> {
 // Verbose Formatter (Key: Value (Type))
 // -----------------------------------------------------------------------------
 
-fn print_verbose(
-    row: &ArrowRow,
-    f: &mut fmt::Formatter<'_>,
-    indent_level: usize,
-) -> fmt::Result {
+fn print_verbose(row: &ArrowRow, f: &mut fmt::Formatter<'_>, indent_level: usize) -> fmt::Result {
     let indent = "  ".repeat(indent_level);
 
     for (key, value) in row.iter() {
@@ -73,18 +69,24 @@ fn fmt_value_verbose(
             write!(f, "{}d {}ms (IntervalDayTime)", days, milliseconds)
         }
         ArrowValue::Str(v) => write!(f, "\"{}\" (String)", v),
-        
+
         // Complex Types
         ArrowValue::PrimitiveList(list) => {
             write!(f, "[")?;
             // Preview first few items to avoid spamming the CLI
             let max_preview = 5;
             let len = list.len();
-            
+
             // Helper to print primitive slices generic over T
-            fn print_slice<T: fmt::Display>(f: &mut fmt::Formatter, slice: &[T], max: usize) -> fmt::Result {
+            fn print_slice<T: fmt::Display>(
+                f: &mut fmt::Formatter,
+                slice: &[T],
+                max: usize,
+            ) -> fmt::Result {
                 for (i, item) in slice.iter().take(max).enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{}", item)?;
                 }
                 Ok(())
@@ -115,11 +117,11 @@ fn fmt_value_verbose(
             writeln!(f, "(Group)")?;
             // Recursive call with increased indent
             print_verbose(row, f, indent_level + 1)?;
-            // Backtrack cursor slightly to align with parent if needed, 
+            // Backtrack cursor slightly to align with parent if needed,
             // but standard recursion usually handles this by finishing the previous writeln.
             Ok(())
         }
-        
+
         ArrowValue::List(items) => {
             writeln!(f, "(List)")?;
             let next_indent = "  ".repeat(indent_level + 1);
@@ -130,18 +132,18 @@ fn fmt_value_verbose(
             }
             Ok(())
         }
-        
+
         ArrowValue::MapInternal(items) => {
-             writeln!(f, "(Map)")?;
-             let next_indent = "  ".repeat(indent_level + 1);
-             for (k, v) in items {
-                 write!(f, "{}[", next_indent)?;
-                 fmt_value_compact(k, f)?; // Keys usually short
-                 write!(f, "] => ")?;
-                 fmt_value_verbose(v, f, indent_level + 1)?;
-                 writeln!(f)?;
-             }
-             Ok(())
+            writeln!(f, "(Map)")?;
+            let next_indent = "  ".repeat(indent_level + 1);
+            for (k, v) in items {
+                write!(f, "{}[", next_indent)?;
+                fmt_value_compact(k, f)?; // Keys usually short
+                write!(f, "] => ")?;
+                fmt_value_verbose(v, f, indent_level + 1)?;
+                writeln!(f)?;
+            }
+            Ok(())
         }
     }
 }
@@ -192,9 +194,11 @@ fn fmt_value_compact(val: &ArrowValue, f: &mut fmt::Formatter<'_>) -> fmt::Resul
         ArrowValue::F16(v) => write!(f, "{}", v),
         ArrowValue::F32(v) => write!(f, "{}", v),
         ArrowValue::F64(v) => write!(f, "{}", v),
-        ArrowValue::IntervalDayTime { days, milliseconds } => write!(f, "{}d{}ms", days, milliseconds),
+        ArrowValue::IntervalDayTime { days, milliseconds } => {
+            write!(f, "{}d{}ms", days, milliseconds)
+        }
         ArrowValue::Str(v) => write!(f, "{}", v), // No quotes in compact mode usually cleaner for tables
-        
+
         // Condensed representations for complex types
         ArrowValue::PrimitiveList(l) => write!(f, "[{} items]", l.len()),
         ArrowValue::Group(g) => {
@@ -203,12 +207,14 @@ fn fmt_value_compact(val: &ArrowValue, f: &mut fmt::Formatter<'_>) -> fmt::Resul
             write!(f, "}}")
         }
         ArrowValue::List(l) => {
-             write!(f, "[")?;
-             for (i, item) in l.iter().enumerate() {
-                 if i > 0 { write!(f, ", ")?; }
-                 fmt_value_compact(item, f)?;
-             }
-             write!(f, "]")
+            write!(f, "[")?;
+            for (i, item) in l.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                fmt_value_compact(item, f)?;
+            }
+            write!(f, "]")
         }
         ArrowValue::MapInternal(m) => write!(f, "{{Map: {} items}}", m.len()),
     }

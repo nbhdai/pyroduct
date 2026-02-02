@@ -26,7 +26,7 @@ pub struct PipelineDef {
     pub pipeline: Vec<Module>,
 }
 /// This is the internal configuration.
-/// 
+///
 /// It should point to the saved artifacts in the pyroduct cache directory.
 #[derive(Deserialize)]
 pub struct PipelineConfig {
@@ -53,7 +53,6 @@ pub struct ModuleConfig {
 impl PipelineDef {
     /// Loads a pipeline definition from a configuration
     pub fn load(config: &PipelineConfig, caps_registry: &mut Capabilities) -> PyroductResult<Self> {
-
         for (name, cap_conf) in &config.capabilities {
             caps_registry.load(name, &cap_conf.path)?;
         }

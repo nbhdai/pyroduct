@@ -1,23 +1,19 @@
-use std::path::Path;
 use std::io::{BufWriter, Write};
+use std::path::Path;
 
-use fs_err as fs;
-use anyhow::{Result, Context, anyhow};
+use anyhow::{Context, Result, anyhow};
 use clap::ValueEnum;
+use fs_err as fs;
 
 use pyroduct::arrow_scalars::schema::infer_schema;
 use pyroduct::{
-    arrow_scalars::{PreBatch, ArrowRow},
-    host::{Capabilities, PipelineConfig, PipelineDef, Pipeline, PipelinePool},
+    arrow_scalars::{ArrowRow, PreBatch},
+    host::{Capabilities, Pipeline, PipelineConfig, PipelineDef, PipelinePool},
 };
 
 // Use arrow-file to handle reading/writing data formats
 use arrow_file::{
-    parse_data_to_batch, 
-    write_parquet, 
-    write_csv, 
-    write_jsonl, 
-    record_batch_to_bytes
+    parse_data_to_batch, record_batch_to_bytes, write_csv, write_jsonl, write_parquet,
 };
 
 #[derive(ValueEnum, Clone, Debug, Copy, PartialEq, Eq)]
@@ -43,25 +39,26 @@ impl OutputFormat {
 fn load_config(config_path: &Path) -> Result<PipelineConfig> {
     tracing::info!("Loading config from {:?}", config_path);
     let config_str = fs::read_to_string(config_path)?;
-    let mut config: PipelineConfig = toml::from_str(&config_str)
-        .context("Failed to parse pipeline TOML")?;
-    
+    let mut config: PipelineConfig =
+        toml::from_str(&config_str).context("Failed to parse pipeline TOML")?;
+
     let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
     // Resolve relative paths
     for cap in config.capabilities.values_mut() {
-        if cap.path.is_relative() { cap.path = config_dir.join(&cap.path); }
+        if cap.path.is_relative() {
+            cap.path = config_dir.join(&cap.path);
+        }
     }
     for mod_conf in config.modules.values_mut() {
-        if mod_conf.path.is_relative() { mod_conf.path = config_dir.join(&mod_conf.path); }
+        if mod_conf.path.is_relative() {
+            mod_conf.path = config_dir.join(&mod_conf.path);
+        }
     }
     Ok(config)
 }
 
 /// Processes a single row from a JSON string and prints the result to stdout.
-pub async fn run(
-    config_path: &Path, 
-    input_json: &str
-) -> Result<()> {
+pub async fn run(config_path: &Path, input_json: &str) -> Result<()> {
     // 1. Setup Pipeline (Single instance, no pool needed)
     let config = load_config(config_path)?;
     let mut capabilities = Capabilities::new();
@@ -70,8 +67,8 @@ pub async fn run(
 
     // 2. Parse Input directly to ArrowRow
     tracing::debug!("Parsing input JSON directly to ArrowRow");
-    let input_row: ArrowRow<'static> = serde_json::from_str(input_json)
-        .context("Failed to deserialize input JSON to ArrowRow")?;
+    let input_row: ArrowRow<'static> =
+        serde_json::from_str(input_json).context("Failed to deserialize input JSON to ArrowRow")?;
 
     // 3. Execute
     tracing::info!("Executing pipeline...");
@@ -87,36 +84,40 @@ pub async fn run(
 
 /// Processes a file of data using a thread pool and batch semantics.
 pub async fn run_batch(
-    config_path: &Path, 
+    config_path: &Path,
     input_file: &Path,
     output_dir: &Path,
-    format: OutputFormat
+    format: OutputFormat,
 ) -> Result<()> {
     let config = load_config(config_path)?;
     let mut capabilities = Capabilities::new();
     let pipeline_def = PipelineDef::load(&config, &mut capabilities)?;
-    
+
     let pipeline = Pipeline::new(&pipeline_def, &capabilities).await?;
     let pool = PipelinePool::new(vec![pipeline]);
 
     tracing::info!("Reading input file: {:?}", input_file);
     let filename = input_file.file_name().unwrap_or_default().to_string_lossy();
     let bytes = fs::read(input_file).context("Failed to read input file")?;
-    
+
     let input_batch = parse_data_to_batch(bytes, &filename).await?;
 
     tracing::info!("Processing {} rows...", input_batch[0].num_rows());
-    let (successes, failures) = pool.process_batch(&input_batch[0].clone().to_batch()).await?;
+    let (successes, failures) = pool
+        .process_batch(&input_batch[0].clone().to_batch())
+        .await?;
 
     if !failures.is_empty() {
-        if !output_dir.exists() { fs::create_dir_all(output_dir)?; }
-        
+        if !output_dir.exists() {
+            fs::create_dir_all(output_dir)?;
+        }
+
         let error_path = output_dir.join("errors.jsonl");
         tracing::warn!("Writing {} failures to {:?}", failures.len(), error_path);
-        
+
         let f = fs::File::create(&error_path)?;
         let mut writer = BufWriter::new(f);
-        
+
         for fail in failures {
             let entry = serde_json::json!({
                 "row_index": fail.row_index,
@@ -129,23 +130,36 @@ pub async fn run_batch(
     }
 
     if !successes.is_empty() {
-        if !output_dir.exists() { fs::create_dir_all(output_dir)?; }
+        if !output_dir.exists() {
+            fs::create_dir_all(output_dir)?;
+        }
         let schema = infer_schema(&successes)?;
         let mut prebatch = PreBatch::new(schema);
         for row in successes {
-            prebatch.push(row).map_err(|e| anyhow!("Row reconstruction failed: {:?}", e))?;
+            prebatch
+                .push(row)
+                .map_err(|e| anyhow!("Row reconstruction failed: {:?}", e))?;
         }
 
-        let output_batch = prebatch.flush()
+        let output_batch = prebatch
+            .flush()
             .map_err(|e| anyhow!("Batch flush failed: {:?}", e))?
             .ok_or_else(|| anyhow!("Resulting batch was empty"))?;
         let out_path = output_dir.join(format!("success.{}", format.extension()));
-        tracing::info!("Writing {} successful rows to {:?}", output_batch.num_rows(), out_path);
+        tracing::info!(
+            "Writing {} successful rows to {:?}",
+            output_batch.num_rows(),
+            out_path
+        );
 
         match format {
             OutputFormat::Parquet => write_parquet(&[output_batch], out_path)?,
-            OutputFormat::Csv => { write_csv(&[output_batch], out_path, None)?; },
-            OutputFormat::Json => { write_jsonl(&[output_batch], out_path, None)?; },
+            OutputFormat::Csv => {
+                write_csv(&[output_batch], out_path, None)?;
+            }
+            OutputFormat::Json => {
+                write_jsonl(&[output_batch], out_path, None)?;
+            }
             OutputFormat::Ipc => {
                 let bytes = record_batch_to_bytes(&output_batch)?;
                 fs::write(out_path, bytes)?;

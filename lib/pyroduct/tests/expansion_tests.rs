@@ -7,7 +7,6 @@ fn expansion_tests() {
     macrotest::expand("tests/expand/*.rs");
 }
 
-
 #[test]
 fn capability_expansion_tests() {
     macrotest::expand("tests/capability_server/expand/*.rs");

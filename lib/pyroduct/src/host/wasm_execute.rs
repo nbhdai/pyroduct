@@ -14,7 +14,9 @@ use rkyv::rancor;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, error, info, instrument, warn};
-use wasmtime::{Caller, Config, Engine, Extern, Instance, Linker, Memory, Module, Store, TypedFunc};
+use wasmtime::{
+    Caller, Config, Engine, Extern, Instance, Linker, Memory, Module, Store, TypedFunc,
+};
 
 pub struct Harness {
     pub ident: ModIdentity,
@@ -215,34 +217,28 @@ impl Harness {
 }
 
 pub struct Pipeline {
-    steps: Vec<Harness>
+    steps: Vec<Harness>,
 }
 
 impl Pipeline {
     pub async fn new(def: &PipelineDef, capabilities: &Capabilities) -> PyroductResult<Self> {
         let mut steps = Vec::new();
 
-        // Must enable async support for async host calls
         let mut config = Config::new();
         config.async_support(true);
-        
-        // --- USING NEW ERROR TYPE HERE ---
+
         let engine = Engine::new(&config).map_err(|e| {
-             PyroductError::from_infrastructure(format!("Failed to create Wasmtime engine: {}", e))
+            PyroductError::from_infrastructure(format!("Failed to create Wasmtime engine: {}", e))
         })?;
 
         for (index, wasm_def) in def.pipeline.iter().enumerate() {
-            debug!(index, wasm=wasm_def.ident.name(), "Initializing");
-            // Init capabilities for this step
-            let harness_state = capabilities.init(&wasm_def.ident, &wasm_def.capabilities).await?;
-            
-            // Create the harness
-            let harness = Harness::new(
-                &engine,
-                &wasm_def.binary,
-                capabilities,
-                harness_state
-            ).await?;
+            debug!(index, wasm = wasm_def.ident.name(), "Initializing");
+            let harness_state = capabilities
+                .init(&wasm_def.ident, &wasm_def.capabilities)
+                .await?;
+
+            let harness =
+                Harness::new(&engine, &wasm_def.binary, capabilities, harness_state).await?;
 
             steps.push(harness);
         }
@@ -257,11 +253,16 @@ impl Pipeline {
     ) -> Result<Result<ArrowRow<'static>, Failure>, PyroductError> {
         let pipeline_len = self.steps.len();
         info!("Pipeline Start: Executing {} steps", pipeline_len);
-        
+
         let mut result: ArrowRow<'static> = input.clone().into_owned();
 
         for (i, step) in self.steps.iter_mut().enumerate() {
-            debug!("Pipeline Step {}/{}: Processing module '{}'", i + 1, pipeline_len, step.ident.name());
+            debug!(
+                "Pipeline Step {}/{}: Processing module '{}'",
+                i + 1,
+                pipeline_len,
+                step.ident.name()
+            );
 
             match step.process(&input).await? {
                 Ok(output) => {
@@ -273,19 +274,25 @@ impl Pipeline {
                 Err(error) => {
                     // Logic failure in the module (returned Err string)
                     warn!(
-                        "Pipeline Step {}/{}: Module '{}' returned error: {}", 
-                        i + 1, pipeline_len, step.ident.name(), error
+                        "Pipeline Step {}/{}: Module '{}' returned error: {}",
+                        i + 1,
+                        pipeline_len,
+                        step.ident.name(),
+                        error
                     );
                     return Ok(Err(Failure {
                         row_index: 0,
                         error,
                         partial_data: result,
                     }));
-                },
+                }
             }
         }
 
-        info!("Pipeline Complete: Successfully finished all {} steps", pipeline_len);
+        info!(
+            "Pipeline Complete: Successfully finished all {} steps",
+            pipeline_len
+        );
         Ok(Ok(result))
     }
 }
@@ -297,7 +304,7 @@ pub struct Failure {
     pub row_index: usize,
     pub error: String,
     /// Stores the state of the data at the moment of failure
-    pub partial_data: ArrowRow<'static>, 
+    pub partial_data: ArrowRow<'static>,
 }
 
 pub struct PipelinePool {
@@ -337,7 +344,7 @@ impl PipelinePool {
         };
 
         let num_pipelines = pipelines.len();
-        
+
         let (tx, mut rx) = mpsc::channel(100);
         let chunk_size = min((total_rows + num_pipelines - 1) / num_pipelines, 1000);
         let mut handles = Vec::with_capacity(num_pipelines);
@@ -356,34 +363,41 @@ impl PipelinePool {
             handles.push(tokio::spawn(async move {
                 for j in 0..batch_slice.num_rows() {
                     let absolute_index = offset + j;
-                    
+
                     // Extract row (safely handling extraction errors)
                     let row_res = batch_slice.row(j);
-                    
+
                     let result = match row_res {
-                        Ok(input_row) => {
-                            match pipeline.process(input_row).await {
-                                Ok(Ok(mut res)) => {
-                                    res.insert("pyroduct_index".to_string(), (absolute_index as u64).into());
-                                    Ok(res)
-                                },
-                                Ok(Err(mut failure)) => {
-                                    failure.row_index = absolute_index;
-                                    Err(failure)
-                                },
-                                Err(e) => {
-                                    Err(Failure { row_index: absolute_index, error: e.to_string(), partial_data: ArrowRow::empty() })
-                                }
+                        Ok(input_row) => match pipeline.process(input_row).await {
+                            Ok(Ok(mut res)) => {
+                                res.insert(
+                                    "pyroduct_index".to_string(),
+                                    (absolute_index as u64).into(),
+                                );
+                                Ok(res)
                             }
-                        }
-                        Err(e) => Err(Failure { row_index: absolute_index, error: e.to_string(), partial_data: ArrowRow::empty() })
+                            Ok(Err(mut failure)) => {
+                                failure.row_index = absolute_index;
+                                Err(failure)
+                            }
+                            Err(e) => Err(Failure {
+                                row_index: absolute_index,
+                                error: e.to_string(),
+                                partial_data: ArrowRow::empty(),
+                            }),
+                        },
+                        Err(e) => Err(Failure {
+                            row_index: absolute_index,
+                            error: e.to_string(),
+                            partial_data: ArrowRow::empty(),
+                        }),
                     };
 
                     if let Err(_) = tx_clone.send(result).await {
                         break;
                     }
                 }
-                
+
                 pipeline
             }));
         }
@@ -416,7 +430,6 @@ impl PipelinePool {
         }
         success_results.sort_by_key(|row| row.get_u64("pyroduct_index").unwrap_or_default());
 
-
         Ok((success_results, failures))
     }
 }
@@ -425,20 +438,20 @@ impl PipelinePool {
 mod integration_tests {
     use super::*;
     use crate::host::pipeline::CapabilityDef;
-    use std::path::Path;
     use serde_json::json;
+    use std::path::Path;
 
     /// Test that capability state is preserved across multiple calls to the same module instance.
     #[tokio::test]
     async fn test_capability_state_preservation() -> PyroductResult<()> {
         let mut caps = Capabilities::new();
         // Use the counter capability from tests/cap_config
-        let cap_path = Path::new("../../tests/cap_config/artifacts/lib.dylib"); // Adjusted for local dev paths
+        let cap_path = Path::new("../../tests/cap_state/artifacts/lib.dylib"); // Adjusted for local dev paths
         caps.load("counter", cap_path)?;
 
-        let wasm_path = Path::new("../../tests/mod_cap_config/artifacts/mod.wasm");
+        let wasm_path = Path::new("../../tests/mod_cap_state/artifacts/mod.wasm");
         let wasm_bytes = std::fs::read(wasm_path).unwrap();
-        
+
         let mod_ident = ModIdentity::from(wasm_path);
         let cap_defs = vec![CapabilityDef {
             name: "counter".to_string(),
@@ -446,7 +459,9 @@ mod integration_tests {
         }];
 
         let harness_state = caps.init(&mod_ident, &cap_defs).await?;
-        let engine = Engine::default();
+        let mut config = Config::new();
+        config.async_support(true);
+        let engine = Engine::new(&config).unwrap();
         let mut harness = Harness::new(&engine, &wasm_bytes, &caps, harness_state).await?;
 
         // First call: Increment counter (start_value: 0)
@@ -468,14 +483,14 @@ mod integration_tests {
     async fn test_capability_configuration_respect() -> PyroductResult<()> {
         let mut caps = Capabilities::new();
         // Use the transform capability from tests/cap_state
-        let cap_path = Path::new("../../tests/cap_state/artifacts/lib.dylib");
+        let cap_path = Path::new("../../tests/cap_config/artifacts/lib.dylib");
         caps.load("transform", cap_path)?;
 
-        let wasm_path = Path::new("../../tests/mod_cap_state/artifacts/mod.wasm");
+        let wasm_path = Path::new("../../tests/mod_cap_config/artifacts/mod.wasm");
         let wasm_bytes = std::fs::read(wasm_path).unwrap();
-        
+
         let mod_ident = ModIdentity::from(wasm_path);
-        
+
         // Configure the capability to uppercase and add a specific suffix
         let cap_defs = vec![CapabilityDef {
             name: "transform".to_string(),
@@ -486,14 +501,16 @@ mod integration_tests {
         }];
 
         let harness_state = caps.init(&mod_ident, &cap_defs).await?;
-        let engine = Engine::default();
+        let mut config = Config::new();
+        config.async_support(true);
+        let engine = Engine::new(&config).unwrap();
         let mut harness = Harness::new(&engine, &wasm_bytes, &caps, harness_state).await?;
 
         // The module adds "[TEST] " prefix. With config, result should be:
         // "[TEST] HELLO!!!"
         let input = ArrowRow::from([("input", "hello".into())]);
         let result = harness.process(&input).await?.unwrap();
-        
+
         let transformed = result.get_str("transformed").unwrap();
         assert_eq!(transformed, "[TEST] HELLO!!!");
 

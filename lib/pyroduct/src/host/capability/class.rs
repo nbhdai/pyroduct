@@ -19,7 +19,7 @@ use crate::{
     host::{
         capability::WasmArgs,
         ffi_bridge::{AsyncExecFuture, ExecutionResultBridge, InitResultBridge},
-        wasm_bridge::{WasmMemory, HarnessState},
+        wasm_bridge::{HarnessState, WasmMemory},
     },
 };
 
@@ -43,7 +43,7 @@ pub struct CapFunction {
 impl CapFunction {
     pub fn new(func: &FunctionExport<'_>) -> Self {
         let cap_name = std::str::from_utf8(unsafe {
-            std::slice::from_raw_parts(func.module, func.module_len)
+            std::slice::from_raw_parts(func.capability, func.capability_len)
         })
         .unwrap_or("unknown_mod")
         .to_string();

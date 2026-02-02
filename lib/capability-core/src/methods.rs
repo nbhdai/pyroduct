@@ -92,10 +92,7 @@ impl ImplMethod {
                     if param_type != class.client_tn {
                         return Err(Error::new_spanned(
                             &pt.ty,
-                            format!(
-                                "Expected &{}, found &{}",
-                                class.client_tn, param_type
-                            ),
+                            format!("Expected &{}, found &{}", class.client_tn, param_type),
                         ));
                     }
                 } else {
@@ -318,6 +315,8 @@ mod tests {
 
     fn mock_class(error: Option<&str>) -> Rc<CapabilityIdent> {
         Rc::new(CapabilityIdent {
+            pkg_name: "cap_name".to_string(),
+            pkg_version: "0.1.0".to_string(),
             config_tn: None,
             state_tn: format_ident!("MyServer"),
             client_tn: format_ident!("MyClient"),
@@ -329,17 +328,21 @@ mod tests {
     fn assert_tokens_eq(actual: &TokenStream, expected: &TokenStream) {
         let actual_str = actual.to_string().replace(" ", "");
         let expected_str = expected.to_string().replace(" ", "");
-        assert_eq!(actual_str, expected_str, "TokenStreams do not match.\nActual: {}\nExpected: {}", actual, expected);
+        assert_eq!(
+            actual_str, expected_str,
+            "TokenStreams do not match.\nActual: {}\nExpected: {}",
+            actual, expected
+        );
     }
 
     #[test]
     fn test_server_method_preserves_mutability() {
         let class = mock_class(None);
-        
+
         // 1. Define Input: Function with &mut self
         let f: ImplItemFn = parse_quote! {
-            fn update(&mut self, ctx: &MyClient, val: u32) { 
-                self.val = val; 
+            fn update(&mut self, ctx: &MyClient, val: u32) {
+                self.val = val;
             }
         };
 
@@ -351,7 +354,7 @@ mod tests {
         // The server method MUST preserve &mut self
         let expected = quote! {
             pub fn update(&mut self, ctx: &MyClient, val: u32) {
-                self.val = val; 
+                self.val = val;
             }
         };
 
@@ -401,7 +404,7 @@ mod tests {
     #[test]
     fn test_reject_value_self() {
         let class = mock_class(None);
-        
+
         // 1. Define Input: self by value
         let f: ImplItemFn = parse_quote! {
             fn consume(self, _c: &MyClient) {}

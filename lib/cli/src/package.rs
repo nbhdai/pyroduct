@@ -1,10 +1,10 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use fs_err as fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::utils::{InterfaceGenerator, ProjectContext, TarballBuilder};
 use super::cargo::{CapabilityManifest, ModuleManifest};
+use crate::utils::{InterfaceGenerator, ProjectContext, TarballBuilder};
 
 fn get_target_dir(path: &Path) -> Result<PathBuf> {
     let output = Command::new("cargo")
@@ -13,8 +13,8 @@ fn get_target_dir(path: &Path) -> Result<PathBuf> {
         .output()
         .context("Failed to run cargo metadata")?;
 
-    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .context("Failed to parse cargo metadata")?;
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&output.stdout).context("Failed to parse cargo metadata")?;
 
     metadata["target_directory"]
         .as_str()
@@ -23,16 +23,20 @@ fn get_target_dir(path: &Path) -> Result<PathBuf> {
 }
 
 fn dylib_extension() -> &'static str {
-    if cfg!(target_os = "macos") { "dylib" }
-    else if cfg!(target_os = "windows") { "dll" }
-    else { "so" }
+    if cfg!(target_os = "macos") {
+        "dylib"
+    } else if cfg!(target_os = "windows") {
+        "dll"
+    } else {
+        "so"
+    }
 }
 
 fn run_cargo_command(
-    path: &Path, 
-    tool_args: &[&str], 
-    user_args: &[String], 
-    error_ctx: &str
+    path: &Path,
+    tool_args: &[&str],
+    user_args: &[String],
+    error_ctx: &str,
 ) -> Result<()> {
     // 1. Identify flags in the tool_args to prevent user overrides
     // We look for things like "--release" or "--target"
@@ -48,8 +52,8 @@ fn run_cargo_command(
             let flag_key = user_arg.split('=').next().unwrap_or(user_arg);
             if restricted_flags.contains(flag_key) {
                 bail!(
-                    "Conflict detected: User argument '{}' overrides internal tool flag '{}'", 
-                    user_arg, 
+                    "Conflict detected: User argument '{}' overrides internal tool flag '{}'",
+                    user_arg,
                     flag_key
                 );
             }
@@ -65,7 +69,12 @@ fn run_cargo_command(
         .context(error_ctx.to_string())?;
 
     if !status.success() {
-        bail!("Cargo command failed with status {}. Args: {:?} {:?}", status, tool_args, user_args);
+        bail!(
+            "Cargo command failed with status {}. Args: {:?} {:?}",
+            status,
+            tool_args,
+            user_args
+        );
     }
     Ok(())
 }
@@ -74,7 +83,11 @@ fn run_cargo_command(
 // Module Packaging
 // ============================================================
 
-fn package_module(ctx: &ProjectContext, manifest: ModuleManifest, cargo_args: &[String]) -> Result<()> {
+fn package_module(
+    ctx: &ProjectContext,
+    manifest: ModuleManifest,
+    cargo_args: &[String],
+) -> Result<()> {
     println!("Packaging module: {:?}", ctx.root);
 
     // 1. Generate Cargo.toml
@@ -84,13 +97,20 @@ fn package_module(ctx: &ProjectContext, manifest: ModuleManifest, cargo_args: &[
 
     // 2. Build WASM with pass-through args
     println!("Compiling WASM module...");
-    let build_args = vec!["build", "--release", "--target", "wasm32-unknown-unknown", "-p", &ctx.name];
+    let build_args = vec![
+        "build",
+        "--release",
+        "--target",
+        "wasm32-unknown-unknown",
+        "-p",
+        &ctx.name,
+    ];
 
     run_cargo_command(
         ctx.root,
         &build_args,
         cargo_args,
-        "Failed to run cargo build"
+        "Failed to run cargo build",
     )?;
 
     // 3. Locate and Copy Artifact
@@ -121,7 +141,11 @@ fn package_module(ctx: &ProjectContext, manifest: ModuleManifest, cargo_args: &[
 // Capability Packaging
 // ============================================================
 
-fn package_capability(ctx: &ProjectContext, manifest: CapabilityManifest, cargo_args: &[String]) -> Result<()> {
+fn package_capability(
+    ctx: &ProjectContext,
+    manifest: CapabilityManifest,
+    cargo_args: &[String],
+) -> Result<()> {
     println!("Packaging capability: {:?}", ctx.root);
 
     // 1. Generate Cargo.toml
@@ -131,18 +155,25 @@ fn package_capability(ctx: &ProjectContext, manifest: CapabilityManifest, cargo_
 
     // 2. Build Dynamic Library with pass-through args
     println!("Compiling capability binary...");
-    let build_args = vec!["build", "--release", "--features", "capability", "-p", &ctx.name];
+    let build_args = vec![
+        "build",
+        "--release",
+        "--features",
+        "capability",
+        "-p",
+        &ctx.name,
+    ];
 
     run_cargo_command(
         ctx.root,
         &build_args,
         cargo_args,
-        "Failed to run cargo build"
+        "Failed to run cargo build",
     )?;
 
     // 3. Locate and Copy Artifact
     let target_dir = get_target_dir(ctx.root)?;
-    let lib_filename = format!("lib{}.{}",ctx.normalized_name(), dylib_extension());
+    let lib_filename = format!("lib{}.{}", ctx.normalized_name(), dylib_extension());
     let built_lib = target_dir.join("release").join(&lib_filename);
 
     if !built_lib.exists() {
@@ -183,7 +214,9 @@ fn package_capability(ctx: &ProjectContext, manifest: CapabilityManifest, cargo_
 // ============================================================
 
 fn package_single(path: &Path, output: Option<&Path>, cargo_args: &[String]) -> Result<()> {
-    let output_dir = output.map(|p| p.to_path_buf()).unwrap_or(path.join("artifacts"));
+    let output_dir = output
+        .map(|p| p.to_path_buf())
+        .unwrap_or(path.join("artifacts"));
     fs::create_dir_all(&output_dir)?;
     let cap_toml = path.join("Capability.toml");
     let mod_toml = path.join("Module.toml");
@@ -194,17 +227,26 @@ fn package_single(path: &Path, output: Option<&Path>, cargo_args: &[String]) -> 
 
     if cap_toml.exists() {
         let manifest: CapabilityManifest = toml::from_str(&fs::read_to_string(&cap_toml)?)?;
-        let pkg = manifest.capability.as_ref().context("Package section missing in Capability.toml")?;
+        let pkg = manifest
+            .capability
+            .as_ref()
+            .context("Package section missing in Capability.toml")?;
 
         let ctx = ProjectContext::new(path, output_dir.as_path(), &pkg.name, pkg.version());
         package_capability(&ctx, manifest, cargo_args)
     } else if mod_toml.exists() {
         let manifest: ModuleManifest = toml::from_str(&fs::read_to_string(&mod_toml)?)?;
-        let pkg = manifest.module.as_ref().context("Module section missing in Module.toml")?;
+        let pkg = manifest
+            .module
+            .as_ref()
+            .context("Module section missing in Module.toml")?;
         let ctx = ProjectContext::new(path, output_dir.as_path(), &pkg.name, pkg.version());
         package_module(&ctx, manifest, cargo_args)
     } else {
-        bail!("Neither Capability.toml nor Module.toml found in {:?}", path)
+        bail!(
+            "Neither Capability.toml nor Module.toml found in {:?}",
+            path
+        )
     }
 }
 
@@ -215,15 +257,20 @@ pub fn package(path: &Path, output: Option<&Path>, cargo_args: &[String]) -> Res
     }
 
     // 2. Recursive scan mode
-    println!("No manifest found in {:?}, scanning subdirectories...", path);
+    println!(
+        "No manifest found in {:?}, scanning subdirectories...",
+        path
+    );
     let mut errors = Vec::new();
     let mut found_any = false;
 
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let subpath = entry.path();
-        
-        if !subpath.is_dir() { continue; }
+
+        if !subpath.is_dir() {
+            continue;
+        }
 
         if subpath.join("Capability.toml").exists() || subpath.join("Module.toml").exists() {
             found_any = true;
@@ -234,7 +281,10 @@ pub fn package(path: &Path, output: Option<&Path>, cargo_args: &[String]) -> Res
     }
 
     if !found_any {
-        bail!("No Capability.toml or Module.toml found in {:?} or subdirectories", path);
+        bail!(
+            "No Capability.toml or Module.toml found in {:?} or subdirectories",
+            path
+        );
     }
 
     if !errors.is_empty() {

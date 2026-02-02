@@ -93,8 +93,8 @@ pub enum Function<'a> {
 
 #[repr(C)]
 pub struct FunctionExport<'a> {
-    pub module: *const u8,
-    pub module_len: usize,
+    pub capability: *const u8,
+    pub capability_len: usize,
     pub name: *const u8,
     pub name_len: usize,
     pub func: Function<'a>,

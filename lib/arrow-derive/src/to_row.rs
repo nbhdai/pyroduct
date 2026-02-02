@@ -1,6 +1,8 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, GenericArgument, Path, PathArguments, Type, TypePath, parse_macro_input};
+use syn::{
+    Data, DeriveInput, GenericArgument, Path, PathArguments, Type, TypePath, parse_macro_input,
+};
 
 pub fn derive_with_path(input: TokenStream, import_location: Path) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

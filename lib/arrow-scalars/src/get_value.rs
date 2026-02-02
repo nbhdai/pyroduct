@@ -112,14 +112,18 @@ impl<'a> ArrowRow<'a> {
     /// Returns the days and milliseconds of an IntervalDayTime value.
     pub fn get_interval_day_time(&self, key: &str) -> Option<(i32, i32)> {
         match self.get(key) {
-            Some(ArrowValue::IntervalDayTime { days, milliseconds }) => Some((*days, *milliseconds)),
+            Some(ArrowValue::IntervalDayTime { days, milliseconds }) => {
+                Some((*days, *milliseconds))
+            }
             _ => None,
         }
     }
 
     pub fn get_deep_interval_day_time<S: AsRef<str>>(&self, path: &[S]) -> Option<(i32, i32)> {
         match self.get_deep(path) {
-            Some(ArrowValue::IntervalDayTime { days, milliseconds }) => Some((*days, *milliseconds)),
+            Some(ArrowValue::IntervalDayTime { days, milliseconds }) => {
+                Some((*days, *milliseconds))
+            }
             _ => None,
         }
     }

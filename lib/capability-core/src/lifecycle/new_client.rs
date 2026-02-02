@@ -28,15 +28,15 @@ impl NewClientFn {
 
         // 1. Validate name
         if sig.ident != "new_client" {
-            return Err(Error::new_spanned(&sig.ident, "Expected function named 'new_client'"));
+            return Err(Error::new_spanned(
+                &sig.ident,
+                "Expected function named 'new_client'",
+            ));
         }
 
         // 2. Validate not async
         if sig.asyncness.is_some() {
-            return Err(Error::new_spanned(
-                &sig,
-                "fn new_client cannot be async",
-            ));
+            return Err(Error::new_spanned(&sig, "fn new_client cannot be async"));
         }
 
         // 3. Validate &self as first parameter
@@ -62,10 +62,7 @@ impl NewClientFn {
                 ));
             }
             None => {
-                return Err(Error::new_spanned(
-                    &sig,
-                    "fn new_client must take &self",
-                ));
+                return Err(Error::new_spanned(&sig, "fn new_client must take &self"));
             }
         }
 
@@ -191,4 +188,3 @@ fn extract_result_error_type(ty: &Type) -> syn::Result<Option<Type>> {
         "Return type must be () or Result<(), ErrorType>",
     ))
 }
-

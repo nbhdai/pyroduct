@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
-use flate2::write::GzEncoder;
+use cargo_toml::{Inheritable, Package};
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use fs_err as fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -17,7 +18,12 @@ pub struct ProjectContext<'a> {
 }
 
 impl<'a> ProjectContext<'a> {
-   pub fn new(root: &'a Path, output_dir: &'a Path, name: impl Into<String>, version: impl Into<String>) -> Self {
+    pub fn new(
+        root: &'a Path,
+        output_dir: &'a Path,
+        name: impl Into<String>,
+        version: impl Into<String>,
+    ) -> Self {
         Self {
             root,
             output_dir,
@@ -31,7 +37,8 @@ impl<'a> ProjectContext<'a> {
     }
 
     pub fn archive_path(&self, suffix: &str) -> PathBuf {
-        self.output_dir.join(format!("{}-{}.{}", self.name, self.version, suffix))
+        self.output_dir
+            .join(format!("{}-{}.{}", self.name, self.version, suffix))
     }
 }
 
@@ -63,12 +70,12 @@ impl TarballBuilder {
         if !host_path.exists() {
             return Ok(());
         }
-        
+
         // Recursive helper
         fn append_recursive<W: std::io::Write>(
-            tar: &mut Builder<W>, 
-            dir: &Path, 
-            prefix: &str
+            tar: &mut Builder<W>,
+            dir: &Path,
+            prefix: &str,
         ) -> Result<()> {
             for entry in fs::read_dir(dir)? {
                 let entry = entry?;
@@ -116,6 +123,19 @@ impl InterfaceGenerator {
         let cargo_toml_content = toml::to_string_pretty(&interface_manifest)
             .context("Failed to serialize interface manifest")?;
 
+        let (cap_name, cap_version) = match interface_manifest.package {
+            Some(Package {
+                name,
+                version: Inheritable::Set(version),
+                ..
+            }) => (name.clone(), version.clone()),
+            Some(Package {
+                version: Inheritable::Inherited,
+                ..
+            }) => anyhow::bail!("Pyroduct does not support inherited versions (yet!)"),
+            None => anyhow::bail!("[capability] section is missing"),
+        };
+
         let source_path = root_path.join("src").join("lib.rs");
         if !source_path.exists() {
             anyhow::bail!("Source file not found: {:?}", source_path);
@@ -123,9 +143,10 @@ impl InterfaceGenerator {
 
         let original_source = fs::read_to_string(&source_path)
             .with_context(|| format!("Failed to read source: {:?}", source_path))?;
-            
-        let (lib_rs_content, doc_string, config_string) = capability_core::generate_interface(&original_source)
-            .context("Failed to generate client code")?;
+
+        let (lib_rs_content, doc_string, config_string) =
+            capability_core::generate_interface(&original_source, &cap_name, &cap_version)
+                .context("Failed to generate client code")?;
 
         Ok(Self {
             cargo_toml_content,
@@ -144,7 +165,7 @@ impl InterfaceGenerator {
         println!("  ✓ Wrote interface/Cargo.toml");
         let src_dir = output_dir.join("src");
         fs::create_dir_all(&src_dir)?;
-        
+
         let lib_path = src_dir.join("lib.rs");
         fs::write(&lib_path, &self.lib_rs_content)?;
 

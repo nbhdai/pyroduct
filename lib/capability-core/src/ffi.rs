@@ -38,7 +38,12 @@ impl CapabilityFuncFFI {
         if let Some(class) = &self.class {
             class.trace_name_static(&self.fn_name)
         } else {
-            format_ident!("__{}", AsSnakeCase(self.fn_name.to_string()).to_string().to_uppercase())
+            format_ident!(
+                "__{}",
+                AsSnakeCase(self.fn_name.to_string())
+                    .to_string()
+                    .to_uppercase()
+            )
         }
     }
 
@@ -164,13 +169,7 @@ impl CapabilityFuncFFI {
 
     pub fn generate_vtable_entry(&self) -> TokenStream {
         let fn_ffi_name = self.fn_ffi_name();
-        let fn_name_static = self.trace_name_static();
-
-        let module_name = if let Some(class) = &self.class {
-            class.class_name_static()
-        } else {
-            format_ident!("__CAPABILITY_NAME")
-        };
+        let fn_wasm_name = self.fn_wasm_name();
 
         let func_variant = if self.is_async {
             quote! {
@@ -184,10 +183,10 @@ impl CapabilityFuncFFI {
 
         quote! {
             ::pyroduct::capability_host::ffi::FunctionExport {
-                module: #module_name.as_ptr(),
-                module_len: #module_name.len(),
-                name: #fn_name_static.as_ptr(),
-                name_len: #fn_name_static.len(),
+                capability: CAPABILITY_NAME_VERSION.as_ptr(),
+                capability_len: CAPABILITY_NAME_VERSION.len(),
+                name: #fn_wasm_name.as_ptr(),
+                name_len: #fn_wasm_name.len(),
                 func: #func_variant,
             }
         }
@@ -386,6 +385,8 @@ mod tests {
 
     fn mock_class() -> Rc<CapabilityIdent> {
         Rc::new(CapabilityIdent {
+            pkg_name: "cap_name".to_string(),
+            pkg_version: "0.1.0".to_string(),
             config_tn: None,
             state_tn: format_ident!("MockServer"),
             client_tn: format_ident!("MockClient"),

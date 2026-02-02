@@ -23,18 +23,18 @@ pub struct ConfigSpec {
 pub struct InterfaceSpec {
     /// The name of the capability (Server struct)
     pub capability: String,
-    
+
     /// The main Client struct specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client: Option<ClientSpec>,
-    
+
     /// Description of the capability (doc comments)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    
+
     /// List of RPC methods
     pub methods: Vec<MethodSpec>,
-    
+
     /// Auxiliary structs used in the interface
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub items: HashMap<String, ItemSpec>,
@@ -150,10 +150,13 @@ impl SpecBuilder {
                 fields,
             });
         } else {
-            self.spec.items.insert(name, ItemSpec {
-                description,
-                fields,
-            });
+            self.spec.items.insert(
+                name,
+                ItemSpec {
+                    description,
+                    fields,
+                },
+            );
         }
     }
 
@@ -175,7 +178,7 @@ impl ConfigSpecBuilder {
             description,
             fields,
         };
-        
+
         serde_json::to_string_pretty(&spec).map_err(|e| anyhow::anyhow!(e))
     }
 }
@@ -208,9 +211,9 @@ fn parse_struct_fields(fields: &syn::Fields) -> HashMap<String, FieldDef> {
 fn clean_type(ty: &syn::Type) -> String {
     let s = quote!(#ty).to_string();
     s.replace(" < ", "<")
-     .replace(" > ", ">")
-     .replace(" >", ">")     // Clean trailing brackets
-     .replace(" , ", ", ")   // Normalize comma spacing
+        .replace(" > ", ">")
+        .replace(" >", ">") // Clean trailing brackets
+        .replace(" , ", ", ") // Normalize comma spacing
 }
 
 fn clean_return_type(ret: &syn::ReturnType) -> String {
@@ -250,14 +253,19 @@ mod tests {
 
     /// Helper to normalize JSON for comparison
     fn assert_json_eq(actual_str: &str, expected_str: &str) {
-        let actual: Value = serde_json::from_str(actual_str)
-            .expect("Generated JSON was invalid");
-        let expected: Value = serde_json::from_str(expected_str)
-            .expect("Expected JSON string was invalid");
+        let actual: Value = serde_json::from_str(actual_str).expect("Generated JSON was invalid");
+        let expected: Value =
+            serde_json::from_str(expected_str).expect("Expected JSON string was invalid");
 
         if actual != expected {
-            println!("EXPECTED:\n{}", serde_json::to_string_pretty(&expected).unwrap());
-            println!("ACTUAL:\n{}", serde_json::to_string_pretty(&actual).unwrap());
+            println!(
+                "EXPECTED:\n{}",
+                serde_json::to_string_pretty(&expected).unwrap()
+            );
+            println!(
+                "ACTUAL:\n{}",
+                serde_json::to_string_pretty(&actual).unwrap()
+            );
             panic!("JSON mismatch");
         }
     }
@@ -303,7 +311,8 @@ mod tests {
             }
         };
 
-        let cap_impl = CapabilityImpl::new(parse2(impl_tokens).unwrap(), true).unwrap();
+        let cap_impl =
+            CapabilityImpl::new(parse2(impl_tokens).unwrap(), true, "cap_name", "0.1.0").unwrap();
         let client_item = CapInterfaceItem::new(parse2(client_tokens).unwrap(), false).unwrap();
         let input_item = CapInterfaceItem::new(parse2(other_tokens).unwrap(), false).unwrap();
         let mut spec_builder = SpecBuilder::new(&cap_impl);

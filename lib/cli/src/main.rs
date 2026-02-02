@@ -1,9 +1,9 @@
 pub mod cargo;
-pub mod package;
 pub mod expand;
-pub mod utils;
-pub mod run;
 pub mod init;
+pub mod package;
+pub mod run;
+pub mod utils;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -29,7 +29,7 @@ enum Commands {
         cap: bool,
     },
     Expand {
-        #[arg(value_name = "DIRECTORY")] 
+        #[arg(value_name = "DIRECTORY")]
         path: PathBuf,
     },
     Package {
@@ -42,7 +42,7 @@ enum Commands {
         #[arg(last = true)]
         cargo_args: Vec<String>,
     },
-    /// Runs the pipeline. 
+    /// Runs the pipeline.
     /// Automatically detects if INPUT is a file path (Batch Mode) or a JSON string (Single Mode).
     Run {
         /// Path to the harness config TOML file
@@ -60,7 +60,7 @@ enum Commands {
         /// Output format (only used for batch processing).
         #[arg(long, value_enum, default_value_t = run::OutputFormat::Json)]
         format: run::OutputFormat,
-    }
+    },
 }
 
 #[tokio::main]
@@ -70,17 +70,24 @@ async fn main() -> Result<()> {
     match args.command {
         Commands::Init { path, cap } => init::init(path, cap),
         Commands::Expand { path } => expand::expand(&path),
-        Commands::Package { path, output, cargo_args } => package::package(&path, output.as_deref(), &cargo_args),
-        Commands::Run { 
-            config, 
-            input, 
-            output_dir, 
-            format 
+        Commands::Package {
+            path,
+            output,
+            cargo_args,
+        } => package::package(&path, output.as_deref(), &cargo_args),
+        Commands::Run {
+            config,
+            input,
+            output_dir,
+            format,
         } => {
             let input_path = Path::new(&input);
 
             if input_path.exists() && input_path.is_file() {
-                println!("📂 Input file detected: {:?}. Running in Batch Mode...", input_path);
+                println!(
+                    "📂 Input file detected: {:?}. Running in Batch Mode...",
+                    input_path
+                );
                 run::run_batch(&config, input_path, &output_dir, format).await
             } else {
                 run::run(&config, &input).await

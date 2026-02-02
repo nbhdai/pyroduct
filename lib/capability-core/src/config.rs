@@ -41,12 +41,12 @@ impl CapConfig {
         let serde_crate: Attribute = parse_quote!(
             #[serde(crate = "::pyroduct::serde")]
         );
-        
+
         // 4. Decorate with Serde attributes
         let serde_derive: Attribute = parse_quote!(
             #[derive(::pyroduct::serde::Serialize, ::pyroduct::serde::Deserialize)]
         );
-        
+
         // Insert in reverse order of appearance
         input.attrs.insert(0, serde_crate);
         input.attrs.insert(0, serde_derive);
@@ -81,7 +81,7 @@ impl CapConfig {
                         } else {
                             quote! { #field }
                         };
-                        
+
                         return Err(syn::Error::new_spanned(
                             tokens,
                             "Configuration fields must be documented",
@@ -145,7 +145,7 @@ mod tests {
             }
         };
         let item = parse2(code).unwrap();
-        
+
         // Should fail
         let err = CapConfig::new(item, DocRec::StructDoc).unwrap_err();
         assert_eq!(err.to_string(), "Configuration struct must be documented");
