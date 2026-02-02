@@ -36,6 +36,7 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for HostLogger {
 }
 
 static INIT: Once = Once::new();
+#[cfg(not(test))]
 pub fn init_logging() {
     INIT.call_once(|| {
         tracing_subscriber::fmt()
@@ -45,3 +46,5 @@ pub fn init_logging() {
             .init();
     });
 }
+#[cfg(test)]
+pub fn init_logging() {}

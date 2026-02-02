@@ -72,7 +72,10 @@
         };
 
         devShells.default = craneLibNightly.devShell {
-          packages = [ nightlyToolchain pyroduct ];
+          packages = [ 
+            nightlyToolchain
+            pyroduct
+          ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.valgrind ];
           RUST_SRC_PATH = "${nightlyToolchain}/lib/rustlib/src/rust/library";
           CARGO = "${nightlyToolchain}/bin/cargo";
           RUSTUP_TOOLCHAIN = "${nightlyToolchain}";

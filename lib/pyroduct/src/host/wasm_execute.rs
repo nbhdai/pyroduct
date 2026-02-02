@@ -446,7 +446,10 @@ mod integration_tests {
     async fn test_capability_state_preservation() -> PyroductResult<()> {
         let mut caps = Capabilities::new();
         // Use the counter capability from tests/cap_config
-        let cap_path = Path::new("../../capabilities/state/artifacts/lib.dylib"); // Adjusted for local dev paths
+        #[cfg(target_os = "linux")]
+        let cap_path = Path::new("../../capabilities/state/artifacts/lib.so");
+        #[cfg(target_os = "macos")]
+        let cap_path = Path::new("../../capabilities/state/artifacts/lib.dylib");
         caps.load("counter", cap_path)?;
 
         let wasm_path = Path::new("../../modules/cap_state/artifacts/mod.wasm");
@@ -483,6 +486,9 @@ mod integration_tests {
     async fn test_capability_configuration_respect() -> PyroductResult<()> {
         let mut caps = Capabilities::new();
         // Use the transform capability from capabilities/state
+        #[cfg(target_os = "linux")]
+        let cap_path = Path::new("../../capabilities/config/artifacts/lib.so");
+        #[cfg(target_os = "macos")]
         let cap_path = Path::new("../../capabilities/config/artifacts/lib.dylib");
         caps.load("transform", cap_path)?;
 

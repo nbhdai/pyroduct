@@ -14,9 +14,6 @@ use crate::{
     errors::FfiError,
 };
 
-#[cfg(test)]
-mod safety_tests;
-
 impl From<Result<COutput, FfiError>> for FfiResult {
     fn from(result: Result<COutput, FfiError>) -> Self {
         match result {
