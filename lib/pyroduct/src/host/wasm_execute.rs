@@ -326,7 +326,6 @@ impl PipelinePool {
             return Ok((Vec::new(), Vec::new()));
         }
 
-        // 1. Acquire all pipelines from the pool
         let pipelines = {
             let mut guard = self.pipelines.lock().await;
             if guard.is_empty() {
@@ -334,23 +333,18 @@ impl PipelinePool {
                     "Pipeline pool is empty or exhausted".to_string(),
                 ));
             }
-            // Take all pipelines out to distribute work
             std::mem::take(&mut *guard)
         };
 
         let num_pipelines = pipelines.len();
         
-        // 2. Setup communication channel (workers -> main thread)
         let (tx, mut rx) = mpsc::channel(100);
-
-        // 3. Calculate chunk sizes and spawn workers
         let chunk_size = min((total_rows + num_pipelines - 1) / num_pipelines, 1000);
         let mut handles = Vec::with_capacity(num_pipelines);
 
         for (i, mut pipeline) in pipelines.into_iter().enumerate() {
             let offset = i * chunk_size;
             if offset >= total_rows {
-                // If we have more pipelines than data, just return the unused pipeline
                 handles.push(tokio::spawn(async move { pipeline }));
                 continue;
             }
@@ -368,7 +362,6 @@ impl PipelinePool {
                     
                     let result = match row_res {
                         Ok(input_row) => {
-                            // Run the pipeline
                             match pipeline.process(input_row).await {
                                 Ok(Ok(mut res)) => {
                                     res.insert("pyroduct_index".to_string(), (absolute_index as u64).into());
@@ -396,8 +389,6 @@ impl PipelinePool {
         }
 
         drop(tx);
-
-        // 4. Collect results in the main thread
         let mut success_results = Vec::with_capacity(total_rows);
         let mut failures = Vec::new();
 
@@ -423,6 +414,8 @@ impl PipelinePool {
             let mut guard = self.pipelines.lock().await;
             *guard = reclaimed_pipelines;
         }
+        success_results.sort_by_key(|row| row.get_u64("pyroduct_index").unwrap_or_default());
+
 
         Ok((success_results, failures))
     }

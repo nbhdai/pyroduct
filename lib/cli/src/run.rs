@@ -91,29 +91,22 @@ pub async fn run_batch(
     output_dir: &Path,
     format: OutputFormat
 ) -> Result<()> {
-    // 1. Setup Pipeline Pool
     let config = load_config(config_path)?;
     let mut capabilities = Capabilities::new();
     let pipeline_def = PipelineDef::load(&config, &mut capabilities)?;
     
-    // Create pool with 1 pipeline (extensible to N via config later)
     let pipeline = Pipeline::new(&pipeline_def, &capabilities).await?;
     let pool = PipelinePool::new(vec![pipeline]);
 
-    // 2. Read File to RecordBatch
     tracing::info!("Reading input file: {:?}", input_file);
     let filename = input_file.file_name().unwrap_or_default().to_string_lossy();
     let bytes = fs::read(input_file).context("Failed to read input file")?;
     
-    // Use arrow-file to normalize input (IPC, CSV, JSON, etc) into a RecordBatch
     let input_batch = parse_data_to_batch(bytes, &filename).await?.to_batch();
 
-    // 3. Process Batch
     tracing::info!("Processing {} rows...", input_batch.num_rows());
-    // Pool handles concurrency, order preservation, and partial failure collection
-    let (mut successes, failures) = pool.process_batch(&input_batch).await?;
+    let (successes, failures) = pool.process_batch(&input_batch).await?;
 
-    // 4. Handle Failures
     if !failures.is_empty() {
         if !output_dir.exists() { fs::create_dir_all(output_dir)?; }
         
@@ -134,13 +127,8 @@ pub async fn run_batch(
         }
     }
 
-    // 5. Handle Successes
     if !successes.is_empty() {
         if !output_dir.exists() { fs::create_dir_all(output_dir)?; }
-
-        // Sort by index to restore original order (workers return unordered)
-        successes.sort_by_key(|row| row.get_u64("index").unwrap_or_default());
-
         let mut prebatch = PreBatch::new(input_batch.schema());
         for row in successes {
             prebatch.push(row).map_err(|e| anyhow!("Row reconstruction failed: {:?}", e))?;
@@ -149,8 +137,6 @@ pub async fn run_batch(
         let output_batch = prebatch.flush()
             .map_err(|e| anyhow!("Batch flush failed: {:?}", e))?
             .ok_or_else(|| anyhow!("Resulting batch was empty"))?;
-
-        // Write to disk using arrow-file helpers
         let out_path = output_dir.join(format!("success.{}", format.extension()));
         tracing::info!("Writing {} successful rows to {:?}", output_batch.num_rows(), out_path);
 

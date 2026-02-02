@@ -1908,6 +1908,7 @@ dependencies = [
  "clap",
  "flate2",
  "fs-err",
+ "heck",
  "pyroduct",
  "serde",
  "serde_json",
