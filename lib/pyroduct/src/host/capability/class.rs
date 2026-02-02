@@ -19,8 +19,7 @@ use crate::{
     host::{
         capability::WasmArgs,
         ffi_bridge::{AsyncExecFuture, ExecutionResultBridge, InitResultBridge},
-        harness::HarnessState,
-        wasm_bridge::WasmMemory,
+        wasm_bridge::{WasmMemory, HarnessState},
     },
 };
 

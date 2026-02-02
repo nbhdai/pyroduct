@@ -5,8 +5,11 @@ use wasmtime::Linker;
 
 use crate::capability_host::ffi::CapabilityRegisterFn;
 use crate::errors::PyroductError;
-use crate::host::harness::HarnessState;
+use crate::host::capability::class::CapabilityInit;
+use crate::host::pipeline::CapabilityDef;
+use crate::host::wasm_bridge::HarnessState;
 use crate::{CapIdentity, ModIdentity, PyroductResult};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -64,10 +67,8 @@ impl Capability {
         })
     }
 
-    pub async fn init(&self, config: Option<&serde_json::Value>) -> PyroductResult<ClassState> {
-        let class = self.class.init(config)?.await?;
-
-        Ok(class)
+    pub fn init(&self, config: Option<&serde_json::Value>) -> PyroductResult<CapabilityInit<'static>> {
+        self.class.init(config)
     }
 
     pub fn link(&self, linker: &mut Linker<HarnessState>) -> PyroductResult<()> {
@@ -76,21 +77,40 @@ impl Capability {
     }
 }
 
+
+
 #[derive(Clone)]
 pub struct Capabilities {
-    pub capabilities: Vec<Arc<Capability>>,
+    pub capabilities: HashMap<String, Arc<Capability>>,
 }
 
 impl Capabilities {
-    pub fn load<'a>(paths: impl Iterator<Item = &'a Path>) -> PyroductResult<Self> {
-        let capabilities = paths
-            .map(|p| unsafe { Capability::load(p) }.map(|c| Arc::new(c)))
-            .collect::<PyroductResult<Vec<_>>>()?;
-        Ok(Self { capabilities })
+    pub fn new() -> Self {
+        Self {
+            capabilities: HashMap::new(),
+        }
     }
 
-    pub fn link(&self, linker: &mut Linker<HarnessState>) -> PyroductResult<()> {
-        for cap in self.capabilities.iter() {
+    pub fn load(&mut self, name: &str, path: &Path) -> PyroductResult<()> {
+        let cap = unsafe { Arc::new(Capability::load(path)?) };
+        self.capabilities.insert(name.to_string(), cap);
+        Ok(())
+    }
+
+    pub fn load_many<'a>(&mut self, names: impl Iterator<Item = &'a str>, paths: impl Iterator<Item = &'a Path>) -> PyroductResult<()> {
+        let capabilities = names.zip(paths)
+            .map(|(n,p)| {
+                let cap = unsafe { Arc::new(Capability::load(p)?) };
+                Ok((n.to_string(), cap))
+            })
+            .collect::<PyroductResult<HashMap<_, _>>>()?;
+        self.capabilities.extend(capabilities);
+        Ok(())
+    }
+
+    pub fn link<'a>(&self, names: impl Iterator<Item = &'a str>, linker: &mut Linker<HarnessState>) -> PyroductResult<()> {
+        for name in names {
+            let cap = self.capabilities.get(name).ok_or(PyroductError::missing_cap(name))?;
             cap.link(linker)?;
         }
         Ok(())
@@ -99,21 +119,23 @@ impl Capabilities {
     pub async fn init<'a>(
         &self,
         module: &ModIdentity,
-        configs: impl Iterator<Item = Option<&'a serde_json::Value>>,
+        configs: &[CapabilityDef],
     ) -> PyroductResult<HarnessState> {
-        let inits: Vec<_> = self
-            .capabilities
-            .iter()
-            .zip(configs)
-            .map(|(c, config)| c.init(config))
-            .collect();
-
+        let mut inits = Vec::new();
+        let mut capabilities = Vec::new();
+        
+        for config in configs {
+            let cap = self.capabilities.get(&config.name).ok_or(PyroductError::missing_cap(&config.name))?;
+            inits.push(cap.init(config.config.as_ref())?);
+            capabilities.push((config.name.clone(), cap.clone()));
+        }
+        
         let states = try_join_all(inits).await?;
         Ok(HarnessState {
             module: module.clone(),
             cap_states: states,
             error_slot: Mutex::new(None),
-            capabilities: self.clone(),
+            capabilities,
         })
     }
 }

@@ -7,20 +7,22 @@ use arrow::ipc::{
     root_as_footer,
     writer::FileWriter,
 };
-use arrow::json;
+use arrow::{csv, json as arrow_json};
 use bytes::Bytes;
 use memmap2::Mmap;
+use parquet::arrow::ArrowWriter;
+use parquet::file::properties::WriterProperties;
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{BufReader, Cursor, Seek, SeekFrom, Write};
 use std::ops::Deref;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::task::spawn_blocking;
 use tracing::{debug, info, instrument, warn};
 
-use pyroduct_error::{Reportable, Retryable, PyroductError};
+use pyroduct_error::{PyroductError, Reportable, Retryable};
 
 // -----------------------------------------------------------------------------
 // 1. Error Definitions
@@ -56,7 +58,6 @@ pub enum DataError {
     Serialization(String),
 }
 
-// Boilerplate to make using ? easy
 impl From<arrow::error::ArrowError> for DataError {
     fn from(err: arrow::error::ArrowError) -> Self {
         DataError::Arrow(Arc::new(err))
@@ -69,7 +70,6 @@ impl From<parquet::errors::ParquetError> for DataError {
     }
 }
 
-// These are logic/data errors, never retryable
 impl Retryable for DataError {
     fn is_retryable(&self) -> bool {
         false
@@ -82,7 +82,7 @@ impl Reportable for DataError {
             message: self.to_string(),
             category: "DataProcessing".to_string(),
             is_retryable: false,
-            details: None, // Could extract Arrow details here if safe
+            details: None,
         }
     }
 }
@@ -102,8 +102,195 @@ pub fn record_batch_to_bytes(batch: &RecordBatch) -> Result<Vec<u8>, DataError> 
     Ok(buffer)
 }
 
+fn get_chunk_path(base_path: &Path, chunk_index: Option<usize>) -> PathBuf {
+    match chunk_index {
+        Some(idx) => {
+            let stem = base_path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy();
+            let ext = base_path
+                .extension()
+                .unwrap_or_default()
+                .to_string_lossy();
+            let parent = base_path.parent().unwrap_or_else(|| Path::new("."));
+            if ext.is_empty() {
+                parent.join(format!("{}_part_{}", stem, idx))
+            } else {
+                parent.join(format!("{}_part_{}.{}", stem, idx, ext))
+            }
+        }
+        None => base_path.to_path_buf(),
+    }
+}
+
 // -----------------------------------------------------------------------------
-// 3. ArrowIpc Struct
+// 3. Export Functions
+// -----------------------------------------------------------------------------
+
+/// Writes a list of RecordBatches to a single Parquet file.
+#[instrument(skip(batches, path), level = "debug")]
+pub fn write_parquet<P: AsRef<Path>>(
+    batches: &[RecordBatch],
+    path: P,
+) -> Result<(), DataError> {
+    if batches.is_empty() {
+        return Ok(());
+    }
+    let schema = batches[0].schema();
+    
+    let file = File::create(path)?;
+    let props = WriterProperties::builder().build();
+    let mut writer = ArrowWriter::try_new(file, schema, Some(props))?;
+
+    for batch in batches {
+        writer.write(batch)?;
+    }
+    writer.close()?;
+
+    Ok(())
+}
+
+/// Writes a list of RecordBatches to CSV.
+///
+/// Handles chunking transparently: if `chunk_size` is provided, the data from
+/// the vector of batches is streamed continuously. If a batch overlaps a chunk
+/// boundary, it is sliced so that rows flow into the correct files.
+#[instrument(skip(batches, path), level = "debug")]
+pub fn write_csv<P: AsRef<Path>>(
+    batches: &[RecordBatch],
+    path: P,
+    chunk_size: Option<usize>,
+) -> Result<Vec<PathBuf>, DataError> {
+    if batches.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Prepare state
+    let mut paths = Vec::new();
+    let mut current_writer: Option<csv::Writer<File>> = None;
+    let mut current_file_idx = 0;
+    let mut current_chunk_rows = 0;
+    
+    // Iterate over logic slices
+    // We use a helper iterator/logic to drive the writer
+    let effective_chunk_size = chunk_size.unwrap_or(usize::MAX);
+    if effective_chunk_size == 0 {
+        return Err(DataError::InvalidContent("Chunk size cannot be zero".into()));
+    }
+
+    for batch in batches {
+        let mut offset = 0;
+        while offset < batch.num_rows() {
+            // 1. Ensure Writer Exists
+            if current_writer.is_none() {
+                let suffix = if chunk_size.is_some() { Some(current_file_idx) } else { None };
+                let out_path = get_chunk_path(path.as_ref(), suffix);
+                let file = File::create(&out_path)?;
+                current_writer = Some(csv::WriterBuilder::new().with_header(true).build(file));
+                paths.push(out_path);
+            }
+
+            // 2. Calculate slice size
+            let rows_remaining_in_batch = batch.num_rows() - offset;
+            let rows_remaining_in_chunk = effective_chunk_size - current_chunk_rows;
+            let write_len = std::cmp::min(rows_remaining_in_batch, rows_remaining_in_chunk);
+
+            // 3. Write slice
+            let slice = batch.slice(offset, write_len);
+            if let Some(w) = current_writer.as_mut() {
+                w.write(&slice)?;
+            }
+
+            // 4. Update counters
+            offset += write_len;
+            current_chunk_rows += write_len;
+
+            // 5. Rotate file if chunk full
+            if current_chunk_rows >= effective_chunk_size {
+                current_writer = None; // Drop writer (closes file)
+                current_file_idx += 1;
+                current_chunk_rows = 0;
+            }
+        }
+    }
+
+    Ok(paths)
+}
+
+/// Writes a list of RecordBatches to JSONL (NewLine Delimited JSON).
+///
+/// Handles chunking transparently across multiple batches.
+#[instrument(skip(batches, path), level = "debug")]
+pub fn write_jsonl<P: AsRef<Path>>(
+    batches: &[RecordBatch],
+    path: P,
+    chunk_size: Option<usize>,
+) -> Result<Vec<PathBuf>, DataError> {
+    if batches.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let mut paths = Vec::new();
+    let mut current_writer: Option<arrow_json::LineDelimitedWriter<File>> = None;
+    let mut current_file_idx = 0;
+    let mut current_chunk_rows = 0;
+
+    let effective_chunk_size = chunk_size.unwrap_or(usize::MAX);
+    if effective_chunk_size == 0 {
+        return Err(DataError::InvalidContent("Chunk size cannot be zero".into()));
+    }
+
+    for batch in batches {
+        let mut offset = 0;
+        while offset < batch.num_rows() {
+            // 1. Ensure Writer Exists
+            if current_writer.is_none() {
+                let suffix = if chunk_size.is_some() { Some(current_file_idx) } else { None };
+                let out_path = get_chunk_path(path.as_ref(), suffix);
+                let file = File::create(&out_path)?;
+                current_writer = Some(arrow_json::LineDelimitedWriter::new(file));
+                paths.push(out_path);
+            }
+
+            // 2. Calculate slice
+            let rows_remaining_in_batch = batch.num_rows() - offset;
+            let rows_remaining_in_chunk = effective_chunk_size - current_chunk_rows;
+            let write_len = std::cmp::min(rows_remaining_in_batch, rows_remaining_in_chunk);
+
+            // 3. Write slice
+            let slice = batch.slice(offset, write_len);
+            if let Some(w) = current_writer.as_mut() {
+                w.write(&slice)?;
+            }
+
+            // 4. Update counters
+            offset += write_len;
+            current_chunk_rows += write_len;
+
+            // 5. Rotate file if chunk full
+            if current_chunk_rows >= effective_chunk_size {
+                // JSON writer usually needs explicit finish
+                if let Some(mut w) = current_writer.take() {
+                    w.finish()?;
+                }
+                current_file_idx += 1;
+                current_chunk_rows = 0;
+            }
+        }
+    }
+
+    // Ensure final file is finished properly
+    if let Some(mut w) = current_writer {
+        w.finish()?;
+    }
+
+    Ok(paths)
+}
+
+
+// -----------------------------------------------------------------------------
+// 4. ArrowIpc Struct
 // -----------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
@@ -128,7 +315,6 @@ impl TryFrom<Vec<u8>> for ArrowIpc {
     fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
         let bytes = Bytes::from(bytes);
         let buffer = Buffer::from(bytes.clone());
-        // We pay the parsing cost here ("pay at load")
         let batch = parse_footer_and_batch(buffer)?;
 
         Ok(Self {
@@ -143,7 +329,6 @@ impl TryFrom<Bytes> for ArrowIpc {
 
     fn try_from(bytes: Bytes) -> Result<Self, Self::Error> {
         let buffer = Buffer::from(bytes.clone());
-        // We pay the parsing cost here ("pay at load")
         let batch = parse_footer_and_batch(buffer)?;
 
         Ok(Self {
@@ -155,14 +340,12 @@ impl TryFrom<Bytes> for ArrowIpc {
 
 impl ArrowIpc {
     /// Creates an ArrowIpc from an existing RecordBatch.
-    /// This immediately serializes the batch to bytes to populate the DataSource,
-    /// ensuring `as_slice()` is always available.
     pub fn from_batch(batch: RecordBatch) -> Result<Self, DataError> {
         debug!("Serializing RecordBatch to initialize ArrowIpc");
         let bytes = Bytes::from(record_batch_to_bytes(&batch)?);
 
         Ok(Self {
-            inner: batch, // We keep the original batch to avoid re-parsing immediately
+            inner: batch,
             source: bytes,
         })
     }
@@ -171,7 +354,6 @@ impl ArrowIpc {
         self.inner
     }
 
-    /// Returns the raw IPC bytes (File/Feather format).
     pub fn bytes(&self) -> &Bytes {
         &self.source
     }
@@ -183,30 +365,22 @@ impl ArrowIpc {
         result.into()
     }
 
-    /// Moves the data from RAM to Disk (Mmap) to reduce memory pressure.
     #[instrument(skip(self), level = "info")]
     pub fn memmap<P: AsRef<Path> + std::fmt::Debug>(&mut self, path: P) -> Result<(), DataError> {
         let path = path.as_ref();
         info!(path = %path.display(), "Memmapping ArrowIpc data");
 
-        // 1. Write content to disk
         {
             let mut file = File::create(path)?;
             file.write_all(self.bytes())?;
         }
 
-        // 2. Re-open as Mmap
         let file = File::open(path)?;
         let mmap = unsafe { Mmap::map(&file)? };
         let bytes = Bytes::from_owner(mmap);
-
-        // 3. Re-Parse via Zero-Copy from the new Mmap
-        // We must replace `self.inner` because the old arrays pointed to Heap memory.
         let buffer = Buffer::from(bytes.clone());
-
         let new_batch = parse_footer_and_batch(buffer)?;
 
-        // 4. Update State
         self.inner = new_batch;
         self.source = bytes;
 
@@ -215,7 +389,7 @@ impl ArrowIpc {
 }
 
 // -----------------------------------------------------------------------------
-// 4. Main Async Parser
+// 5. Main Async Parser
 // -----------------------------------------------------------------------------
 
 #[instrument(skip(data), fields(filename = %filename, size = data.len()))]
@@ -243,56 +417,18 @@ fn inter_parse_data_to_batch(data: Vec<u8>, filename: &str) -> Result<ArrowIpc, 
         }
         "csv" => {
             debug!("Parsing CSV...");
-            todo!("The below relies on tempfile")
-            // Standard CSV parsing
-            // let mut temp_file = NamedTempFile::new()?;
-            // temp_file.write_all(&data)?;
-            // let path_str = temp_file.path().to_str().ok_or_else(|| {
-            //     std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid Path")
-            // })?;
-
-            // let schema = csv::reader::infer_schema_from_files(
-            //     &[path_str.to_string()],
-            //     b',',
-            //     Some(100),
-            //     true,
-            // )?;
-            // let fields = schema
-            //     .fields()
-            //     .iter()
-            //     .map(|f| {
-            //         Arc::new(Field::new(
-            //             f.name().trim().to_owned(),
-            //             f.data_type().to_owned(),
-            //             true,
-            //         ))
-            //     })
-            //     .collect::<Vec<_>>();
-            // let schema = Schema::new(fields);
-
-            // let file = File::open(temp_file.path())?;
-            // let reader = csv::ReaderBuilder::new(schema.into())
-            //     .with_header(true)
-            //     .with_delimiter(b',')
-            //     .build(file)?;
-
-            // let batches = reader.collect::<Result<Vec<_>, _>>()?;
-            // let batch = validate_single_batch(batches)?;
-
-            // Convert Batch -> ArrowIpc (this triggers serialization to ensure byte-backing)
-            // ArrowIpc::from_batch(batch)
+            todo!("CSV Parsing implementation")
         }
         "json" => {
             debug!("Parsing JSON...");
             let mut cursor = Cursor::new(data);
-            let (schema, _) = json::reader::infer_json_schema(BufReader::new(&mut cursor), None)?;
+            let (schema, _) = arrow_json::reader::infer_json_schema(BufReader::new(&mut cursor), None)?;
             cursor.seek(SeekFrom::Start(0))?;
             let mut reader =
-                json::ReaderBuilder::new(schema.into()).build(BufReader::new(cursor))?;
+                arrow_json::ReaderBuilder::new(schema.into()).build(BufReader::new(cursor))?;
 
             let first = reader.next().transpose()?;
             if let Some(batch) = first {
-                // Convert Batch -> ArrowIpc (triggers serialization)
                 ArrowIpc::from_batch(batch)
             } else {
                 Err(DataError::InvalidContent("No JSON data found".into()))
@@ -302,8 +438,6 @@ fn inter_parse_data_to_batch(data: Vec<u8>, filename: &str) -> Result<ArrowIpc, 
     }
 }
 
-
-/// Zero-Copy parse from a Buffer (Raw or Mmapped)
 fn parse_footer_and_batch(buffer: Buffer) -> Result<RecordBatch, DataError> {
     if buffer.len() < 10 {
         return Err(DataError::InvalidContent(
@@ -356,14 +490,17 @@ fn parse_footer_and_batch(buffer: Buffer) -> Result<RecordBatch, DataError> {
 // Tests
 // -----------------------------------------------------------------------------
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use arrow::array::StringArray;
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::ipc::writer::FileWriter;
+    use std::fs::read_to_string;
     use std::sync::Arc;
     use tempfile::NamedTempFile;
+
 
     fn create_primary_batch(inputs: &[&str], targets: &[&str]) -> RecordBatch {
         let schema = Schema::new(vec![
@@ -566,5 +703,78 @@ mod tests {
         let bytes = b"".to_vec();
         let result = parse_data_to_batch(bytes, "data.json").await;
         assert!(result.is_err()); // infer_json_schema usually fails on empty
+    }
+
+    #[tokio::test]
+    async fn test_write_parquet_multi_batch() {
+        let batch1 = create_primary_batch(&["A"], &["1"]);
+        let batch2 = create_primary_batch(&["B"], &["2"]);
+        let batches = vec![batch1, batch2];
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path().to_owned();
+        temp_file.close().unwrap();
+
+        write_parquet(&batches, &path).unwrap();
+
+        assert!(path.exists());
+        let metadata = std::fs::metadata(&path).unwrap();
+        assert!(metadata.len() > 0);
+    }
+
+    #[tokio::test]
+    async fn test_write_csv_multi_batch_chunked() {
+        // Batch 1: A, B
+        // Batch 2: C, D
+        let batch1 = create_primary_batch(&["A", "B"], &["1", "2"]);
+        let batch2 = create_primary_batch(&["C", "D"], &["3", "4"]);
+        let batches = vec![batch1, batch2];
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let base_path = temp_file.path().to_owned();
+        temp_file.close().unwrap();
+
+        // Chunk size 3:
+        // File 0 should contain A, B, C (split logic handles moving C here)
+        // File 1 should contain D
+        let paths = write_csv(&batches, &base_path, Some(3)).unwrap();
+
+        assert_eq!(paths.len(), 2);
+
+        // Verify File 0
+        let c0 = read_to_string(&paths[0]).unwrap();
+        let lines0: Vec<&str> = c0.lines().collect();
+        // Header + A + B + C = 4 lines
+        assert_eq!(lines0.len(), 4);
+        assert!(c0.contains("input,target"));
+        assert!(c0.contains("A,1"));
+        assert!(c0.contains("B,2"));
+        assert!(c0.contains("C,3"));
+
+        // Verify File 1
+        let c1 = read_to_string(&paths[1]).unwrap();
+        let lines1: Vec<&str> = c1.lines().collect();
+        // Header + D = 2 lines
+        assert_eq!(lines1.len(), 2);
+        assert!(c1.contains("D,4"));
+    }
+
+    #[tokio::test]
+    async fn test_write_jsonl_multi_batch_continuous() {
+        let batch1 = create_primary_batch(&["A"], &["1"]);
+        let batch2 = create_primary_batch(&["B"], &["2"]);
+        let batches = vec![batch1, batch2];
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path().to_owned();
+        temp_file.close().unwrap();
+
+        // No chunking -> Single file
+        let paths = write_jsonl(&batches, &path, None).unwrap();
+        assert_eq!(paths.len(), 1);
+
+        let content = read_to_string(&paths[0]).unwrap();
+        assert!(content.contains(r#""input":"A""#));
+        assert!(content.contains(r#""input":"B""#));
     }
 }

@@ -1,9 +1,9 @@
-mod capability;
+pub mod capability;
 pub mod ffi_bridge;
-mod harness;
-mod wasm_bridge;
-mod wasm_execute;
+pub mod wasm_bridge;
+pub mod wasm_execute;
+pub mod pipeline;
 
-pub use capability::{Capabilities, Capability, ClassState};
-pub use harness::{CapabilityDefinition, HarnessConfig, HarnessState};
-pub use wasm_execute::CompiledModule;
+pub use capability::{Capabilities, Capability};
+pub use wasm_execute::{Pipeline, PipelinePool};
+pub use pipeline::{CapabilityConfig, ModuleConfig, PipelineConfig, PipelineDef};

@@ -29,6 +29,7 @@ edition = "2024"
 
 [workspace.dependencies]
 arrow-scalars = { path = "arrow-scalars" }
+arrow-file = { path = "arrow-file" }
 pyroduct = { path = "pyroduct" }
 capability-core = { path = "capability-core" }
 capability-derive = { path = "capability-derive" }

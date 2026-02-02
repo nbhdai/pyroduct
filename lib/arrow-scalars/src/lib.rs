@@ -1,6 +1,8 @@
 use arrow_schema::{ArrowError, DataType};
 use thiserror::Error;
 mod arrow_value;
+mod get_value;
+pub mod pretty_print;
 pub use arrow_value::*;
 
 mod repair;
@@ -14,6 +16,8 @@ pub use record_batch::*;
 mod scalar;
 #[cfg(not(target_arch = "wasm32"))]
 pub use scalar::*;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod schema;
 
 pub mod deep_ref;
 pub use deep_ref::DeepRef;

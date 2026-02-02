@@ -130,9 +130,11 @@ impl fmt::Display for ErrorLocation {
 
 #[derive(Debug)]
 enum ErrorKind {
+    NotFound,
     LogicPanic,
     IoError,
     LinkingError,
+    Infrastructure, // Added for "I fucked up" scenarios
     Unknown,
 }
 
@@ -148,9 +150,22 @@ enum InnerError {
     ModuleMemory(ModIdentity, String),
     ModuleValidation(ModIdentity, String),
     ModuleExecution(ModIdentity, String),
+    Infrastructure(String), // Added for host setup failures
+    NotFound(String),
 }
 
 impl PyroductError {
+    /// Create a new user-facing error from a capability FfiError with explicit location
+    pub fn missing_cap(
+        name: &str,
+    ) -> Self {
+        Self {
+            kind: ErrorKind::NotFound,
+            inner: InnerError::NotFound(name.to_string()),
+            location: None,
+        }
+    }
+
     /// Create a new user-facing error from a capability FfiError with automatic location tracking
     pub fn from_capability(ident: &CapIdentity, inner: FfiError) -> Self {
         Self::from_capability_with_location(ident, inner, None)
@@ -218,6 +233,15 @@ impl PyroductError {
 
     // --- New Extension Methods ---
 
+    /// Create a new user-facing error for host infrastructure failures ("I fucked up")
+    pub fn from_infrastructure(error: impl fmt::Display) -> Self {
+        Self {
+            kind: ErrorKind::Infrastructure,
+            inner: InnerError::Infrastructure(error.to_string()),
+            location: None,
+        }
+    }
+
     pub fn from_module_serialization(module: &ModIdentity, error: impl fmt::Display) -> Self {
         Self {
             kind: ErrorKind::IoError,
@@ -276,6 +300,8 @@ impl PyroductError {
     /// Get the path to the capability or module that errored
     pub fn path(&self) -> &Path {
         match &self.inner {
+            InnerError::NotFound(_) => Path::new("./."),
+            InnerError::Infrastructure(_) => Path::new("HOST_INFRASTRUCTURE"),
             InnerError::Capability(ident, _) | InnerError::CapabilityLinking(ident, _) => {
                 &ident.path
             }
@@ -292,6 +318,8 @@ impl PyroductError {
     /// Get the path to the capability or module that errored
     pub fn name(&self) -> &str {
         match &self.inner {
+            InnerError::NotFound(name) => &name,
+            InnerError::Infrastructure(_) => "Host Infrastructure",
             InnerError::Capability(ident, _) | InnerError::CapabilityLinking(ident, _) => {
                 &ident.name()
             }
@@ -308,6 +336,12 @@ impl PyroductError {
     /// Get the underlying error details for diagnostics
     pub fn detailed_error(&self) -> String {
         match &self.inner {
+            InnerError::NotFound(name) => {
+                format!("NotFound: {:?}", name)
+            }
+            InnerError::Infrastructure(e) => {
+                format!("Infrastructure failure: {}", e)
+            }
             InnerError::Capability(path, e) => {
                 format!("Capability at {:?}: {:?}", path, e)
             }
@@ -347,6 +381,13 @@ impl PyroductError {
 impl fmt::Display for PyroductError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.kind {
+            ErrorKind::NotFound => {
+                write!(f, "Did not find: {}", self.name())?;
+            }
+            ErrorKind::Infrastructure => {
+                write!(f, "Host Infrastructure failed (I fucked up)")?;
+                write!(f, ": {}", self.inner)?;
+            }
             ErrorKind::LogicPanic => {
                 write!(f, "{} experienced a logic panic", self.name())?;
                 write!(f, ": {}", self.inner)?;
@@ -380,6 +421,12 @@ impl fmt::Display for PyroductError {
 impl fmt::Display for InnerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            InnerError::NotFound(name) => {
+                write!(f, "(not found: {})", name)
+            }
+            InnerError::Infrastructure(e) => {
+                write!(f, "CRITICAL: {}", e)
+            }
             InnerError::Capability(path, e) => {
                 write!(f, "{} (capability: {})", e, path.display())
             }

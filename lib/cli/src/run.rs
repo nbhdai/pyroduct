@@ -1,68 +1,170 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::io::{BufWriter, Write};
+
 use fs_err as fs;
-use anyhow::Result;
-use pyroduct::{ModIdentity, arrow_scalars::ArrowRow, host::{Capabilities, CapabilityDefinition, CompiledModule, HarnessConfig}};
-use wasmtime::{Config, Engine};
+use anyhow::{Result, Context, anyhow};
+use clap::ValueEnum;
 
+use pyroduct::{
+    arrow_scalars::{PreBatch, ArrowRow},
+    host::{Capabilities, PipelineConfig, PipelineDef, Pipeline, PipelinePool},
+};
 
-pub async fn run(config_path: &Path, input_json: Option<&str>) -> Result<()> {
+// Use arrow-file to handle reading/writing data formats
+use arrow_file::{
+    parse_data_to_batch, 
+    write_parquet, 
+    write_csv, 
+    write_jsonl, 
+    record_batch_to_bytes
+};
+
+#[derive(ValueEnum, Clone, Debug, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    Json,
+    Csv,
+    Ipc,
+    Parquet,
+}
+
+impl OutputFormat {
+    fn extension(&self) -> &'static str {
+        match self {
+            OutputFormat::Json => "jsonl",
+            OutputFormat::Csv => "csv",
+            OutputFormat::Ipc => "arrow",
+            OutputFormat::Parquet => "parquet",
+        }
+    }
+}
+
+/// Helper to load config and resolve paths
+fn load_config(config_path: &Path) -> Result<PipelineConfig> {
     tracing::info!("Loading config from {:?}", config_path);
-
     let config_str = fs::read_to_string(config_path)?;
-    let config: HarnessConfig = toml::from_str(&config_str)?;
-    let config_dir = config_path.parent().unwrap_or(Path::new("."));
+    let mut config: PipelineConfig = toml::from_str(&config_str)
+        .context("Failed to parse pipeline TOML")?;
+    
+    let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+    // Resolve relative paths
+    for cap in config.capabilities.values_mut() {
+        if cap.path.is_relative() { cap.path = config_dir.join(&cap.path); }
+    }
+    for mod_conf in config.modules.values_mut() {
+        if mod_conf.path.is_relative() { mod_conf.path = config_dir.join(&mod_conf.path); }
+    }
+    Ok(config)
+}
 
-    let module_path = if config.module.is_relative() {
-        config_dir.join(&config.module)
-    } else {
-        config.module.clone()
-    };
+/// Processes a single row from a JSON string and prints the result to stdout.
+pub async fn run(
+    config_path: &Path, 
+    input_json: &str
+) -> Result<()> {
+    // 1. Setup Pipeline (Single instance, no pool needed)
+    let config = load_config(config_path)?;
+    let mut capabilities = Capabilities::new();
+    let pipeline_def = PipelineDef::load(&config, &mut capabilities)?;
+    let mut pipeline = Pipeline::new(&pipeline_def, &capabilities).await?;
 
-    tracing::info!("Loading WASM module from {:?}", module_path);
-    let wasm_bytes = fs::read(&module_path)?;
+    // 2. Parse Input directly to ArrowRow
+    tracing::debug!("Parsing input JSON directly to ArrowRow");
+    let input_row: ArrowRow<'static> = serde_json::from_str(input_json)
+        .context("Failed to deserialize input JSON to ArrowRow")?;
 
-    let cap_paths: Vec<PathBuf> = config
-        .capabilities
-        .iter()
-        .map(|c| {
-            let p = match c {
-                CapabilityDefinition::NoConfig(p) => p,
-                CapabilityDefinition::Config { path, .. } => path,
-            };
-            if p.is_relative() { config_dir.join(p) } else { p.clone() }
-        })
-        .collect();
+    // 3. Execute
+    tracing::info!("Executing pipeline...");
+    let result_row = pipeline.process(input_row).await?;
 
-    tracing::info!("Loading {} capabilities", cap_paths.len());
-    let capabilities = Capabilities::load(cap_paths.iter().map(|p: &PathBuf| p.as_path()))?;
+    // 4. Print Result
+    match result_row {
+        Ok(row) => println!("{row:#?}"),
+        Err(failure) => println!("{failure:#?}"),
+    }
+    Ok(())
+}
 
-    let mut engine_config = Config::new();
-    engine_config.async_support(true);
-    let engine = Engine::new(&engine_config)?;
+/// Processes a file of data using a thread pool and batch semantics.
+pub async fn run_batch(
+    config_path: &Path, 
+    input_file: &Path,
+    output_dir: &Path,
+    format: OutputFormat
+) -> Result<()> {
+    // 1. Setup Pipeline Pool
+    let config = load_config(config_path)?;
+    let mut capabilities = Capabilities::new();
+    let pipeline_def = PipelineDef::load(&config, &mut capabilities)?;
+    
+    // Create pool with 1 pipeline (extensible to N via config later)
+    let pipeline = Pipeline::new(&pipeline_def, &capabilities).await?;
+    let pool = PipelinePool::new(vec![pipeline]);
 
-    let ident = ModIdentity::from(&config.module_name);
+    // 2. Read File to RecordBatch
+    tracing::info!("Reading input file: {:?}", input_file);
+    let filename = input_file.file_name().unwrap_or_default().to_string_lossy();
+    let bytes = fs::read(input_file).context("Failed to read input file")?;
+    
+    // Use arrow-file to normalize input (IPC, CSV, JSON, etc) into a RecordBatch
+    let input_batch = parse_data_to_batch(bytes, &filename).await?.to_batch();
 
-    tracing::info!("Compiling module '{}'", config.module_name);
-    let mut compiled = CompiledModule::new(&ident, &engine, &wasm_bytes, &capabilities, &config).await?;
+    // 3. Process Batch
+    tracing::info!("Processing {} rows...", input_batch.num_rows());
+    // Pool handles concurrency, order preservation, and partial failure collection
+    let (mut successes, failures) = pool.process_batch(&input_batch).await?;
 
-    let input_row: ArrowRow<'static> = if let Some(json) = input_json {
-        serde_json::from_str(json)?
-    } else {
-        ArrowRow::default()
-    };
-
-    tracing::info!("Processing input...");
-    let result = compiled.process(&input_row).await?;
-
-    match result {
-        Ok(output) => {
-            tracing::info!("Module completed successfully");
-            println!("{}", serde_json::to_string_pretty(&output)?);
+    // 4. Handle Failures
+    if !failures.is_empty() {
+        if !output_dir.exists() { fs::create_dir_all(output_dir)?; }
+        
+        let error_path = output_dir.join("errors.jsonl");
+        tracing::warn!("Writing {} failures to {:?}", failures.len(), error_path);
+        
+        let f = fs::File::create(&error_path)?;
+        let mut writer = BufWriter::new(f);
+        
+        for fail in failures {
+            let entry = serde_json::json!({
+                "row_index": fail.row_index,
+                "error": fail.error,
+                "partial_data": fail.partial_data
+            });
+            serde_json::to_writer(&mut writer, &entry)?;
+            writeln!(writer)?;
         }
-        Err(e) => {
-            tracing::error!("Module returned error: {}", e);
-            anyhow::bail!("Module error: {}", e);
+    }
+
+    // 5. Handle Successes
+    if !successes.is_empty() {
+        if !output_dir.exists() { fs::create_dir_all(output_dir)?; }
+
+        // Sort by index to restore original order (workers return unordered)
+        successes.sort_by_key(|row| row.get_u64("index").unwrap_or_default());
+
+        let mut prebatch = PreBatch::new(input_batch.schema());
+        for row in successes {
+            prebatch.push(row).map_err(|e| anyhow!("Row reconstruction failed: {:?}", e))?;
         }
+
+        let output_batch = prebatch.flush()
+            .map_err(|e| anyhow!("Batch flush failed: {:?}", e))?
+            .ok_or_else(|| anyhow!("Resulting batch was empty"))?;
+
+        // Write to disk using arrow-file helpers
+        let out_path = output_dir.join(format!("success.{}", format.extension()));
+        tracing::info!("Writing {} successful rows to {:?}", output_batch.num_rows(), out_path);
+
+        match format {
+            OutputFormat::Parquet => write_parquet(&[output_batch], out_path)?,
+            OutputFormat::Csv => { write_csv(&[output_batch], out_path, None)?; },
+            OutputFormat::Json => { write_jsonl(&[output_batch], out_path, None)?; },
+            OutputFormat::Ipc => {
+                let bytes = record_batch_to_bytes(&output_batch)?;
+                fs::write(out_path, bytes)?;
+            }
+        }
+    } else {
+        tracing::warn!("No successful rows produced.");
     }
 
     Ok(())

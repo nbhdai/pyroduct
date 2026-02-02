@@ -1,16 +1,23 @@
+use std::cmp::min;
+use std::sync::Arc;
+
 use crate::errors::PyroductError;
 use crate::host::capability::Capabilities;
-use crate::host::harness::HarnessState;
+use crate::host::pipeline::PipelineDef;
+use crate::host::wasm_bridge::HarnessState;
 use crate::module_capability::access::wasm_ptr_to_slice;
-use crate::{ModIdentity, host::HarnessConfig};
-use arrow_scalars::ArrowRow;
+use crate::{ModIdentity, PyroductResult};
+use arrow::array::RecordBatch;
+use arrow_scalars::{ArrowRow, Rowable};
 
 use rkyv::rancor;
-use tracing::{debug, info};
-use wasmtime::{Caller, Engine, Extern, Instance, Linker, Memory, Module, Store, TypedFunc};
+use serde::{Deserialize, Serialize};
+use tokio::sync::{Mutex, mpsc};
+use tracing::{debug, error, info, instrument, warn};
+use wasmtime::{Caller, Config, Engine, Extern, Instance, Linker, Memory, Module, Store, TypedFunc};
 
-pub struct CompiledModule {
-    ident: ModIdentity,
+pub struct Harness {
+    pub ident: ModIdentity,
     store: Store<HarnessState>,
     #[allow(dead_code)]
     instance: Instance,
@@ -19,23 +26,21 @@ pub struct CompiledModule {
     call_func: TypedFunc<(i32, i32), u64>,
 }
 
-impl CompiledModule {
+impl Harness {
     pub async fn new(
-        ident: &ModIdentity,
         engine: &Engine,
         wasm_bytes: &[u8],
+        // So we can link against the capabilities we've got.
         capabilities: &Capabilities,
-        config: &HarnessConfig,
+        harness_state: HarnessState,
     ) -> Result<Self, PyroductError> {
+        let ident = harness_state.module.clone();
         let module = Module::from_binary(engine, wasm_bytes).map_err(|err| {
             PyroductError::from_module_linking(
                 &ident,
                 format!("Unable to parse the wasm binary: {err}"),
             )
         })?;
-        let harness_state = capabilities
-            .init(ident, config.capabilities.iter().map(|c| c.config()))
-            .await?;
 
         let mut store = Store::new(engine, harness_state);
         let mut linker = Linker::new(engine);
@@ -67,7 +72,7 @@ impl CompiledModule {
                 )
             })?;
 
-        capabilities.link(&mut linker)?;
+        capabilities.link(store.data().capabilities(), &mut linker)?;
 
         let instance = linker
             .instantiate_async(&mut store, &module)
@@ -98,7 +103,7 @@ impl CompiledModule {
                 )
             })?;
 
-        Ok(CompiledModule {
+        Ok(Self {
             ident: ident.clone(),
             store,
             instance,
@@ -108,7 +113,7 @@ impl CompiledModule {
         })
     }
 
-    #[tracing::instrument(skip(self, input))]
+    #[instrument(skip(self, input), fields(module = %self.ident.name()))]
     pub async fn process(
         &mut self,
         input: &ArrowRow<'_>,
@@ -116,7 +121,7 @@ impl CompiledModule {
         debug!("Resetting capability states...");
         self.store.data_mut().reset().await?;
 
-        info!("Serializing ArrowRow input...");
+        debug!("Serializing ArrowRow input...");
         let data = rkyv::to_bytes::<rancor::Error>(input).map_err(|e| {
             PyroductError::from_module_serialization(
                 &self.ident,
@@ -146,7 +151,7 @@ impl CompiledModule {
                 )
             })?;
 
-        info!("Invoking WASM export 'exter_call'...");
+        debug!("Invoking WASM export 'exter_call'...");
         let packed_result = self
             .call_func
             .call_async(&mut self.store, (ptr, data.len() as i32))
@@ -165,19 +170,13 @@ impl CompiledModule {
                 let memory = self.memory.data(&self.store);
 
                 if end > memory.len() {
-                    tracing::error!(
+                    let msg = format!(
                         "Result pointer out of bounds! Memory: {}, End: {}",
                         memory.len(),
                         end
                     );
-                    return Err(PyroductError::from_module_memory(
-                        &self.ident,
-                        format!(
-                            "Result pointer out of bounds! Memory: {}, End: {}",
-                            memory.len(),
-                            end
-                        ),
-                    ));
+                    error!("{}", msg);
+                    return Err(PyroductError::from_module_memory(&self.ident, msg));
                 }
 
                 &memory[start..end]
@@ -204,13 +203,227 @@ impl CompiledModule {
 
         match archived {
             rkyv::result::ArchivedResult::Ok(archived_row) => {
-                info!("Result deserialized successfully.");
+                debug!("Result deserialized successfully (Ok).");
                 Ok(Ok(ArrowRow::from(archived_row).into_owned()))
             }
             rkyv::result::ArchivedResult::Err(error) => {
-                info!("Result deserialized successfully.");
+                debug!("Result deserialized successfully (Err).");
                 Ok(Err(error.to_string()))
             }
         }
+    }
+}
+
+pub struct Pipeline {
+    steps: Vec<Harness>
+}
+
+impl Pipeline {
+    pub async fn new(def: &PipelineDef, capabilities: &Capabilities) -> PyroductResult<Self> {
+        let mut steps = Vec::new();
+
+        // Must enable async support for async host calls
+        let mut config = Config::new();
+        config.async_support(true);
+        
+        // --- USING NEW ERROR TYPE HERE ---
+        let engine = Engine::new(&config).map_err(|e| {
+             PyroductError::from_infrastructure(format!("Failed to create Wasmtime engine: {}", e))
+        })?;
+
+        for (index, wasm_def) in def.pipeline.iter().enumerate() {
+            debug!(index, wasm=wasm_def.ident.name(), "Initializing");
+            // Init capabilities for this step
+            let harness_state = capabilities.init(&wasm_def.ident, &wasm_def.capabilities).await?;
+            
+            // Create the harness
+            let harness = Harness::new(
+                &engine,
+                &wasm_def.binary,
+                capabilities,
+                harness_state
+            ).await?;
+
+            steps.push(harness);
+        }
+
+        Ok(Self { steps })
+    }
+
+    #[instrument(skip(self, input))]
+    pub async fn process(
+        &mut self,
+        mut input: ArrowRow<'_>,
+    ) -> Result<Result<ArrowRow<'static>, Failure>, PyroductError> {
+        let pipeline_len = self.steps.len();
+        info!("Pipeline Start: Executing {} steps", pipeline_len);
+        
+        let mut result: ArrowRow<'static> = input.clone().into_owned();
+
+        for (i, step) in self.steps.iter_mut().enumerate() {
+            debug!("Pipeline Step {}/{}: Processing module '{}'", i + 1, pipeline_len, step.ident.name());
+
+            match step.process(&input).await? {
+                Ok(output) => {
+                    // Success case
+                    debug!("Pipeline Step {}/{}: Success", i + 1, pipeline_len);
+                    result.extend(output.clone());
+                    input = output;
+                }
+                Err(error) => {
+                    // Logic failure in the module (returned Err string)
+                    warn!(
+                        "Pipeline Step {}/{}: Module '{}' returned error: {}", 
+                        i + 1, pipeline_len, step.ident.name(), error
+                    );
+                    return Ok(Err(Failure {
+                        row_index: 0,
+                        error,
+                        partial_data: result,
+                    }));
+                },
+            }
+        }
+
+        info!("Pipeline Complete: Successfully finished all {} steps", pipeline_len);
+        Ok(Ok(result))
+    }
+}
+
+/// Represents a failure where the pipeline could not complete successfully,
+/// but may have returned partial data before the error.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Failure {
+    pub row_index: usize,
+    pub error: String,
+    /// Stores the state of the data at the moment of failure
+    pub partial_data: ArrowRow<'static>, 
+}
+
+pub struct PipelinePool {
+    pipelines: Arc<Mutex<Vec<Pipeline>>>,
+}
+
+impl PipelinePool {
+    pub fn new(pipelines: Vec<Pipeline>) -> Self {
+        Self {
+            pipelines: Arc::new(Mutex::new(pipelines)),
+        }
+    }
+
+    /// Processes a batch by distributing chunks of the RecordBatch to available pipelines.
+    /// Results are streamed back via a channel and collected by the main thread.
+    ///
+    /// Returns:
+    /// - `Vec<(usize, ArrowRow<'static>)>`: Unsorted results containing the row index and data.
+    /// - `Vec<Failure>`: List of rows that encountered logic errors, with their partial state.
+    pub async fn process_batch(
+        &self,
+        batch: &RecordBatch,
+    ) -> Result<(Vec<ArrowRow<'static>>, Vec<Failure>), PyroductError> {
+        let total_rows = batch.num_rows();
+        if total_rows == 0 {
+            return Ok((Vec::new(), Vec::new()));
+        }
+
+        // 1. Acquire all pipelines from the pool
+        let pipelines = {
+            let mut guard = self.pipelines.lock().await;
+            if guard.is_empty() {
+                return Err(PyroductError::from_infrastructure(
+                    "Pipeline pool is empty or exhausted".to_string(),
+                ));
+            }
+            // Take all pipelines out to distribute work
+            std::mem::take(&mut *guard)
+        };
+
+        let num_pipelines = pipelines.len();
+        
+        // 2. Setup communication channel (workers -> main thread)
+        let (tx, mut rx) = mpsc::channel(100);
+
+        // 3. Calculate chunk sizes and spawn workers
+        let chunk_size = min((total_rows + num_pipelines - 1) / num_pipelines, 1000);
+        let mut handles = Vec::with_capacity(num_pipelines);
+
+        for (i, mut pipeline) in pipelines.into_iter().enumerate() {
+            let offset = i * chunk_size;
+            if offset >= total_rows {
+                // If we have more pipelines than data, just return the unused pipeline
+                handles.push(tokio::spawn(async move { pipeline }));
+                continue;
+            }
+
+            let length = chunk_size.min(total_rows - offset);
+            let batch_slice = batch.slice(offset, length);
+            let tx_clone = tx.clone();
+
+            handles.push(tokio::spawn(async move {
+                for j in 0..batch_slice.num_rows() {
+                    let absolute_index = offset + j;
+                    
+                    // Extract row (safely handling extraction errors)
+                    let row_res = batch_slice.row(j);
+                    
+                    let result = match row_res {
+                        Ok(input_row) => {
+                            // Run the pipeline
+                            match pipeline.process(input_row).await {
+                                Ok(Ok(mut res)) => {
+                                    res.insert("pyroduct_index".to_string(), (absolute_index as u64).into());
+                                    Ok(res)
+                                },
+                                Ok(Err(mut failure)) => {
+                                    failure.row_index = absolute_index;
+                                    Err(failure)
+                                },
+                                Err(e) => {
+                                    Err(Failure { row_index: absolute_index, error: e.to_string(), partial_data: ArrowRow::empty() })
+                                }
+                            }
+                        }
+                        Err(e) => Err(Failure { row_index: absolute_index, error: e.to_string(), partial_data: ArrowRow::empty() })
+                    };
+
+                    if let Err(_) = tx_clone.send(result).await {
+                        break;
+                    }
+                }
+                
+                pipeline
+            }));
+        }
+
+        drop(tx);
+
+        // 4. Collect results in the main thread
+        let mut success_results = Vec::with_capacity(total_rows);
+        let mut failures = Vec::new();
+
+        while let Some(row_result) = rx.recv().await {
+            match row_result {
+                Ok(row) => success_results.push(row),
+                Err(failure) => failures.push(failure),
+            }
+        }
+
+        // Reclaim pipelines and put them back in the pool
+        let mut reclaimed_pipelines = Vec::with_capacity(num_pipelines);
+        for handle in handles {
+            match handle.await {
+                Ok(p) => reclaimed_pipelines.push(p),
+                Err(e) => {
+                    tracing::error!("Worker task panicked, pipeline lost: {}", e);
+                }
+            }
+        }
+
+        {
+            let mut guard = self.pipelines.lock().await;
+            *guard = reclaimed_pipelines;
+        }
+
+        Ok((success_results, failures))
     }
 }

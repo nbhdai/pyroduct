@@ -8,6 +8,7 @@ edition.workspace = true
 capability-core.workspace = true
 pyroduct.workspace = true
 wasmtime.workspace = true
+arrow-file.workspace = true
 
 clap.workspace = true
 fs-err.workspace = true

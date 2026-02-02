@@ -344,6 +344,7 @@ dependencies = [
  "arrow-schema",
  "half",
  "macrotest",
+ "paste",
  "rkyv",
  "serde",
  "serde_json",
@@ -1873,6 +1874,7 @@ name = "pyroduct"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrow",
  "arrow-derive",
  "arrow-scalars",
  "async-ffi",
@@ -1900,6 +1902,7 @@ name = "pyroduct-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrow-file",
  "capability-core",
  "cargo_toml",
  "clap",

@@ -4,7 +4,7 @@ pub mod expand;
 pub mod utils;
 pub mod run;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -19,14 +19,12 @@ struct Args {
 enum Commands {
     /// Generates the Cargo.toml for the Capability crate itself.
     /// If no manifest is found, attempts to expand each subdirectory.
-    /// Usage: pyroduct expand ./capability
     Expand {
         #[arg(value_name = "DIRECTORY")] 
         path: PathBuf,
     },
+    
     /// Packages a module or capability into distributable archives.
-    /// For modules: creates a .module archive and .wasm binary
-    /// For capabilities: creates .cargo, .capability archives and .so/.dylib binary
     Package {
         #[arg(value_name = "DIRECTORY")]
         path: PathBuf,
@@ -34,16 +32,36 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
-    /// Runs the pipeline with the given config against the given data
+
+    /// Runs the pipeline.
+    /// Can run in single mode (via --json) or batch mode (via --input-file).
     Run {
         /// Path to the harness config TOML file
         #[arg(value_name = "CONFIG")]
         config: PathBuf,
 
-        /// Input data as JSON string, or a file path
-        #[arg(short, long)]
-        input: Option<String>,
-    }
+        // --- Mode 1: Single Run ---
+        
+        /// Input data as a JSON string. 
+        /// Mutually exclusive with --input-file.
+        #[arg(long, group = "input_source")]
+        json: Option<String>,
+
+        // --- Mode 2: Batch Run ---
+
+        /// Input file path for batch processing.
+        /// Mutually exclusive with --json. Requires --output-dir.
+        #[arg(long, group = "input_source", requires = "output_dir")]
+        input_file: Option<PathBuf>,
+
+        /// Output directory for batch processing.
+        #[arg(long)]
+        output_dir: Option<PathBuf>,
+
+        /// Output format for batch processing.
+        #[arg(long, value_enum, default_value_t = run::OutputFormat::Json)]
+        format: run::OutputFormat,
+    },
 }
 
 #[tokio::main]
@@ -53,6 +71,23 @@ async fn main() -> Result<()> {
     match args.command {
         Commands::Expand { path } => expand::expand(&path),
         Commands::Package { path, output } => package::package(&path, output.as_deref()),
-        Commands::Run { config, input } => run::run(&config, input.as_ref().map(|s| s.as_str())).await,
+        
+        Commands::Run { 
+            config, 
+            json, 
+            input_file, 
+            output_dir, 
+            format 
+        } => {
+            if let Some(json_str) = json {
+                run::run(&config, &json_str).await
+            } else if let Some(input_path) = input_file {
+                let output_path = output_dir.expect("Output directory is required for batch mode");
+                
+                run::run_batch(&config, &input_path, &output_path, format).await
+            } else {
+                Err(anyhow!("Please provide either --json for a single run or --input-file for a batch run."))
+            }
+        }
     }
 }

@@ -57,7 +57,7 @@
           version = "0.1.0";
           cargoArtifacts = pyroductDeps;
           doCheck = false;
-          cargoExtraArgs = "-p pyroduct";
+          cargoExtraArgs = "-p pyroduct-cli";
         });
 
         # Shared Library Extension

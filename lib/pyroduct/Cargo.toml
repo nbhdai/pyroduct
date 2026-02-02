@@ -11,6 +11,7 @@ module = []
 
 [dependencies]
 
+arrow.workspace = true
 arrow-scalars = { path = "../arrow-scalars", default-features = false, features = [] }
 arrow-derive = { path = "../arrow-derive", default-features = false, features = ["pyroduct"] }
 
