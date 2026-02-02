@@ -4,6 +4,7 @@ use std::path::Path;
 use fs_err as fs;
 
 use crate::cargo::{CapabilityManifest, ModuleManifest};
+use crate::symbols;
 use crate::utils::InterfaceGenerator;
 
 use capability_core::generate_capability;
@@ -16,8 +17,20 @@ pub fn expand(path: &Path, wat_mode: bool, lockfile: bool) -> Result<()> {
     if (is_cap || is_mod) && !wat_mode {
         return expand_single(path, lockfile);
     }
-    if is_mod && wat_mode {
-        wat_project(path)?;
+    if wat_mode {
+        let mut expanded_something = false;
+        
+        if is_mod {
+            expanded_something |= wat_project(path)?;
+        }
+        
+        if is_cap {
+            expanded_something |= dylib_project(path)?;
+        }
+
+        if expanded_something {
+            return Ok(());
+        }
     }
 
     // No manifest found, try expanding subdirectories
@@ -48,6 +61,13 @@ pub fn expand(path: &Path, wat_mode: bool, lockfile: bool) -> Result<()> {
         }
         if is_mod && wat_mode {
             match wat_project(&subpath) {
+                Ok(true) => found_any = true,
+                Ok(false) => {},
+                Err(e) => errors.push((subpath.clone(), e)),
+            }
+        }
+        if is_cap && wat_mode {
+            match dylib_project(&subpath) {
                 Ok(true) => found_any = true,
                 Ok(false) => {},
                 Err(e) => errors.push((subpath, e)),
@@ -85,7 +105,6 @@ pub fn expand(path: &Path, wat_mode: bool, lockfile: bool) -> Result<()> {
     Ok(())
 }
 
-
 fn wat_project(path: &Path) -> Result<bool> {
     let wasm_path = path.join("artifacts").join("mod.wasm");
     if wasm_path.exists() {
@@ -94,6 +113,36 @@ fn wat_project(path: &Path) -> Result<bool> {
         Ok(true)
     } else {
         println!("  x No WASM binary found at {:?}", wasm_path);
+        Ok(false)
+    }
+}
+
+fn dylib_project(path: &Path) -> Result<bool> {
+    let artifacts = path.join("artifacts");
+    if !artifacts.exists() {
+        return Ok(false);
+    }
+
+    let mut found = false;
+    // Scan for any common shared library extension
+    for entry in fs::read_dir(artifacts)? {
+        let entry = entry?;
+        let path = entry.path();
+        if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+            if ["dylib", "so", "dll"].contains(&ext) {
+                // Ensure we don't try to parse the symbols file itself or other garbage
+                if !path.file_stem().unwrap_or_default().to_string_lossy().contains("symbols") {
+                     symbols::dump_dylib_symbols(&path)?;
+                     found = true;
+                }
+            }
+        }
+    }
+    
+    if found {
+        Ok(true)
+    } else {
+        // Silent return if no binary artifacts found (expected if not built yet)
         Ok(false)
     }
 }

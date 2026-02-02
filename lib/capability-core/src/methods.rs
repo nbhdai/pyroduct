@@ -309,6 +309,8 @@ fn extract_result_parts(ty: &Type) -> Option<(&Type, &Type)> {
 
 #[cfg(test)]
 mod tests {
+    use crate::fmt::assert_code_eq_token;
+
     use super::*;
     use quote::format_ident;
     use syn::parse_quote;
@@ -322,17 +324,6 @@ mod tests {
             client_tn: format_ident!("MyClient"),
             error_tn: error.map(|s| syn::parse_str(s).unwrap()),
         })
-    }
-
-    /// Helper to compare TokenStreams by string representation, ignoring whitespace
-    fn assert_tokens_eq(actual: &TokenStream, expected: &TokenStream) {
-        let actual_str = actual.to_string().replace(" ", "");
-        let expected_str = expected.to_string().replace(" ", "");
-        assert_eq!(
-            actual_str, expected_str,
-            "TokenStreams do not match.\nActual: {}\nExpected: {}",
-            actual, expected
-        );
     }
 
     #[test]
@@ -358,7 +349,7 @@ mod tests {
             }
         };
 
-        assert_tokens_eq(&output, &expected);
+        assert_code_eq_token(&output, &expected);
     }
 
     #[test]
@@ -398,7 +389,7 @@ mod tests {
             pub fn get(&self, c: &MyClient) -> u32 { 10 }
         };
 
-        assert_tokens_eq(&output, &expected);
+        assert_code_eq_token(&output, &expected);
     }
 
     #[test]

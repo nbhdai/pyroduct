@@ -342,7 +342,7 @@ impl CapabilityImpl {
     fn generate_drop_ffi(&self) -> TokenStream {
         let server = &self.ident.state_tn;
         let server_snake = AsSnakeCase(server.to_string()).to_string();
-        let drop_name = format_ident!("__{}__ffi_drop", server_snake);
+        let drop_name = format_ident!("p__{}__ffi_drop", server_snake);
 
         quote! {
             #[unsafe(no_mangle)]
@@ -373,10 +373,10 @@ impl CapabilityImpl {
         let server_snake = AsSnakeCase(server.to_string()).to_string();
         let server_upper = server_snake.to_uppercase();
 
-        let class_name_static = format_ident!("__{}", server_upper);
-        let class_name_string = format!("__{}", server_snake);
+        let class_name_static = format_ident!("p__{}", server_upper);
+        let class_name_string = format!("p__{}", server_snake);
 
-        let drop_name = format_ident!("__{}__ffi_drop", server_snake);
+        let drop_name = format_ident!("p__{}__ffi_drop", server_snake);
 
         // Collect all FFIs
         let new_client_ffi = self.new_client_fn.build_ffi(&self.ident);
@@ -596,25 +596,24 @@ mod tests {
 
         let expected = quote! {
             const CAPABILITY_NAME_VERSION: &'static str = "cap_name:0.1.0";
-            const __TEST_SERVER: &'static str = "__test_server";
-            const __TEST_SERVER: &'static str = "__test_server";
-            const __TEST_SERVER__NEW_CLIENT: &'static str = "__test_server__new_client";
-            const __TEST_SERVER__GET_VALUE: &'static str = "__test_server__get_value";
+            const p__TEST_SERVER: &'static str = "p__test_server";
+            const p__TEST_SERVER__NEW_CLIENT: &'static str = "p__test_server__new_client__wasm";
+            const p__TEST_SERVER__GET_VALUE: &'static str = "p__test_server__get_value__wasm";
 
-            const __TEST_SERVER__METHODS: [::pyroduct::capability_host::ffi::FunctionExport; 2usize] = [
+            const p__TEST_SERVER__METHODS: [::pyroduct::capability_host::ffi::FunctionExport; 2usize] = [
                  ::pyroduct::capability_host::ffi::FunctionExport {
-                    module: __TEST_SERVER.as_ptr(),
-                    module_len: __TEST_SERVER.len(),
-                    name: __TEST_SERVER__NEW_CLIENT.as_ptr(),
-                    name_len: __TEST_SERVER__NEW_CLIENT.len(),
-                    func: ::pyroduct::capability_host::ffi::Function::Sync(__test_server__new_client__ffi),
+                    capability: CAPABILITY_NAME_VERSION.as_ptr(),
+                    capability_len: CAPABILITY_NAME_VERSION.len(),
+                    name: p__TEST_SERVER__NEW_CLIENT.as_ptr(),
+                    name_len: p__TEST_SERVER__NEW_CLIENT.len(),
+                    func: ::pyroduct::capability_host::ffi::Function::Sync(p__test_server__new_client__ffi),
                 },
                 ::pyroduct::capability_host::ffi::FunctionExport {
-                    module: __TEST_SERVER.as_ptr(),
-                    module_len: __TEST_SERVER.len(),
-                    name: __TEST_SERVER__GET_VALUE.as_ptr(),
-                    name_len: __TEST_SERVER__GET_VALUE.len(),
-                    func: ::pyroduct::capability_host::ffi::Function::Sync(__test_server__get_value__ffi),
+                    capability: CAPABILITY_NAME_VERSION.as_ptr(),
+                    capability_len: CAPABILITY_NAME_VERSION.len(),
+                    name: p__TEST_SERVER__GET_VALUE.as_ptr(),
+                    name_len: p__TEST_SERVER__GET_VALUE.len(),
+                    func: ::pyroduct::capability_host::ffi::Function::Sync(p__test_server__get_value__ffi),
                 }
             ];
 
@@ -626,11 +625,11 @@ mod tests {
                 ::pyroduct::capability::init_logging(id, log_callback);
 
                 ::pyroduct::capability_host::ffi::ClassExport {
-                    len: __TEST_SERVER__METHODS.len(),
-                    ptr: __TEST_SERVER__METHODS.as_ptr() as *mut _,
-                    init: ::pyroduct::capability_host::ffi::ClassInitFn::Sync(__test_server__ffi_init),
-                    drop: ::pyroduct::capability_host::ffi::ClassDropFn::Sync(__test_server__ffi_drop),
-                    reset: ::pyroduct::capability_host::ffi::ClassResetFn::Sync(__test_server__ffi_reset),
+                    len: p__TEST_SERVER__METHODS.len(),
+                    ptr: p__TEST_SERVER__METHODS.as_ptr() as *mut _,
+                    init: ::pyroduct::capability_host::ffi::ClassInitFn::Sync(p__test_server__ffi_init),
+                    drop: ::pyroduct::capability_host::ffi::ClassDropFn::Sync(p__test_server__ffi_drop),
+                    reset: ::pyroduct::capability_host::ffi::ClassResetFn::Sync(p__test_server__ffi_reset),
                 }
             }
         };
@@ -674,7 +673,7 @@ mod tests {
                         (),
                         _
                     >(
-                        "__my_state__new_client",
+                        "p__my_state__new_client",
                         Some(&__config_buf),
                         None,
                         |client_state_ptr: *const u8,
@@ -682,7 +681,7 @@ mod tests {
                          input_ptr: *const u8,
                          input_len: usize| {
                             unsafe {
-                                wasm::__my_state__new_client__wasm(
+                                wasm::p__my_state__new_client__wasm(
                                     client_state_ptr,
                                     client_state_len,
                                     input_ptr,
@@ -705,7 +704,7 @@ mod tests {
                         u32,
                         _
                     >(
-                        "__my_state__get_info",
+                        "p__my_state__get_info",
                         Some(self.buffer()),
                         None,
                         |client_state_ptr: *const u8,
@@ -713,7 +712,7 @@ mod tests {
                          input_ptr: *const u8,
                          input_len: usize| {
                             unsafe {
-                                wasm::__my_state__get_info__wasm(
+                                wasm::p__my_state__get_info__wasm(
                                     client_state_ptr,
                                     client_state_len,
                                     input_ptr,
@@ -730,7 +729,7 @@ mod tests {
                         u32,
                         _
                     >(
-                        "__my_state__get_other_info",
+                        "p__my_state__get_other_info",
                         Some(self.buffer()),
                         Some(&data),
                         |client_state_ptr: *const u8,
@@ -738,7 +737,7 @@ mod tests {
                          input_ptr: *const u8,
                          input_len: usize| {
                             unsafe {
-                                wasm::__my_state__get_other_info__wasm(
+                                wasm::p__my_state__get_other_info__wasm(
                                     client_state_ptr,
                                     client_state_len,
                                     input_ptr,
@@ -797,7 +796,7 @@ mod tests {
                         Result<(), MyError>,
                         _
                     >(
-                        "__advanced_struct__new_client",
+                        "p__advanced_struct__new_client",
                         Some(&__config_buf),
                         None,
                         |client_state_ptr: *const u8,
@@ -805,7 +804,7 @@ mod tests {
                          input_ptr: *const u8,
                          input_len: usize| {
                             unsafe {
-                                wasm::__advanced_struct__new_client__wasm(
+                                wasm::p__advanced_struct__new_client__wasm(
                                     client_state_ptr,
                                     client_state_len,
                                     input_ptr,
@@ -828,25 +827,25 @@ mod tests {
                 fn process(&self, val: u32, flag: bool) -> Result<u32, MyError> {
                     #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
                     #[rkyv(crate = ::pyroduct::rkyv)]
-                    struct __AdvancedStruct__Process__Input {
+                    struct p__AdvancedStruct__Process__Input {
                         pub val: u32,
                         pub flag: bool
                     }
 
                     ::pyroduct::module_capability::access::call_from_wasm::<
-                        __AdvancedStruct__Process__Input,
+                        p__AdvancedStruct__Process__Input,
                         Result<u32, MyError>,
                         _
                     >(
-                        "__advanced_struct__process",
+                        "p__advanced_struct__process",
                         Some(self.buffer()),
-                        Some(&__AdvancedStruct__Process__Input { val, flag }),
+                        Some(&p__AdvancedStruct__Process__Input { val, flag }),
                         |client_state_ptr: *const u8,
                          client_state_len: usize,
                          input_ptr: *const u8,
                          input_len: usize| {
                             unsafe {
-                                wasm::__advanced_struct__process__wasm(
+                                wasm::p__advanced_struct__process__wasm(
                                     client_state_ptr,
                                     client_state_len,
                                     input_ptr,

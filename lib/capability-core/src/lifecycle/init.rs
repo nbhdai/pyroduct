@@ -152,7 +152,7 @@ impl InitFn {
     /// Generate the FFI init function
     pub fn generate_ffi(&self, server: &Ident) -> TokenStream {
         let server_snake = AsSnakeCase(server.to_string()).to_string();
-        let init_name = format_ident!("__{}__ffi_init", server_snake);
+        let init_name = format_ident!("p__{}__ffi_init", server_snake);
 
         // Determine config type and closure body
         // The safe_lifecycle functions expect Option<T> to be passed through
@@ -219,7 +219,7 @@ impl InitFn {
     /// Generate the export entry for the init function
     pub fn generate_export(&self, server: &Ident) -> TokenStream {
         let server_snake = AsSnakeCase(server.to_string()).to_string();
-        let init_name = format_ident!("__{}__ffi_init", server_snake);
+        let init_name = format_ident!("p__{}__ffi_init", server_snake);
 
         if self.is_async {
             quote!(::pyroduct::capability_host::ffi::ClassInitFn::Async(#init_name))
@@ -282,7 +282,7 @@ mod tests {
         // Note: Closure now calls new(config) directly (config is already Option<T>)
         let expected = quote! {
             #[unsafe(no_mangle)]
-            pub extern "C" fn __greeter_server__ffi_init(
+            pub extern "C" fn p__greeter_server__ffi_init(
                 config_ptr: *const u8,
                 config_len: usize
             ) -> ::pyroduct::capability_host::ffi::FfiInitResult {
@@ -319,7 +319,7 @@ mod tests {
 
         let expected = quote! {
             #[unsafe(no_mangle)]
-            pub extern "C" fn __greeter_server__ffi_init<'a>(
+            pub extern "C" fn p__greeter_server__ffi_init<'a>(
                 config_ptr: *const u8,
                 config_len: usize
             ) -> ::pyroduct::capability_host::ffi::FfiBorrowedFutureObjectResult<'a> {

@@ -36,7 +36,7 @@ impl CapabilityIdent {
     pub fn trace_name(&self, name: &Ident) -> Ident {
         let state_snake = AsSnakeCase(self.state_tn.to_string()).to_string();
         let snake = AsSnakeCase(name.to_string()).to_string();
-        format_ident!("__{}__{}", state_snake, snake)
+        format_ident!("p__{}__{}", state_snake, snake)
     }
 
     /// Library identifier for a method (e.g., __my_trait__my_state__method_name)
@@ -44,7 +44,7 @@ impl CapabilityIdent {
         let state_snake = AsSnakeCase(self.state_tn.to_string())
             .to_string()
             .to_uppercase();
-        format_ident!("__{}", state_snake)
+        format_ident!("p__{}", state_snake)
     }
 
     /// Library identifier for a method (e.g., __my_trait__my_state__method_name)
@@ -53,27 +53,27 @@ impl CapabilityIdent {
             .to_string()
             .to_uppercase();
         let snake = AsSnakeCase(name.to_string()).to_string().to_uppercase();
-        format_ident!("__{}__{}", state_snake, snake)
+        format_ident!("p__{}__{}", state_snake, snake)
     }
 
     /// FFI function name for a method (e.g., __my_trait__my_state__name__ffi)
     pub fn ffi_name(&self, name: &Ident) -> Ident {
         let state_snake = AsSnakeCase(self.state_tn.to_string()).to_string();
         let snake = AsSnakeCase(name.to_string()).to_string();
-        format_ident!("__{}__{}__ffi", state_snake, snake)
+        format_ident!("p__{}__{}__ffi", state_snake, snake)
     }
 
     /// WASM import name for a method (e.g., __my_trait__my_state__name__wasm)
     pub fn wasm_name(&self, name: &Ident) -> Ident {
         let state_snake = AsSnakeCase(self.state_tn.to_string()).to_string();
         let snake = AsSnakeCase(name.to_string()).to_string();
-        format_ident!("__{}__{}__wasm", state_snake, snake)
+        format_ident!("p__{}__{}__wasm", state_snake, snake)
     }
 
     /// Input struct name for a method with multiple parameters
     pub fn input_struct(&self, name: &Ident) -> Ident {
         let state_snake = AsUpperCamelCase(self.state_tn.to_string()).to_string();
         let snake = AsUpperCamelCase(name.to_string()).to_string();
-        format_ident!("__{}__{}__Input", state_snake, snake)
+        format_ident!("p__{}__{}__Input", state_snake, snake)
     }
 }

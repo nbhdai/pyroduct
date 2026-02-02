@@ -1673,6 +1673,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "object"
+version = "0.38.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "271638cd5fa9cca89c4c304675ca658efc4e64a66c716b7cfe1afb4b9611dbbc"
+dependencies = [
+ "flate2",
+ "memchr",
+ "ruzstd",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1919,6 +1930,7 @@ dependencies = [
  "fs-err",
  "heck",
  "module-core",
+ "object 0.38.1",
  "pyroduct",
  "serde",
  "serde_json",
@@ -2139,6 +2151,15 @@ name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
+
+[[package]]
+name = "ruzstd"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5ff0cc5e135c8870a775d3320910cd9b564ec036b4dc0b8741629020be63f01"
+dependencies = [
+ "twox-hash",
+]
 
 [[package]]
 name = "ryu"
@@ -2872,7 +2893,7 @@ dependencies = [
  "log",
  "mach2",
  "memfd",
- "object",
+ "object 0.37.3",
  "once_cell",
  "postcard",
  "pulley-interpreter",
@@ -2918,7 +2939,7 @@ dependencies = [
  "gimli",
  "indexmap",
  "log",
- "object",
+ "object 0.37.3",
  "postcard",
  "rustc-demangle",
  "semver",
@@ -2989,7 +3010,7 @@ dependencies = [
  "gimli",
  "itertools",
  "log",
- "object",
+ "object 0.37.3",
  "pulley-interpreter",
  "smallvec",
  "target-lexicon",
@@ -3023,7 +3044,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "02cbe560c79f17316ab188e5932aa533216ab5d5ab0608ac2f97c61452c8a059"
 dependencies = [
  "cc",
- "object",
+ "object 0.37.3",
  "rustix",
  "wasmtime-internal-versioned-export-macros",
 ]
@@ -3065,7 +3086,7 @@ dependencies = [
  "cfg-if",
  "cranelift-codegen",
  "log",
- "object",
+ "object 0.37.3",
 ]
 
 [[package]]
@@ -3089,7 +3110,7 @@ dependencies = [
  "cranelift-codegen",
  "gimli",
  "log",
- "object",
+ "object 0.37.3",
  "target-lexicon",
  "wasmparser 0.243.0",
  "wasmtime-environ",

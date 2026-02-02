@@ -87,7 +87,7 @@ impl ResetFn {
     /// Generate the FFI reset function
     pub fn generate_ffi(&self, server: &Ident) -> TokenStream {
         let server_snake = AsSnakeCase(server.to_string()).to_string();
-        let reset_name = format_ident!("__{}__ffi_reset", server_snake);
+        let reset_name = format_ident!("p__{}__ffi_reset", server_snake);
 
         if self.is_async {
             quote! {
@@ -119,7 +119,7 @@ impl ResetFn {
     /// Generate the export entry for the reset function
     pub fn generate_export(&self, server: &Ident) -> TokenStream {
         let server_snake = AsSnakeCase(server.to_string()).to_string();
-        let reset_name = format_ident!("__{}__ffi_reset", server_snake);
+        let reset_name = format_ident!("p__{}__ffi_reset", server_snake);
 
         if self.is_async {
             quote!(::pyroduct::capability_host::ffi::ClassResetFn::Async(#reset_name))
@@ -163,7 +163,7 @@ mod tests {
         let result = reset_fn.generate_ffi(&server_ident);
         let expected = quote! {
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __greeter_server__ffi_reset(
+            pub unsafe extern "C" fn p__greeter_server__ffi_reset(
                 state: *mut std::ffi::c_void
             ) -> ::pyroduct::capability_host::ffi::FfiResult {
                 ::pyroduct::capability::safe_lifecycle::execute_safe_reset::<GreeterServer, _>(
@@ -189,7 +189,7 @@ mod tests {
         let result = reset_fn.generate_ffi(&server_ident);
         let expected = quote! {
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __greeter_server__ffi_reset<'a>(
+            pub unsafe extern "C" fn p__greeter_server__ffi_reset<'a>(
                 state: *mut std::ffi::c_void
             ) -> ::pyroduct::capability_host::ffi::FfiBorrowedFutureResult<'a> {
                 ::pyroduct::capability::safe_lifecycle::execute_safe_async_reset::<GreeterServer, _, _>(

@@ -30,7 +30,7 @@ impl CapabilityFuncFFI {
         if let Some(class) = &self.class {
             class.trace_name(&self.fn_name)
         } else {
-            format_ident!("__{}", AsSnakeCase(self.fn_name.to_string()).to_string())
+            format_ident!("p__{}", AsSnakeCase(self.fn_name.to_string()).to_string())
         }
     }
 
@@ -39,7 +39,7 @@ impl CapabilityFuncFFI {
             class.trace_name_static(&self.fn_name)
         } else {
             format_ident!(
-                "__{}",
+                "p__{}",
                 AsSnakeCase(self.fn_name.to_string())
                     .to_string()
                     .to_uppercase()
@@ -53,7 +53,7 @@ impl CapabilityFuncFFI {
             class.ffi_name(&self.fn_name)
         } else {
             format_ident!(
-                "__{}__ffi",
+                "p__{}__ffi",
                 AsSnakeCase(self.fn_name.to_string()).to_string()
             )
         }
@@ -65,7 +65,7 @@ impl CapabilityFuncFFI {
             class.wasm_name(&self.fn_name)
         } else {
             format_ident!(
-                "__{}__wasm",
+                "p__{}__wasm",
                 AsSnakeCase(self.fn_name.to_string()).to_string()
             )
         }
@@ -75,7 +75,7 @@ impl CapabilityFuncFFI {
     pub fn input_struct_name(&self) -> Option<Ident> {
         match (&self.input, &self.class) {
             (Some(InputParams::Many { .. }), None) => Some(format_ident!(
-                "__{}__Input",
+                "p__{}__Input",
                 AsUpperCamelCase(self.fn_name.to_string()).to_string()
             )),
             (Some(InputParams::Many { .. }), Some(class)) => {
@@ -439,7 +439,7 @@ mod tests {
 
         let output_capability = quote! {
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __test_sync_empty__ffi(
+            pub unsafe extern "C" fn p__test_sync_empty__ffi(
                 client_state_ptr: *const u8,
                 client_state_len: usize,
                 input_ptr: *const u8,
@@ -469,7 +469,7 @@ mod tests {
                     u32,
                     _,
                 >(
-                    "__test_sync_empty",
+                    "p__test_sync_empty",
                     None,
                     None,
                     |client_state_ptr: *const u8,
@@ -477,7 +477,7 @@ mod tests {
                     input_ptr: *const u8,
                     input_len: usize,| {
                         unsafe {
-                            __test_sync_empty__wasm(client_state_ptr, client_state_len, input_ptr, input_len,)
+                            p__test_sync_empty__wasm(client_state_ptr, client_state_len, input_ptr, input_len,)
                         }
                     },
                 )
@@ -512,7 +512,7 @@ mod tests {
 
         let output_capability = quote! {
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __test_async_single__ffi<'a>(
+            pub unsafe extern "C" fn p__test_async_single__ffi<'a>(
                 client_state_ptr: *const u8,
                 client_state_len: usize,
                 input_ptr: *const u8,
@@ -544,7 +544,7 @@ mod tests {
                     u32,
                     _,
                 >(
-                    "__test_async_single",
+                    "p__test_async_single",
                     None,
                     Some(&input_arg),
                     |client_state_ptr: *const u8,
@@ -552,7 +552,7 @@ mod tests {
                     input_ptr: *const u8,
                     input_len: usize| {
                         unsafe {
-                            __test_async_single__wasm(client_state_ptr, client_state_len, input_ptr, input_len)
+                            p__test_async_single__wasm(client_state_ptr, client_state_len, input_ptr, input_len)
                         }
                     },
                 )
@@ -588,7 +588,7 @@ mod tests {
         let output_struct = quote! {
                 #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
                 #[rkyv(crate = ::pyroduct::rkyv)]
-            struct __TestSyncMulti__Input {
+            struct p__TestSyncMulti__Input {
                 pub a: i32,
                 pub b: i32,
             }
@@ -599,13 +599,13 @@ mod tests {
         let output_capability = quote! {
                 #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
                 #[rkyv(crate = ::pyroduct::rkyv)]
-            struct __TestSyncMulti__Input {
+            struct p__TestSyncMulti__Input {
                 pub a: i32,
                 pub b: i32,
             }
 
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __test_sync_multi__ffi(
+            pub unsafe extern "C" fn p__test_sync_multi__ffi(
                 client_state_ptr: *const u8,
                 client_state_len: usize,
                 input_ptr: *const u8,
@@ -613,7 +613,7 @@ mod tests {
                 capability_state_ptr: *mut std::ffi::c_void,
             ) -> ::pyroduct::capability_host::ffi::FfiResult {
                 ::pyroduct::capability::safe_call::i_call::<
-                    __TestSyncMulti__Input,
+                    p__TestSyncMulti__Input,
                     u32,
                     _,
                 >(
@@ -633,25 +633,25 @@ mod tests {
             fn func() {
                 #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
                 #[rkyv(crate = ::pyroduct::rkyv)]
-                struct __TestSyncMulti__Input {
+                struct p__TestSyncMulti__Input {
                     pub a: i32,
                     pub b: i32,
                 }
 
                 ::pyroduct::module_capability::access::call_from_wasm::<
-                    __TestSyncMulti__Input,
+                    p__TestSyncMulti__Input,
                     u32,
                     _,
                 >(
-                    "__test_sync_multi",
+                    "p__test_sync_multi",
                     None,
-                    Some(&__TestSyncMulti__Input { a , b }),
+                    Some(&p__TestSyncMulti__Input { a , b }),
                     |client_state_ptr: *const u8,
                     client_state_len: usize,
                     input_ptr: *const u8,
                     input_len: usize| {
                         unsafe {
-                            wasm::__test_sync_multi__wasm(client_state_ptr, client_state_len, input_ptr, input_len)
+                            wasm::p__test_sync_multi__wasm(client_state_ptr, client_state_len, input_ptr, input_len)
                         }
                     },
                 )
@@ -683,7 +683,7 @@ mod tests {
 
         let output_capability = quote! {
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __mock_server__test_async_client__ffi<'a>(
+            pub unsafe extern "C" fn p__mock_server__test_async_client__ffi<'a>(
                 client_state_ptr: *const u8,
                 client_state_len: usize,
                 input_ptr: *const u8,
@@ -716,7 +716,7 @@ mod tests {
                     u32,
                     _,
                 >(
-                    "__mock_server__test_async_client",
+                    "p__mock_server__test_async_client",
                     Some(self.buffer()),
                     None,
                     |client_state_ptr: *const u8,
@@ -724,7 +724,7 @@ mod tests {
                     input_ptr: *const u8,
                     input_len: usize| {
                         unsafe {
-                            __mock_server__test_async_client__wasm(client_state_ptr, client_state_len, input_ptr, input_len)
+                            p__mock_server__test_async_client__wasm(client_state_ptr, client_state_len, input_ptr, input_len)
                         }
                     },
                 )
@@ -757,7 +757,7 @@ mod tests {
 
         let output_capability = quote! {
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __mock_server__test_sync_client_input__ffi(
+            pub unsafe extern "C" fn p__mock_server__test_sync_client_input__ffi(
                 client_state_ptr: *const u8,
                 client_state_len: usize,
                 input_ptr: *const u8,
@@ -790,7 +790,7 @@ mod tests {
                     u32,
                     _,
                 >(
-                    "__mock_server__test_sync_client_input",
+                    "p__mock_server__test_sync_client_input",
                     Some(self.buffer()),
                     Some(&x),
                     |client_state_ptr: *const u8,
@@ -798,7 +798,7 @@ mod tests {
                     input_ptr: *const u8,
                     input_len: usize| {
                         unsafe {
-                            __mock_server__test_sync_client_input__wasm(client_state_ptr, client_state_len, input_ptr, input_len)
+                            p__mock_server__test_sync_client_input__wasm(client_state_ptr, client_state_len, input_ptr, input_len)
                         }
                     },
                 )
@@ -834,7 +834,7 @@ mod tests {
         let output_struct = quote! {
                 #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
                 #[rkyv(crate = ::pyroduct::rkyv)]
-            struct __MockServer__TestSciMulti__Input {
+            struct p__MockServer__TestSciMulti__Input {
                 pub a: i32,
                 pub b: i32,
             }
@@ -844,13 +844,13 @@ mod tests {
         let output_capability = quote! {
                 #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
                 #[rkyv(crate = ::pyroduct::rkyv)]
-            struct __MockServer__TestSciMulti__Input {
+            struct p__MockServer__TestSciMulti__Input {
                 pub a: i32,
                 pub b: i32,
             }
 
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn __mock_server__test_sci_multi__ffi<'a>(
+            pub unsafe extern "C" fn p__mock_server__test_sci_multi__ffi<'a>(
                 client_state_ptr: *const u8,
                 client_state_len: usize,
                 input_ptr: *const u8,
@@ -860,7 +860,7 @@ mod tests {
                 ::pyroduct::capability::safe_async::sci_call::<
                     MockServer,
                     MockClient,
-                    __MockServer__TestSciMulti__Input,
+                    p__MockServer__TestSciMulti__Input,
                     u32,
                     _,
                     _,
@@ -884,25 +884,25 @@ mod tests {
             fn func() {
                 #[derive(::pyroduct::rkyv::Archive, ::pyroduct::rkyv::Deserialize, ::pyroduct::rkyv::Serialize)]
                 #[rkyv(crate = ::pyroduct::rkyv)]
-                struct __MockServer__TestSciMulti__Input {
+                struct p__MockServer__TestSciMulti__Input {
                     pub a: i32,
                     pub b: i32,
                 }
 
                 ::pyroduct::module_capability::access::call_from_wasm::<
-                    __MockServer__TestSciMulti__Input,
+                    p__MockServer__TestSciMulti__Input,
                     u32,
                     _,
                 >(
-                    "__mock_server__test_sci_multi",
+                    "p__mock_server__test_sci_multi",
                     Some(self.buffer()),
-                    Some(&__MockServer__TestSciMulti__Input { a , b }),
+                    Some(&p__MockServer__TestSciMulti__Input { a , b }),
                     |client_state_ptr: *const u8,
                     client_state_len: usize,
                     input_ptr: *const u8,
                     input_len: usize| {
                         unsafe {
-                            __mock_server__test_sci_multi__wasm(client_state_ptr, client_state_len, input_ptr, input_len)
+                            p__mock_server__test_sci_multi__wasm(client_state_ptr, client_state_len, input_ptr, input_len)
                         }
                     },
                 )

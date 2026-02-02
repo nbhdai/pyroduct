@@ -5,6 +5,7 @@ pub mod package;
 pub mod run;
 pub mod utils;
 pub mod clean;
+pub mod symbols;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
