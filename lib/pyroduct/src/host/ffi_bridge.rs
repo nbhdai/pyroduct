@@ -49,10 +49,6 @@ unsafe fn deserialize_error(output: COutput) -> FfiError {
     }
 }
 
-// ============================================================================
-// Initialization Bridge
-// ============================================================================
-
 pub struct InitResultBridge;
 
 impl InitResultBridge {
@@ -77,10 +73,6 @@ impl InitResultBridge {
         }
     }
 }
-
-// ============================================================================
-// Function Call Bridge (Execution)
-// ============================================================================
 
 pub struct ExecutionResultBridge;
 
