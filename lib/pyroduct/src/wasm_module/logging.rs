@@ -1,8 +1,18 @@
 use std::sync::Once;
 
+#[cfg(not(test))]
 #[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_log(ptr: *const u8, len: usize);
+}
+
+// MOCK: If testing, provide a dummy implementation to satisfy the linker.
+#[cfg(test)]
+unsafe extern "C" fn host_log(ptr: *const u8, len: usize) {
+    let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+    if let Ok(s) = std::str::from_utf8(slice) {
+        println!("[HOST LOG MOCK]: {}", s);
+    }
 }
 
 struct HostLogger;
