@@ -10,7 +10,7 @@ members = [
     "module-derive",
     "pyroduct",
     "cli",
-    "bridge-vec",
+    "bridge-vec", "bridge-derive",
 ]
 
 default-members = [

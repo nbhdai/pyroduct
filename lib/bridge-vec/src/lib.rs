@@ -51,9 +51,17 @@ use std::ptr::{self, NonNull};
 use std::{fmt, slice};
 use std::ops::{Deref, DerefMut};
 
+use crate::rkyv::TypedBuf;
+
 pub mod rkyv;
 pub mod tokio;
 pub mod ffi;
+
+pub trait Bridgable: ::rkyv::Archive + Sized {
+    fn serialize(&self) -> Result<BridgeVec, ::rkyv::rancor::Error>;
+    fn parse(&self) -> Result<TypedBuf<Self>, ::rkyv::rancor::Error>;
+    fn deserialize(vec: TypedBuf<Self>) -> Result<Self, ::rkyv::rancor::Error>;
+}
 
 /// A 16-byte aligned buffer with a self-describing header.
 /// Compatible with FFI passing as a raw pointer or TCP/Unix framing.

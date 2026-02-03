@@ -1,14 +1,6 @@
-use std::{ffi::c_void, mem, panic, slice};
+use std::{ffi::c_void, panic, slice};
 
-use rkyv::{
-    Archive, Deserialize, Serialize,
-    bytecheck::CheckBytes,
-    de::Pool,
-    rancor::{self, Strategy},
-    ser::{Serializer, allocator::ArenaHandle, sharing::Share},
-    util::AlignedVec,
-    validation::{Validator, archive::ArchiveValidator, shared::SharedValidator},
-};
+use bridge_vec::{BridgeVec, DataStatus, ffi::RkyvFfiError, rkyv::Bridgable};
 use tracing::{debug, error, trace};
 
 use crate::{
@@ -18,15 +10,7 @@ use crate::{
 
 /// Updated get_input function that returns Result instead of Option
 #[tracing::instrument]
-pub unsafe fn get_input<T>(ptr: *const u8, len: usize) -> Result<T, FfiError>
-where
-    T: Archive,
-    // Validate the archived bytes are safe
-    for<'b> <T as Archive>::Archived:
-        CheckBytes<Strategy<Validator<ArchiveValidator<'b>, SharedValidator>, rancor::Error>>,
-    // Deserialize back to the native type
-    for<'b> <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rkyv::rancor::Error>>,
-{
+pub unsafe fn get_input<T: Bridgable>(ptr: *const u8, len: usize) -> Result<T, FfiError> {
     trace!("get_input: processing input");
     if ptr.is_null() {
         error!("get_input: capability input pointer is null");
@@ -43,15 +27,7 @@ where
 }
 
 #[tracing::instrument]
-pub unsafe fn get_client_state<T>(ptr: *const u8, len: usize) -> Result<T, FfiError>
-where
-    T: Archive,
-    // Validate the archived bytes are safe
-    for<'b> <T as Archive>::Archived:
-        CheckBytes<Strategy<Validator<ArchiveValidator<'b>, SharedValidator>, rancor::Error>>,
-    // Deserialize back to the native type
-    for<'b> <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rkyv::rancor::Error>>,
-{
+pub unsafe fn get_client_state<T: Bridgable>(ptr: *const u8, len: usize) -> Result<T, FfiError> {
     trace!("get_client_state: processing client state");
     if ptr.is_null() {
         error!("get_client_state: client state pointer is null");
@@ -67,24 +43,16 @@ where
     deserialize(slice, Phase::Client)
 }
 
-fn deserialize<T>(slice: &[u8], phase: Phase) -> Result<T, FfiError>
-where
-    T: Archive,
-    // Validate the archived bytes are safe
-    for<'b> <T as Archive>::Archived:
-        CheckBytes<Strategy<Validator<ArchiveValidator<'b>, SharedValidator>, rancor::Error>>,
-    // Deserialize back to the native type
-    for<'b> <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rkyv::rancor::Error>>,
-{
+fn deserialize<T: Bridgable>(slice: &[u8], phase: Phase) -> Result<T, FfiError> {
     clear_last_panic();
     panic::catch_unwind(|| {
         let archived = rkyv::access::<<T as rkyv::Archive>::Archived, rkyv::rancor::Error>(slice)
             .map_err(|e| {
-            error!(error = ?e, %phase, "deserialize: validation failed");
-            FfiError::ValidationFailed(format!("{e:?}"), phase)
-        })?;
+                error!(error = ?e, %phase, "deserialize: validation failed");
+                FfiError::ValidationFailed(format!("{e:?}"), phase)
+            })?;
 
-        rkyv::deserialize::<_, rancor::Error>(archived).map_err(|e| {
+        rkyv::deserialize::<_, rkyv::rancor::Error>(archived).map_err(|e| {
             error!(error = ?e, %phase, "deserialize: deserialization failed");
             FfiError::DeserializationFailed(format!("{e:?}"), phase)
         })
@@ -99,16 +67,10 @@ where
 
 /// Updated borrow_input function that returns Result instead of Option
 #[tracing::instrument]
-pub unsafe fn borrow_input<'a, T>(
+pub unsafe fn borrow_input<'a, T: Bridgable>(
     ptr: *const u8,
     len: usize,
-) -> Result<&'a <T as Archive>::Archived, FfiError>
-where
-    T: Archive,
-    for<'b> <T as Archive>::Archived:
-        CheckBytes<Strategy<Validator<ArchiveValidator<'b>, SharedValidator>, rancor::Error>>,
-    for<'b> <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rkyv::rancor::Error>>,
-{
+) -> Result<&'a <T as rkyv::Archive>::Archived, FfiError> {
     trace!("borrow_input: attempting zero-copy access");
     if ptr.is_null() {
         error!("borrow_input: input pointer is null");
@@ -148,57 +110,53 @@ pub unsafe fn get_capability_state<'a, T>(
     Ok(unsafe { &mut *(host_state_ptr as *mut T) })
 }
 
-/// Updated make_output function that returns Result instead of Option
-pub unsafe fn make_output<T>(value: &T) -> FfiResult
-where
-    T: Archive + std::panic::RefUnwindSafe,
-    for<'a> T:
-        Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
-{
+/// Serialize a successful output value into a BridgeVec
+pub fn make_output<T: Bridgable + std::panic::RefUnwindSafe>(value: &T) -> BridgeVec {
     trace!("make_output: starting serialization");
     clear_last_panic();
 
     match panic::catch_unwind(|| {
-        rkyv::to_bytes::<rkyv::rancor::Error>(value).map_err(|e| {
+        BridgeVec::serialize_from(value).map_err(|e| {
             error!(error = ?e, "make_output: serialization failed");
             FfiError::SerializationFailed(format!("{e:?}"), Phase::Output)
         })
-    })
-    .map_err(|_| -> FfiError {
-        let panic = recover_panic_info();
-        error!(panic = ?panic, "make_output: panic during serialization");
-        FfiError::SerializationPanicked(panic, Phase::Output)
-    })
-    .flatten()
-    {
-        Ok(bytes) => {
-            let (ptr, len, cap) = (bytes.as_ptr(), bytes.len(), bytes.capacity());
-            debug!(?ptr, len, "make_output: serialization successful");
-            mem::forget(bytes);
-            FfiResult::ok(COutput { ptr, len, cap })
+    }) {
+        Ok(Ok(mut vec)) => {
+            debug!(len = vec.len(), "make_output: serialization successful");
+            vec.set_status(DataStatus::ValidData as u16);
+            vec
         }
-        Err(err) => make_error_output(err),
+        Ok(Err(err)) => {
+            error!(%err, "make_output: serialization error");
+            make_error_output(err)
+        }
+        Err(_) => {
+            let panic = recover_panic_info();
+            error!(panic = ?panic, "make_output: panic during serialization");
+            make_error_output(FfiError::SerializationPanicked(panic, Phase::Output))
+        }
     }
 }
 
-pub fn make_error_output(error: FfiError) -> FfiResult {
+/// Serialize an FfiError into a BridgeVec with TransportError status
+pub fn make_error_output(error: FfiError) -> BridgeVec {
     trace!(%error, "make_error_output: constructing error output");
-    // If this serialization fails, we're in real trouble
-    match rkyv::to_bytes::<rkyv::rancor::Error>(&error) {
-        Ok(bytes) => {
-            let (ptr, len, cap) = (bytes.as_ptr(), bytes.len(), bytes.capacity());
-            debug!(?ptr, len, "make_error_output: serialization successful");
-            mem::forget(bytes);
-            FfiResult::full_err(COutput { ptr, len, cap })
+    
+    let rkyv_error = RkyvFfiError::from(error);
+    
+    match BridgeVec::serialize_from(&rkyv_error) {
+        Ok(mut vec) => {
+            debug!(len = vec.len(), "make_error_output: serialization successful");
+            vec.set_status(DataStatus::TransportError as u16);
+            vec
         }
         Err(e) => {
-            // Last resort: return a simple error message
             error!(error = ?e, "make_error_output: failed to serialize error output");
-            let msg = format!("{}", error);
-            let mut bytes = msg.into_bytes();
-            let (ptr, len, cap) = (bytes.as_mut_ptr(), bytes.len(), bytes.capacity());
-            mem::forget(bytes);
-            FfiResult::partial_error(COutput { ptr, len, cap })
+            let msg = format!("{:?}", rkyv_error);
+            let mut vec = BridgeVec::with_capacity(msg.len());
+            vec.extend_from_slice(msg.as_bytes());
+            vec.set_status(DataStatus::Utf8Error as u16);
+            vec
         }
     }
 }

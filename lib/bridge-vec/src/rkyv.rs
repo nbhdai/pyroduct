@@ -1,4 +1,3 @@
-use rkyv::Serialize;
 use rkyv::rancor::{Error, Fallible};
 use rkyv::ser::allocator::Arena;
 use rkyv::ser::{Positional, Writer};
@@ -41,41 +40,6 @@ impl<E> Writer<E> for BridgeVec {
         Ok(())
     }
 }
-
-/// A trait that compresses rkyv's complex IO and validation bounds 
-/// for use with BridgeVec.
-pub trait Bridgable: Archive + Sized
-where
-    // Serialization Bounds
-    for<'a, 'b> Self: Serialize<
-        Strategy<
-            rkyv::ser::Serializer<&'a mut BridgeVec, &'b mut Arena, &'b mut Share>,
-            Error
-        >
-    >,
-    // Validation Bounds
-    Self::Archived: for<'a> CheckBytes<
-        Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, Error>
-    >,
-    // Deserialization Bounds
-    Self::Archived: Deserialize<Self, Strategy<rkyv::de::Pool, Error>>,
-{}
-
-// Blanket implementation for any type that meets the criteria
-impl<T> Bridgable for T
-where
-    T: Archive + Sized,
-    for<'a, 'b> T: Serialize<
-        Strategy<
-            rkyv::ser::Serializer<&'a mut BridgeVec, &'b mut Arena, &'b mut Share>,
-            Error
-        >
-    >,
-    T::Archived: for<'a> CheckBytes<
-        Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, Error>
-    >,
-    T::Archived: Deserialize<T, Strategy<rkyv::de::Pool, Error>>,
-{}
 
 /// A type-safe wrapper around a BridgeVec containing an archived rkyv type.
 pub struct TypedBuf<T>
