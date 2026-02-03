@@ -125,7 +125,10 @@ pub fn bridgeable(args: TokenStream, input: TokenStream) -> TokenStream {
     let impl_block = quote! {
         impl #impl_generics ::bridge_vec::Bridgeable for #name #ty_generics #where_clause {
             fn serialize(&self) -> Result<::bridge_vec::BridgeVec, ::rkyv::rancor::Error> {
-                ::bridge_vec::BridgeVec::serialize_from(self)
+                ::bridge_vec::BridgeVec::serialize_from(self).map(|mut v| {
+                    v.set_version(::bridge_vec::PROTOCOL_VERSION);
+                    v
+                })
             }
 
             fn parse(vec: ::bridge_vec::BridgeVec) -> Result<::bridge_vec::rkyv::TypedBuf<Self>, ::rkyv::rancor::Error> {

@@ -15,23 +15,26 @@
 //!  Pointer (16-byte aligned)
 //!  │
 //!  ▼
-//! ┌─────────────┬─────────────┬─────────────┬──────────────┬─────────────┐
-//! │ Magic (u32) │  Len (u32)  │  Cap (u32)  | Version(u16) │ Status(u16) │  <-- Header (16 bytes)
-//! ├─────────────┴─────────────┴─────────────┴──────────────┴─────────────┤
-//! │                                                                      │
-//! │                             Data Payload ...                         │  <-- Body (Len bytes)
-//! │                                                                      │
-//! └──────────────────────────────────────────────────────────────────────┘
+//! ┌─────────────────┬──────────────────┬───────────────┐
+//! │   Magic (u32)   │    Len (u32)     │   Cap (u32)   │ Row 1
+//! ├─────────────────┼──────────────────┼───────────────┤
+//! │ Wire Format(u8) │ User wire_format(u8) │  Status (u8)  │ Row 2
+//! ├─────────────────┴──────────────────┴───────────────┤
+//! │                                                    │
+//! │               Data Payload ...                     │ <-- Body (Len bytes)
+//! │                                                    │
+//! └────────────────────────────────────────────────────┘
 //! ```
 //!
 //! ## Header Fields
 //!
-//! | Offset | Type  | Field   | Description |
-//! |--------|-------|---------|-------------|
-//! | `0x00` | `u32` | Magic   | Constant `0x7079726F` (ASCII "pyro"). Verifies pointer validity. |
-//! | `0x04` | `u32` | Len     | Current length of the data payload in bytes. |
-//! | `0x08` | `u32` | Cap     | Total allocated capacity (including header) in bytes. |
-//! | `0x0C` | `u16` | Version | Protocol Version number |
+//! | Offset | Type  | Field   | Description                                                        |
+//! |--------|-------|---------|--------------------------------------------------------------------|
+//! | `0x00` | `u32` | Magic   | Constant `0x7079726F` (ASCII "pyro"). Verifies pointer validity.   |
+//! | `0x04` | `u32` | Len     | Current length of the data payload in bytes.                       |
+//! | `0x08` | `u32` | Cap     | Total allocated capacity (including header) in bytes.              |
+//! | `0x0C` | `u8`  | Format  | Protocol Version number                                            |
+//! | `0x0C` | `u8`  | User    | User Version number                                                |
 //! | `0x0E` | `u16` | Status  | **Message Protocol Status**. Used to indicate the type of payload. |
 //!
 //! ## Status Codes (Offset 0x0E)
@@ -53,6 +56,10 @@ use std::ops::{Deref, DerefMut};
 
 use crate::rkyv::TypedBuf;
 
+pub(crate) const MAGIC_VAL: u32 = 0x7079726F; // "pyro"
+pub const PROTOCOL_VERSION: u8 = 1;
+
+mod common;
 pub mod rkyv;
 pub mod tokio;
 pub mod ffi;
@@ -100,12 +107,9 @@ impl BridgeVec {
     const OFFSET_MAGIC: usize = 0;
     const OFFSET_LEN: usize = 4;
     const OFFSET_CAP: usize = 8;
-    const OFFSET_VERSION: usize = 12;
+    const OFFSET_WIRE_FORMAT: usize = 12;
+    const OFFSET_USER_VERSION: usize = 13;
     const OFFSET_STATUS: usize = 14;
-    
-    // Constants
-    pub(crate) const MAGIC_VAL: u32 = 0x7079726F; // "pyro"
-    const PROTOCOL_VERSION: u16 = 1;
 
     /// Creates a new vector with a specific capacity.
     pub fn with_capacity(capacity: usize) -> Self {
@@ -121,10 +125,10 @@ impl BridgeVec {
             }
             
             // Initialize Header
-            ptr::write(raw.add(Self::OFFSET_MAGIC) as *mut u32, Self::MAGIC_VAL);
+            ptr::write(raw.add(Self::OFFSET_MAGIC) as *mut u32, MAGIC_VAL);
             ptr::write(raw.add(Self::OFFSET_LEN) as *mut u32, 0); 
             ptr::write(raw.add(Self::OFFSET_CAP) as *mut u32, total_cap as u32);
-            ptr::write(raw.add(Self::OFFSET_VERSION) as *mut u16, Self::PROTOCOL_VERSION);
+            ptr::write(raw.add(Self::OFFSET_WIRE_FORMAT) as *mut u8, PROTOCOL_VERSION);
             ptr::write(raw.add(Self::OFFSET_STATUS) as *mut u16, 0); // Default: ValidData
             
             NonNull::new_unchecked(raw)
@@ -150,7 +154,7 @@ impl BridgeVec {
 
         // Verify Magic Number
         let magic = unsafe { ptr::read(ptr.add(Self::OFFSET_MAGIC) as *const u32) };
-        if magic != Self::MAGIC_VAL {
+        if magic != MAGIC_VAL {
             return Err("Invalid magic header");
         }
 
@@ -175,7 +179,7 @@ impl BridgeVec {
         }
 
         let magic = unsafe { ptr::read(ptr.add(Self::OFFSET_MAGIC) as *const u32) };
-        if magic != Self::MAGIC_VAL {
+        if magic != MAGIC_VAL {
             return Err("Invalid magic header");
         }
 
@@ -211,13 +215,24 @@ impl BridgeVec {
     }
 
     #[inline]
-    pub fn version(&self) -> u16 {
-        unsafe { ptr::read(self.ptr.as_ptr().add(Self::OFFSET_VERSION) as *const u16) }
+    pub fn version(&self) -> u8 {
+        unsafe { ptr::read(self.ptr.as_ptr().add(Self::OFFSET_USER_VERSION) as *const u8) }
     }
 
     #[inline]
-    pub fn set_version(&mut self, version: u16) {
-        unsafe { ptr::write(self.ptr.as_ptr().add(Self::OFFSET_VERSION) as *mut u16, version) }
+    pub fn set_version(&mut self, version: u8) {
+        unsafe { ptr::write(self.ptr.as_ptr().add(Self::OFFSET_USER_VERSION) as *mut u8, version) }
+    }
+
+    #[inline]
+    pub fn wire_format(&self) -> u8 {
+        unsafe { ptr::read(self.ptr.as_ptr().add(Self::OFFSET_WIRE_FORMAT) as *const u8) }
+    }
+
+    #[doc(hidden)]
+    #[inline]
+    pub fn set_wire_format(&mut self, version: u8) {
+        unsafe { ptr::write(self.ptr.as_ptr().add(Self::OFFSET_WIRE_FORMAT) as *mut u8, version) }
     }
 
     // --- Data Accessors ---
@@ -354,8 +369,8 @@ impl<'a> BridgeVecRef<'a> {
     }
 
     #[inline]
-    pub fn version(&self) -> u16 {
-        unsafe { ptr::read(self.ptr.add(BridgeVec::OFFSET_VERSION) as *const u16) }
+    pub fn wire_format(&self) -> u16 {
+        unsafe { ptr::read(self.ptr.add(BridgeVec::OFFSET_WIRE_FORMAT) as *const u16) }
     }
 
     #[inline]
@@ -396,7 +411,7 @@ impl<'a> fmt::Debug for BridgeVecRef<'a> {
          .field("len", &self.len())
          .field("capacity", &self.capacity())
          .field("status", &self.status())
-         .field("version", &self.version())
+         .field("version", &self.wire_format())
          .field("data", &self.as_slice())
          .finish()
     }
@@ -411,7 +426,7 @@ impl Clone for BridgeVec {
         new_vec.extend_from_slice(self.as_slice());
 
         new_vec.set_status(self.status());
-        new_vec.set_version(self.version());
+        new_vec.set_wire_format(self.wire_format());
 
         new_vec
     }
@@ -423,7 +438,7 @@ impl fmt::Debug for BridgeVec {
          .field("len", &self.len())
          .field("capacity", &self.capacity())
          .field("status", &self.status())
-         .field("version", &self.version())
+         .field("version", &self.wire_format())
          .field("data", &self.as_slice())
          .finish()
     }
@@ -503,7 +518,7 @@ fn test_with_capacity_large() {
 fn test_default_header_values() {
     let vec = BridgeVec::with_capacity(10);
     assert_eq!(vec.status(), 0);
-    assert_eq!(vec.version(), 1);
+    assert_eq!(vec.wire_format(), 1);
 }
 
 // =============================================================================
@@ -563,14 +578,19 @@ fn test_status_read_write() {
 #[test]
 fn test_version_read_write() {
     let mut vec = BridgeVec::with_capacity(10);
+
+    assert_eq!(vec.wire_format(), 1);
+    assert_eq!(vec.version(), 0);
     
-    assert_eq!(vec.version(), 1); // Default version
-    
+    vec.set_wire_format(99);
+    assert_eq!(vec.wire_format(), 99);
     vec.set_version(99);
     assert_eq!(vec.version(), 99);
     
-    vec.set_version(0xABCD);
-    assert_eq!(vec.version(), 0xABCD);
+    vec.set_wire_format(0xAB);
+    assert_eq!(vec.wire_format(), 0xAB);
+    vec.set_version(0xFF);
+    assert_eq!(vec.version(), 0xFF);
 }
 
 #[test]
@@ -578,15 +598,18 @@ fn test_header_fields_independent() {
     let mut vec = BridgeVec::with_capacity(10);
     
     vec.set_status(0x1234);
-    vec.set_version(0x5678);
+    vec.set_wire_format(0x56);
+    vec.set_version(0x78);
     
     // Verify they don't interfere with each other
     assert_eq!(vec.status(), 0x1234);
-    assert_eq!(vec.version(), 0x5678);
+    assert_eq!(vec.wire_format(), 0x56);
+    assert_eq!(vec.version(), 0x78);
     
     vec.set_status(0xAAAA);
     assert_eq!(vec.status(), 0xAAAA);
-    assert_eq!(vec.version(), 0x5678); // Unchanged
+    assert_eq!(vec.wire_format(), 0x56); // Unchanged
+    assert_eq!(vec.version(), 0x78);
 }
 
 // =============================================================================
@@ -799,7 +822,7 @@ fn test_clone_empty() {
     
     assert_eq!(cloned.len(), 0);
     assert_eq!(cloned.status(), original.status());
-    assert_eq!(cloned.version(), original.version());
+    assert_eq!(cloned.wire_format(), original.wire_format());
 }
 
 #[test]
@@ -807,13 +830,13 @@ fn test_clone_with_data() {
     let mut original = BridgeVec::with_capacity(10);
     original.extend_from_slice(b"hello world");
     original.set_status(42);
-    original.set_version(7);
+    original.set_wire_format(7);
     
     let cloned = original.clone();
     
     assert_eq!(cloned.as_slice(), b"hello world");
     assert_eq!(cloned.status(), 42);
-    assert_eq!(cloned.version(), 7);
+    assert_eq!(cloned.wire_format(), 7);
     
     // Verify independence
     assert_ne!(original.as_ptr(), cloned.as_ptr());
@@ -1011,14 +1034,14 @@ fn test_into_raw_roundtrip_preserves_all() {
     let mut vec = BridgeVec::with_capacity(100);
     vec.extend_from_slice(b"roundtrip test data");
     vec.set_status(0x1234);
-    vec.set_version(0x5678);
+    vec.set_wire_format(0x56);
     
     let ptr = vec.into_raw();
     let recovered = unsafe { BridgeVec::from_raw(ptr).unwrap() };
     
     assert_eq!(recovered.as_slice(), b"roundtrip test data");
     assert_eq!(recovered.status(), 0x1234);
-    assert_eq!(recovered.version(), 0x5678);
+    assert_eq!(recovered.wire_format(), 0x56);
 }
 
 // =============================================================================
@@ -1068,7 +1091,7 @@ fn test_borrow_raw_non_owning() {
     let mut original = BridgeVec::with_capacity(50);
     original.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
     original.set_status(7);
-    original.set_version(3);
+    original.set_wire_format(3);
     
     let borrowed = unsafe { 
         BridgeVec::borrow_raw(original.as_ptr()).expect("Should borrow from valid ptr") 
@@ -1076,7 +1099,7 @@ fn test_borrow_raw_non_owning() {
     
     assert_eq!(borrowed.len(), 3);
     assert_eq!(borrowed.status(), 7);
-    assert_eq!(borrowed.version(), 3);
+    assert_eq!(borrowed.wire_format(), 3);
     assert_eq!(borrowed.as_slice(), &[0xAA, 0xBB, 0xCC]);
     
     // Original still valid
@@ -1109,14 +1132,14 @@ fn test_vec_ref_accessors() {
     let mut vec = BridgeVec::with_capacity(100);
     vec.extend_from_slice(b"reference test");
     vec.set_status(42);
-    vec.set_version(7);
+    vec.set_wire_format(7);
     
     let borrowed = unsafe { BridgeVec::borrow_raw(vec.as_ptr()).unwrap() };
     
     assert_eq!(borrowed.len(), 14);
     assert_eq!(borrowed.capacity(), vec.capacity());
     assert_eq!(borrowed.status(), 42);
-    assert_eq!(borrowed.version(), 7);
+    assert_eq!(borrowed.wire_format(), 7);
     assert!(!borrowed.is_empty());
 }
 
@@ -1175,14 +1198,14 @@ fn test_vec_ref_debug() {
 fn test_grow_preserves_header() {
     let mut vec = BridgeVec::with_capacity(10);
     vec.set_status(42);
-    vec.set_version(99);
+    vec.set_wire_format(99);
     
     // Force grow
     let pattern: Vec<u8> = (0..500).map(|i| i as u8).collect();
     vec.extend_from_slice(&pattern);
     
     assert_eq!(vec.status(), 42, "Status must be preserved across realloc");
-    assert_eq!(vec.version(), 99, "Version must be preserved across realloc");
+    assert_eq!(vec.wire_format(), 99, "Version must be preserved across realloc");
     assert_eq!(vec.as_slice(), &pattern[..]);
 }
 

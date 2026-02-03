@@ -1,7 +1,7 @@
 use bridge_vec::{
     BridgeVec, DataStatus, bridgeable, Bridgeable, ffi::{RkyvFfiError, access_from_ffi}
 };
-use rkyv::{Archive, Serialize, Deserialize};
+use rkyv::{Archive, Deserialize};
 
 // --- Test Structures ---
 
@@ -26,6 +26,20 @@ struct PanicOnSerialize;
 impl<S: rkyv::rancor::Fallible + ?Sized> rkyv::Serialize<S> for PanicOnSerialize {
     fn serialize(&self, _serializer: &mut S) -> Result<Self::Resolver, S::Error> {
         panic!("Intentional panic during serialization test");
+    }
+}
+
+impl Bridgeable for PanicOnSerialize {
+    fn serialize(&self) -> Result<BridgeVec, rkyv::rancor::Error> {
+        ::bridge_vec::BridgeVec::serialize_from(self)
+    }
+
+    fn parse(vec: BridgeVec) -> Result<bridge_vec::rkyv::TypedBuf<Self>, rkyv::rancor::Error> {
+        vec.parse::<Self>()
+    }
+
+    fn deserialize(buf: bridge_vec::rkyv::TypedBuf<Self>) -> Result<Self, rkyv::rancor::Error> {
+        buf.deserialize()
     }
 }
 

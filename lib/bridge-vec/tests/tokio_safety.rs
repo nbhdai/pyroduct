@@ -26,7 +26,7 @@ async fn test_stream_preserves_header_fields() {
     let mut original = BridgeVec::with_capacity(8);
     original.extend_from_slice(b"data");
     original.set_status(0xABCD);
-    original.set_version(0x1234);
+    original.set_version(0x12);
 
     let mut stream_buffer = Vec::new();
     write_to_stream(&mut stream_buffer, &original).await.unwrap();
@@ -35,7 +35,7 @@ async fn test_stream_preserves_header_fields() {
     let recovered = read_from_stream(&mut cursor).await.unwrap();
 
     assert_eq!(recovered.status(), 0xABCD);
-    assert_eq!(recovered.version(), 0x1234);
+    assert_eq!(recovered.version(), 0x12);
 }
 
 #[tokio::test]

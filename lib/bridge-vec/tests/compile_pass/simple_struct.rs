@@ -1,4 +1,4 @@
-use bridge_vec::{bridgeable, Bridgeable};
+use bridge_vec::bridgeable;
 
 #[bridgeable]
 struct SimpleStruct {

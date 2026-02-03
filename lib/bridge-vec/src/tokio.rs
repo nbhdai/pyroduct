@@ -49,14 +49,16 @@ where
     let magic = u32::from_le_bytes(header_buf[0..4].try_into().unwrap());
     let len = u32::from_le_bytes(header_buf[4..8].try_into().unwrap()) as usize;
     let cap = u32::from_le_bytes(header_buf[8..12].try_into().unwrap()) as usize;
-    let version = u16::from_le_bytes(header_buf[12..14].try_into().unwrap());
+    let wire_format = u8::from_le_bytes(header_buf[12..13].try_into().unwrap());
+    let version = u8::from_le_bytes(header_buf[13..14].try_into().unwrap());
     let status = u16::from_le_bytes(header_buf[14..16].try_into().unwrap());
 
-    if magic != BridgeVec::MAGIC_VAL {
+    if magic != crate::MAGIC_VAL {
         return Err(Error::new(ErrorKind::InvalidData, "Invalid BridgeVec magic header"));
     }
 
     let mut vec = BridgeVec::with_capacity(cap);
+    vec.set_wire_format(wire_format);
     vec.set_version(version);
     vec.set_status(status);
 
@@ -81,10 +83,11 @@ where
     W: AsyncWrite + Unpin
 {
     // Use native-endian writes to match the read_from_stream logic
-    dest.write_u32_le(BridgeVec::MAGIC_VAL).await?;  // 0..4
+    dest.write_u32_le(crate::MAGIC_VAL).await?;  // 0..4
     dest.write_u32_le(vec.len() as u32).await?;          // 4..8
     dest.write_u32_le(vec.capacity() as u32).await?;     // 8..12
-    dest.write_u16_le(vec.version()).await?;             // 12..14
+    dest.write_u8(vec.wire_format()).await?;             // 12..13
+    dest.write_u8(vec.version()).await?;             // 13..14
     dest.write_u16_le(vec.status()).await?;              // 14..16
 
     dest.write_all(vec.as_slice()).await?;
@@ -104,7 +107,8 @@ mod tests {
         let mut original = BridgeVec::with_capacity(16);
         original.extend_from_slice(b"endian-test-data");
         original.set_status(0x1234);
-        original.set_version(0xABCD);
+        original.set_wire_format(0xAB);
+        original.set_version(0xCD);
 
         let mut stream = Vec::new();
 
@@ -122,7 +126,7 @@ mod tests {
         let magic_val = u32::from_ne_bytes(magic_bytes.try_into().unwrap());
         assert_eq!(
             magic_val, 
-            BridgeVec::MAGIC_VAL, 
+            crate::MAGIC_VAL, 
             "Magic value byte order mismatch in stream"
         );
 
@@ -135,7 +139,8 @@ mod tests {
         // Step 4: Validate integrity
         assert_eq!(recovered.as_slice(), b"endian-test-data");
         assert_eq!(recovered.status(), 0x1234);
-        assert_eq!(recovered.version(), 0xABCD);
+        assert_eq!(recovered.wire_format(), 0xAB);
+        assert_eq!(recovered.version(), 0xCD);
     }
 
     #[tokio::test]
