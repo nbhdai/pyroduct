@@ -1,6 +1,6 @@
 use std::{ffi::c_void, panic, slice};
 
-use bridge_vec::{BridgeVec, DataStatus, ffi::RkyvFfiError, rkyv::Bridgable};
+use bridge_vec::{BridgeVec, DataStatus, ffi::RkyvFfiError, ser_de::Bridgable};
 use tracing::{debug, error, trace};
 
 use crate::{

@@ -1,6 +1,6 @@
 use std::panic::{self, AssertUnwindSafe};
 
-use bridge_vec::{BridgeVec, rkyv::Bridgable};
+use bridge_vec::{BridgeVec, ser_de::Bridgable};
 use tracing::{debug, trace};
 
 use crate::{

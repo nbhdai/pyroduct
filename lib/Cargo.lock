@@ -458,11 +458,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "bridge-derive"
+name = "bridge-core"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
+ "syn",
+]
+
+[[package]]
+name = "bridge-derive"
+version = "0.1.0"
+dependencies = [
+ "bridge-core",
  "syn",
 ]
 

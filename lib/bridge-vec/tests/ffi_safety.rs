@@ -34,11 +34,11 @@ impl Bridgeable for PanicOnSerialize {
         ::bridge_vec::BridgeVec::serialize_from(self)
     }
 
-    fn parse(vec: BridgeVec) -> Result<bridge_vec::rkyv::TypedBuf<Self>, rkyv::rancor::Error> {
+    fn parse(vec: BridgeVec) -> Result<bridge_vec::ser_de::TypedBuf<Self>, rkyv::rancor::Error> {
         vec.parse::<Self>()
     }
 
-    fn deserialize(buf: bridge_vec::rkyv::TypedBuf<Self>) -> Result<Self, rkyv::rancor::Error> {
+    fn deserialize(buf: bridge_vec::ser_de::TypedBuf<Self>) -> Result<Self, rkyv::rancor::Error> {
         buf.deserialize()
     }
 }

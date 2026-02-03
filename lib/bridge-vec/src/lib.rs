@@ -54,13 +54,15 @@ use std::ptr::{self, NonNull};
 use std::{fmt, slice};
 use std::ops::{Deref, DerefMut};
 
-use crate::rkyv::TypedBuf;
+use crate::ser_de::TypedBuf;
 
 pub(crate) const MAGIC_VAL: u32 = 0x7079726F; // "pyro"
 pub const PROTOCOL_VERSION: u8 = 1;
 
+pub use rkyv;
+
 mod common;
-pub mod rkyv;
+pub mod ser_de;
 pub mod tokio;
 pub mod ffi;
 

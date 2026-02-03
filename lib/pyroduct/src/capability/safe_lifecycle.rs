@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 
 use async_ffi::BorrowingFfiFuture;
-use bridge_vec::{BridgeVec, rkyv::Bridgable};
+use bridge_vec::{BridgeVec, ser_de::Bridgable};
 use futures::FutureExt;
 use tokio::runtime::Runtime;
 use tracing::{debug, trace};

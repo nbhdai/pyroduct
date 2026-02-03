@@ -3,14 +3,17 @@
 use std::collections::{HashMap, HashSet, BTreeMap, BTreeSet};
 use std::hash::Hash;
 
-use crate::{BridgeVec, Bridgeable};
-use crate::rkyv::TypedBuf;
+use crate::{BridgeVec, Bridgeable, PROTOCOL_VERSION};
+use crate::ser_de::TypedBuf;
 
 // --- Primitive Types ---
 
 impl Bridgeable for () {
     fn serialize(&self) -> Result<BridgeVec, rkyv::rancor::Error> {
-        BridgeVec::serialize_from(self)
+        BridgeVec::serialize_from(self).map(|mut v| {
+            v.set_version(PROTOCOL_VERSION);
+            v
+        })
     }
     fn parse(vec: BridgeVec) -> Result<TypedBuf<Self>, rkyv::rancor::Error> {
         vec.parse::<Self>()
@@ -22,7 +25,10 @@ impl Bridgeable for () {
 
 impl Bridgeable for bool {
     fn serialize(&self) -> Result<BridgeVec, rkyv::rancor::Error> {
-        BridgeVec::serialize_from(self)
+        BridgeVec::serialize_from(self).map(|mut v| {
+            v.set_version(PROTOCOL_VERSION);
+            v
+        })
     }
     fn parse(vec: BridgeVec) -> Result<TypedBuf<Self>, rkyv::rancor::Error> {
         vec.parse::<Self>()
@@ -37,7 +43,10 @@ macro_rules! impl_bridgeable_primitive {
         $(
             impl Bridgeable for $ty {
                 fn serialize(&self) -> Result<BridgeVec, rkyv::rancor::Error> {
-                    BridgeVec::serialize_from(self)
+                    BridgeVec::serialize_from(self).map(|mut v| {
+                        v.set_version(PROTOCOL_VERSION);
+                        v
+                    })
                 }
                 fn parse(vec: BridgeVec) -> Result<TypedBuf<Self>, rkyv::rancor::Error> {
                     vec.parse::<Self>()
@@ -61,7 +70,10 @@ impl_bridgeable_primitive!(
 
 impl Bridgeable for String {
     fn serialize(&self) -> Result<BridgeVec, rkyv::rancor::Error> {
-        BridgeVec::serialize_from(self)
+        BridgeVec::serialize_from(self).map(|mut v| {
+            v.set_version(PROTOCOL_VERSION);
+            v
+        })
     }
     fn parse(vec: BridgeVec) -> Result<TypedBuf<Self>, rkyv::rancor::Error> {
         vec.parse::<Self>()
@@ -73,7 +85,10 @@ impl Bridgeable for String {
 
 impl Bridgeable for Box<str> {
     fn serialize(&self) -> Result<BridgeVec, rkyv::rancor::Error> {
-        BridgeVec::serialize_from(self)
+        BridgeVec::serialize_from(self).map(|mut v| {
+            v.set_version(PROTOCOL_VERSION);
+            v
+        })
     }
     fn parse(vec: BridgeVec) -> Result<TypedBuf<Self>, rkyv::rancor::Error> {
         vec.parse::<Self>()
@@ -109,7 +124,10 @@ where
     <Vec<T> as rkyv::Archive>::Archived: rkyv::Deserialize<Vec<T>, rkyv::rancor::Strategy<rkyv::de::Pool, rkyv::rancor::Error>>,
 {
     fn serialize(&self) -> Result<BridgeVec, rkyv::rancor::Error> {
-        BridgeVec::serialize_from(self)
+        BridgeVec::serialize_from(self).map(|mut v| {
+            v.set_version(PROTOCOL_VERSION);
+            v
+        })
     }
     fn parse(vec: BridgeVec) -> Result<TypedBuf<Self>, rkyv::rancor::Error> {
         vec.parse::<Self>()
@@ -139,7 +157,10 @@ where
     <Box<[T]> as rkyv::Archive>::Archived: rkyv::Deserialize<Box<[T]>, rkyv::rancor::Strategy<rkyv::de::Pool, rkyv::rancor::Error>>,
 {
     fn serialize(&self) -> Result<BridgeVec, rkyv::rancor::Error> {
-        BridgeVec::serialize_from(self)
+        BridgeVec::serialize_from(self).map(|mut v| {
+            v.set_version(PROTOCOL_VERSION);
+            v
+        })
     }
     fn parse(vec: BridgeVec) -> Result<TypedBuf<Self>, rkyv::rancor::Error> {
         vec.parse::<Self>()
@@ -177,7 +198,10 @@ where
     <HashMap<K, V> as rkyv::Archive>::Archived: rkyv::Deserialize<HashMap<K, V>, rkyv::rancor::Strategy<rkyv::de::Pool, rkyv::rancor::Error>>,
 {
     fn serialize(&self) -> Result<BridgeVec, rkyv::rancor::Error> {
-        BridgeVec::serialize_from(self)
+        BridgeVec::serialize_from(self).map(|mut v| {
+            v.set_version(PROTOCOL_VERSION);
+            v
+        })
     }
     fn parse(vec: BridgeVec) -> Result<TypedBuf<Self>, rkyv::rancor::Error> {
         vec.parse::<Self>()
@@ -208,7 +232,10 @@ where
     <HashSet<T> as rkyv::Archive>::Archived: rkyv::Deserialize<HashSet<T>, rkyv::rancor::Strategy<rkyv::de::Pool, rkyv::rancor::Error>>,
 {
     fn serialize(&self) -> Result<BridgeVec, rkyv::rancor::Error> {
-        BridgeVec::serialize_from(self)
+        BridgeVec::serialize_from(self).map(|mut v| {
+            v.set_version(PROTOCOL_VERSION);
+            v
+        })
     }
     fn parse(vec: BridgeVec) -> Result<TypedBuf<Self>, rkyv::rancor::Error> {
         vec.parse::<Self>()
@@ -246,7 +273,10 @@ where
     <BTreeMap<K, V> as rkyv::Archive>::Archived: rkyv::Deserialize<BTreeMap<K, V>, rkyv::rancor::Strategy<rkyv::de::Pool, rkyv::rancor::Error>>,
 {
     fn serialize(&self) -> Result<BridgeVec, rkyv::rancor::Error> {
-        BridgeVec::serialize_from(self)
+        BridgeVec::serialize_from(self).map(|mut v| {
+            v.set_version(PROTOCOL_VERSION);
+            v
+        })
     }
     fn parse(vec: BridgeVec) -> Result<TypedBuf<Self>, rkyv::rancor::Error> {
         vec.parse::<Self>()
@@ -277,7 +307,10 @@ where
     <BTreeSet<T> as rkyv::Archive>::Archived: rkyv::Deserialize<BTreeSet<T>, rkyv::rancor::Strategy<rkyv::de::Pool, rkyv::rancor::Error>>,
 {
     fn serialize(&self) -> Result<BridgeVec, rkyv::rancor::Error> {
-        BridgeVec::serialize_from(self)
+        BridgeVec::serialize_from(self).map(|mut v| {
+            v.set_version(PROTOCOL_VERSION);
+            v
+        })
     }
     fn parse(vec: BridgeVec) -> Result<TypedBuf<Self>, rkyv::rancor::Error> {
         vec.parse::<Self>()
@@ -307,7 +340,10 @@ where
     <Option<T> as rkyv::Archive>::Archived: rkyv::Deserialize<Option<T>, rkyv::rancor::Strategy<rkyv::de::Pool, rkyv::rancor::Error>>,
 {
     fn serialize(&self) -> Result<BridgeVec, rkyv::rancor::Error> {
-        BridgeVec::serialize_from(self)
+        BridgeVec::serialize_from(self).map(|mut v| {
+            v.set_version(PROTOCOL_VERSION);
+            v
+        })
     }
     fn parse(vec: BridgeVec) -> Result<TypedBuf<Self>, rkyv::rancor::Error> {
         vec.parse::<Self>()
@@ -344,7 +380,10 @@ where
     <Result<T, E> as rkyv::Archive>::Archived: rkyv::Deserialize<Result<T, E>, rkyv::rancor::Strategy<rkyv::de::Pool, rkyv::rancor::Error>>,
 {
     fn serialize(&self) -> Result<BridgeVec, rkyv::rancor::Error> {
-        BridgeVec::serialize_from(self)
+        BridgeVec::serialize_from(self).map(|mut v| {
+            v.set_version(PROTOCOL_VERSION);
+            v
+        })
     }
     fn parse(vec: BridgeVec) -> Result<TypedBuf<Self>, rkyv::rancor::Error> {
         vec.parse::<Self>()
@@ -378,7 +417,10 @@ macro_rules! impl_bridgeable_tuple {
             <($($T,)+) as rkyv::Archive>::Archived: rkyv::Deserialize<($($T,)+), rkyv::rancor::Strategy<rkyv::de::Pool, rkyv::rancor::Error>>,
         {
             fn serialize(&self) -> Result<BridgeVec, rkyv::rancor::Error> {
-                BridgeVec::serialize_from(self)
+                BridgeVec::serialize_from(self).map(|mut v| {
+                    v.set_version(PROTOCOL_VERSION);
+                    v
+                })
             }
             fn parse(vec: BridgeVec) -> Result<TypedBuf<Self>, rkyv::rancor::Error> {
                 vec.parse::<Self>()
@@ -423,7 +465,10 @@ where
     <[T; N] as rkyv::Archive>::Archived: rkyv::Deserialize<[T; N], rkyv::rancor::Strategy<rkyv::de::Pool, rkyv::rancor::Error>>,
 {
     fn serialize(&self) -> Result<BridgeVec, rkyv::rancor::Error> {
-        BridgeVec::serialize_from(self)
+        BridgeVec::serialize_from(self).map(|mut v| {
+            v.set_version(PROTOCOL_VERSION);
+            v
+        })
     }
     fn parse(vec: BridgeVec) -> Result<TypedBuf<Self>, rkyv::rancor::Error> {
         vec.parse::<Self>()
@@ -441,6 +486,7 @@ mod tests {
     fn test_primitive_roundtrip() {
         let val: u64 = 42;
         let vec = val.serialize().unwrap();
+        assert_eq!(vec.version(), PROTOCOL_VERSION);
         let typed = u64::parse(vec).unwrap();
         let recovered = u64::deserialize(typed).unwrap();
         assert_eq!(val, recovered);
@@ -450,6 +496,7 @@ mod tests {
     fn test_string_roundtrip() {
         let val = "Hello, World!".to_string();
         let vec = val.serialize().unwrap();
+        assert_eq!(vec.version(), PROTOCOL_VERSION);
         let typed = String::parse(vec).unwrap();
         let recovered = String::deserialize(typed).unwrap();
         assert_eq!(val, recovered);
@@ -459,6 +506,7 @@ mod tests {
     fn test_vec_roundtrip() {
         let val: Vec<u32> = vec![1, 2, 3, 4, 5];
         let vec = val.serialize().unwrap();
+        assert_eq!(vec.version(), PROTOCOL_VERSION);
         let typed = Vec::<u32>::parse(vec).unwrap();
         let recovered = Vec::<u32>::deserialize(typed).unwrap();
         assert_eq!(val, recovered);
@@ -471,6 +519,7 @@ mod tests {
         val.insert("b".to_string(), 2);
         
         let vec = val.serialize().unwrap();
+        assert_eq!(vec.version(), PROTOCOL_VERSION);
         let typed = HashMap::<String, i32>::parse(vec).unwrap();
         let recovered = HashMap::<String, i32>::deserialize(typed).unwrap();
         assert_eq!(val, recovered);
@@ -480,12 +529,14 @@ mod tests {
     fn test_option_roundtrip() {
         let val: Option<String> = Some("test".to_string());
         let vec = val.serialize().unwrap();
+        assert_eq!(vec.version(), PROTOCOL_VERSION);
         let typed = Option::<String>::parse(vec).unwrap();
         let recovered = Option::<String>::deserialize(typed).unwrap();
         assert_eq!(val, recovered);
 
         let none_val: Option<String> = None;
         let vec = none_val.serialize().unwrap();
+        assert_eq!(vec.version(), PROTOCOL_VERSION);
         let typed = Option::<String>::parse(vec).unwrap();
         let recovered = Option::<String>::deserialize(typed).unwrap();
         assert_eq!(none_val, recovered);
@@ -495,6 +546,7 @@ mod tests {
     fn test_tuple_roundtrip() {
         let val: (u32, String, bool) = (42, "hello".to_string(), true);
         let vec = val.serialize().unwrap();
+        assert_eq!(vec.version(), PROTOCOL_VERSION);
         let typed = <(u32, String, bool)>::parse(vec).unwrap();
         let recovered = <(u32, String, bool)>::deserialize(typed).unwrap();
         assert_eq!(val, recovered);
@@ -504,6 +556,7 @@ mod tests {
     fn test_array_roundtrip() {
         let val: [u8; 4] = [1, 2, 3, 4];
         let vec = val.serialize().unwrap();
+        assert_eq!(vec.version(), PROTOCOL_VERSION);
         let typed = <[u8; 4]>::parse(vec).unwrap();
         let recovered = <[u8; 4]>::deserialize(typed).unwrap();
         assert_eq!(val, recovered);

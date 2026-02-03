@@ -10,7 +10,9 @@ members = [
     "module-derive",
     "pyroduct",
     "cli",
-    "bridge-vec", "bridge-derive",
+    "bridge-vec",
+    "bridge-core",
+    "bridge-derive",
 ]
 
 default-members = [
@@ -23,6 +25,7 @@ default-members = [
     "pyroduct",
     "cli",
     "bridge-vec",
+    "bridge-core",
 ]
 resolver = "2"
 
@@ -32,6 +35,7 @@ authors = ["Sven Cattell"]
 edition = "2024"
 
 [workspace.dependencies]
+bridge-core = { path = "bridge-core" }
 bridge-derive = { path = "bridge-derive" }
 bridge-vec = { path = "bridge-vec" }
 arrow-scalars = { path = "arrow-scalars" }
