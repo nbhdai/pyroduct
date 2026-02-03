@@ -1,21 +1,19 @@
 use bridge_vec::{
-    BridgeVec,
-    DataStatus,
-    ffi::{access_from_ffi, RkyvFfiError}
+    BridgeVec, DataStatus, bridgeable, Bridgeable, ffi::{RkyvFfiError, access_from_ffi}
 };
 use rkyv::{Archive, Serialize, Deserialize};
 
 // --- Test Structures ---
 
-#[derive(Debug, Archive, Serialize, Deserialize, PartialEq)]
-#[rkyv(derive(Debug))]
+#[bridgeable(derive(Debug, PartialEq))]
+#[derive(Debug, PartialEq)]
 struct UserData {
     id: u32,
     payload: String,
 }
 
-#[derive(Archive, Serialize, Deserialize, Debug, PartialEq)]
-#[rkyv(derive(Debug))]
+#[bridgeable(derive(Debug, PartialEq))]
+#[derive(Debug, PartialEq)]
 struct UserError {
     code: u16,
     msg: String,

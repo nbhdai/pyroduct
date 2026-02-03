@@ -1,5 +1,5 @@
 use rkyv::rancor::{Error, Fallible};
-use rkyv::ser::allocator::Arena;
+use rkyv::ser::allocator::{Arena, ArenaHandle};
 use rkyv::ser::{Positional, Writer};
 
 
@@ -17,7 +17,7 @@ use rkyv::{
 
 // Define thread-local scratch space to reuse allocations.
 thread_local! {
-    static SCRATCH: RefCell<(Arena, Share)> = RefCell::new((Arena::new(), Share::new()));
+    static SCRATCH: RefCell<Arena> = RefCell::new(Arena::new());
 }
 
 use crate::BridgeVec;
@@ -89,9 +89,9 @@ impl BridgeVec {
     pub fn serialize_from<T>(value: &T) -> Result<Self, Error>
         where
             T: rkyv::Archive,
-            for<'a, 'b> T: rkyv::Serialize<
+            for<'a> T: rkyv::Serialize<
                 Strategy<
-                    Serializer<&'a mut BridgeVec, &'b mut Arena, &'b mut Share>,
+                    Serializer<&'a mut BridgeVec, ArenaHandle<'a>, Share>,
                     Error
                 >
             >,
@@ -100,12 +100,12 @@ impl BridgeVec {
 
             SCRATCH.with(|scratch| {
                 let mut borrow = scratch.borrow_mut();
-                let (arena, share) = &mut *borrow;
+                let arena = &mut *borrow;
 
-                arena.acquire();
-                share.clear();
+                let handle = arena.acquire();
+                let share = Share::new();
 
-                let mut inner = Serializer::new(&mut vec, arena, share);
+                let mut inner = Serializer::new(&mut vec, handle, share);
                 
                 rkyv::api::serialize_using::<_, Error>(
                     value, 

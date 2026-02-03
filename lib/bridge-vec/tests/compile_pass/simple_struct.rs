@@ -6,10 +6,4 @@ struct SimpleStruct {
     name: String,
 }
 
-fn main() {
-    let s = SimpleStruct {
-        id: 42,
-        name: "test".to_string(),
-    };
-    let _ = s;
-}
+fn main() {}

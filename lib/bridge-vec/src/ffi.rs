@@ -1,14 +1,18 @@
 use std::{panic, slice, any::Any};
 use tracing::{error, trace};
 use rkyv::{
-    Archive, Deserialize, Serialize, bytecheck::CheckBytes, rancor::{Error, Strategy}, ser::{Serializer, allocator::{Arena, ArenaHandle}, sharing::Share}, validation::{Validator, archive::ArchiveValidator, shared::SharedValidator}
+    Archive, Deserialize,
+    bytecheck::CheckBytes,
+    rancor::{Error, Strategy},
+    de::Pool,
+    validation::{Validator, archive::ArchiveValidator, shared::SharedValidator},
 };
 
-use crate::{DataStatus, BridgeVec};
+use crate::{DataStatus, BridgeVec, Bridgeable};
 
 // --- Error Definitions ---
 
-#[derive(Debug, Clone, Archive, Serialize, Deserialize)]
+#[derive(Debug, Clone, Archive, rkyv::Serialize, Deserialize)]
 pub enum RkyvFfiError {
     NullPointer,
     ZeroLength,
@@ -16,7 +20,7 @@ pub enum RkyvFfiError {
     RemoteUserErrorSerializationFailed(String),
     ValidationFailed(String),
     SystemErrorDeserializationFailed(String),
-    UnknownStatus(u16), // Updated to u16
+    UnknownStatus(u16),
     RawUtf8(String),
 }
 
@@ -44,19 +48,16 @@ impl BridgeVec {
     /// Serializes a Result<T, E> for the FFI boundary.
     pub fn serialize_result<T, E>(result: Result<&T, &E>) -> Self
     where
-        T: Archive + std::panic::RefUnwindSafe,
-        E: Archive + std::panic::RefUnwindSafe,
-        for<'a, 'b> T: Serialize<Strategy<Serializer<&'a mut BridgeVec, &'b mut Arena, &'b mut Share>, rkyv::rancor::Error>>,
-        for<'a, 'b> E: Serialize<Strategy<Serializer<&'a mut BridgeVec, &'b mut Arena, &'b mut Share>, rkyv::rancor::Error>>,
+        T: Bridgeable + std::panic::RefUnwindSafe,
+        E: Bridgeable + std::panic::RefUnwindSafe,
     {
         trace!("serialize_result: starting");
         
         let panic_guard = panic::catch_unwind(|| {
             match result {
                 Ok(val) => {
-                    match Self::serialize_from(val) {
+                    match val.serialize() {
                         Ok(mut vec) => {
-                            // Uses lib.rs set_status (u16 offset 14)
                             vec.set_status(DataStatus::ValidData as u16);
                             vec
                         }
@@ -67,7 +68,7 @@ impl BridgeVec {
                     }
                 }
                 Err(val) => {
-                    match Self::serialize_from(val) {
+                    match val.serialize() {
                         Ok(mut vec) => {
                             vec.set_status(DataStatus::UserError as u16);
                             vec
@@ -92,9 +93,7 @@ impl BridgeVec {
         }
     }
 
-    fn serialize_system_error(err: RkyvFfiError) -> Self 
-    where for<'a> RkyvFfiError: Serialize<Strategy<Serializer<&'a mut BridgeVec, ArenaHandle<'a>, Share>, Error>>
-    {
+    fn serialize_system_error(err: RkyvFfiError) -> Self {
         match Self::serialize_from(&err) {
             Ok(mut vec) => {
                 vec.set_status(DataStatus::TransportError as u16);
@@ -119,12 +118,12 @@ pub unsafe fn access_from_ffi<'a, T, E>(ptr: *const u8) -> Result<Result<&'a T::
 where
     T: Archive,
     E: Archive,
-    for<'b> <T as Archive>::Archived: CheckBytes<Strategy<Validator<ArchiveValidator<'b>, SharedValidator>, rkyv::rancor::Error>>,
-    for<'b> <E as Archive>::Archived: CheckBytes<Strategy<Validator<ArchiveValidator<'b>, SharedValidator>, rkyv::rancor::Error>>,
+    for<'b> <T as Archive>::Archived: CheckBytes<Strategy<Validator<ArchiveValidator<'b>, SharedValidator>, Error>>,
+    for<'b> <E as Archive>::Archived: CheckBytes<Strategy<Validator<ArchiveValidator<'b>, SharedValidator>, Error>>,
 {
     // Reconstruct wrapper to access header safely
     let vec_ref = match unsafe { BridgeVec::borrow_raw(ptr) } {
-        Ok(v) => v, // Don't drop, we don't own it
+        Ok(v) => v,
         Err(_) => return Err(RkyvFfiError::NullPointer),
     };
 
@@ -144,7 +143,60 @@ where
                 .map(Err)
                 .map_err(|e| RkyvFfiError::ValidationFailed(format!("E validation failed: {:?}", e)))
         }
-        2 => { // RkyvFfiError
+        2 => { // TransportError
+            let archived_err = rkyv::access::<ArchivedRkyvFfiError, Error>(slice)
+                .map_err(|e| RkyvFfiError::ValidationFailed(format!("System error validation failed: {:?}", e)))?;
+            
+            let deserialized: RkyvFfiError = rkyv::deserialize(archived_err)
+                .map_err(|e: Error| RkyvFfiError::SystemErrorDeserializationFailed(format!("{:?}", e)))?;
+                
+            Err(deserialized)
+        }
+        3 => { // Utf8Error
+            let msg = std::str::from_utf8(slice).unwrap_or("<Invalid UTF8>");
+            Err(RkyvFfiError::RawUtf8(msg.to_string()))
+        }
+        _ => Err(RkyvFfiError::UnknownStatus(status_val)),
+    }
+}
+
+/// Reads and deserializes a result from the FFI boundary into owned types.
+#[tracing::instrument]
+pub unsafe fn deserialize_from_ffi<T, E>(ptr: *const u8) -> Result<Result<T, E>, RkyvFfiError>
+where
+    T: Bridgeable,
+    E: Bridgeable,
+    for<'b> <T as Archive>::Archived: CheckBytes<Strategy<Validator<ArchiveValidator<'b>, SharedValidator>, Error>>,
+    for<'b> <E as Archive>::Archived: CheckBytes<Strategy<Validator<ArchiveValidator<'b>, SharedValidator>, Error>>,
+    <T as Archive>::Archived: Deserialize<T, Strategy<Pool, Error>>,
+    <E as Archive>::Archived: Deserialize<E, Strategy<Pool, Error>>,
+{
+    let vec_ref = match unsafe { BridgeVec::borrow_raw(ptr) } {
+        Ok(v) => v,
+        Err(_) => return Err(RkyvFfiError::NullPointer),
+    };
+
+    let status_val = vec_ref.status();
+    let len = vec_ref.len();
+    let data_ptr = vec_ref.data_ptr();
+    let slice = unsafe { slice::from_raw_parts(data_ptr, len) };
+
+    match status_val {
+        0 => { // ValidData
+            let archived = rkyv::access::<T::Archived, Error>(slice)
+                .map_err(|e| RkyvFfiError::ValidationFailed(format!("T validation failed: {:?}", e)))?;
+            let value: T = rkyv::deserialize(archived)
+                .map_err(|e: Error| RkyvFfiError::SystemErrorDeserializationFailed(format!("{:?}", e)))?;
+            Ok(Ok(value))
+        }
+        1 => { // UserError
+            let archived = rkyv::access::<E::Archived, Error>(slice)
+                .map_err(|e| RkyvFfiError::ValidationFailed(format!("E validation failed: {:?}", e)))?;
+            let value: E = rkyv::deserialize(archived)
+                .map_err(|e: Error| RkyvFfiError::SystemErrorDeserializationFailed(format!("{:?}", e)))?;
+            Ok(Err(value))
+        }
+        2 => { // TransportError
             let archived_err = rkyv::access::<ArchivedRkyvFfiError, Error>(slice)
                 .map_err(|e| RkyvFfiError::ValidationFailed(format!("System error validation failed: {:?}", e)))?;
             

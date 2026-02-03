@@ -12,3 +12,4 @@ tracing.workspace = true
 
 [dev-dependencies]
 trybuild.workspace = true
+macrotest = "1.0"

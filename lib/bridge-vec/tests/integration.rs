@@ -1,27 +1,30 @@
 //! Integration tests for Bridgeable derive macro
 
-use bridge_derive::Bridgeable;
-use bridge_vec::rkyv::Bridgable;
+use bridge_vec::{Bridgeable, bridgeable};
 
-#[derive(Bridgeable, Debug, PartialEq)]
+#[bridgeable]
+#[derive(Debug, PartialEq)]
 struct SimpleStruct {
     id: u32,
     name: String,
 }
 
-#[derive(Bridgeable, Debug, PartialEq)]
+#[bridgeable]
+#[derive(Debug, PartialEq)]
 struct WithVec {
     items: Vec<u8>,
     labels: Vec<String>,
 }
 
-#[derive(Bridgeable, Debug, PartialEq)]
+#[bridgeable]
+#[derive(Debug, PartialEq)]
 struct Nested {
     inner: SimpleStruct,
     count: u64,
 }
 
-#[derive(Bridgeable, Debug, PartialEq)]
+#[bridgeable]
+#[derive(Debug, PartialEq)]
 enum Status {
     Active,
     Inactive,
