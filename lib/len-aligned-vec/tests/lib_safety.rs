@@ -21,15 +21,12 @@ fn test_alignment_and_layout_contract() {
 
 #[test]
 fn test_raw_pointer_reconstruction() {
-    // Setup initial state
     let mut original = LenAlignedVec::with_capacity(50);
     original.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
     original.set_status(7);
 
-    let raw_ptr = original.as_ptr();
+    let raw_ptr = original.into_raw(); // Transfer ownership
 
-    // Reconstruct. Note: This creates a SECOND owner of the same memory.
-    // We must be careful not to double-free.
     let reconstructed = unsafe { 
         LenAlignedVec::from_raw(raw_ptr).expect("Should reconstruct from valid ptr") 
     };
@@ -37,10 +34,6 @@ fn test_raw_pointer_reconstruction() {
     assert_eq!(reconstructed.len(), 3);
     assert_eq!(reconstructed.status(), 7);
     assert_eq!(reconstructed.as_slice(), &[0xAA, 0xBB, 0xCC]);
-
-    // Safety: Prevent double free. `original` and `reconstructed` point to the same buffer.
-    // We forget `original` so only `reconstructed` drops the memory.
-    std::mem::forget(original);
 }
 
 #[test]
@@ -93,4 +86,58 @@ fn test_grow_preserves_header_and_data() {
     // Verify alignment is still correct after realloc
     let addr = vec.as_ptr() as usize;
     assert_eq!(addr % 16, 0);
+}
+
+#[test]
+fn test_into_raw_ownership_transfer() {
+    let mut vec = LenAlignedVec::with_capacity(10);
+    vec.extend_from_slice(b"test");
+    vec.set_status(42);
+    
+    let ptr = vec.into_raw();
+    // vec is now consumed, no double-free possible
+    
+    // Reconstruct and verify
+    let recovered = unsafe { LenAlignedVec::from_raw(ptr).unwrap() };
+    assert_eq!(recovered.as_slice(), b"test");
+    assert_eq!(recovered.status(), 42);
+}
+
+#[test]
+fn test_borrow_raw_non_owning() {
+    let mut original = LenAlignedVec::with_capacity(50);
+    original.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
+    original.set_status(7);
+
+    let borrowed = unsafe { 
+        LenAlignedVec::borrow_raw(original.as_ptr()).expect("Should borrow from valid ptr") 
+    };
+    
+    assert_eq!(borrowed.len(), 3);
+    assert_eq!(borrowed.status(), 7);
+    assert_eq!(borrowed.as_slice(), &[0xAA, 0xBB, 0xCC]);
+    
+    // original still valid and will drop
+    assert_eq!(original.len(), 3);
+}
+
+#[test]
+fn test_borrow_raw_rejects_invalid() {
+    let result = unsafe { LenAlignedVec::borrow_raw(std::ptr::null()) };
+    assert!(result.is_err());
+    
+    let layout = Layout::from_size_align(32, 16).unwrap();
+    let ptr = unsafe { alloc(layout) };
+    
+    // Bad magic
+    unsafe { ptr::write(ptr as *mut u32, 0xDEADBEEF); }
+    let result = unsafe { LenAlignedVec::borrow_raw(ptr) };
+    assert!(result.is_err());
+    
+    // Misaligned
+    let bad_ptr = unsafe { ptr.add(1) };
+    let result = unsafe { LenAlignedVec::borrow_raw(bad_ptr) };
+    assert!(result.is_err());
+    
+    unsafe { dealloc(ptr, layout); }
 }

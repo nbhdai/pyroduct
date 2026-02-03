@@ -1909,6 +1909,7 @@ dependencies = [
  "async-ffi",
  "capability-derive",
  "futures",
+ "len-aligned-vec",
  "libloading",
  "macrotest",
  "module-derive",

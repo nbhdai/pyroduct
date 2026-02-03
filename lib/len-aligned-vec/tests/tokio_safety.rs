@@ -5,21 +5,37 @@ use std::io::Cursor;
 async fn test_stream_roundtrip() {
     let mut original = LenAlignedVec::with_capacity(32);
     original.extend_from_slice(b"Async Data Packet");
-    // Note: implementation of write_to_stream currently writes 0 for status/version padding
-    // so we don't expect status to survive a network roundtrip in the current code,
-    // only the payload.
+    original.set_status(5);
+    original.set_version(2);
 
     let mut stream_buffer = Vec::new();
     
-    // 1. Write to stream
     write_to_stream(&mut stream_buffer, &original).await.expect("Write failed");
 
-    // 2. Read from stream
     let mut cursor = Cursor::new(stream_buffer);
     let recovered = read_from_stream(&mut cursor).await.expect("Read failed");
 
     assert_eq!(recovered.as_slice(), b"Async Data Packet");
     assert_eq!(recovered.len(), 17);
+    assert_eq!(recovered.status(), 5, "Status must survive roundtrip");
+    assert_eq!(recovered.version(), 2, "Version must survive roundtrip");
+}
+
+#[tokio::test]
+async fn test_stream_preserves_header_fields() {
+    let mut original = LenAlignedVec::with_capacity(8);
+    original.extend_from_slice(b"data");
+    original.set_status(0xABCD);
+    original.set_version(0x1234);
+
+    let mut stream_buffer = Vec::new();
+    write_to_stream(&mut stream_buffer, &original).await.unwrap();
+
+    let mut cursor = Cursor::new(stream_buffer);
+    let recovered = read_from_stream(&mut cursor).await.unwrap();
+
+    assert_eq!(recovered.status(), 0xABCD);
+    assert_eq!(recovered.version(), 0x1234);
 }
 
 #[tokio::test]

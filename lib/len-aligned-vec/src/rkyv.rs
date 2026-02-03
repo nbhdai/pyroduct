@@ -33,9 +33,9 @@ impl Positional for LenAlignedVec {
     }
 }
 
-impl Writer<Error> for LenAlignedVec {
+impl<E> Writer<E> for LenAlignedVec {
     #[inline]
-    fn write(&mut self, bytes: &[u8]) -> Result<(), Error> {
+    fn write(&mut self, bytes: &[u8]) -> Result<(), E> {
         self.extend_from_slice(bytes);
         Ok(())
     }
@@ -87,39 +87,36 @@ impl LenAlignedVec {
     /// This uses a default `Arena` allocator and `Share` strategy (for handling 
     /// shared pointers/cycles), similar to `rkyv::to_bytes`.
     pub fn serialize_from<T>(value: &T) -> Result<Self, Error>
-    where
-        T: rkyv::Archive,
-        // The constraints must now accept mutable references to the Arena and Share
-        // because we are borrowing them from the TLS rather than passing by value.
-        for<'a, 'b> T: rkyv::Serialize<
-            Strategy<
-                Serializer<&'a mut LenAlignedVec, &'b mut Arena, &'b mut Share>,
-                Error
-            >
-        >,
-    {
-        // 1. Create the destination buffer
-        let mut vec = Self::with_capacity(256);
+        where
+            T: rkyv::Archive,
+            for<'a, 'b> T: rkyv::Serialize<
+                Strategy<
+                    Serializer<&'a mut LenAlignedVec, &'b mut Arena, &'b mut Share>,
+                    Error
+                >
+            >,
+        {
+            let mut vec = Self::with_capacity(256);
 
-        // 2. Access the thread-local scratch space
-        SCRATCH.with(|scratch| {
-            let mut borrow = scratch.borrow_mut();
-            let (arena, share) = &mut *borrow;
+            SCRATCH.with(|scratch| {
+                let mut borrow = scratch.borrow_mut();
+                let (arena, share) = &mut *borrow;
 
-            // IMPORTANT: Reset state to reuse capacity but clear logic from previous runs.
-            // If we don't clear `share`, it might incorrectly detect cycles from previous objects.
-            arena.acquire();
-            share.clear();
+                arena.acquire();
+                share.clear();
 
-            // 3. Construct Serializer using *mutable references* to the scratch space
-            let mut inner = Serializer::new(&mut vec, arena, share);
-            let strategy = Strategy::<_, Error>::wrap(&mut inner);
+                let mut inner = Serializer::new(&mut vec, arena, share);
+                
+                rkyv::api::serialize_using::<_, Error>(
+                    value, 
+                    &mut inner
+                )?;
 
-            value.serialize(strategy)
-        })?;
+                Ok(())
+            })?;
 
-        Ok(vec)
-    }
+            Ok(vec)
+        }
 }
 
 impl<T: Archive> TypedBuf<T> {
@@ -153,5 +150,77 @@ impl<T> Deref for TypedBuf<T>
 
     fn deref(&self) -> &Self::Target {
         &self.archived
+    }
+}
+
+#[cfg(test)]
+mod rkyv_tests {
+    use crate::LenAlignedVec;
+    use rkyv::{Archive, Serialize, Deserialize};
+
+    #[derive(Archive, Serialize, Deserialize, Debug, PartialEq)]
+    struct TestStruct {
+        a: u32,
+        b: u64,
+        c: String,
+    }
+
+    #[test]
+    fn test_serialization_alignment_integrity() {
+        let val = TestStruct {
+            a: 42,
+            b: 1337,
+            c: "Hello Rkyv".to_string(),
+        };
+
+        // 1. Serialize
+        let vec = LenAlignedVec::serialize_from(&val).expect("Serialization failed");
+        let correct_vec = rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("Serialization failed");
+        
+        // 2. Check alignment of the data pointer
+        let data_addr = vec.data_ptr() as usize;
+        assert_eq!(data_addr % 16, 0, "Data payload must start on 16-byte boundary");
+
+        // 3. Debug: Print bytes to see where the root is
+        println!("Vec: {:?}", vec);
+        println!("Bytes: {:x?}", vec.as_slice());
+
+        println!("Correct Buffer len: {}", correct_vec.len());
+        println!("Correct Bytes: {:x?}", correct_vec.as_slice());
+
+        // 4. Attempt access (This mimics what ffi.rs does)
+        let slice = vec.as_slice();
+        let access_result = rkyv::access::<ArchivedTestStruct, rkyv::rancor::Error>(slice);
+        
+        if let Err(e) = &access_result {
+            panic!("Access failed! This confirms rkyv.rs logic is broken. Error: {:?}", e);
+        }
+    }
+
+    #[test]
+    fn test_minimal_alignment_failure() {
+        // This tests if small types (like u16) cause alignment issues when serialized
+        // into our 16-byte aligned buffer at offset 16.
+        let val: u16 = 0xABCD;
+        let vec = LenAlignedVec::serialize_from(&val).expect("Failed to serialize u16");
+        
+        let slice = vec.as_slice();
+        let res = rkyv::access::<rkyv::Archived<u16>, rkyv::rancor::Error>(slice);
+        assert!(res.is_ok(), "Small type access failed: {:?}", res.err());
+    }
+
+    #[test]
+    fn test_typed_buf_parse_logic() {
+        let val = TestStruct {
+            a: 1,
+            b: 2,
+            c: "typed".to_string(),
+        };
+
+        let vec = LenAlignedVec::serialize_from(&val).unwrap();
+        
+        // This calls the logic inside parse()
+        let typed_res = vec.parse::<TestStruct>();
+        assert!(typed_res.is_ok(), "parse<T> failed: {:?}", typed_res.err());
     }
 }

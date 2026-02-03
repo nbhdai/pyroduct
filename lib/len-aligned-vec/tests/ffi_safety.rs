@@ -1,6 +1,7 @@
 use len_aligned_vec::{
-    LenAlignedVec, 
-    ffi::{access_from_ffi, RkyvFfiError, DataStatus}
+    LenAlignedVec,
+    DataStatus,
+    ffi::{access_from_ffi, RkyvFfiError}
 };
 use rkyv::{Archive, Serialize, Deserialize};
 
@@ -41,9 +42,11 @@ fn test_ffi_success_path() {
     
     // Verify Header Status
     assert_eq!(vec.status(), DataStatus::ValidData as u16);
+    println!("Vec {:?}", vec);
 
     // Verify Access
     let access = unsafe { access_from_ffi::<UserData, UserError>(vec.as_ptr()) };
+    println!("{:?}", access);
     match access {
         Ok(Ok(archived)) => {
             assert_eq!(archived.id, 101);
@@ -83,7 +86,7 @@ fn test_ffi_panic_safety_catch() {
     // This MUST NOT abort the process. It must return a buffer with RkyvFfiError status.
     let vec = LenAlignedVec::serialize_result(result);
     
-    assert_eq!(vec.status(), DataStatus::RkyvFfiError as u16);
+    assert_eq!(vec.status(), DataStatus::TransportError as u16);
     
     // Decode the error
     let access = unsafe { access_from_ffi::<UserData, UserError>(vec.as_ptr()) };

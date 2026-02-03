@@ -4,7 +4,7 @@ use rkyv::{
     Archive, Deserialize, Serialize, bytecheck::CheckBytes, rancor::{Error, Strategy}, ser::{Serializer, allocator::{Arena, ArenaHandle}, sharing::Share}, validation::{Validator, archive::ArchiveValidator, shared::SharedValidator}
 };
 
-use crate::LenAlignedVec;
+use crate::{DataStatus, LenAlignedVec};
 
 // --- Error Definitions ---
 
@@ -27,18 +27,6 @@ impl std::fmt::Display for RkyvFfiError {
 }
 
 impl std::error::Error for RkyvFfiError {}
-
-// --- Status Codes ---
-
-#[repr(u16)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DataStatus {
-    ValidData = 0,
-    UserError = 1,
-    RkyvFfiError = 2,
-    Utf8Error = 3,
-    ValidUtf8 = 4,
-}
 
 fn panic_payload_to_string(payload: Box<dyn Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
@@ -109,7 +97,7 @@ impl LenAlignedVec {
     {
         match Self::serialize_from(&err) {
             Ok(mut vec) => {
-                vec.set_status(DataStatus::RkyvFfiError as u16);
+                vec.set_status(DataStatus::TransportError as u16);
                 vec
             }
             Err(e) => {
@@ -135,8 +123,8 @@ where
     for<'b> <E as Archive>::Archived: CheckBytes<Strategy<Validator<ArchiveValidator<'b>, SharedValidator>, rkyv::rancor::Error>>,
 {
     // Reconstruct wrapper to access header safely
-    let vec_ref = match unsafe { LenAlignedVec::from_raw(ptr) } {
-        Ok(v) => std::mem::ManuallyDrop::new(v), // Don't drop, we don't own it
+    let vec_ref = match unsafe { LenAlignedVec::borrow_raw(ptr) } {
+        Ok(v) => v, // Don't drop, we don't own it
         Err(_) => return Err(RkyvFfiError::NullPointer),
     };
 
