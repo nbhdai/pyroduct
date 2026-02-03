@@ -25,6 +25,9 @@ anyhow.workspace = true
 
 tokio.workspace = true
 
+syn.workspace = true
+prettyplease.workspace = true
+
 tracing.workspace = true
 tracing-subscriber.workspace = true
 wasmprinter = "0.244.0"

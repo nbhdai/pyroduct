@@ -134,8 +134,11 @@ impl InterfaceGenerator {
 
         let (lib_rs_content, doc_string, config_string) =
             capability_core::generate_interface(&original_source, &cap_name, &cap_version)
+                .map_err(|r| format_syn_error(&original_source, r))
                 .context("Failed to generate client code")?;
-
+        let doc_string = doc_string.context("Failed to generate documentation")?;
+        let config_string = config_string.transpose().context("Failed to generate configuration spec")?;
+        let lib_rs_content = prettyplease::unparse(&lib_rs_content);
         Ok(Self {
             root_path: root_path.to_path_buf(),
             cargo_toml_content,
@@ -246,4 +249,41 @@ impl InterfaceGenerator {
     pub fn config(&self) -> Option<&str> {
         self.config_string.as_ref().map(|s| s.as_str())
     }
+}
+
+
+/// Format a syn::Error with source context
+pub fn format_syn_error(source: &str, err: syn::Error) -> anyhow::Error {
+    let span = err.span();
+    let start = span.start();
+    let msg = err.to_string();
+
+    let lines: Vec<&str> = source.lines().collect();
+    let line_num = start.line;
+    let col = start.column;
+
+    let mut output = String::new();
+    output.push_str(&format!("error: {}\n", msg));
+    output.push_str(&format!("  --> src/lib.rs:{}:{}\n", line_num, col + 1));
+    output.push_str("   |\n");
+
+    // Show context: line before, error line, line after
+    let start_line = line_num.saturating_sub(2);
+    let end_line = (line_num + 1).min(lines.len());
+
+    for i in start_line..end_line {
+        let line_content = lines.get(i).unwrap_or(&"");
+        let display_num = i + 1;
+
+        if display_num == line_num {
+            output.push_str(&format!("{:3} | {}\n", display_num, line_content));
+            // Add caret pointing to the column
+            output.push_str(&format!("    | {}^\n", " ".repeat(col)));
+        } else {
+            output.push_str(&format!("{:3} | {}\n", display_num, line_content));
+        }
+    }
+    output.push_str("   |\n");
+
+    anyhow::anyhow!("{}", output)
 }

@@ -1,0 +1,9 @@
+[package]
+name = "len-aligned-vec"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[dependencies]
+rkyv.workspace = true
+tokio.workspace = true

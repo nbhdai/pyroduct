@@ -98,7 +98,7 @@ fn test_sci_call_null_client_pointer() {
 
     let error = deserialize_ffi_error(result);
     match error {
-        FfiError::NullPointer(Phase::Client) => {}
+        FfiError::NullPointer(Phase::Input) => {}
         _ => panic!("Expected NullPointer(Client), got {:?}", error),
     }
 }

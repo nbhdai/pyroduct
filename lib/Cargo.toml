@@ -8,7 +8,7 @@ members = [
     "capability-derive",
     "module-derive",
     "pyroduct",
-    "cli", "module-core",
+    "cli", "module-core", "len-aligned-vec",
 ]
 
 default-members = [
