@@ -10,7 +10,7 @@ members = [
     "module-derive",
     "pyroduct",
     "cli",
-    "len-aligned-vec",
+    "bridge-vec",
 ]
 
 default-members = [
@@ -23,7 +23,7 @@ default-members = [
     "module-derive",
     "pyroduct",
     "cli",
-    "len-aligned-vec",
+    "bridge-vec",
 ]
 resolver = "2"
 
@@ -33,7 +33,7 @@ authors = ["Sven Cattell"]
 edition = "2024"
 
 [workspace.dependencies]
-len-aligned-vec = { path = "len-aligned-vec" }
+bridge-vec = { path = "bridge-vec" }
 arrow-scalars = { path = "arrow-scalars" }
 arrow-file = { path = "arrow-file" }
 pyroduct = { path = "pyroduct" }

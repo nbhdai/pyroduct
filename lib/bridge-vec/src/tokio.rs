@@ -5,11 +5,11 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::io::{Error, ErrorKind};
 
-use crate::LenAlignedVec;
+use crate::BridgeVec;
 
 // --- AsyncWrite Implementation ---
-// Allows LenAlignedVec to be used as a buffer for tokio::io::copy or other async writers.
-impl AsyncWrite for LenAlignedVec {
+// Allows BridgeVec to be used as a buffer for tokio::io::copy or other async writers.
+impl AsyncWrite for BridgeVec {
     fn poll_write(
         mut self: Pin<&mut Self>,
         _cx: &mut Context<'_>,
@@ -30,7 +30,7 @@ impl AsyncWrite for LenAlignedVec {
 
 // --- Framing Helpers ---
 
-/// Reads a `LenAlignedVec` from an async stream (TCP/Unix).
+/// Reads a `BridgeVec` from an async stream (TCP/Unix).
 /// 
 /// This performs the framing logic:
 /// 1. Reads the 16-byte header.
@@ -38,7 +38,7 @@ impl AsyncWrite for LenAlignedVec {
 /// 3. Reads the length, version, and status.
 /// 4. Allocates the vector.
 /// 5. Reads the exact payload into the vector.
-pub async fn read_from_stream<R>(src: &mut R) -> io::Result<LenAlignedVec> 
+pub async fn read_from_stream<R>(src: &mut R) -> io::Result<BridgeVec> 
 where 
     R: AsyncRead + Unpin
 {
@@ -52,11 +52,11 @@ where
     let version = u16::from_le_bytes(header_buf[12..14].try_into().unwrap());
     let status = u16::from_le_bytes(header_buf[14..16].try_into().unwrap());
 
-    if magic != LenAlignedVec::MAGIC_VAL {
-        return Err(Error::new(ErrorKind::InvalidData, "Invalid LenAlignedVec magic header"));
+    if magic != BridgeVec::MAGIC_VAL {
+        return Err(Error::new(ErrorKind::InvalidData, "Invalid BridgeVec magic header"));
     }
 
-    let mut vec = LenAlignedVec::with_capacity(cap);
+    let mut vec = BridgeVec::with_capacity(cap);
     vec.set_version(version);
     vec.set_status(status);
 
@@ -74,14 +74,14 @@ where
     Ok(vec)
 }
 
-/// Helper to write a LenAlignedVec to an async stream.
+/// Helper to write a BridgeVec to an async stream.
 /// This writes the header (with version/status) followed by the data payload.
-pub async fn write_to_stream<W>(dest: &mut W, vec: &LenAlignedVec) -> io::Result<()>
+pub async fn write_to_stream<W>(dest: &mut W, vec: &BridgeVec) -> io::Result<()>
 where
     W: AsyncWrite + Unpin
 {
     // Use native-endian writes to match the read_from_stream logic
-    dest.write_u32_le(LenAlignedVec::MAGIC_VAL).await?;  // 0..4
+    dest.write_u32_le(BridgeVec::MAGIC_VAL).await?;  // 0..4
     dest.write_u32_le(vec.len() as u32).await?;          // 4..8
     dest.write_u32_le(vec.capacity() as u32).await?;     // 8..12
     dest.write_u16_le(vec.version()).await?;             // 12..14
@@ -95,13 +95,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::LenAlignedVec;
+    use crate::BridgeVec;
     use std::io::Cursor;
 
     #[tokio::test]
     async fn test_streaming_endian_consistency() {
         // Create a vec with specific metadata to test byte-order
-        let mut original = LenAlignedVec::with_capacity(16);
+        let mut original = BridgeVec::with_capacity(16);
         original.extend_from_slice(b"endian-test-data");
         original.set_status(0x1234);
         original.set_version(0xABCD);
@@ -122,7 +122,7 @@ mod tests {
         let magic_val = u32::from_ne_bytes(magic_bytes.try_into().unwrap());
         assert_eq!(
             magic_val, 
-            LenAlignedVec::MAGIC_VAL, 
+            BridgeVec::MAGIC_VAL, 
             "Magic value byte order mismatch in stream"
         );
 
@@ -140,7 +140,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_empty_payload() {
-        let mut original = LenAlignedVec::with_capacity(0);
+        let mut original = BridgeVec::with_capacity(0);
         original.set_status(1);
         
         let mut stream = Vec::new();

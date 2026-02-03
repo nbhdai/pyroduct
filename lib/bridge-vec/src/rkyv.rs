@@ -1,3 +1,4 @@
+use rkyv::Serialize;
 use rkyv::rancor::{Error, Fallible};
 use rkyv::ser::allocator::Arena;
 use rkyv::ser::{Positional, Writer};
@@ -20,20 +21,20 @@ thread_local! {
     static SCRATCH: RefCell<(Arena, Share)> = RefCell::new((Arena::new(), Share::new()));
 }
 
-use crate::LenAlignedVec;
+use crate::BridgeVec;
 
-impl Fallible for LenAlignedVec {
+impl Fallible for BridgeVec {
     type Error = Error;
 }
 
-impl Positional for LenAlignedVec {
+impl Positional for BridgeVec {
     #[inline]
     fn pos(&self) -> usize {
         self.len()
     }
 }
 
-impl<E> Writer<E> for LenAlignedVec {
+impl<E> Writer<E> for BridgeVec {
     #[inline]
     fn write(&mut self, bytes: &[u8]) -> Result<(), E> {
         self.extend_from_slice(bytes);
@@ -41,22 +42,57 @@ impl<E> Writer<E> for LenAlignedVec {
     }
 }
 
-/// A type-safe wrapper around a LenAlignedVec containing an archived rkyv type.
+/// A trait that compresses rkyv's complex IO and validation bounds 
+/// for use with BridgeVec.
+pub trait Bridgable: Archive + Sized
+where
+    // Serialization Bounds
+    for<'a, 'b> Self: Serialize<
+        Strategy<
+            rkyv::ser::Serializer<&'a mut BridgeVec, &'b mut Arena, &'b mut Share>,
+            Error
+        >
+    >,
+    // Validation Bounds
+    Self::Archived: for<'a> CheckBytes<
+        Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, Error>
+    >,
+    // Deserialization Bounds
+    Self::Archived: Deserialize<Self, Strategy<rkyv::de::Pool, Error>>,
+{}
+
+// Blanket implementation for any type that meets the criteria
+impl<T> Bridgable for T
+where
+    T: Archive + Sized,
+    for<'a, 'b> T: Serialize<
+        Strategy<
+            rkyv::ser::Serializer<&'a mut BridgeVec, &'b mut Arena, &'b mut Share>,
+            Error
+        >
+    >,
+    T::Archived: for<'a> CheckBytes<
+        Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, Error>
+    >,
+    T::Archived: Deserialize<T, Strategy<rkyv::de::Pool, Error>>,
+{}
+
+/// A type-safe wrapper around a BridgeVec containing an archived rkyv type.
 pub struct TypedBuf<T>
     where T: Archive,
     <T as Archive>::Archived: 'static
 {
-    vec: LenAlignedVec,
+    vec: BridgeVec,
     archived: &'static T::Archived,
 }
 
-impl LenAlignedVec {
+impl BridgeVec {
     /// Validates the buffer as containing a rooted `T` and returns a wrapper
     /// holding both the buffer and the typed reference.
     ///
     /// # Implementation Note
-    /// This consumes the `LenAlignedVec`. The internal `archived` reference is
-    /// safely tied to the stable heap allocation of the `LenAlignedVec`.
+    /// This consumes the `BridgeVec`. The internal `archived` reference is
+    /// safely tied to the stable heap allocation of the `BridgeVec`.
     pub fn parse<T>(self) -> Result<TypedBuf<T>, Error>
     where
         T: Archive,
@@ -69,7 +105,7 @@ impl LenAlignedVec {
 
         // 3. Extend lifetime to 'static.
         //    SAFETY: 
-        //    - `LenAlignedVec` data is allocated on the heap via `alloc`.
+        //    - `BridgeVec` data is allocated on the heap via `alloc`.
         //    - Moving `self` into `TypedBuf` only moves the pointer (struct), not the heap data.
         //    - The heap address remains stable.
         //    - `TypedBuf` owns `vec` and does not expose mutable access to it, preventing reallocation.
@@ -82,7 +118,7 @@ impl LenAlignedVec {
         })
     }
 
-    /// Serializes a value into a new LenAlignedVec.
+    /// Serializes a value into a new BridgeVec.
     ///
     /// This uses a default `Arena` allocator and `Share` strategy (for handling 
     /// shared pointers/cycles), similar to `rkyv::to_bytes`.
@@ -91,7 +127,7 @@ impl LenAlignedVec {
             T: rkyv::Archive,
             for<'a, 'b> T: rkyv::Serialize<
                 Strategy<
-                    Serializer<&'a mut LenAlignedVec, &'b mut Arena, &'b mut Share>,
+                    Serializer<&'a mut BridgeVec, &'b mut Arena, &'b mut Share>,
                     Error
                 >
             >,
@@ -136,8 +172,8 @@ impl<T: Archive> TypedBuf<T> {
         rkyv::deserialize::<T, Error>(self.archived)
     }
 
-    /// Extract the underlying LenAlignedVec, discarding the type information.
-    pub fn into_inner(self) -> LenAlignedVec {
+    /// Extract the underlying BridgeVec, discarding the type information.
+    pub fn into_inner(self) -> BridgeVec {
         self.vec
     }
 }
@@ -155,7 +191,7 @@ impl<T> Deref for TypedBuf<T>
 
 #[cfg(test)]
 mod rkyv_tests {
-    use crate::LenAlignedVec;
+    use crate::BridgeVec;
     use rkyv::{Archive, Serialize, Deserialize};
 
     #[derive(Archive, Serialize, Deserialize, Debug, PartialEq)]
@@ -174,7 +210,7 @@ mod rkyv_tests {
         };
 
         // 1. Serialize
-        let vec = LenAlignedVec::serialize_from(&val).expect("Serialization failed");
+        let vec = BridgeVec::serialize_from(&val).expect("Serialization failed");
         let correct_vec = rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("Serialization failed");
         
         // 2. Check alignment of the data pointer
@@ -202,7 +238,7 @@ mod rkyv_tests {
         // This tests if small types (like u16) cause alignment issues when serialized
         // into our 16-byte aligned buffer at offset 16.
         let val: u16 = 0xABCD;
-        let vec = LenAlignedVec::serialize_from(&val).expect("Failed to serialize u16");
+        let vec = BridgeVec::serialize_from(&val).expect("Failed to serialize u16");
         
         let slice = vec.as_slice();
         let res = rkyv::access::<rkyv::Archived<u16>, rkyv::rancor::Error>(slice);
@@ -217,7 +253,7 @@ mod rkyv_tests {
             c: "typed".to_string(),
         };
 
-        let vec = LenAlignedVec::serialize_from(&val).unwrap();
+        let vec = BridgeVec::serialize_from(&val).unwrap();
         
         // This calls the logic inside parse()
         let typed_res = vec.parse::<TestStruct>();

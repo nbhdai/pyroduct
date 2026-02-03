@@ -10,7 +10,7 @@ pub use serde;
 
 use crate::{
     capability::safe_io::make_error_output,
-    capability_host::ffi::{COutput, FfiBorrowedFutureResult, FfiResult},
+    capability_host::ffi::FfiBorrowedFutureResult,
     errors::FfiError,
 };
 

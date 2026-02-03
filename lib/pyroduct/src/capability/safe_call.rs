@@ -13,7 +13,6 @@ use tracing::{debug, trace};
 
 use crate::{
     capability::safe_io,
-    capability_host::ffi::FfiResult,
     errors::FfiError,
     module_capability::panic::{clear_last_panic, recover_panic_info},
 };

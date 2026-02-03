@@ -5,7 +5,7 @@
 //! 
 //! # Memory Layout & Header Protocol
 //!
-//! `LenAlignedVec` utilizes a custom 16-byte aligned memory layout compatible with FFI
+//! `BridgeVec` utilizes a custom 16-byte aligned memory layout compatible with FFI
 //! boundary crossing. The allocation consists of a **16-byte Header** followed immediately
 //! by the **Data Payload**.
 //!
@@ -57,17 +57,17 @@ pub mod ffi;
 
 /// A 16-byte aligned buffer with a self-describing header.
 /// Compatible with FFI passing as a raw pointer or TCP/Unix framing.
-pub struct LenAlignedVec {
+pub struct BridgeVec {
     ptr: NonNull<u8>,
 }
 
-// SAFETY: LenAlignedVec owns its allocation exclusively
+// SAFETY: BridgeVec owns its allocation exclusively
 // and contains no references to thread-local state
-unsafe impl Send for LenAlignedVec {}
+unsafe impl Send for BridgeVec {}
 
-/// A borrowed, non-owning view into a LenAlignedVec buffer.
+/// A borrowed, non-owning view into a BridgeVec buffer.
 /// Does not free memory on drop.
-pub struct LenAlignedVecRef<'a> {
+pub struct BridgeVecRef<'a> {
     ptr: *const u8,
     _marker: PhantomData<&'a [u8]>,
 }
@@ -82,7 +82,7 @@ pub enum DataStatus {
     ValidUtf8 = 4,
 }
 
-impl LenAlignedVec {
+impl BridgeVec {
     const ALIGN: usize = 16;
     pub const HEADER_SIZE: usize = 16;
     
@@ -126,9 +126,9 @@ impl LenAlignedVec {
     /// Reconstructs an owned Vec from a raw pointer.
     /// 
     /// # Safety
-    /// - `ptr` must have been created by `LenAlignedVec::into_raw()` or equivalent
+    /// - `ptr` must have been created by `BridgeVec::into_raw()` or equivalent
     /// - Caller must ensure no other owner exists for this allocation
-    /// - Caller transfers ownership to the returned `LenAlignedVec`
+    /// - Caller transfers ownership to the returned `BridgeVec`
     pub unsafe fn from_raw(ptr: *const u8) -> Result<Self, &'static str> {
         if ptr.is_null() {
             return Err("Pointer is null");
@@ -152,10 +152,10 @@ impl LenAlignedVec {
     /// Creates a non-owning borrowed view from a raw pointer.
     /// 
     /// # Safety
-    /// - `ptr` must point to a valid LenAlignedVec allocation
+    /// - `ptr` must point to a valid BridgeVec allocation
     /// - The allocation must remain valid for lifetime `'a`
     /// - Caller must not free or reallocate the memory during `'a`
-    pub unsafe fn borrow_raw<'a>(ptr: *const u8) -> Result<LenAlignedVecRef<'a>, &'static str> {
+    pub unsafe fn borrow_raw<'a>(ptr: *const u8) -> Result<BridgeVecRef<'a>, &'static str> {
         if ptr.is_null() {
             return Err("Pointer is null");
         }
@@ -169,7 +169,7 @@ impl LenAlignedVec {
             return Err("Invalid magic header");
         }
 
-        Ok(LenAlignedVecRef {
+        Ok(BridgeVecRef {
             ptr,
             _marker: PhantomData,
         })
@@ -335,27 +335,27 @@ impl LenAlignedVec {
     }
 }
 
-// --- LenAlignedVecRef Implementation ---
+// --- BridgeVecRef Implementation ---
 
-impl<'a> LenAlignedVecRef<'a> {
+impl<'a> BridgeVecRef<'a> {
     #[inline]
     pub fn status(&self) -> u16 {
-        unsafe { ptr::read(self.ptr.add(LenAlignedVec::OFFSET_STATUS) as *const u16) }
+        unsafe { ptr::read(self.ptr.add(BridgeVec::OFFSET_STATUS) as *const u16) }
     }
 
     #[inline]
     pub fn version(&self) -> u16 {
-        unsafe { ptr::read(self.ptr.add(LenAlignedVec::OFFSET_VERSION) as *const u16) }
+        unsafe { ptr::read(self.ptr.add(BridgeVec::OFFSET_VERSION) as *const u16) }
     }
 
     #[inline]
     pub fn len(&self) -> usize {
-        unsafe { ptr::read(self.ptr.add(LenAlignedVec::OFFSET_LEN) as *const u32) as usize }
+        unsafe { ptr::read(self.ptr.add(BridgeVec::OFFSET_LEN) as *const u32) as usize }
     }
 
     #[inline]
     pub fn capacity(&self) -> usize {
-        unsafe { ptr::read(self.ptr.add(LenAlignedVec::OFFSET_CAP) as *const u32) as usize }
+        unsafe { ptr::read(self.ptr.add(BridgeVec::OFFSET_CAP) as *const u32) as usize }
     }
 
     #[inline]
@@ -368,7 +368,7 @@ impl<'a> LenAlignedVecRef<'a> {
     }
 
     pub fn data_ptr(&self) -> *const u8 {
-        unsafe { self.ptr.add(LenAlignedVec::HEADER_SIZE) }
+        unsafe { self.ptr.add(BridgeVec::HEADER_SIZE) }
     }
 
     pub fn as_slice(&self) -> &'a [u8] {
@@ -376,13 +376,13 @@ impl<'a> LenAlignedVecRef<'a> {
     }
 
     pub fn as_packet_slice(&self) -> &'a [u8] {
-        unsafe { slice::from_raw_parts(self.ptr, LenAlignedVec::HEADER_SIZE + self.len()) }
+        unsafe { slice::from_raw_parts(self.ptr, BridgeVec::HEADER_SIZE + self.len()) }
     }
 }
 
-impl<'a> fmt::Debug for LenAlignedVecRef<'a> {
+impl<'a> fmt::Debug for BridgeVecRef<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("LenAlignedVecRef")
+        f.debug_struct("BridgeVecRef")
          .field("len", &self.len())
          .field("capacity", &self.capacity())
          .field("status", &self.status())
@@ -392,9 +392,9 @@ impl<'a> fmt::Debug for LenAlignedVecRef<'a> {
     }
 }
 
-// --- LenAlignedVec Trait Implementations ---
+// --- BridgeVec Trait Implementations ---
 
-impl Clone for LenAlignedVec {
+impl Clone for BridgeVec {
     fn clone(&self) -> Self {
         let mut new_vec = Self::with_capacity(self.len());
         
@@ -407,9 +407,9 @@ impl Clone for LenAlignedVec {
     }
 }
 
-impl fmt::Debug for LenAlignedVec {
+impl fmt::Debug for BridgeVec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("LenAlignedVec")
+        f.debug_struct("BridgeVec")
          .field("len", &self.len())
          .field("capacity", &self.capacity())
          .field("status", &self.status())
@@ -419,34 +419,34 @@ impl fmt::Debug for LenAlignedVec {
     }
 }
 
-impl PartialEq for LenAlignedVec {
+impl PartialEq for BridgeVec {
     fn eq(&self, other: &Self) -> bool {
         self.as_slice() == other.as_slice()
     }
 }
 
-impl Eq for LenAlignedVec {}
+impl Eq for BridgeVec {}
 
-impl std::hash::Hash for LenAlignedVec {
+impl std::hash::Hash for BridgeVec {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.as_slice().hash(state);
     }
 }
 
-impl Deref for LenAlignedVec {
+impl Deref for BridgeVec {
     type Target = [u8];
     fn deref(&self) -> &Self::Target {
         self.as_slice()
     }
 }
 
-impl DerefMut for LenAlignedVec {
+impl DerefMut for BridgeVec {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.as_mut_slice()
     }
 }
 
-impl Drop for LenAlignedVec {
+impl Drop for BridgeVec {
     fn drop(&mut self) {
         let cap = self.capacity();
         let layout = Layout::from_size_align(cap, Self::ALIGN).unwrap();
@@ -468,30 +468,30 @@ use std::ptr;
 
 #[test]
 fn test_with_capacity_zero() {
-    let vec = LenAlignedVec::with_capacity(0);
+    let vec = BridgeVec::with_capacity(0);
     assert_eq!(vec.len(), 0);
     assert!(vec.is_empty());
     // Minimum allocation is ALIGN (16), so capacity >= 16
-    assert!(vec.capacity() >= LenAlignedVec::HEADER_SIZE);
+    assert!(vec.capacity() >= BridgeVec::HEADER_SIZE);
 }
 
 #[test]
 fn test_with_capacity_small() {
-    let vec = LenAlignedVec::with_capacity(10);
+    let vec = BridgeVec::with_capacity(10);
     assert_eq!(vec.len(), 0);
-    assert!(vec.capacity() >= 10 + LenAlignedVec::HEADER_SIZE);
+    assert!(vec.capacity() >= 10 + BridgeVec::HEADER_SIZE);
 }
 
 #[test]
 fn test_with_capacity_large() {
-    let vec = LenAlignedVec::with_capacity(10000);
+    let vec = BridgeVec::with_capacity(10000);
     assert_eq!(vec.len(), 0);
-    assert!(vec.capacity() >= 10000 + LenAlignedVec::HEADER_SIZE);
+    assert!(vec.capacity() >= 10000 + BridgeVec::HEADER_SIZE);
 }
 
 #[test]
 fn test_default_header_values() {
-    let vec = LenAlignedVec::with_capacity(10);
+    let vec = BridgeVec::with_capacity(10);
     assert_eq!(vec.status(), 0);
     assert_eq!(vec.version(), 1);
 }
@@ -502,14 +502,14 @@ fn test_default_header_values() {
 
 #[test]
 fn test_base_pointer_alignment() {
-    let vec = LenAlignedVec::with_capacity(100);
+    let vec = BridgeVec::with_capacity(100);
     let addr = vec.as_ptr() as usize;
     assert_eq!(addr % 16, 0, "Base pointer must be 16-byte aligned");
 }
 
 #[test]
 fn test_data_pointer_alignment() {
-    let vec = LenAlignedVec::with_capacity(100);
+    let vec = BridgeVec::with_capacity(100);
     let base_addr = vec.as_ptr() as usize;
     let data_addr = vec.data_ptr() as usize;
     
@@ -519,7 +519,7 @@ fn test_data_pointer_alignment() {
 
 #[test]
 fn test_alignment_preserved_after_grow() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     
     // Force multiple reallocations
     for i in 0..1000 {
@@ -536,7 +536,7 @@ fn test_alignment_preserved_after_grow() {
 
 #[test]
 fn test_status_read_write() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     
     assert_eq!(vec.status(), 0);
     
@@ -552,7 +552,7 @@ fn test_status_read_write() {
 
 #[test]
 fn test_version_read_write() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     
     assert_eq!(vec.version(), 1); // Default version
     
@@ -565,7 +565,7 @@ fn test_version_read_write() {
 
 #[test]
 fn test_header_fields_independent() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     
     vec.set_status(0x1234);
     vec.set_version(0x5678);
@@ -585,7 +585,7 @@ fn test_header_fields_independent() {
 
 #[test]
 fn test_push_single() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     vec.push(0xAB);
     
     assert_eq!(vec.len(), 1);
@@ -594,7 +594,7 @@ fn test_push_single() {
 
 #[test]
 fn test_push_multiple() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     
     for i in 0..5 {
         vec.push(i);
@@ -606,7 +606,7 @@ fn test_push_multiple() {
 
 #[test]
 fn test_push_triggers_grow() {
-    let mut vec = LenAlignedVec::with_capacity(2);
+    let mut vec = BridgeVec::with_capacity(2);
     let initial_cap = vec.capacity();
     
     // Push more than initial capacity
@@ -629,7 +629,7 @@ fn test_push_triggers_grow() {
 
 #[test]
 fn test_extend_from_slice_empty() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     vec.extend_from_slice(&[]);
     
     assert_eq!(vec.len(), 0);
@@ -638,7 +638,7 @@ fn test_extend_from_slice_empty() {
 
 #[test]
 fn test_extend_from_slice_small() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     vec.extend_from_slice(&[1, 2, 3, 4, 5]);
     
     assert_eq!(vec.len(), 5);
@@ -647,7 +647,7 @@ fn test_extend_from_slice_small() {
 
 #[test]
 fn test_extend_from_slice_multiple() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     
     vec.extend_from_slice(&[1, 2, 3]);
     vec.extend_from_slice(&[4, 5, 6]);
@@ -659,7 +659,7 @@ fn test_extend_from_slice_multiple() {
 
 #[test]
 fn test_extend_from_slice_triggers_grow() {
-    let mut vec = LenAlignedVec::with_capacity(5);
+    let mut vec = BridgeVec::with_capacity(5);
     let pattern: Vec<u8> = (0..200).collect();
     
     vec.extend_from_slice(&pattern);
@@ -674,7 +674,7 @@ fn test_extend_from_slice_triggers_grow() {
 
 #[test]
 fn test_clear_empty() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     vec.clear();
     
     assert_eq!(vec.len(), 0);
@@ -683,7 +683,7 @@ fn test_clear_empty() {
 
 #[test]
 fn test_clear_with_data() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     vec.extend_from_slice(&[1, 2, 3, 4, 5]);
     
     let cap_before = vec.capacity();
@@ -696,7 +696,7 @@ fn test_clear_with_data() {
 
 #[test]
 fn test_clear_then_reuse() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     
     vec.extend_from_slice(&[1, 2, 3]);
     vec.clear();
@@ -712,13 +712,13 @@ fn test_clear_then_reuse() {
 
 #[test]
 fn test_as_slice_empty() {
-    let vec = LenAlignedVec::with_capacity(10);
+    let vec = BridgeVec::with_capacity(10);
     assert_eq!(vec.as_slice(), &[]);
 }
 
 #[test]
 fn test_as_slice_with_data() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     vec.extend_from_slice(b"hello");
     
     assert_eq!(vec.as_slice(), b"hello");
@@ -726,7 +726,7 @@ fn test_as_slice_with_data() {
 
 #[test]
 fn test_as_mut_slice() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     vec.extend_from_slice(&[1, 2, 3, 4, 5]);
     
     let slice = vec.as_mut_slice();
@@ -738,7 +738,7 @@ fn test_as_mut_slice() {
 
 #[test]
 fn test_as_packet_slice() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     vec.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
     
     let packet = vec.as_packet_slice();
@@ -760,7 +760,7 @@ fn test_as_packet_slice() {
 
 #[test]
 fn test_deref() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     vec.extend_from_slice(b"test");
     
     let slice: &[u8] = &vec;
@@ -769,7 +769,7 @@ fn test_deref() {
 
 #[test]
 fn test_deref_mut() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     vec.extend_from_slice(&[1, 2, 3]);
     
     let slice: &mut [u8] = &mut vec;
@@ -784,7 +784,7 @@ fn test_deref_mut() {
 
 #[test]
 fn test_clone_empty() {
-    let original = LenAlignedVec::with_capacity(10);
+    let original = BridgeVec::with_capacity(10);
     let cloned = original.clone();
     
     assert_eq!(cloned.len(), 0);
@@ -794,7 +794,7 @@ fn test_clone_empty() {
 
 #[test]
 fn test_clone_with_data() {
-    let mut original = LenAlignedVec::with_capacity(10);
+    let mut original = BridgeVec::with_capacity(10);
     original.extend_from_slice(b"hello world");
     original.set_status(42);
     original.set_version(7);
@@ -811,7 +811,7 @@ fn test_clone_with_data() {
 
 #[test]
 fn test_clone_independence() {
-    let mut original = LenAlignedVec::with_capacity(10);
+    let mut original = BridgeVec::with_capacity(10);
     original.extend_from_slice(&[1, 2, 3]);
     
     let mut cloned = original.clone();
@@ -833,16 +833,16 @@ fn test_clone_independence() {
 
 #[test]
 fn test_eq_empty() {
-    let a = LenAlignedVec::with_capacity(10);
-    let b = LenAlignedVec::with_capacity(20);
+    let a = BridgeVec::with_capacity(10);
+    let b = BridgeVec::with_capacity(20);
     
     assert_eq!(a, b);
 }
 
 #[test]
 fn test_eq_same_data() {
-    let mut a = LenAlignedVec::with_capacity(10);
-    let mut b = LenAlignedVec::with_capacity(20);
+    let mut a = BridgeVec::with_capacity(10);
+    let mut b = BridgeVec::with_capacity(20);
     
     a.extend_from_slice(b"test");
     b.extend_from_slice(b"test");
@@ -852,8 +852,8 @@ fn test_eq_same_data() {
 
 #[test]
 fn test_eq_different_data() {
-    let mut a = LenAlignedVec::with_capacity(10);
-    let mut b = LenAlignedVec::with_capacity(10);
+    let mut a = BridgeVec::with_capacity(10);
+    let mut b = BridgeVec::with_capacity(10);
     
     a.extend_from_slice(b"hello");
     b.extend_from_slice(b"world");
@@ -863,8 +863,8 @@ fn test_eq_different_data() {
 
 #[test]
 fn test_eq_ignores_status() {
-    let mut a = LenAlignedVec::with_capacity(10);
-    let mut b = LenAlignedVec::with_capacity(10);
+    let mut a = BridgeVec::with_capacity(10);
+    let mut b = BridgeVec::with_capacity(10);
     
     a.extend_from_slice(b"test");
     b.extend_from_slice(b"test");
@@ -881,8 +881,8 @@ fn test_hash_consistency() {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     
-    let mut a = LenAlignedVec::with_capacity(10);
-    let mut b = LenAlignedVec::with_capacity(20);
+    let mut a = BridgeVec::with_capacity(10);
+    let mut b = BridgeVec::with_capacity(20);
     
     a.extend_from_slice(b"test data");
     b.extend_from_slice(b"test data");
@@ -908,13 +908,13 @@ fn test_hash_consistency() {
 
 #[test]
 fn test_debug_format() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     vec.extend_from_slice(&[1, 2, 3]);
     vec.set_status(5);
     
     let debug = format!("{:?}", vec);
     
-    assert!(debug.contains("LenAlignedVec"));
+    assert!(debug.contains("BridgeVec"));
     assert!(debug.contains("len: 3"));
     assert!(debug.contains("status: 5"));
 }
@@ -925,7 +925,7 @@ fn test_debug_format() {
 
 #[test]
 fn test_from_raw_null() {
-    let result = unsafe { LenAlignedVec::from_raw(std::ptr::null()) };
+    let result = unsafe { BridgeVec::from_raw(std::ptr::null()) };
     assert!(result.is_err());
     assert_eq!(result.err(), Some("Pointer is null"));
 }
@@ -936,7 +936,7 @@ fn test_from_raw_misaligned() {
     let ptr = unsafe { alloc(layout) };
     
     let bad_ptr = unsafe { ptr.add(1) };
-    let result = unsafe { LenAlignedVec::from_raw(bad_ptr) };
+    let result = unsafe { BridgeVec::from_raw(bad_ptr) };
     
     assert!(result.is_err());
     assert_eq!(result.err(), Some("Pointer is not 16-byte aligned"));
@@ -953,7 +953,7 @@ fn test_from_raw_bad_magic() {
         ptr::write(ptr as *mut u32, 0xDEADBEEF);
     }
     
-    let result = unsafe { LenAlignedVec::from_raw(ptr) };
+    let result = unsafe { BridgeVec::from_raw(ptr) };
     
     assert!(result.is_err());
     assert_eq!(result.err(), Some("Invalid magic header"));
@@ -963,14 +963,14 @@ fn test_from_raw_bad_magic() {
 
 #[test]
 fn test_from_raw_valid() {
-    let mut original = LenAlignedVec::with_capacity(50);
+    let mut original = BridgeVec::with_capacity(50);
     original.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
     original.set_status(7);
     
     let raw_ptr = original.into_raw();
     
     let reconstructed = unsafe { 
-        LenAlignedVec::from_raw(raw_ptr).expect("Should reconstruct from valid ptr") 
+        BridgeVec::from_raw(raw_ptr).expect("Should reconstruct from valid ptr") 
     };
     
     assert_eq!(reconstructed.len(), 3);
@@ -984,27 +984,27 @@ fn test_from_raw_valid() {
 
 #[test]
 fn test_into_raw_ownership_transfer() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     vec.extend_from_slice(b"test");
     vec.set_status(42);
     
     let ptr = vec.into_raw();
     // vec is now consumed
     
-    let recovered = unsafe { LenAlignedVec::from_raw(ptr).unwrap() };
+    let recovered = unsafe { BridgeVec::from_raw(ptr).unwrap() };
     assert_eq!(recovered.as_slice(), b"test");
     assert_eq!(recovered.status(), 42);
 }
 
 #[test]
 fn test_into_raw_roundtrip_preserves_all() {
-    let mut vec = LenAlignedVec::with_capacity(100);
+    let mut vec = BridgeVec::with_capacity(100);
     vec.extend_from_slice(b"roundtrip test data");
     vec.set_status(0x1234);
     vec.set_version(0x5678);
     
     let ptr = vec.into_raw();
-    let recovered = unsafe { LenAlignedVec::from_raw(ptr).unwrap() };
+    let recovered = unsafe { BridgeVec::from_raw(ptr).unwrap() };
     
     assert_eq!(recovered.as_slice(), b"roundtrip test data");
     assert_eq!(recovered.status(), 0x1234);
@@ -1012,12 +1012,12 @@ fn test_into_raw_roundtrip_preserves_all() {
 }
 
 // =============================================================================
-// borrow_raw / LenAlignedVecRef
+// borrow_raw / BridgeVecRef
 // =============================================================================
 
 #[test]
 fn test_borrow_raw_null() {
-    let result = unsafe { LenAlignedVec::borrow_raw(std::ptr::null()) };
+    let result = unsafe { BridgeVec::borrow_raw(std::ptr::null()) };
     assert!(result.is_err());
     assert_eq!(result.err(), Some("Pointer is null"));
 }
@@ -1028,7 +1028,7 @@ fn test_borrow_raw_misaligned() {
     let ptr = unsafe { alloc(layout) };
     
     let bad_ptr = unsafe { ptr.add(1) };
-    let result = unsafe { LenAlignedVec::borrow_raw(bad_ptr) };
+    let result = unsafe { BridgeVec::borrow_raw(bad_ptr) };
     
     assert!(result.is_err());
     assert_eq!(result.err(), Some("Pointer is not 16-byte aligned"));
@@ -1045,7 +1045,7 @@ fn test_borrow_raw_bad_magic() {
         ptr::write(ptr as *mut u32, 0xDEADBEEF);
     }
     
-    let result = unsafe { LenAlignedVec::borrow_raw(ptr) };
+    let result = unsafe { BridgeVec::borrow_raw(ptr) };
     
     assert!(result.is_err());
     assert_eq!(result.err(), Some("Invalid magic header"));
@@ -1055,13 +1055,13 @@ fn test_borrow_raw_bad_magic() {
 
 #[test]
 fn test_borrow_raw_non_owning() {
-    let mut original = LenAlignedVec::with_capacity(50);
+    let mut original = BridgeVec::with_capacity(50);
     original.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
     original.set_status(7);
     original.set_version(3);
     
     let borrowed = unsafe { 
-        LenAlignedVec::borrow_raw(original.as_ptr()).expect("Should borrow from valid ptr") 
+        BridgeVec::borrow_raw(original.as_ptr()).expect("Should borrow from valid ptr") 
     };
     
     assert_eq!(borrowed.len(), 3);
@@ -1076,12 +1076,12 @@ fn test_borrow_raw_non_owning() {
 
 #[test]
 fn test_borrow_raw_does_not_drop() {
-    let mut original = LenAlignedVec::with_capacity(50);
+    let mut original = BridgeVec::with_capacity(50);
     original.extend_from_slice(b"test");
     
     {
         let _borrowed = unsafe { 
-            LenAlignedVec::borrow_raw(original.as_ptr()).unwrap() 
+            BridgeVec::borrow_raw(original.as_ptr()).unwrap() 
         };
         // borrowed goes out of scope here but should NOT free memory
     }
@@ -1091,17 +1091,17 @@ fn test_borrow_raw_does_not_drop() {
 }
 
 // =============================================================================
-// LenAlignedVecRef
+// BridgeVecRef
 // =============================================================================
 
 #[test]
 fn test_vec_ref_accessors() {
-    let mut vec = LenAlignedVec::with_capacity(100);
+    let mut vec = BridgeVec::with_capacity(100);
     vec.extend_from_slice(b"reference test");
     vec.set_status(42);
     vec.set_version(7);
     
-    let borrowed = unsafe { LenAlignedVec::borrow_raw(vec.as_ptr()).unwrap() };
+    let borrowed = unsafe { BridgeVec::borrow_raw(vec.as_ptr()).unwrap() };
     
     assert_eq!(borrowed.len(), 14);
     assert_eq!(borrowed.capacity(), vec.capacity());
@@ -1112,9 +1112,9 @@ fn test_vec_ref_accessors() {
 
 #[test]
 fn test_vec_ref_empty() {
-    let vec = LenAlignedVec::with_capacity(10);
+    let vec = BridgeVec::with_capacity(10);
     
-    let borrowed = unsafe { LenAlignedVec::borrow_raw(vec.as_ptr()).unwrap() };
+    let borrowed = unsafe { BridgeVec::borrow_raw(vec.as_ptr()).unwrap() };
     
     assert_eq!(borrowed.len(), 0);
     assert!(borrowed.is_empty());
@@ -1123,9 +1123,9 @@ fn test_vec_ref_empty() {
 
 #[test]
 fn test_vec_ref_as_ptr() {
-    let vec = LenAlignedVec::with_capacity(10);
+    let vec = BridgeVec::with_capacity(10);
     
-    let borrowed = unsafe { LenAlignedVec::borrow_raw(vec.as_ptr()).unwrap() };
+    let borrowed = unsafe { BridgeVec::borrow_raw(vec.as_ptr()).unwrap() };
     
     assert_eq!(borrowed.as_ptr(), vec.as_ptr());
     assert_eq!(borrowed.data_ptr(), vec.data_ptr());
@@ -1133,10 +1133,10 @@ fn test_vec_ref_as_ptr() {
 
 #[test]
 fn test_vec_ref_as_packet_slice() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     vec.extend_from_slice(&[1, 2, 3]);
     
-    let borrowed = unsafe { LenAlignedVec::borrow_raw(vec.as_ptr()).unwrap() };
+    let borrowed = unsafe { BridgeVec::borrow_raw(vec.as_ptr()).unwrap() };
     
     let packet = borrowed.as_packet_slice();
     assert_eq!(packet.len(), 16 + 3);
@@ -1145,14 +1145,14 @@ fn test_vec_ref_as_packet_slice() {
 
 #[test]
 fn test_vec_ref_debug() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     vec.extend_from_slice(&[1, 2, 3]);
     vec.set_status(5);
     
-    let borrowed = unsafe { LenAlignedVec::borrow_raw(vec.as_ptr()).unwrap() };
+    let borrowed = unsafe { BridgeVec::borrow_raw(vec.as_ptr()).unwrap() };
     let debug = format!("{:?}", borrowed);
     
-    assert!(debug.contains("LenAlignedVecRef"));
+    assert!(debug.contains("BridgeVecRef"));
     assert!(debug.contains("len: 3"));
     assert!(debug.contains("status: 5"));
 }
@@ -1163,7 +1163,7 @@ fn test_vec_ref_debug() {
 
 #[test]
 fn test_grow_preserves_header() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     vec.set_status(42);
     vec.set_version(99);
     
@@ -1178,7 +1178,7 @@ fn test_grow_preserves_header() {
 
 #[test]
 fn test_grow_preserves_data() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     
     for i in 0u8..=255 {
         vec.push(i);
@@ -1192,12 +1192,12 @@ fn test_grow_preserves_data() {
 
 #[test]
 fn test_grow_maintains_alignment() {
-    let mut vec = LenAlignedVec::with_capacity(1);
+    let mut vec = BridgeVec::with_capacity(1);
     
     for _ in 0..10 {
         // Each iteration should trigger growth
         let current_cap = vec.capacity();
-        while vec.len() + LenAlignedVec::HEADER_SIZE < current_cap {
+        while vec.len() + BridgeVec::HEADER_SIZE < current_cap {
             vec.push(0);
         }
         vec.push(0); // Trigger grow
@@ -1213,7 +1213,7 @@ fn test_grow_maintains_alignment() {
 
 #[test]
 fn test_large_allocation() {
-    let mut vec = LenAlignedVec::with_capacity(1_000_000);
+    let mut vec = BridgeVec::with_capacity(1_000_000);
     let data = vec![0xABu8; 1_000_000];
     
     vec.extend_from_slice(&data);
@@ -1224,7 +1224,7 @@ fn test_large_allocation() {
 
 #[test]
 fn test_mixed_operations() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     
     vec.push(1);
     vec.extend_from_slice(&[2, 3, 4]);
@@ -1239,7 +1239,7 @@ fn test_mixed_operations() {
 
 #[test]
 fn test_clear_and_refill_multiple_times() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     
     for round in 0..5 {
         vec.clear();

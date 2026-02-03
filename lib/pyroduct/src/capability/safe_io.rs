@@ -12,7 +12,6 @@ use rkyv::{
 use tracing::{debug, error, trace};
 
 use crate::{
-    capability_host::ffi::{COutput, FfiResult},
     errors::{FfiError, Phase},
     module_capability::panic::{clear_last_panic, recover_panic_info},
 };

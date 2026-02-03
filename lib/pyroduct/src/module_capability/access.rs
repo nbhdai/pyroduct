@@ -5,21 +5,22 @@ use rkyv::{
     de::Pool,
     rancor::{self, Error as RkyvError, Strategy},
     ser::{Serializer, allocator::ArenaHandle, sharing::Share},
-    util::AlignedVec,
     validation::{Validator, archive::ArchiveValidator, shared::SharedValidator},
 };
+
+use bridge_vec::BridgeVec;
 
 pub type PackedWasmSlicePtr = u64;
 
 pub fn call_from_wasm<I, O, F>(
     capability: &'static str,
-    client_state: Option<&AlignedVec>,
+    client_state: Option<&BridgeVec>,
     input: Option<&I>,
     func: F,
 ) -> O
 where
     I: Archive,
-    for<'a> I: Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, RkyvError>>,
+    for<'a> I: Serialize<Strategy<Serializer<BridgeVec, ArenaHandle<'a>, Share>, RkyvError>>,
     O: Archive,
     for<'a> <O as Archive>::Archived:
         CheckBytes<Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, rancor::Error>>,
@@ -44,7 +45,7 @@ where
         };
         (i_bytes.as_ptr(), i_bytes.len(), i_bytes)
     } else {
-        (std::ptr::null(), 0, AlignedVec::new())
+        (std::ptr::null(), 0, BridgeVec::new())
     };
 
     let result_ptr = (func)(c_ptr, c_len, i_ptr, i_len);

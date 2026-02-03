@@ -1,9 +1,9 @@
-use len_aligned_vec::{LenAlignedVec, tokio::{read_from_stream, write_to_stream}};
+use bridge_vec::{BridgeVec, tokio::{read_from_stream, write_to_stream}};
 use std::io::Cursor;
 
 #[tokio::test]
 async fn test_stream_roundtrip() {
-    let mut original = LenAlignedVec::with_capacity(32);
+    let mut original = BridgeVec::with_capacity(32);
     original.extend_from_slice(b"Async Data Packet");
     original.set_status(5);
     original.set_version(2);
@@ -23,7 +23,7 @@ async fn test_stream_roundtrip() {
 
 #[tokio::test]
 async fn test_stream_preserves_header_fields() {
-    let mut original = LenAlignedVec::with_capacity(8);
+    let mut original = BridgeVec::with_capacity(8);
     original.extend_from_slice(b"data");
     original.set_status(0xABCD);
     original.set_version(0x1234);

@@ -1,5 +1,5 @@
 [package]
-name = "len-aligned-vec"
+name = "bridge-vec"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

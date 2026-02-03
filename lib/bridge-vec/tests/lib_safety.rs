@@ -2,11 +2,11 @@ use std::alloc::{Layout, alloc, dealloc};
 use std::ptr;
 
 // REPLACE THIS with your actual crate name
-use len_aligned_vec::LenAlignedVec;
+use bridge_vec::BridgeVec;
 
 #[test]
 fn test_alignment_and_layout_contract() {
-    let vec = LenAlignedVec::with_capacity(100);
+    let vec = BridgeVec::with_capacity(100);
     
     // 1. Base Pointer Alignment
     let raw_addr = vec.as_ptr() as usize;
@@ -21,14 +21,14 @@ fn test_alignment_and_layout_contract() {
 
 #[test]
 fn test_raw_pointer_reconstruction() {
-    let mut original = LenAlignedVec::with_capacity(50);
+    let mut original = BridgeVec::with_capacity(50);
     original.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
     original.set_status(7);
 
     let raw_ptr = original.into_raw(); // Transfer ownership
 
     let reconstructed = unsafe { 
-        LenAlignedVec::from_raw(raw_ptr).expect("Should reconstruct from valid ptr") 
+        BridgeVec::from_raw(raw_ptr).expect("Should reconstruct from valid ptr") 
     };
     
     assert_eq!(reconstructed.len(), 3);
@@ -38,7 +38,7 @@ fn test_raw_pointer_reconstruction() {
 
 #[test]
 fn test_guard_invalid_magic() {
-    // Manually alloc memory that looks like a LenAlignedVec but has bad magic
+    // Manually alloc memory that looks like a BridgeVec but has bad magic
     let layout = Layout::from_size_align(32, 16).unwrap();
     let ptr = unsafe { alloc(layout) };
     
@@ -47,11 +47,11 @@ fn test_guard_invalid_magic() {
         ptr::write(ptr as *mut u32, 0xDEADBEEF); 
     }
 
-    let result = unsafe { LenAlignedVec::from_raw(ptr) };
+    let result = unsafe { BridgeVec::from_raw(ptr) };
     assert!(result.is_err());
     assert_eq!(result.err(), Some("Invalid magic header"));
 
-    // Clean up manually since LenAlignedVec didn't take ownership
+    // Clean up manually since BridgeVec didn't take ownership
     unsafe { dealloc(ptr, layout); }
 }
 
@@ -63,7 +63,7 @@ fn test_guard_misalignment() {
     // Create a pointer offset by 1 byte (misaligned)
     let bad_ptr = unsafe { ptr.add(1) };
 
-    let result = unsafe { LenAlignedVec::from_raw(bad_ptr) };
+    let result = unsafe { BridgeVec::from_raw(bad_ptr) };
     assert!(result.is_err());
     assert_eq!(result.err(), Some("Pointer is not 16-byte aligned"));
 
@@ -72,7 +72,7 @@ fn test_guard_misalignment() {
 
 #[test]
 fn test_grow_preserves_header_and_data() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     vec.set_status(42);
     let pattern: Vec<u8> = (0..50).collect();
     
@@ -90,7 +90,7 @@ fn test_grow_preserves_header_and_data() {
 
 #[test]
 fn test_into_raw_ownership_transfer() {
-    let mut vec = LenAlignedVec::with_capacity(10);
+    let mut vec = BridgeVec::with_capacity(10);
     vec.extend_from_slice(b"test");
     vec.set_status(42);
     
@@ -98,19 +98,19 @@ fn test_into_raw_ownership_transfer() {
     // vec is now consumed, no double-free possible
     
     // Reconstruct and verify
-    let recovered = unsafe { LenAlignedVec::from_raw(ptr).unwrap() };
+    let recovered = unsafe { BridgeVec::from_raw(ptr).unwrap() };
     assert_eq!(recovered.as_slice(), b"test");
     assert_eq!(recovered.status(), 42);
 }
 
 #[test]
 fn test_borrow_raw_non_owning() {
-    let mut original = LenAlignedVec::with_capacity(50);
+    let mut original = BridgeVec::with_capacity(50);
     original.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
     original.set_status(7);
 
     let borrowed = unsafe { 
-        LenAlignedVec::borrow_raw(original.as_ptr()).expect("Should borrow from valid ptr") 
+        BridgeVec::borrow_raw(original.as_ptr()).expect("Should borrow from valid ptr") 
     };
     
     assert_eq!(borrowed.len(), 3);
@@ -123,7 +123,7 @@ fn test_borrow_raw_non_owning() {
 
 #[test]
 fn test_borrow_raw_rejects_invalid() {
-    let result = unsafe { LenAlignedVec::borrow_raw(std::ptr::null()) };
+    let result = unsafe { BridgeVec::borrow_raw(std::ptr::null()) };
     assert!(result.is_err());
     
     let layout = Layout::from_size_align(32, 16).unwrap();
@@ -131,12 +131,12 @@ fn test_borrow_raw_rejects_invalid() {
     
     // Bad magic
     unsafe { ptr::write(ptr as *mut u32, 0xDEADBEEF); }
-    let result = unsafe { LenAlignedVec::borrow_raw(ptr) };
+    let result = unsafe { BridgeVec::borrow_raw(ptr) };
     assert!(result.is_err());
     
     // Misaligned
     let bad_ptr = unsafe { ptr.add(1) };
-    let result = unsafe { LenAlignedVec::borrow_raw(bad_ptr) };
+    let result = unsafe { BridgeVec::borrow_raw(bad_ptr) };
     assert!(result.is_err());
     
     unsafe { dealloc(ptr, layout); }

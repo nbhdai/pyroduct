@@ -458,6 +458,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bridge-vec"
+version = "0.1.0"
+dependencies = [
+ "rkyv",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "brotli"
 version = "8.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1376,15 +1385,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
-name = "len-aligned-vec"
-version = "0.1.0"
-dependencies = [
- "rkyv",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "lexical-core"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1907,9 +1907,9 @@ dependencies = [
  "arrow-derive",
  "arrow-scalars",
  "async-ffi",
+ "bridge-vec",
  "capability-derive",
  "futures",
- "len-aligned-vec",
  "libloading",
  "macrotest",
  "module-derive",

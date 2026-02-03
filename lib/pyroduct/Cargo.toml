@@ -10,7 +10,7 @@ host = []
 module = []
 
 [dependencies]
-len-aligned-vec.workspace = true
+bridge-vec.workspace = true
 
 arrow.workspace = true
 arrow-scalars = { path = "../arrow-scalars", default-features = false, features = [] }

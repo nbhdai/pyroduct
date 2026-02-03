@@ -4,7 +4,7 @@ use rkyv::{
     Archive, Deserialize, Serialize, bytecheck::CheckBytes, rancor::{Error, Strategy}, ser::{Serializer, allocator::{Arena, ArenaHandle}, sharing::Share}, validation::{Validator, archive::ArchiveValidator, shared::SharedValidator}
 };
 
-use crate::{DataStatus, LenAlignedVec};
+use crate::{DataStatus, BridgeVec};
 
 // --- Error Definitions ---
 
@@ -40,14 +40,14 @@ fn panic_payload_to_string(payload: Box<dyn Any + Send>) -> String {
 
 // --- Implementation ---
 
-impl LenAlignedVec {
+impl BridgeVec {
     /// Serializes a Result<T, E> for the FFI boundary.
     pub fn serialize_result<T, E>(result: Result<&T, &E>) -> Self
     where
         T: Archive + std::panic::RefUnwindSafe,
         E: Archive + std::panic::RefUnwindSafe,
-        for<'a, 'b> T: Serialize<Strategy<Serializer<&'a mut LenAlignedVec, &'b mut Arena, &'b mut Share>, rkyv::rancor::Error>>,
-        for<'a, 'b> E: Serialize<Strategy<Serializer<&'a mut LenAlignedVec, &'b mut Arena, &'b mut Share>, rkyv::rancor::Error>>,
+        for<'a, 'b> T: Serialize<Strategy<Serializer<&'a mut BridgeVec, &'b mut Arena, &'b mut Share>, rkyv::rancor::Error>>,
+        for<'a, 'b> E: Serialize<Strategy<Serializer<&'a mut BridgeVec, &'b mut Arena, &'b mut Share>, rkyv::rancor::Error>>,
     {
         trace!("serialize_result: starting");
         
@@ -93,7 +93,7 @@ impl LenAlignedVec {
     }
 
     fn serialize_system_error(err: RkyvFfiError) -> Self 
-    where for<'a> RkyvFfiError: Serialize<Strategy<Serializer<&'a mut LenAlignedVec, ArenaHandle<'a>, Share>, Error>>
+    where for<'a> RkyvFfiError: Serialize<Strategy<Serializer<&'a mut BridgeVec, ArenaHandle<'a>, Share>, Error>>
     {
         match Self::serialize_from(&err) {
             Ok(mut vec) => {
@@ -102,7 +102,7 @@ impl LenAlignedVec {
             }
             Err(e) => {
                 let msg = format!("Critical: Failed to serialize RkyvFfiError ({:?}) | Source: {:?}", err, e);
-                let mut vec = LenAlignedVec::with_capacity(msg.len());
+                let mut vec = BridgeVec::with_capacity(msg.len());
                 vec.extend_from_slice(msg.as_bytes());
                 vec.set_status(DataStatus::Utf8Error as u16);
                 vec
@@ -123,7 +123,7 @@ where
     for<'b> <E as Archive>::Archived: CheckBytes<Strategy<Validator<ArchiveValidator<'b>, SharedValidator>, rkyv::rancor::Error>>,
 {
     // Reconstruct wrapper to access header safely
-    let vec_ref = match unsafe { LenAlignedVec::borrow_raw(ptr) } {
+    let vec_ref = match unsafe { BridgeVec::borrow_raw(ptr) } {
         Ok(v) => v, // Don't drop, we don't own it
         Err(_) => return Err(RkyvFfiError::NullPointer),
     };

@@ -1,5 +1,5 @@
-use len_aligned_vec::{
-    LenAlignedVec,
+use bridge_vec::{
+    BridgeVec,
     DataStatus,
     ffi::{access_from_ffi, RkyvFfiError}
 };
@@ -38,7 +38,7 @@ fn test_ffi_success_path() {
     let data = UserData { id: 101, payload: "Success".to_string() };
     let result: Result<&UserData, &UserError> = Ok(&data);
 
-    let vec = LenAlignedVec::serialize_result(result);
+    let vec = BridgeVec::serialize_result(result);
     
     // Verify Header Status
     assert_eq!(vec.status(), DataStatus::ValidData as u16);
@@ -61,7 +61,7 @@ fn test_ffi_user_error_path() {
     let err = UserError { code: 500, msg: "Server exploded".to_string() };
     let result: Result<&UserData, &UserError> = Err(&err);
 
-    let vec = LenAlignedVec::serialize_result(result);
+    let vec = BridgeVec::serialize_result(result);
     
     assert_eq!(vec.status(), DataStatus::UserError as u16);
 
@@ -84,7 +84,7 @@ fn test_ffi_panic_safety_catch() {
     let result: Result<&PanicOnSerialize, &PanicOnSerialize> = Ok(&p);
     
     // This MUST NOT abort the process. It must return a buffer with RkyvFfiError status.
-    let vec = LenAlignedVec::serialize_result(result);
+    let vec = BridgeVec::serialize_result(result);
     
     assert_eq!(vec.status(), DataStatus::TransportError as u16);
     
@@ -103,7 +103,7 @@ fn test_ffi_panic_safety_catch() {
 fn test_validation_security() {
     // 1. Serialize a u64 (8 bytes)
     let wrong_data = 999999u64;
-    let mut vec = LenAlignedVec::serialize_from(&wrong_data).unwrap();
+    let mut vec = BridgeVec::serialize_from(&wrong_data).unwrap();
     
     // 2. Maliciously mark it as ValidData for UserData struct
     vec.set_status(DataStatus::ValidData as u16); 
