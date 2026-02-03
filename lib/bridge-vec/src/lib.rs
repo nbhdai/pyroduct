@@ -57,9 +57,11 @@ pub mod rkyv;
 pub mod tokio;
 pub mod ffi;
 
-pub trait Bridgable: ::rkyv::Archive + Sized {
+pub use bridge_derive::bridgeable;
+
+pub trait Bridgeable: ::rkyv::Archive + Sized {
     fn serialize(&self) -> Result<BridgeVec, ::rkyv::rancor::Error>;
-    fn parse(&self) -> Result<TypedBuf<Self>, ::rkyv::rancor::Error>;
+    fn parse(vec: BridgeVec) -> Result<TypedBuf<Self>, ::rkyv::rancor::Error>;
     fn deserialize(vec: TypedBuf<Self>) -> Result<Self, ::rkyv::rancor::Error>;
 }
 

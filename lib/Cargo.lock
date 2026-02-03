@@ -469,9 +469,11 @@ dependencies = [
 name = "bridge-vec"
 version = "0.1.0"
 dependencies = [
+ "bridge-derive",
  "rkyv",
  "tokio",
  "tracing",
+ "trybuild",
 ]
 
 [[package]]

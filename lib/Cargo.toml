@@ -18,7 +18,6 @@ default-members = [
     "arrow-derive",
     "arrow-file",
     "capability-core",
-    "capability-derive",
     "module-core",
     "module-derive",
     "pyroduct",
@@ -33,6 +32,7 @@ authors = ["Sven Cattell"]
 edition = "2024"
 
 [workspace.dependencies]
+bridge-derive = { path = "bridge-derive" }
 bridge-vec = { path = "bridge-vec" }
 arrow-scalars = { path = "arrow-scalars" }
 arrow-file = { path = "arrow-file" }

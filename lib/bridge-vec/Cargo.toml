@@ -5,6 +5,10 @@ authors.workspace = true
 edition.workspace = true
 
 [dependencies]
+bridge-derive.workspace = true
 rkyv.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+trybuild.workspace = true
