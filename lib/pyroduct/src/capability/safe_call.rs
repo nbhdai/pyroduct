@@ -1,6 +1,6 @@
 use std::panic::{self, AssertUnwindSafe};
 
-use bridge_vec::{BridgeVec, ser_de::Bridgable};
+use bridge_vec::{BridgeVec, Bridgeable};
 use tracing::{debug, trace};
 
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
 
 pub(crate) fn execute_safe<F, O>(func: F) -> BridgeVec
 where
-    O: Bridgable + std::panic::RefUnwindSafe + Send + 'static,
+    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
     F: FnOnce() -> O,
 {
     clear_last_panic();
@@ -39,9 +39,9 @@ pub fn sci_call<'a, S, C, I, O, F>(
 ) -> BridgeVec
 where
     S: Send + 'a,
-    C: Bridgable + Send + 'a,
-    I: Bridgable + Send + 'a,
-    O: Bridgable + std::panic::RefUnwindSafe + Send + 'static,
+    C: Bridgeable + Send + 'a,
+    I: Bridgeable + Send + 'a,
+    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
     F: FnOnce(&'a mut S, C, I) -> O + Send + 'a,
 {
     let state = match unsafe { safe_io::get_capability_state::<'a, S>(host_state_ptr) } {
@@ -73,8 +73,8 @@ pub fn sc_call<'a, S, C, O, F>(
 ) -> BridgeVec
 where
     S: Send + 'a,
-    C: Bridgable + Send + 'a,
-    O: Bridgable + std::panic::RefUnwindSafe + Send + 'static,
+    C: Bridgeable + Send + 'a,
+    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
     F: FnOnce(&'a mut S, C) -> O + Send + 'a,
 {
     let state = match unsafe { safe_io::get_capability_state::<'a, S>(host_state_ptr) } {
@@ -99,8 +99,8 @@ pub fn i_call<'a, I, O, F>(
     func: F,
 ) -> BridgeVec
 where
-    I: Bridgable + Send + 'a,
-    O: Bridgable + std::panic::RefUnwindSafe + Send + 'static,
+    I: Bridgeable + Send + 'a,
+    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
     F: FnOnce(I) -> O + Send + 'a,
 {
     let input: I = match unsafe { safe_io::get_input::<I>(input_ptr, input_len) } {
@@ -120,7 +120,7 @@ pub fn empty_call<'a, O, F>(
     func: F,
 ) -> BridgeVec
 where
-    O: Bridgable + std::panic::RefUnwindSafe + Send + 'static,
+    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
     F: FnOnce() -> O + Send + 'a,
 {
     execute_safe(|| (func)())

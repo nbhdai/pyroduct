@@ -1,6 +1,6 @@
 use std::{ffi::c_void, panic, slice};
 
-use bridge_vec::{BridgeVec, DataStatus, ffi::RkyvFfiError, ser_de::Bridgable};
+use bridge_vec::{BridgeVec, DataStatus, ffi::RkyvFfiError, Bridgeable};
 use tracing::{debug, error, trace};
 
 use crate::{
@@ -10,7 +10,7 @@ use crate::{
 
 /// Updated get_input function that returns Result instead of Option
 #[tracing::instrument]
-pub unsafe fn get_input<T: Bridgable>(ptr: *const u8, len: usize) -> Result<T, FfiError> {
+pub unsafe fn get_input<T: Bridgeable>(ptr: *const u8, len: usize) -> Result<T, FfiError> {
     trace!("get_input: processing input");
     if ptr.is_null() {
         error!("get_input: capability input pointer is null");
@@ -27,7 +27,7 @@ pub unsafe fn get_input<T: Bridgable>(ptr: *const u8, len: usize) -> Result<T, F
 }
 
 #[tracing::instrument]
-pub unsafe fn get_client_state<T: Bridgable>(ptr: *const u8, len: usize) -> Result<T, FfiError> {
+pub unsafe fn get_client_state<T: Bridgeable>(ptr: *const u8, len: usize) -> Result<T, FfiError> {
     trace!("get_client_state: processing client state");
     if ptr.is_null() {
         error!("get_client_state: client state pointer is null");
@@ -43,7 +43,7 @@ pub unsafe fn get_client_state<T: Bridgable>(ptr: *const u8, len: usize) -> Resu
     deserialize(slice, Phase::Client)
 }
 
-fn deserialize<T: Bridgable>(slice: &[u8], phase: Phase) -> Result<T, FfiError> {
+fn deserialize<T: Bridgeable>(slice: &[u8], phase: Phase) -> Result<T, FfiError> {
     clear_last_panic();
     panic::catch_unwind(|| {
         let archived = rkyv::access::<<T as rkyv::Archive>::Archived, rkyv::rancor::Error>(slice)
@@ -67,7 +67,7 @@ fn deserialize<T: Bridgable>(slice: &[u8], phase: Phase) -> Result<T, FfiError> 
 
 /// Updated borrow_input function that returns Result instead of Option
 #[tracing::instrument]
-pub unsafe fn borrow_input<'a, T: Bridgable>(
+pub unsafe fn borrow_input<'a, T: Bridgeable>(
     ptr: *const u8,
     len: usize,
 ) -> Result<&'a <T as rkyv::Archive>::Archived, FfiError> {
@@ -111,7 +111,7 @@ pub unsafe fn get_capability_state<'a, T>(
 }
 
 /// Serialize a successful output value into a BridgeVec
-pub fn make_output<T: Bridgable + std::panic::RefUnwindSafe>(value: &T) -> BridgeVec {
+pub fn make_output<T: Bridgeable + std::panic::RefUnwindSafe>(value: &T) -> BridgeVec {
     trace!("make_output: starting serialization");
     clear_last_panic();
 

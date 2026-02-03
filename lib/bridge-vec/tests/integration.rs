@@ -149,7 +149,7 @@ fn test_roundtrip_via_bridgable() {
 
     let vec = original.serialize().expect("serialize failed");
     let typed = SimpleStruct::parse(vec).expect("parse failed");
-    let recovered = SimpleStruct::deserialize(typed).expect("deserialize failed");
+    let recovered = typed.deserialize().expect("deserialize failed");
 
     assert_eq!(original, recovered);
 }

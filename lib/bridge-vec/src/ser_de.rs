@@ -1,4 +1,4 @@
-use rkyv::rancor::{Error, Fallible};
+use rkyv::rancor::{Error as RancorError, Fallible};
 use rkyv::ser::allocator::{Arena, ArenaHandle};
 use rkyv::ser::{Positional, Writer};
 
@@ -15,15 +15,17 @@ use rkyv::{
     validation::{Validator, archive::ArchiveValidator, shared::SharedValidator},
 };
 
+use crate::{BridgeError, DataStatus, ErrorVec};
+
 // Define thread-local scratch space to reuse allocations.
 thread_local! {
     static SCRATCH: RefCell<Arena> = RefCell::new(Arena::new());
 }
 
-use crate::BridgeVec;
+use crate::{BridgeVec, TypedBuf};
 
 impl Fallible for BridgeVec {
-    type Error = Error;
+    type Error = RancorError;
 }
 
 impl Positional for BridgeVec {
@@ -41,31 +43,64 @@ impl<E> Writer<E> for BridgeVec {
     }
 }
 
-/// A type-safe wrapper around a BridgeVec containing an archived rkyv type.
-pub struct TypedBuf<T>
-    where T: Archive,
-    <T as Archive>::Archived: 'static
-{
-    vec: BridgeVec,
-    archived: &'static T::Archived,
-}
-
 impl BridgeVec {
+    /// Verifies the bridge status header and reconstructs the appropriate result.
+    ///
+    /// - **Status 0 (ValidData)**: Returns `Ok(Ok(TypedBuf<T>))` (Zero-copy).
+    /// - **Status 1 (UserError)**: Returns `Ok(Err(TypedBuf<E>))` (Zero-copy).
+    /// - **Status 2 (TransportError)**: Deserializes JSON error and returns `Err(BridgeError::Ffi(...))`.
+    /// - **Status 3 (Utf8Error)**: Returns `Err(BridgeError::RemoteError(...))`.
+    pub fn parse<T>(self) -> Result<TypedBuf<T>, BridgeError>
+    where
+        // T: Success Type Constraints
+        T: Archive,
+        T::Archived: for<'a> CheckBytes<Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, RancorError>>,
+    {
+        if self.parsed_status() == Ok(DataStatus::ValidData) {
+                let buf = self.unchecked_parse::<T>()?;
+                Ok(buf)
+        } else {
+            Err(self.parse_as_error())
+        }
+    }
+
+    pub fn parse_as_error(self) -> BridgeError {
+        match self.parsed_status() {
+            Ok(DataStatus::ValidData) => BridgeError::UserSuccess(self),
+            Ok(DataStatus::UserError) => BridgeError::UserError(ErrorVec(self)),
+            Ok(DataStatus::TransportError) => {
+                let slice = self.as_slice();
+                match serde_json::from_slice::<serde_json::Value>(slice) {
+                    Ok(transport) => BridgeError::Transport(transport),
+                    Err(e) => BridgeError::RemoteError(format!("Failed to parse error JSON: {}", e)),
+                }
+            }
+            Ok(DataStatus::Utf8Error) => {
+                match std::str::from_utf8(self.as_slice()) {
+                    Ok(s) => BridgeError::RemoteError(s.to_string()),
+                    Err(s) => BridgeError::Utf8(s),
+                }
+                
+            }
+            Err(unknown) => BridgeError::UnknownStatus(unknown, self),
+        }
+    }
+
     /// Validates the buffer as containing a rooted `T` and returns a wrapper
     /// holding both the buffer and the typed reference.
     ///
     /// # Implementation Note
     /// This consumes the `BridgeVec`. The internal `archived` reference is
     /// safely tied to the stable heap allocation of the `BridgeVec`.
-    pub fn parse<T>(self) -> Result<TypedBuf<T>, Error>
+    pub fn unchecked_parse<T>(self) -> Result<TypedBuf<T>, RancorError>
     where
         T: Archive,
         // Constraint: Validation logic
-        T::Archived: for<'a> CheckBytes<Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, Error>>,
+        T::Archived: for<'a> CheckBytes<Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, RancorError>>,
     {
         // 1. Get the slice of the payload
         let slice = self.as_slice();
-        let archived_ref = rkyv::access::<T::Archived, Error>(slice)?;
+        let archived_ref = rkyv::access::<T::Archived, RancorError>(slice)?;
 
         // 3. Extend lifetime to 'static.
         //    SAFETY: 
@@ -86,13 +121,13 @@ impl BridgeVec {
     ///
     /// This uses a default `Arena` allocator and `Share` strategy (for handling 
     /// shared pointers/cycles), similar to `rkyv::to_bytes`.
-    pub fn serialize_from<T>(value: &T) -> Result<Self, Error>
+    pub fn serialize_from<T>(value: &T) -> Result<Self, RancorError>
         where
             T: rkyv::Archive,
             for<'a> T: rkyv::Serialize<
                 Strategy<
                     Serializer<&'a mut BridgeVec, ArenaHandle<'a>, Share>,
-                    Error
+                    RancorError
                 >
             >,
         {
@@ -107,7 +142,7 @@ impl BridgeVec {
 
                 let mut inner = Serializer::new(&mut vec, handle, share);
                 
-                rkyv::api::serialize_using::<_, Error>(
+                rkyv::api::serialize_using::<_, RancorError>(
                     value, 
                     &mut inner
                 )?;
@@ -119,6 +154,30 @@ impl BridgeVec {
         }
 }
 
+
+impl ErrorVec {
+    /// Verifies the bridge status header and reconstructs the appropriate result.
+    ///
+    /// - **Status 0 (ValidData)**: Returns `Ok(Ok(TypedBuf<T>))` (Zero-copy).
+    /// - **Status 1 (UserError)**: Returns `Ok(Err(TypedBuf<E>))` (Zero-copy).
+    /// - **Status 2 (TransportError)**: Deserializes JSON error and returns `Err(BridgeError::Ffi(...))`.
+    /// - **Status 3 (Utf8Error)**: Returns `Err(BridgeError::RemoteError(...))`.
+    pub fn parse<T>(self) -> Result<TypedBuf<T>, BridgeError>
+    where
+        // T: Success Type Constraints
+        T: Archive,
+        T::Archived: for<'a> CheckBytes<Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, RancorError>>,
+    {
+        if self.0.parsed_status() == Ok(DataStatus::ValidData) {
+                let buf = self.0.unchecked_parse::<T>()?;
+                Ok(buf)
+        } else {
+            Err(self.0.parse_as_error())
+        }
+    }
+}
+
+
 impl<T: Archive> TypedBuf<T> {
     /// Returns a reference to the archived type.
     pub fn get(&self) -> &T::Archived {
@@ -126,14 +185,14 @@ impl<T: Archive> TypedBuf<T> {
     }
 
     /// Deserializes the archived data back into the native type T.
-    pub fn deserialize(&self) -> Result<T, Error>
+    pub fn deserialize(&self) -> Result<T, RancorError>
     where
         // Constraint: Deserialization logic
-        T::Archived: Deserialize<T, Strategy<Pool, Error>>,
+        T::Archived: Deserialize<T, Strategy<Pool, RancorError>>,
     {
         // rkyv::deserialize takes the archived reference and a deserializer (strategy).
         // We use the default generic deserializer strategy (Pool + Error).
-        rkyv::deserialize::<T, Error>(self.archived)
+        rkyv::deserialize::<T, RancorError>(self.archived)
     }
 
     /// Extract the underlying BridgeVec, discarding the type information.

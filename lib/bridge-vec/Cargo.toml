@@ -9,6 +9,9 @@ bridge-derive.workspace = true
 rkyv.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 trybuild.workspace = true
