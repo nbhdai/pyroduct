@@ -1,27 +1,74 @@
+/// # Memory Layout & Header Protocol
+///
+/// `LenAlignedVec` utilizes a custom 16-byte aligned memory layout compatible with FFI
+/// boundary crossing. The allocation consists of a **16-byte Header** followed immediately
+/// by the **Data Payload**.
+///
+/// ## Layout Diagram
+///
+/// ```text
+///  Pointer (16-byte aligned)
+///  │
+///  ▼
+/// ┌─────────────┬─────────────┬─────────────┬──────────────┬─────────────┐
+/// │ Magic (u32) │  Len (u32)  │  Cap (u32)  | Version(u16) │ Status(u16) │  <-- Header (16 bytes)
+/// ├─────────────┴─────────────┴─────────────┴──────────────┴─────────────┤
+/// │                                                                      │
+/// │                             Data Payload ...                         │  <-- Body (Len bytes)
+/// │                                                                      │
+/// └──────────────────────────────────────────────────────────────────────┘
+/// ```
+///
+/// ## Header Fields
+///
+/// | Offset | Type  | Field   | Description |
+/// |--------|-------|---------|-------------|
+/// | `0x00` | `u32` | Magic   | Constant `0x7079726F` (ASCII "pyro"). Verifies pointer validity. |
+/// | `0x04` | `u32` | Len     | Current length of the data payload in bytes. |
+/// | `0x08` | `u32` | Cap     | Total allocated capacity (including header) in bytes. |
+/// | `0x0C` | `u16` | Version | Protocol Version number |
+/// | `0x0C` | `u16` | Status  | **Message Protocol Status**. Used to indicate the type of payload. |
+///
+/// ## Status Codes (Offset 0x0C)
+///
+/// When passing `Result<T, E>` across FFI or transport boundaries, the status field determines how
+/// the payload should be interpreted:
+///
+/// * **`0` (ValidData)**: The payload is a valid `rkyv` archived `T`. Corresponds to `Ok(T)`.
+/// * **`1` (UserError)**: The payload is a valid `rkyv` archived `E`. Corresponds to `Err(E)`.
+/// * **`2` (Transport Error)**: The payload is a serialized `RkyvFfiError`, or a transport error. Indicates a system failure (e.g., serialization panic, validation failure) rather than a logic error.
+/// * **`3` (Utf8Error)**: The payload is a raw UTF-8 string. Used as a catastrophic fallback if system error serialization fails.
+/// * **`4` (ValidUtf8)**: Reserved/Unused.
 use std::alloc::{self, Layout};
+use std::hash::Hasher;
 use std::ptr::{self, NonNull};
-use std::slice;
+use std::{fmt, slice};
 use std::ops::{Deref, DerefMut};
 
-mod rkyv;
+pub mod rkyv;
+pub mod tokio;
+pub mod ffi;
 
 /// A 16-byte aligned buffer with a self-describing header.
-/// Compatible with FFI passing as a raw pointer.
+/// Compatible with FFI passing as a raw pointer or TCP/Unix framing.
 pub struct LenAlignedVec {
     ptr: NonNull<u8>,
 }
 
 impl LenAlignedVec {
     const ALIGN: usize = 16;
-    const HEADER_SIZE: usize = 16;
+    pub const HEADER_SIZE: usize = 16;
     
-    // Offsets for specific u32 fields
+    // Header Offsets
     const OFFSET_MAGIC: usize = 0;
     const OFFSET_LEN: usize = 4;
     const OFFSET_CAP: usize = 8;
+    const OFFSET_VERSION: usize = 12;
+    const OFFSET_STATUS: usize = 14;
     
-    // 0x524B5956 is ASCII for "pyro"
-    const MAGIC_VAL: u32 = 0x7079726F; 
+    // Constants
+    pub(crate) const MAGIC_VAL: u32 = 0x7079726F; // "pyro"
+    const PROTOCOL_VERSION: u16 = 1;
 
     /// Creates a new vector with a specific capacity.
     pub fn with_capacity(capacity: usize) -> Self {
@@ -38,9 +85,10 @@ impl LenAlignedVec {
             
             // Initialize Header
             ptr::write(raw.add(Self::OFFSET_MAGIC) as *mut u32, Self::MAGIC_VAL);
-            ptr::write(raw.add(Self::OFFSET_LEN) as *mut u32, 0); // Length = 0
+            ptr::write(raw.add(Self::OFFSET_LEN) as *mut u32, 0); 
             ptr::write(raw.add(Self::OFFSET_CAP) as *mut u32, total_cap as u32);
-            // Padding at [12..16] is left uninitialized
+            ptr::write(raw.add(Self::OFFSET_VERSION) as *mut u16, Self::PROTOCOL_VERSION);
+            ptr::write(raw.add(Self::OFFSET_STATUS) as *mut u16, 0); // Default: ValidData
             
             NonNull::new_unchecked(raw)
         };
@@ -49,11 +97,6 @@ impl LenAlignedVec {
     }
 
     /// Reconstructs the Vec from a raw pointer.
-    /// 
-    /// # Safety
-    /// 1. `ptr` must be non-null and 16-byte aligned.
-    /// 2. `ptr` must have been allocated by `LenAlignedVec` (or compatible allocator).
-    /// 3. Ownership is transferred to Rust; the memory will be deallocated when this struct drops.
     pub unsafe fn from_raw(ptr: *const u8) -> Result<Self, &'static str> {
         if ptr.is_null() {
             return Err("Pointer is null");
@@ -74,17 +117,41 @@ impl LenAlignedVec {
         })
     }
 
-    /// Returns the raw pointer to the start of the allocation (Header).
+    // --- Header Accessors ---
+
+    /// Gets the status code from the header (Offset 14).
+    #[inline]
+    pub fn status(&self) -> u16 {
+        unsafe { ptr::read(self.ptr.as_ptr().add(Self::OFFSET_STATUS) as *const u16) }
+    }
+
+    /// Sets the status code in the header (Offset 14).
+    /// Used by FFI and Transport layers to indicate Data vs Error.
+    #[inline]
+    pub fn set_status(&mut self, status: u16) {
+        unsafe { ptr::write(self.ptr.as_ptr().add(Self::OFFSET_STATUS) as *mut u16, status) }
+    }
+
+    #[inline]
+    pub fn version(&self) -> u16 {
+        unsafe { ptr::read(self.ptr.as_ptr().add(Self::OFFSET_VERSION) as *const u16) }
+    }
+
+    #[inline]
+    pub fn set_version(&mut self, version: u16) {
+        unsafe { ptr::write(self.ptr.as_ptr().add(Self::OFFSET_VERSION) as *mut u16, version) }
+    }
+
+    // --- Data Accessors ---
+
     pub fn as_ptr(&self) -> *const u8 {
         self.ptr.as_ptr()
     }
 
-    /// Returns the raw pointer to the start of the data (skipping Header).
     pub fn data_ptr(&self) -> *const u8 {
         unsafe { self.ptr.as_ptr().add(Self::HEADER_SIZE) }
     }
 
-    /// Get the length (number of data bytes) directly from the header.
     #[inline]
     pub fn len(&self) -> usize {
         unsafe {
@@ -92,7 +159,6 @@ impl LenAlignedVec {
         }
     }
 
-    /// Get the total allocated capacity directly from the header.
     #[inline]
     pub fn capacity(&self) -> usize {
         unsafe {
@@ -105,7 +171,15 @@ impl LenAlignedVec {
         self.len() == 0
     }
 
-    // --- Core Vec Functionality ---
+    /// Returns a slice containing the Header (16 bytes) AND the Data (len bytes).
+    /// Useful for zero-copy writing to streams.
+    pub fn as_packet_slice(&self) -> &[u8] {
+        unsafe {
+            slice::from_raw_parts(self.ptr.as_ptr(), Self::HEADER_SIZE + self.len())
+        }
+    }
+
+    // --- Vec Operations ---
 
     pub fn push(&mut self, byte: u8) {
         if self.len() + Self::HEADER_SIZE == self.capacity() {
@@ -120,24 +194,6 @@ impl LenAlignedVec {
         }
     }
 
-    pub fn pop(&mut self) -> Option<u8> {
-        let len = self.len();
-        if len == 0 {
-            None
-        } else {
-            unsafe {
-                let new_len = len - 1;
-                self.set_len(new_len);
-                Some(ptr::read(self.ptr.as_ptr().add(Self::HEADER_SIZE + new_len)))
-            }
-        }
-    }
-
-    pub fn clear(&mut self) {
-        unsafe { self.set_len(0); }
-    }
-
-    /// Extends the vector with a slice of bytes.
     pub fn extend_from_slice(&mut self, other: &[u8]) {
         let required = other.len();
         let current_len = self.len();
@@ -169,7 +225,11 @@ impl LenAlignedVec {
         }
     }
 
-    // --- Helpers ---
+    pub fn clear(&mut self) {
+        unsafe { self.set_len(0); }
+    }
+
+    // --- Internals ---
 
     #[inline]
     unsafe fn set_len(&mut self, new_len: usize) {
@@ -180,14 +240,12 @@ impl LenAlignedVec {
         let current_cap = self.capacity();
         let current_len = self.len();
         
-        // Calculate new capacity (doubling strategy similar to std::Vec)
         let required_cap = current_len + Self::HEADER_SIZE + additional;
         let mut new_cap = current_cap * 2;
         if new_cap < required_cap {
             new_cap = required_cap;
         }
         
-        // Ensure aligned to 16
         let remainder = new_cap % Self::ALIGN;
         if remainder != 0 {
             new_cap += Self::ALIGN - remainder;
@@ -200,16 +258,51 @@ impl LenAlignedVec {
             if new_ptr.is_null() {
                 alloc::handle_alloc_error(Layout::from_size_align(new_cap, Self::ALIGN).unwrap());
             }
-            
-            // Update the capacity field in the header at the *new* location
             ptr::write(new_ptr.add(Self::OFFSET_CAP) as *mut u32, new_cap as u32);
-            
             self.ptr = NonNull::new_unchecked(new_ptr);
         }
     }
 }
 
-// --- Trait Implementations ---
+
+impl Clone for LenAlignedVec {
+    fn clone(&self) -> Self {
+        let mut new_vec = Self::with_capacity(self.len());
+        
+        new_vec.extend_from_slice(self.as_slice());
+
+        new_vec.set_status(self.status());
+        new_vec.set_version(self.version());
+
+        new_vec
+    }
+}
+
+impl fmt::Debug for LenAlignedVec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LenAlignedVec")
+         .field("len", &self.len())
+         .field("capacity", &self.capacity())
+         .field("status", &self.status())
+         .field("version", &self.version())
+         .field("data", &self.as_slice())
+         .finish()
+    }
+}
+
+impl PartialEq for LenAlignedVec {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl Eq for LenAlignedVec {}
+
+impl std::hash::Hash for LenAlignedVec {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_slice().hash(state);
+    }
+}
 
 impl Deref for LenAlignedVec {
     type Target = [u8];
