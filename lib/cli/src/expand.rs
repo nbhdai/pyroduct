@@ -10,7 +10,6 @@ use crate::utils::{InterfaceGenerator, format_syn_error};
 use capability_core::generate_capability;
 use module_core::generate_module;
 
-
 pub fn expand(path: &Path, bin_mode: bool, lockfile: bool) -> Result<()> {
     let is_cap = path.join("Capability.toml").exists();
     let is_mod = path.join("Module.toml").exists();
@@ -218,7 +217,8 @@ fn generate_capability_artifacts(path: &Path, cap_manifest: &CapabilityManifest)
     let content = fs::read_to_string(&src_path)?;
     let (cap_name, cap_version) = cap_manifest.name_version()?;
 
-    let generated_code = generate_capability(&content, &cap_name, &cap_version).map_err(|r| format_syn_error(&content, r))?;
+    let generated_code = generate_capability(&content, &cap_name, &cap_version)
+        .map_err(|r| format_syn_error(&content, r))?;
     let generated_code = prettyplease::unparse(&generated_code);
 
     fs::create_dir_all(&artifacts_dir)?;

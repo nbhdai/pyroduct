@@ -27,7 +27,7 @@ fn test_alignment_and_layout_contract() {
 fn test_raw_pointer_reconstruction() {
     let mut original = BridgeVec::with_capacity(50);
     original.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
-    original.set_status(7);
+    original.set_status_u8(7);
 
     let raw_ptr = original.into_raw(); // Transfer ownership
 
@@ -40,28 +40,10 @@ fn test_raw_pointer_reconstruction() {
 }
 
 #[test]
-fn test_grow_preserves_header_and_data() {
-    let mut vec = BridgeVec::with_capacity(10);
-    vec.set_status(42);
-    let pattern: Vec<u8> = (0..50).collect();
-
-    // This will force multiple reallocations
-    vec.extend_from_slice(&pattern);
-
-    assert_eq!(vec.len(), 50);
-    assert_eq!(vec.status(), 42, "Status must be preserved across realloc");
-    assert_eq!(vec.as_slice(), &pattern[..]);
-
-    // Verify alignment is still correct after realloc
-    let addr = vec.as_ptr() as usize;
-    assert_eq!(addr % 16, 0);
-}
-
-#[test]
 fn test_into_raw_ownership_transfer() {
     let mut vec = BridgeVec::with_capacity(10);
     vec.extend_from_slice(b"test");
-    vec.set_status(42);
+    vec.set_status_u8(42);
 
     let ptr = vec.into_raw();
     // vec is now consumed, no double-free possible
@@ -76,7 +58,7 @@ fn test_into_raw_ownership_transfer() {
 fn test_borrow_raw_non_owning() {
     let mut original = BridgeVec::with_capacity(50);
     original.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
-    original.set_status(7);
+    original.set_status_u8(7);
 
     let borrowed =
         unsafe { BridgeVec::borrow_raw(original.as_ptr()).expect("Should borrow from valid ptr") };

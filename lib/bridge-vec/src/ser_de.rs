@@ -13,7 +13,9 @@ use rkyv::{
 use std::cell::RefCell;
 use std::mem;
 use std::ops::Deref;
+use std::panic::Location;
 
+use crate::captured::{ErrorKind, ErrorPayload};
 use crate::{BridgeError, Bridgeable, CapturedError, DataStatus, ErrorVec};
 
 // Define thread-local scratch space to reuse allocations.
@@ -65,6 +67,31 @@ impl BridgeVec {
         }
     }
 
+        pub fn parse_result<T, E>(self) -> Result<Result<TypedBuf<T>, TypedBuf<E>>, BridgeError>
+    where
+        // T: Success Type Constraints
+        T: Archive + Bridgeable,
+        T::Archived: for<'a> CheckBytes<
+            Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, RancorError>,
+        >,
+        E: Archive + Bridgeable,
+        E::Archived: for<'a> CheckBytes<
+            Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, RancorError>,
+        >,
+    {
+        match self.parsed_status() {
+            Ok(DataStatus::ValidData) => {
+                let buf = self.unchecked_parse::<T>()?;
+                Ok(Ok(buf))
+            }
+            Ok(DataStatus::UserError) => {
+                let buf = self.unchecked_parse::<E>()?;
+                Ok(Err(buf))
+            }
+            _ => Err(self.parse_as_error())
+        }
+    }
+
     /// Validates the buffer as containing a rooted `T` and returns a wrapper
     /// holding both the buffer and the typed reference.
     ///
@@ -81,7 +108,8 @@ impl BridgeVec {
     {
         // 1. Get the slice of the payload
         let slice = self.as_slice();
-        let archived_ref = rkyv::access::<T::Archived, RancorError>(slice).map_err(|e| BridgeError::Validation(e))?;
+        let archived_ref = rkyv::access::<T::Archived, RancorError>(slice)
+            .map_err(|e| BridgeError::validation(e))?;
 
         // 3. Extend lifetime to 'static.
         //    SAFETY:
@@ -121,7 +149,8 @@ impl BridgeVec {
 
             let mut inner = Serializer::new(&mut vec, handle, share);
 
-            rkyv::api::serialize_using::<_, RancorError>(value, &mut inner).map_err(|e| BridgeError::Serialization(e))?;
+            rkyv::api::serialize_using::<_, RancorError>(value, &mut inner)
+                .map_err(|e| BridgeError::serialization(e))?;
 
             Ok::<(), BridgeError>(())
         })?;
@@ -137,7 +166,7 @@ impl BridgeVec {
         match &result {
             Ok(ok_value) => ok_value.serialize(),
             Err(err_value) => err_value.serialize().map(|mut e| {
-                e.set_status(DataStatus::UserError as u8);
+                e.set_status(DataStatus::UserError);
                 e.set_error_version(e.version());
                 e.set_version(0);
                 e
@@ -145,58 +174,81 @@ impl BridgeVec {
         }
     }
 
-        /// Consumes the BridgeVec and converts it into the appropriate BridgeError
+    /// Consumes the BridgeVec and converts it into the appropriate BridgeError
     /// based on the Status header.
-    /// 
+    ///
     /// If the status implies a payload (e.g., CodeError/Panic), this attempts
     /// to deserialize the payload as a JSON `CapturedError`.
+    /// Parse this BridgeVec as an error based on its status code.
     pub fn parse_as_error(self) -> BridgeError {
         match self.parsed_status() {
-            // Status 0: Valid Data (But we are parsing as error, so this is UserSuccess)
             Ok(DataStatus::ValidData) => BridgeError::UserSuccess(self),
-            
-            // Status 1: User Error
             Ok(DataStatus::UserError) => BridgeError::UserError(ErrorVec(self)),
 
-            // --- Remote Execution Errors (JSON Payload) ---
-            Ok(DataStatus::CodeError) => BridgeError::RemotePanic(self.extract_captured_error()),
-            Ok(DataStatus::RemoteSerialization) => BridgeError::RemoteSerialization(self.extract_captured_error()),
-            Ok(DataStatus::RemoteDeserialization) => BridgeError::RemoteDeserialization(self.extract_captured_error()),
-            Ok(DataStatus::RemoteTransport) => BridgeError::RemoteTransport(self.extract_captured_error()),
+            // Remote errors (150-156, 3)
+            Ok(DataStatus::CodeError) => BridgeError::CodePanic(self.extract_captured_error()),
+            Ok(DataStatus::RemoteSerialization) => BridgeError::remote(ErrorKind::Serialization(
+                ErrorPayload::Captured(self.extract_captured_error()),
+            )),
+            Ok(DataStatus::RemoteValidation) => BridgeError::remote(ErrorKind::Serialization(
+                ErrorPayload::Captured(self.extract_captured_error()),
+            )),
+            Ok(DataStatus::RemoteDeserialization) => BridgeError::remote(
+                ErrorKind::Deserialization(ErrorPayload::Captured(self.extract_captured_error())),
+            ),
+            Ok(DataStatus::RemoteTransport) => BridgeError::remote(ErrorKind::Transport(
+                ErrorPayload::Captured(self.extract_captured_error()),
+            )),
+            Ok(DataStatus::RemoteIo) => BridgeError::remote_io(self.extract_captured_error()),
+            Ok(DataStatus::RemoteUtf8) => BridgeError::remote_utf8(self.extract_captured_error()),
+            Ok(DataStatus::RemoteUnexpectedEof) => BridgeError::remote(ErrorKind::NullPointer),
+            Ok(DataStatus::RemoteNullPointer) => BridgeError::remote(ErrorKind::NullPointer),
+            Ok(DataStatus::RemoteMisalignedPointer) => {
+                BridgeError::remote(ErrorKind::MisalignedPointer)
+            }
+            Ok(DataStatus::RemoteInvalidHeader) => BridgeError::remote(ErrorKind::InvalidHeader),
+            Ok(DataStatus::RemoteLayoutError) => BridgeError::remote(ErrorKind::LayoutError),
 
-            // --- Remote Protocol Errors (Empty Payload) ---
-            Ok(DataStatus::RemoteNullPointer) => BridgeError::RemoteNullPointer,
-            Ok(DataStatus::RemoteMisalignedPointer) => BridgeError::RemoteMisalignedPointer,
-            Ok(DataStatus::RemoteInvalidHeader) => BridgeError::RemoteInvalidHeader,
-            Ok(DataStatus::RemoteLayoutError) => BridgeError::RemoteLayoutError,
-
-            // --- Local Errors (Self-reported) ---
-            Ok(DataStatus::LocalSerialization) | Ok(DataStatus::LocalDeserialization) => {
-                // If we have a local rancor error stored in the vec, we might need a way to extract it,
-                // otherwise we return a generic Transport error with the string payload.
+            // Local errors (100-109) - shouldn't normally appear in received data
+            // but handle them for completeness
+            Ok(DataStatus::LocalSerialization) => {
                 let msg = String::from_utf8_lossy(self.as_slice()).to_string();
-                BridgeError::Transport(msg)
-            },
+                BridgeError::local(ErrorKind::Serialization(ErrorPayload::Message(msg)))
+            }
+            Ok(DataStatus::LocalValidation) => {
+                let msg = String::from_utf8_lossy(self.as_slice()).to_string();
+                BridgeError::local(ErrorKind::Serialization(ErrorPayload::Message(msg)))
+            }
+            Ok(DataStatus::LocalDeserialization) => {
+                let msg = String::from_utf8_lossy(self.as_slice()).to_string();
+                BridgeError::local(ErrorKind::Deserialization(ErrorPayload::Message(msg)))
+            }
             Ok(DataStatus::LocalTransport) => {
                 let msg = String::from_utf8_lossy(self.as_slice()).to_string();
-                BridgeError::Transport(msg)
-            },
-            
-            // These shouldn't logically exist *inside* a valid BridgeVec, 
-            // but if we serialized them for transport:
-            Ok(DataStatus::LocalNullPointer) => BridgeError::NullPointer,
-            Ok(DataStatus::LocalMisalignedPointer) => BridgeError::MisalignedPointer,
-            Ok(DataStatus::LocalInvalidHeader) => BridgeError::InvalidHeader,
-            Ok(DataStatus::LocalLayoutError) => BridgeError::LayoutError,
-            Ok(DataStatus::LocalUnexpectedEof) => BridgeError::UnexpectedEof,
-            
-            // Local Io/Utf8/etc
-            Ok(_) => {
-                 let msg = String::from_utf8_lossy(self.as_slice()).to_string();
-                 BridgeError::Transport(format!("Unhandled local error status: {}", msg))
+                BridgeError::local(ErrorKind::Transport(ErrorPayload::Message(msg)))
             }
+            Ok(DataStatus::LocalIo) => {
+                let msg = String::from_utf8_lossy(self.as_slice()).to_string();
+                BridgeError::local(ErrorKind::Transport(ErrorPayload::Message(format!(
+                    "I/O: {}",
+                    msg
+                ))))
+            }
+            Ok(DataStatus::LocalUtf8) => {
+                let msg = String::from_utf8_lossy(self.as_slice()).to_string();
+                BridgeError::local(ErrorKind::Transport(ErrorPayload::Message(format!(
+                    "UTF-8: {}",
+                    msg
+                ))))
+            }
+            Ok(DataStatus::LocalNullPointer) => BridgeError::local(ErrorKind::NullPointer),
+            Ok(DataStatus::LocalMisalignedPointer) => {
+                BridgeError::local(ErrorKind::MisalignedPointer)
+            }
+            Ok(DataStatus::LocalInvalidHeader) => BridgeError::local(ErrorKind::InvalidHeader),
+            Ok(DataStatus::LocalLayoutError) => BridgeError::local(ErrorKind::LayoutError),
+            Ok(DataStatus::LocalUnexpectedEof) => BridgeError::local(ErrorKind::UnexpectedEof),
 
-            // Unknown
             Err(code) => BridgeError::UnknownStatus(code, self),
         }
     }
@@ -204,11 +256,9 @@ impl BridgeVec {
     /// Helper to deserialize a CapturedError from the payload (JSON).
     /// Falls back to a generic error if JSON deserialization fails.
     fn extract_captured_error(&self) -> Box<CapturedError> {
-        // Try to deserialize JSON
         if let Ok(captured) = serde_json::from_slice::<CapturedError>(self.as_slice()) {
             Box::new(captured)
         } else {
-            // Fallback if the payload isn't valid JSON (e.g., raw string panic)
             Box::new(CapturedError {
                 message: String::from_utf8_lossy(self.as_slice()).to_string(),
                 file: "unknown".to_string(),
@@ -216,6 +266,7 @@ impl BridgeVec {
                 column: 0,
                 error: Some("Failed to deserialize error details".into()),
                 cause: None,
+                stack_trace: None,
             })
         }
     }
@@ -245,63 +296,54 @@ impl ErrorVec {
     }
 }
 
-
 impl BridgeError {
+    // Users should use the ffi code that does this for them, or should read the codebase to understand.
+    #[doc(hidden)]
+    #[track_caller]
     pub fn encode(&self) -> BridgeVec {
         match self {
-            BridgeError::UserError(err_vec) => err_vec.0.clone(),
-            BridgeError::UserSuccess(vec) => vec.clone(),
-            
-            err => {
-                // 1. Assign Status Code
-                // If we are serializing "NullPointer", it means WE (the remote) found it,
-                // so we send it back as "RemoteNullPointer" (153).
-                let (status_code, is_panic) = match err {
-                    // Specific Remote Infrastructure Errors
-                    BridgeError::NullPointer => (153, false),
-                    BridgeError::MisalignedPointer => (154, false),
-                    BridgeError::InvalidHeader => (155, false),
-                    BridgeError::LayoutError => (156, false),
-                    
-                    // Remote Execution Errors
-                    BridgeError::RemoteError(_) => (150, true), // Explicit Panic
-                    BridgeError::Serialization(_) => (151, false),
-                    BridgeError::Transport(_) => (152, false),
+            BridgeError::UserError(_) => {
+                let mut err_vec=  CapturedError::new("Encoding a BridgeError that is an unhandled user deserialization error, not a bridge error").with_location(Location::caller()).encode();
+                err_vec.set_status(DataStatus::CodeError);
+                err_vec
+            }
+            BridgeError::UserSuccess(_) => {
+                let mut err_vec=  CapturedError::new("Encoding a BridgeError that is an unhandled user deserialization error, not a bridge error").with_location(Location::caller()).encode();
+                err_vec.set_status(DataStatus::CodeError);
+                err_vec
+            }
+            BridgeError::CodePanic(err) => {
+                let mut vec = err.encode();
+                vec.set_status(DataStatus::CodeError);
+                vec
+            }
+            BridgeError::UnknownStatus(_, _) => {
+                let mut err_vec=  CapturedError::new("Encoding a BridgeError that is an unhandled user deserialization error, not a bridge error").with_location(Location::caller()).encode();
+                err_vec.set_status(DataStatus::CodeError);
+                err_vec
+            }
 
-                    // Generic Fallback
-                    _ => (152, false), 
+            BridgeError::Bridge { kind, .. } => {
+                let error: Option<Box<CapturedError>> = match kind {
+                    ErrorKind::Serialization(error_payload) => Some(error_payload.into()),
+                    ErrorKind::Deserialization(error_payload) => Some(error_payload.into()),
+                    ErrorKind::Validation(error_payload) => Some(error_payload.into()),
+                    ErrorKind::Transport(error_payload) => Some(error_payload.into()),
+                    ErrorKind::Io(io_payload) => Some(io_payload.into()),
+                    ErrorKind::Utf8(utf8_payload) => Some(utf8_payload.into()),
+                    ErrorKind::NullPointer => None,
+                    ErrorKind::MisalignedPointer => None,
+                    ErrorKind::InvalidHeader => None,
+                    ErrorKind::LayoutError => None,
+                    ErrorKind::UnexpectedEof => None,
+                };
+                let status_code = kind.to_status().to_remote();
+
+                let mut vec = match error {
+                    Some(error) => error.encode(),
+                    None => BridgeVec::ok(),
                 };
 
-                // 2. Capture Stack Trace 
-                let detailed = if let BridgeError::RemoteError(boxed) = err {
-                    *boxed.clone()
-                } else {
-                    let location = std::panic::Location::caller();
-                    let backtrace = std::backtrace::Backtrace::capture();
-                    CapturedError {
-                        message: err.to_string(),
-                        file: location.file().to_string(),
-                        line: location.line(),
-                        column: location.column(),
-                        error: Some(format!("{:?}", err)),
-                        cause: if backtrace.status() == std::backtrace::BacktraceStatus::Captured {
-                            Some(backtrace.to_string())
-                        } else { None },
-                    }
-                };
-
-                // 3. Wrap in FfiError
-                // We use Generic for infrastructure errors because the Status Code 
-                // carries the specific type information (Null/Misaligned).
-                let transport_wrapper = if is_panic {
-                    FfiError::Panic(Box::new(detailed))
-                } else {
-                    // For NullPointer (153), etc., we send the detailed trace inside a Generic wrapper.
-                    FfiError::Generic(serde_json::to_string(&detailed).unwrap_or_default())
-                };
-
-                // 4. Create BridgeVec
-                let mut vec = BridgeVec::from_transport_error(&transport_wrapper);
                 vec.set_status(status_code);
                 vec
             }
@@ -310,10 +352,9 @@ impl BridgeError {
 }
 
 impl<T: Archive> TypedBuf<T> {
-    pub unsafe fn from_raw(
-        pointer: *const u8,
-    ) -> Result<TypedBuf<T>, BridgeError> 
-    where T: Bridgeable
+    pub unsafe fn from_raw(pointer: *const u8) -> Result<TypedBuf<T>, BridgeError>
+    where
+        T: Bridgeable,
     {
         let vec = unsafe { BridgeVec::from_raw(pointer) }?;
         T::parse(vec)
@@ -332,7 +373,8 @@ impl<T: Archive> TypedBuf<T> {
     {
         // rkyv::deserialize takes the archived reference and a deserializer (strategy).
         // We use the default generic deserializer strategy (Pool + Error).
-        rkyv::deserialize::<T, RancorError>(self.archived).map_err(|e| BridgeError::Deserialization(e))
+        rkyv::deserialize::<T, RancorError>(self.archived)
+            .map_err(|e| BridgeError::deserialization(e))
     }
 
     /// Extract the underlying BridgeVec, discarding the type information.

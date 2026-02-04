@@ -1,43 +1,68 @@
+//! # FFI Boundary Safety & Execution
+//!
+//! This module provides the "safety firewall" required when exposing Rust functions to foreign code
+//! (e.g., as a dynamically loaded plugin). It guarantees that panics and errors strictly adhere
+//! to the `BridgeVec` protocol and never unwind across the FFI boundary, which would constitute
+//! Undefined Behavior (UB).
+//!
+//! ## Core Responsibilities
+//!
+//! 1.  **Panic Isolation**: Wraps all user logic in `std::panic::catch_unwind`. If the plugin code
+//!     panics, the unwind is caught, and the panic details (message, file, line, backtrace) are
+//!     captured and serialized into a `BridgeError::CodePanic`.
+//! 2.  **Rich Error Reporting**: Registers a library-local panic hook that captures detailed diagnostic
+//!     info into Thread Local Storage (TLS) before the stack unwinds. This allows the host application
+//!     to receive a full stack trace of the crash rather than a generic "abort".
+//! 3.  **Serialization Safety**: Even the serialization step is guarded. If `rkyv` serialization panics,
+//!     this module catches it and returns a `Status::LocalSerialization` error.
+//! 4.  **Async Support**: Provides `execute_safe_async` to bridge `Future`s into FFI-safe pointers,
+//!     managing a local Tokio runtime if necessary.
+//!
+//! ## Intended Usage
+//!
+//! This module is designed for **Plugin Authors**. It should be used to wrap the implementation of
+//! every `extern "C"` function exported by the library.
+//!
+//! ```rust,ignore
+//! use bridge_vec::ffi;
+//!
+//! #[no_mangle]
+//! pub extern "C" fn my_plugin_function() -> *const u8 {
+//!     // execute_safe ensures that no matter what happens in the closure
+//!     // (panic, error, success), a valid *const u8 BridgeVec pointer is returned.
+//!     ffi::execute_safe(|| {
+//!         // Your logic here
+//!         let data = calculate_something();
+//!         data // This will be serialized automatically
+//!     })
+//! }
+//! ```
+//!
+//! ## Panic Hook Behavior
+//!
+//! **Important**: Calling any execution function in this module (`execute_safe`, `execute_safe_result`, etc.)
+//! will lazily register a global panic hook for this library instance.
+//!
+//! * In a **`cdylib` (Plugin)** context, this hook affects only this library's independent copy of
+//!     `std`. It does not interfere with the host application's panic handlers.
+//! * The hook is designed to capture metadata into TLS. It then delegates to the default hook
+//!     (printing to stderr) so logs are preserved.
+//!
+//! ## Safety
+//!
+//! This module assumes the library is compiled as a `cdylib` or static library with its own
+//! std/allocator. If linked as a `dylib` sharing `libstd` with the host, the panic hook registration
+//! may be visible to the host process.
+
+use rkyv::Archive;
 use std::cell::RefCell;
 use std::panic::{self, AssertUnwindSafe, Location, PanicHookInfo};
 use std::sync::Once;
-use rkyv::Archive;
 use tracing::{debug, error, trace};
 
 // Assuming these exist in your crate based on the snippet
 use crate::{BridgeError, BridgeVec, Bridgeable, CapturedError, DataStatus, TypedBuf};
 
-// ============================================================================
-// 1. Error Definitions & Data Structures
-// ============================================================================
-
-/// Errors occurring on the remote side of the FFI boundary.
-/// This is what is serialized into the BridgeVec when Status is TransportError.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum FfiError {
-    /// The remote side panicked while processing the request.
-    Panic(Box<CapturedError>),
-    /// The remote side completed logic, but failed to serialize the result.
-    SerializationFailed(String),
-    /// A raw error string (used for fallbacks or raw UTF-8 errors).
-    Generic(String),
-}
-
-impl std::fmt::Display for FfiError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FfiError::Panic(p) => write!(f, "Remote Panic at {}:{}: {}", p.file, p.line, p.message),
-            FfiError::SerializationFailed(msg) => write!(f, "Serialization Failed: {}", msg),
-            FfiError::Generic(msg) => write!(f, "Generic FFI Error: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for FfiError {}
-
-// ============================================================================
-// 2. Panic Infrastructure (Thread Local Storage & Hooks)
-// ============================================================================
 
 thread_local! {
     /// Temporarily holds panic info for the current thread so it can be retrieved
@@ -66,11 +91,11 @@ pub fn register_ffi_panic_hook() {
             if let Some(loc) = info.location() {
                 error = error.with_location(loc);
             };
-            
+
             // --- NEW: Capture Stack Trace ---
             error = error.with_backtrace(std::backtrace::Backtrace::capture());
 
-            error!(?error,"FFI Panic Hook captured a panic");
+            error!(?error, "FFI Panic Hook captured a panic");
             LAST_FFI_PANIC.with(|slot| {
                 *slot.borrow_mut() = Some(Box::new(error));
             });
@@ -85,7 +110,9 @@ pub fn recover_panic_info() -> Box<CapturedError> {
     LAST_FFI_PANIC.with(|slot| {
         slot.borrow_mut().take().unwrap_or_else(|| {
             error!("recover_panic_info: panic detected but no details found in TLS");
-            Box::new(CapturedError::new("Panic caught via catch_unwind, but TLS was empty."))
+            Box::new(CapturedError::new(
+                "Panic caught via catch_unwind, but TLS was empty.",
+            ))
         })
     })
 }
@@ -124,7 +151,7 @@ where
         Err(_) => {
             let panic_info = recover_panic_info();
             trace!(panic = ?panic_info, "execute_safe: panic caught, returning error");
-            BridgeError::RemotePanic(panic_info).encode().into_raw()
+            BridgeError::CodePanic(panic_info).encode().into_raw()
         }
     }
 }
@@ -157,7 +184,7 @@ where
             // we captured in our custom hook via TLS.
             let panic_info = recover_panic_info();
             trace!(panic = ?panic_info, "execute_safe: panic caught, returning error");
-            BridgeError::RemotePanic(panic_info).encode().into_raw()
+            BridgeError::CodePanic(panic_info).encode().into_raw()
         }
     }
 }
@@ -170,7 +197,8 @@ where
 {
     // We construct a nested catch_unwind here in case *serialization itself* panics.
     let guard = panic::catch_unwind(AssertUnwindSafe(|| {
-        unsafe { TypedBuf::from_raw(data) }.and_then(|v| I::deserialize(&v).map_err(BridgeError::from))
+        unsafe { TypedBuf::from_raw(data) }
+            .and_then(|v| I::deserialize(&v).map_err(BridgeError::from))
     }));
 
     match guard {
@@ -179,7 +207,7 @@ where
             // Serialization panicked
             let panic_info = recover_panic_info();
             let panic_info = panic_info.with_location(location);
-            Err(BridgeError::DeserializationPanic(panic_info.into()))
+            Err(BridgeError::deserialization_panic(panic_info.into()))
         }
     }
 }
@@ -195,17 +223,15 @@ where
     match guard {
         Ok(Ok(mut vec)) => {
             // Success path
-            vec.set_status(DataStatus::ValidData as u8);
+            vec.set_status(DataStatus::ValidData);
             vec
         }
-        Ok(Err(e)) => {
-            e.encode()
-        }
+        Ok(Err(e)) => e.encode(),
         Err(_) => {
             // Serialization panicked
             let panic_info = recover_panic_info();
             let panic_info = panic_info.with_location(location);
-            BridgeError::SerializationPanic(panic_info.into()).encode()
+            BridgeError::serialization_panic(panic_info.into()).encode()
         }
     }
 }
@@ -222,7 +248,7 @@ where
     match guard {
         Ok(Ok(mut vec)) => {
             // Success path
-            vec.set_status(DataStatus::ValidData as u8);
+            vec.set_status(DataStatus::ValidData);
             vec
         }
         Ok(Err(e)) => {
@@ -233,7 +259,7 @@ where
             // Serialization panicked
             let panic_info = recover_panic_info();
             let panic_info = panic_info.with_location(location);
-            BridgeError::SerializationPanic(panic_info.into()).encode()
+            BridgeError::serialization_panic(panic_info.into()).encode()
         }
     }
 }
@@ -283,7 +309,7 @@ mod async_ffi {
                 Err(_) => {
                     let panic_info = recover_panic_info();
                     trace!(panic = ?panic_info, "execute_safe_async: panic caught, returning error");
-                    BridgeError::RemotePanic(panic_info).encode().into_raw()
+                    BridgeError::CodePanic(panic_info).encode().into_raw()
                 }
             }
         })
@@ -314,7 +340,7 @@ mod async_ffi {
                 Err(_) => {
                     let panic_info = recover_panic_info();
                     trace!(panic = ?panic_info, "execute_safe_async: panic caught, returning error");
-                    BridgeError::RemotePanic(panic_info).encode().into_raw()
+                    BridgeError::CodePanic(panic_info).encode().into_raw()
                 }
             }
         })

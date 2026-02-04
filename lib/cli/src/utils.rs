@@ -137,7 +137,9 @@ impl InterfaceGenerator {
                 .map_err(|r| format_syn_error(&original_source, r))
                 .context("Failed to generate client code")?;
         let doc_string = doc_string.context("Failed to generate documentation")?;
-        let config_string = config_string.transpose().context("Failed to generate configuration spec")?;
+        let config_string = config_string
+            .transpose()
+            .context("Failed to generate configuration spec")?;
         let lib_rs_content = prettyplease::unparse(&lib_rs_content);
         Ok(Self {
             root_path: root_path.to_path_buf(),
@@ -250,7 +252,6 @@ impl InterfaceGenerator {
         self.config_string.as_ref().map(|s| s.as_str())
     }
 }
-
 
 /// Format a syn::Error with source context
 pub fn format_syn_error(source: &str, err: syn::Error) -> anyhow::Error {

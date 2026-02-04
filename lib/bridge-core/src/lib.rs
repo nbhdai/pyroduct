@@ -5,15 +5,13 @@ use syn::{Item, Meta, Path, parse_quote, punctuated::Punctuated, token::Comma};
 /// Attribute macro that adds rkyv serialization and the Bridgeable trait.
 ///
 /// Usage: #[bridgeable(derive(Debug, PartialEq))]
-pub fn bridgeable(attribute_args: Punctuated<Meta, Comma>, mut item: Item, import_location: Path) -> syn::Result<TokenStream> {
+pub fn bridgeable(
+    attribute_args: Punctuated<Meta, Comma>,
+    mut item: Item,
+    import_location: Path,
+) -> syn::Result<TokenStream> {
     // Whitelist of derives that are safe/common to pass through to the Archived type
-    let derive_whitelist = [
-        "Debug",
-        "PartialEq",
-        "Eq",
-        "PartialOrd",
-        "Ord",
-    ];
+    let derive_whitelist = ["Debug", "PartialEq", "Eq", "PartialOrd", "Ord"];
 
     let mut derives_to_pass = Vec::new();
     let mut compares_to_add = Vec::new();
@@ -57,7 +55,7 @@ pub fn bridgeable(attribute_args: Punctuated<Meta, Comma>, mut item: Item, impor
     let base_derives = quote! {
         #[derive(#import_location::rkyv::Archive, #import_location::rkyv::Serialize, #import_location::rkyv::Deserialize)]
     };
-    
+
     // Construct #[rkyv(attr(derive(...)))] if we found valid whitelist items
     let pass_through_attr = if !derives_to_pass.is_empty() {
         quote! { #[rkyv(attr(derive(#(#derives_to_pass),*)))] }
@@ -138,5 +136,3 @@ pub fn bridgeable(attribute_args: Punctuated<Meta, Comma>, mut item: Item, impor
         #impl_block
     }))
 }
-
-

@@ -1,4 +1,6 @@
-use bridge_vec::{BridgeError, Bridgeable, TypedBuf, ffi::execute_safe_async};
+use std::panic::Location;
+
+use bridge_vec::{Bridgeable, ffi::{deserialize_input, execute_safe_async}};
 use rkyv::Archive;
 
 use crate::capability_host::ffi::FfiBorrowedFutureResult;
@@ -6,6 +8,7 @@ use crate::capability_host::ffi::FfiBorrowedFutureResult;
 use super::get_capability_state;
 
 /// Complete call with state, client, and input
+#[track_caller]
 pub fn sci_call<'a, S, C, I, O, F, Fut>(
     client_state_ptr: *const u8,
     input_ptr: *const u8,
@@ -27,11 +30,11 @@ where
         Err(error) => return error.into(),
     };
 
-    let client: C = match deserialize_input(client_state_ptr) {
+    let client: C = match deserialize_input(client_state_ptr, Location::caller()) {
         Ok(buf) => buf,
         Err(err) => return err.into(),
     };
-    let input: I = match deserialize_input(input_ptr) {
+    let input: I = match deserialize_input(input_ptr, Location::caller()) {
         Ok(buf) => buf,
         Err(err) => return err.into(),
     };
@@ -40,6 +43,7 @@ where
 }
 
 /// Call with state and client (no input)
+#[track_caller]
 pub fn sc_call<'a, S, C, O, F, Fut>(
     client_state_ptr: *const u8,
     _input_ptr: *const u8,
@@ -59,7 +63,7 @@ where
         Err(error) => return error.into(),
     };
 
-    let client: C = match deserialize_input(client_state_ptr) {
+    let client: C = match deserialize_input(client_state_ptr, Location::caller()) {
         Ok(buf) => buf,
         Err(err) => return err.into(),
     };
@@ -67,6 +71,7 @@ where
 }
 
 /// Call with input only
+#[track_caller]
 pub fn i_call<'a, I, O, F, Fut>(
     _client_state_ptr: *const u8,
     input_ptr: *const u8,
@@ -80,7 +85,7 @@ where
     F: FnOnce(I) -> Fut + Send + std::panic::UnwindSafe + 'a,
     Fut: std::future::Future<Output = O> + Send + std::panic::UnwindSafe + 'a,
 {
-    let input: I = match deserialize_input(input_ptr) {
+    let input: I = match deserialize_input(input_ptr, Location::caller()) {
         Ok(buf) => buf,
         Err(err) => return err.into(),
     };

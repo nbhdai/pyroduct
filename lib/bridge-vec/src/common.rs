@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 
 use crate::TypedBuf;
-use crate::{BridgeVec, Bridgeable, PROTOCOL_VERSION, BridgeError};
+use crate::{BridgeError, BridgeVec, Bridgeable, PROTOCOL_VERSION};
 
 // --- Primitive Types ---
 

@@ -20,9 +20,11 @@ pub fn generate_module(content: &str) -> syn::Result<syn::File> {
         match item {
             syn::Item::Fn(item_fn) => {
                 if has_module_attr(&item_fn.attrs) {
-                    let attr = extract_module_attr(&item_fn.attrs)?.ok_or(syn::Error::new_spanned(&item_fn, 
-                        "Module attribute requires arguments: #[module(output = ...)]"
-                    ))?;
+                    let attr =
+                        extract_module_attr(&item_fn.attrs)?.ok_or(syn::Error::new_spanned(
+                            &item_fn,
+                            "Module attribute requires arguments: #[module(output = ...)]",
+                        ))?;
                     let config: ModuleAttrs = parse2(attr)?;
 
                     // Clone the function without the #[module] attribute
@@ -71,12 +73,16 @@ fn extract_module_attr(attrs: &[syn::Attribute]) -> syn::Result<Option<TokenStre
                     return Ok(Some(list.tokens.clone()));
                 }
                 syn::Meta::Path(_) => {
-                    return Err(syn::Error::new_spanned(attr, 
-                        "Module attribute requires arguments: #[module(output = ...)]"
+                    return Err(syn::Error::new_spanned(
+                        attr,
+                        "Module attribute requires arguments: #[module(output = ...)]",
                     ));
                 }
                 syn::Meta::NameValue(_) => {
-                    return Err(syn::Error::new_spanned(attr, "Invalid module attribute format"));
+                    return Err(syn::Error::new_spanned(
+                        attr,
+                        "Invalid module attribute format",
+                    ));
                 }
             }
         }

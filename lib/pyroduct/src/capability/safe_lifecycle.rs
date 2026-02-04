@@ -44,9 +44,8 @@ where
         match serde_json::from_slice::<Option<C>>(config_bytes) {
             Ok(config) => config,
             Err(err) => {
-                let error = CapturedError::new(err).with_location(location)
-                
-                return BridgeVec::from_transport_error(&detailed_err).into();
+                let error = CapturedError::new(format!("Json Serialization: {err}")).with_location(std::panic::Location::caller()).with_backtrace(std::backtrace::Backtrace::capture());
+                return BridgeError::serialization_panic(error.into()).into();
             }
         }
     };
@@ -64,7 +63,7 @@ where
         Err(_) => {
             let panic_info = recover_panic_info();
             error!(panic = ?panic_info, "execute_safe_init: panic caught during initialization");
-            BridgeError::RemoteError(panic_info).into()
+            BridgeError::CodePanic(panic_info).into()
         }
     }
 }
@@ -79,7 +78,7 @@ where
 
     if state_ptr.is_null() {
         error!("execute_safe_reset: state pointer is null");
-        return BridgeError::NullPointer.to_vec().into_raw();
+        return BridgeError::null_pointer().encode().into_raw();
     }
 
     let state = unsafe { &mut *(state_ptr as *mut S) };
@@ -97,7 +96,7 @@ where
         Err(_) => {
             let panic_info = recover_panic_info();
             error!(panic = ?panic_info, "execute_safe_reset: panic caught during reset");
-            BridgeError::RemoteError(panic_info).to_vec().into_raw()
+            BridgeError::CodePanic(panic_info).encode().into_raw()
         }
     }
 }
@@ -129,25 +128,8 @@ where
         match serde_json::from_slice::<Option<C>>(config_bytes) {
             Ok(config) => config,
             Err(err) => {
-                let location = std::panic::Location::caller();
-                let error = Some(err.to_string());
-                // Capture stack trace to pinpoint where the conversion happened
-                let backtrace = std::backtrace::Backtrace::capture();
-                let cause = match backtrace.status() {
-                    std::backtrace::BacktraceStatus::Captured => Some(backtrace.to_string()),
-                    _ => None,
-                };
-
-                let detailed_err = CapturedError {
-                    message: err.to_string(),
-                    file: location.file().to_string(),
-                    line: location.line(),
-                    column: location.column(),
-                    error,
-                    cause,
-                };
-                
-                return BridgeVec::from_transport_error(&detailed_err).into();
+                let error = CapturedError::new(format!("Json Serialization: {err}")).with_location(std::panic::Location::caller()).with_backtrace(std::backtrace::Backtrace::capture());
+                return BridgeError::serialization_panic(error.into()).into();
             }
         }
     };
@@ -169,7 +151,7 @@ where
             Err(_) => {
                 let panic_info = recover_panic_info();
                 error!(panic = ?panic_info, "execute_safe_async_init: panic caught during async init");
-                BridgeError::RemoteError(panic_info).into()
+                BridgeError::CodePanic(panic_info).into()
             }
         }
     }))
@@ -191,7 +173,7 @@ where
 
     if state_ptr.is_null() {
         error!("execute_safe_reset: state pointer is null");
-        return BridgeError::NullPointer.into();
+        return BridgeError::null_pointer().into();
     }
 
     let state = unsafe { &mut *(state_ptr as *mut S) };
@@ -211,7 +193,7 @@ where
             Err(_) => {
                 let panic_info = recover_panic_info();
                 error!(panic = ?panic_info, "execute_safe_async_reset: panic caught during async reset");
-                BridgeError::RemoteError(panic_info).to_vec().into_raw()
+                BridgeError::CodePanic(panic_info).encode().into_raw()
             }
         }
     }))

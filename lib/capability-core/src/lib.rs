@@ -1,6 +1,6 @@
 //! This crate provides proc macros to generate FFI boilerplate for capabilities.
-use syn::parse_file;
 use crate::{capability::CapabilityImpl, client::CapInterfaceItem, config::CapConfig};
+use syn::parse_file;
 
 pub mod capability;
 pub mod client;
@@ -17,7 +17,11 @@ pub fn generate_interface(
     content: &str,
     cap_name: &str,
     cap_version: &str,
-) -> syn::Result<(syn::File, anyhow::Result<String>, Option<anyhow::Result<String>>)> {
+) -> syn::Result<(
+    syn::File,
+    anyhow::Result<String>,
+    Option<anyhow::Result<String>>,
+)> {
     let file = parse_file(content)?;
 
     let failure_error = syn::Error::new_spanned(&file, "No capability found");

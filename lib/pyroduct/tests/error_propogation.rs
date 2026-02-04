@@ -1,4 +1,5 @@
 //! Tests for error propagation across FFI boundaries
+use pyroduct::CapIdentity;
 use pyroduct::arrow_scalars::{ArrowRow, ArrowValue};
 use pyroduct::capability::safe_call::{empty_call, i_call, sc_call, sci_call};
 use pyroduct::capability::safe_io::{get_client_state, get_input, make_output};
@@ -6,7 +7,6 @@ use pyroduct::capability_host::ffi::{COutput, FfiResult};
 use pyroduct::errors::{ArchivedFfiError, FfiError, Phase};
 use pyroduct::host::ffi_bridge::ExecutionResultBridge;
 use pyroduct::module_capability::panic::register_ffi_panic_hook;
-use pyroduct::CapIdentity;
 use std::ffi::c_void;
 use std::path::Path;
 
@@ -54,8 +54,12 @@ fn test_sci_call_null_state_pointer() {
         command: "test".into(),
     };
 
-    let client_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&client).unwrap().into_vec();
-    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input).unwrap().into_vec();
+    let client_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&client)
+        .unwrap()
+        .into_vec();
+    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)
+        .unwrap()
+        .into_vec();
 
     let result = sci_call::<TestState, TestClient, TestInput, TestOutput, _>(
         client_bytes.as_ptr(),
@@ -83,7 +87,9 @@ fn test_sci_call_null_client_pointer() {
     let input = TestInput {
         command: "test".into(),
     };
-    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input).unwrap().into_vec();
+    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)
+        .unwrap()
+        .into_vec();
 
     let result = sci_call::<TestState, TestClient, TestInput, TestOutput, _>(
         std::ptr::null(), // NULL client pointer
@@ -109,7 +115,9 @@ fn test_sci_call_null_input_pointer() {
 
     let mut state = TestState { initialized: true };
     let client = TestClient { id: 1 };
-    let client_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&client).unwrap().into_vec();
+    let client_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&client)
+        .unwrap()
+        .into_vec();
 
     let result = sci_call::<TestState, TestClient, TestInput, TestOutput, _>(
         client_bytes.as_ptr(),
@@ -138,7 +146,9 @@ fn test_sci_call_invalid_client_bytes() {
     let input = TestInput {
         command: "test".into(),
     };
-    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input).unwrap().into_vec();
+    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)
+        .unwrap()
+        .into_vec();
 
     let result = sci_call::<TestState, TestClient, TestInput, TestOutput, _>(
         garbage_client.as_ptr(),
@@ -167,8 +177,12 @@ fn test_sci_call_logic_panic_propagation() {
     let input = TestInput {
         command: "crash".into(),
     };
-    let client_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&client).unwrap().into_vec();
-    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input).unwrap().into_vec();
+    let client_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&client)
+        .unwrap()
+        .into_vec();
+    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)
+        .unwrap()
+        .into_vec();
 
     let result = sci_call::<TestState, TestClient, TestInput, TestOutput, _>(
         client_bytes.as_ptr(),
@@ -202,7 +216,9 @@ fn test_i_call_success() {
     let input = TestInput {
         command: "hello".into(),
     };
-    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input).unwrap().into_vec();
+    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)
+        .unwrap()
+        .into_vec();
 
     let result = i_call::<TestInput, TestOutput, _>(
         std::ptr::null(),

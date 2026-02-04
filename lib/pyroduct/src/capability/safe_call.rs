@@ -1,7 +1,10 @@
-use bridge_vec::{BridgeError, Bridgeable, TypedBuf, ffi::execute_safe};
+use std::panic::Location;
+
+use bridge_vec::{Bridgeable, ffi::{deserialize_input, execute_safe}};
 use rkyv::Archive;
 use super::get_capability_state;
 
+#[track_caller]
 pub fn sci_call<'a, S, C, I, O, F>(
     client_state_ptr: *const u8,
     input_ptr: *const u8,
@@ -20,21 +23,22 @@ where
 {
     let state = match unsafe { get_capability_state::<'a, S>(host_state_ptr) } {
         Ok(state) => state,
-        Err(error) => return error.to_vec().into_raw(),
+        Err(error) => return error.encode().into_raw(),
     };
 
-    let client: C = match deserialize_input(input_ptr) {
+    let client: C = match deserialize_input(client_state_ptr, Location::caller()) {
         Ok(buf) => buf,
-        Err(err) => return err.to_vec().into_raw(),
+        Err(err) => return err.encode().into_raw(),
     };
-    let input: I = match deserialize_input(input_ptr) {
+    let input: I = match deserialize_input(input_ptr, Location::caller()) {
         Ok(buf) => buf,
-        Err(err) => return err.to_vec().into_raw(),
+        Err(err) => return err.encode().into_raw(),
     };
 
     execute_safe(|| (func)(state, client, input))
 }
 
+#[track_caller]
 pub fn sc_call<'a, S, C, O, F>(
     client_state_ptr: *const u8,
     _input_ptr: *const u8,
@@ -51,16 +55,17 @@ where
 {
     let state = match unsafe { get_capability_state::<'a, S>(host_state_ptr) } {
         Ok(state) => state,
-        Err(error) => return error.to_vec().into_raw(),
+        Err(error) => return error.encode().into_raw(),
     };
 
-    let client: C = match deserialize_input(input_ptr) {
+    let client: C = match deserialize_input(client_state_ptr, Location::caller()) {
         Ok(buf) => buf,
-        Err(err) => return err.to_vec().into_raw(),
+        Err(err) => return err.encode().into_raw(),
     };
     execute_safe(|| (func)(state, client))
 }
 
+#[track_caller]
 pub fn i_call<'a, I, O, F>(
     _client_state_ptr: *const u8,
     input_ptr: *const u8,
@@ -73,9 +78,9 @@ where
     O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
     F: FnOnce(I) -> O + Send + std::panic::UnwindSafe + 'a,
 {
-    let input: I = match deserialize_input(input_ptr) {
+    let input: I = match deserialize_input(input_ptr, Location::caller()) {
         Ok(buf) => buf,
-        Err(err) => return err.to_vec().into_raw(),
+        Err(err) => return err.encode().into_raw(),
     };
     execute_safe(|| (func)(input))
 }

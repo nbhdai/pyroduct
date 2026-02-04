@@ -43,7 +43,7 @@ impl<'a> From<BridgeError> for FfiInitResult {
         Self {
             tag: 1,
             state: ptr::null_mut(),
-            error: value.to_vec().into_raw(),
+            error: value.encode().into_raw(),
         }
     }
 }
@@ -74,7 +74,7 @@ pub enum FfiBorrowedFutureResult<'a> {
 
 impl<'a> From<BridgeError> for FfiBorrowedFutureResult<'a> {
     fn from(value: BridgeError) -> Self {
-        FfiBorrowedFutureResult::EarlyError(value.to_vec().into_raw())
+        FfiBorrowedFutureResult::EarlyError(value.encode().into_raw())
     }
 }
 

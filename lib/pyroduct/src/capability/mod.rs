@@ -15,7 +15,7 @@ pub unsafe fn get_capability_state<'a, T>(
 ) -> Result<&'a mut T, BridgeError> {
     if host_state_ptr.is_null() {
         tracing::error!("get_capability_state: host_state_ptr is null");
-        return Err(BridgeError::NullPointer);
+        return Err(BridgeError::null_pointer());
     }
     Ok(unsafe { &mut *(host_state_ptr as *mut T) })
 }

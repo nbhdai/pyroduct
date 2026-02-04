@@ -3,9 +3,35 @@
 use std::io::{Error, ErrorKind};
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::Duration;
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::BridgeVec;
+
+// --- Constants ---
+
+pub const DEFAULT_MAX_MSG_SIZE: usize = 16 * 1024 * 1024; // 16 MB
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
+// --- Configuration ---
+
+#[derive(Debug, Clone, Copy)]
+pub struct BridgeStreamSettings {
+    pub max_msg_size: usize,
+    pub timeout: Duration,
+    // pub use_compression: bool,
+}
+
+impl Default for BridgeStreamSettings {
+    fn default() -> Self {
+        DEFAULT_STREAM_SETTINGS.clone()
+    }
+}
+
+const DEFAULT_STREAM_SETTINGS: BridgeStreamSettings = BridgeStreamSettings {
+    max_msg_size: DEFAULT_MAX_MSG_SIZE,
+    timeout: DEFAULT_TIMEOUT,
+};
 
 // --- AsyncWrite Implementation ---
 // Allows BridgeVec to be used as a buffer for tokio::io::copy or other async writers.
@@ -38,10 +64,16 @@ impl AsyncWrite for BridgeVec {
 /// 3. Reads the length, capacity, versions, and status.
 /// 4. Allocates the vector.
 /// 5. Reads the exact payload into the vector.
-pub async fn read_from_stream<R>(src: &mut R) -> io::Result<BridgeVec>
+pub async fn read_from_stream<R>(src: &mut R, config: Option<&BridgeStreamSettings>) -> io::Result<BridgeVec>
 where
     R: AsyncRead + Unpin,
 {
+    
+    let config = match config {
+        Some(c) => c,
+        None => &DEFAULT_STREAM_SETTINGS,
+    };
+
     let mut header_buf = [0u8; 16];
 
     // 1. Read the full 16-byte header
@@ -76,12 +108,16 @@ where
         ));
     }
 
+    if cap > config.max_msg_size {
+        return Err(Error::new(ErrorKind::InvalidData, "Message size exceeds limit"));
+    }
+
     // 3. Allocate and set metadata
     let mut vec = BridgeVec::with_capacity(cap);
     vec.set_wire_format(wire_format);
     vec.set_version(version);
     vec.set_error_version(error_version);
-    vec.set_status(status);
+    vec.set_status_u8(status);
 
     // 4. Read Payload
     if len > 0 {
@@ -103,13 +139,14 @@ where
 
 /// Helper to write a BridgeVec to an async stream.
 /// This writes the header (with version/status) followed by the data payload.
-pub async fn write_to_stream<W>(dest: &mut W, vec: &BridgeVec) -> io::Result<()>
+pub async fn write_to_stream<W>(dest: &mut W, vec: &BridgeVec, config: Option<&BridgeStreamSettings>) -> io::Result<()>
 where
     W: AsyncWrite + Unpin,
 {
-    // Use native-endian writes to match the read_from_stream logic.
-    // Note: Use write_all for single bytes to avoid endian confusion, though u8 is safe.
-
+    let config = match config {
+        Some(c) => c,
+        None => &DEFAULT_STREAM_SETTINGS,
+    };
     // 0x00: Magic
     dest.write_u32_le(crate::MAGIC_VAL).await?;
 
@@ -118,6 +155,10 @@ where
 
     // 0x08: Capacity
     dest.write_u32_le(vec.capacity() as u32).await?;
+
+    if vec.capacity() > config.max_msg_size {
+        return Err(Error::new(ErrorKind::InvalidData, "Message size exceeds limit"));
+    }
 
     // 0x0C: Wire Format
     dest.write_u8(vec.wire_format()).await?;
@@ -153,12 +194,12 @@ mod tests {
         original.set_wire_format(0xAA);
         original.set_version(0xBB);
         original.set_error_version(0xCC);
-        original.set_status(0xDD);
+        original.set_status_u8(0xDD);
 
         let mut stream = Vec::new();
 
         // Step 1: Write to stream
-        write_to_stream(&mut stream, &original)
+        write_to_stream(&mut stream, &original, None)
             .await
             .expect("Failed to write to stream");
 
@@ -174,7 +215,7 @@ mod tests {
 
         // Step 3: Read back from stream using framing logic
         let mut reader = Cursor::new(stream);
-        let recovered = read_from_stream(&mut reader)
+        let recovered = read_from_stream(&mut reader,  None)
             .await
             .expect("Failed to read from stream");
 
@@ -189,14 +230,14 @@ mod tests {
     #[tokio::test]
     async fn test_read_empty_payload() {
         let mut original = BridgeVec::with_capacity(0);
-        original.set_status(1);
+        original.set_status_u8(1);
         original.set_error_version(5);
 
         let mut stream = Vec::new();
-        write_to_stream(&mut stream, &original).await.unwrap();
+        write_to_stream(&mut stream, &original,  None).await.unwrap();
 
         let mut reader = Cursor::new(stream);
-        let recovered = read_from_stream(&mut reader).await.unwrap();
+        let recovered = read_from_stream(&mut reader,  None).await.unwrap();
 
         assert_eq!(recovered.len(), 0);
         assert_eq!(recovered.status(), 1);
@@ -209,7 +250,7 @@ mod tests {
         let partial_header = vec![0u8; 8];
         let mut reader = Cursor::new(partial_header);
 
-        let result = read_from_stream(&mut reader).await;
+        let result = read_from_stream(&mut reader,  None).await;
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().kind(),

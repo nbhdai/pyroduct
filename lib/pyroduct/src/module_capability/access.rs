@@ -8,7 +8,7 @@ use rkyv::{
     validation::{Validator, archive::ArchiveValidator, shared::SharedValidator},
 };
 
-use bridge_vec::BridgeVec;
+use bridge_vec::{BridgeVec, Bridgeable};
 
 pub type PackedWasmSlicePtr = u64;
 
@@ -19,9 +19,7 @@ pub fn call_from_wasm<I, O, F>(
     func: F,
 ) -> O
 where
-    I: Archive,
-    for<'a> I: Serialize<Strategy<Serializer<BridgeVec, ArenaHandle<'a>, Share>, RkyvError>>,
-    O: Archive,
+    I: Bridgeable,
     for<'a> <O as Archive>::Archived:
         CheckBytes<Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, rancor::Error>>,
     for<'a> <O as Archive>::Archived: Deserialize<O, Strategy<Pool, RkyvError>>,
@@ -32,20 +30,10 @@ where
     } else {
         (std::ptr::null(), 0)
     };
-
-    let (i_ptr, i_len, _i_bytes) = if let Some(i) = input {
-        let i_bytes = match rkyv::to_bytes::<RkyvError>(i) {
-            Ok(bytes) => bytes,
-            Err(err) => {
-                error::set_last_error(error::CapabilityIoError::InputSerialization(
-                    err.to_string(),
-                ));
-                panic!("{} Capability Serialization failed: {}", capability, err);
-            }
-        };
-        (i_bytes.as_ptr(), i_bytes.len(), i_bytes)
+    let (i_ptr, i_len) = if let Some(i) = input {
+        input.serialize()
     } else {
-        (std::ptr::null(), 0, BridgeVec::new())
+        BridgeVec::ok()
     };
 
     let result_ptr = (func)(c_ptr, c_len, i_ptr, i_len);
