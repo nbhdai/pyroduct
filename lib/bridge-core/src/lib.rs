@@ -115,14 +115,18 @@ pub fn bridgeable(attribute_args: Punctuated<Meta, Comma>, mut item: Item, impor
     // 6. Generate the implementation block
     let impl_block = quote! {
         impl #impl_generics #import_location::Bridgeable for #name #ty_generics #where_clause {
-            fn serialize(&self) -> Result<#import_location::BridgeVec, #import_location::RancorError> {
+            fn serialize(&self) -> Result<#import_location::BridgeVec, #import_location::BridgeError> {
                 #import_location::BridgeVec::serialize_from(self).map(|mut v| {
                     v.set_version(#import_location::PROTOCOL_VERSION);
                     v
                 })
             }
 
-            fn unchecked_parse(vec: #import_location::BridgeVec) -> Result<#import_location::TypedBuf<Self>, #import_location::RancorError> {
+            fn deserialize(vec: &#import_location::TypedBuf<Self>) -> Result<Self, #import_location::BridgeError> {
+                vec.deserialize()
+            }
+
+            fn unchecked_parse(vec: #import_location::BridgeVec) -> Result<#import_location::TypedBuf<Self>, #import_location::BridgeError> {
                 vec.unchecked_parse::<Self>()
             }
         }

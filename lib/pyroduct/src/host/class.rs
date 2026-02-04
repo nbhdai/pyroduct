@@ -15,7 +15,7 @@ use crate::{
         ClassDropFn, ClassExport, ClassInitFn, ClassResetFn, FfiBorrowedFutureObjectResult,
         FfiInitResult, Function, FunctionExport,
     },
-    errors::{FfiError, PyroductError},
+    errors::PyroductError,
     host::{
         capability::WasmArgs,
         ffi_bridge::{AsyncExecFuture, ExecutionResultBridge, InitResultBridge},

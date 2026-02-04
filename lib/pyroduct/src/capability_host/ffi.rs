@@ -1,6 +1,8 @@
 use std::ffi::c_void;
 use std::ptr;
 
+use bridge_vec::{BridgeError, BridgeVec};
+
 pub type LogCallback = unsafe extern "C" fn(u64, *const u8, usize);
 
 
@@ -36,6 +38,27 @@ impl FfiInitResult {
     }
 }
 
+impl<'a> From<BridgeError> for FfiInitResult {
+    fn from(value: BridgeError) -> Self {
+        Self {
+            tag: 1,
+            state: ptr::null_mut(),
+            error: value.to_vec().into_raw(),
+        }
+    }
+}
+
+
+impl<'a> From<BridgeVec> for FfiInitResult {
+    fn from(value: BridgeVec) -> Self {
+        Self {
+            tag: 1,
+            state: ptr::null_mut(),
+            error: value.into_raw(),
+        }
+    }
+}
+
 // --- Future Result Types ---
 
 #[repr(C)]
@@ -49,6 +72,24 @@ pub enum FfiBorrowedFutureResult<'a> {
     Future(::async_ffi::BorrowingFfiFuture<'a, *const u8>),
 }
 
+impl<'a> From<BridgeError> for FfiBorrowedFutureResult<'a> {
+    fn from(value: BridgeError) -> Self {
+        FfiBorrowedFutureResult::EarlyError(value.to_vec().into_raw())
+    }
+}
+
+impl<'a> From<BridgeVec> for FfiBorrowedFutureResult<'a> {
+    fn from(value: BridgeVec) -> Self {
+        FfiBorrowedFutureResult::EarlyError(value.into_raw())
+    }
+}
+
+impl<'a> From<::async_ffi::BorrowingFfiFuture<'a, *const u8>> for FfiBorrowedFutureResult<'a> {
+    fn from(value: ::async_ffi::BorrowingFfiFuture<'a, *const u8>) -> Self {
+        FfiBorrowedFutureResult::Future(value)
+    }
+}
+
 // NEW: Future result for Object creation (Init)
 #[repr(C)]
 pub enum FfiBorrowedFutureObjectResult<'a> {
@@ -56,6 +97,18 @@ pub enum FfiBorrowedFutureObjectResult<'a> {
     EarlyError(FfiInitResult),
     /// The operation started successfully.
     Future(::async_ffi::BorrowingFfiFuture<'a, FfiInitResult>),
+}
+
+impl<'a> From<BridgeError> for FfiBorrowedFutureObjectResult<'a> {
+    fn from(value: BridgeError) -> Self {
+        FfiBorrowedFutureObjectResult::EarlyError(value.into())
+    }
+}
+
+impl<'a> From<BridgeVec> for FfiBorrowedFutureObjectResult<'a> {
+    fn from(value: BridgeVec) -> Self {
+        FfiBorrowedFutureObjectResult::EarlyError(value.into())
+    }
 }
 
 // --- Function Typedefs ---

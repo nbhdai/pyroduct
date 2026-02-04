@@ -1,131 +1,16 @@
 // crates/pyroduct/src/errors.rs
 
 use std::{fmt, path::Path};
+use bridge_vec::BridgeError;
 use thiserror::Error;
 
 use crate::{CapIdentity, ModIdentity};
-
-#[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-pub struct FfiPanic {
-    pub message: String,
-    pub file: String,
-    pub line: u32,
-    pub column: u32,
-}
-
-#[derive(Clone, Copy, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug)]
-pub enum Phase {
-    /// Detected during capability init
-    Init,
-    /// Detected during capability reset
-    Reset,
-    /// Detected during capability state retrieval
-    State,
-    /// Detected during capability input retrieval
-    Input,
-    /// Detected during capability input retrieval
-    Output,
-    /// Detected during capability client retrieval
-    Client,
-    /// Detected during serializing input of wasm capability call
-    CapabilityInput,
-    /// Detected during serializing client of wasm capability call
-    CapabilityClient,
-    /// Detected during serializing client of wasm capability call
-    CapabilityOutput,
-    /// Detected during wasm main call
-    Call,
-}
-
-impl fmt::Display for Phase {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Phase::Init => write!(f, "Init()"),
-            Phase::Reset => write!(f, "Reset()"),
-
-            Phase::State => write!(f, "State()"),
-            Phase::Input => write!(f, "Input()"),
-            Phase::Client => write!(f, "Client()"),
-            Phase::Output => write!(f, "Output()"),
-
-            Phase::CapabilityInput => write!(f, "CapabilityInput()"),
-            Phase::CapabilityClient => write!(f, "CapabilityClient()"),
-            Phase::CapabilityOutput => write!(f, "CapabilityOutput()"),
-
-            Phase::Call => write!(f, "Call()"),
-        }
-    }
-}
-
-/// Error type for FFI operations between wasm or capabilities
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Error)]
-pub enum FfiError {
-    /// Null pointer was provided
-    #[error("FFI error: null pointer provided")]
-    NullPointer(Phase),
-
-    /// Zero length was provided
-    #[error("FFI error: zero length provided")]
-    ZeroLength(Phase),
-
-    /// Failed to validate archived bytes
-    #[error("FFI validation error: {0} during {1}")]
-    ValidationFailed(String, Phase),
-
-    /// Failed to deserialize data
-    #[error("FFI deserialization error: {0} during {1}")]
-    DeserializationFailed(String, Phase),
-
-    #[error("FFI deserialization panic: {0:?} during {1}")]
-    DeserializationPanicked(FfiPanic, Phase),
-
-    /// Failed to convert the call data to a row
-    #[error("Input failed ToRow: {0}")]
-    ToRowFailed(String),
-
-    /// Failed to serialize data
-    #[error("FFI serialization error: {0} during {1}")]
-    SerializationFailed(String, Phase),
-
-    #[error("FFI serialization panic: {0:?} during {1}")]
-    SerializationPanicked(FfiPanic, Phase),
-
-    #[error("User Logic panic: {0:?}")]
-    ModuleLogicPanicked(FfiPanic),
-
-    #[error("Capability Logic panic: {0:?}")]
-    CapabilityLogicPanicked(FfiPanic),
-
-    #[error("Future polled after completion")]
-    FuturePolledAfterCompletion,
-
-    #[error("Unknown FFI Tag: {0}")]
-    UnknownTag(u8),
-
-    #[error("Host Side capability fail, check the error slot")]
-    HostSideCapability,
-}
 
 /// User-facing error that wraps internal errors with simplified messaging
 #[derive(Debug, Error)]
 pub struct PyroductError {
     kind: ErrorKind,
     inner: InnerError,
-    /// Location where the error was created (host-side)
-    location: Option<ErrorLocation>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ErrorLocation {
-    pub file: String,
-    pub line: u32,
-    pub column: u32,
-}
-
-impl fmt::Display for ErrorLocation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}:{}", self.file, self.line, self.column)
-    }
 }
 
 #[derive(Debug)]
@@ -141,10 +26,11 @@ enum ErrorKind {
 
 #[derive(Debug)]
 enum InnerError {
-    Capability(CapIdentity, FfiError),
-    Module(ModIdentity, FfiError),
+    Capability(CapIdentity, BridgeError),
+    Module(ModIdentity, BridgeError),
     CapabilityLoading(CapIdentity, String),
     CapabilityLinking(CapIdentity, String),
+    ModuleLoading(ModIdentity, String),
     ModuleLinking(ModIdentity, String),
     ModuleUnknown(ModIdentity, String),
     // New Extensions
@@ -162,26 +48,14 @@ impl PyroductError {
         Self {
             kind: ErrorKind::NotFound,
             inner: InnerError::NotFound(name.to_string()),
-            location: None,
         }
     }
 
     /// Create a new user-facing error from a capability FfiError with automatic location tracking
-    pub fn from_capability(ident: &CapIdentity, inner: FfiError) -> Self {
-        Self::from_capability_with_location(ident, inner, None)
-    }
-
-    /// Create a new user-facing error from a capability FfiError with explicit location
-    pub fn from_capability_with_location(
-        ident: &CapIdentity,
-        inner: FfiError,
-        location: Option<ErrorLocation>,
-    ) -> Self {
-        let kind = Self::classify_error(&inner);
+    pub fn from_capability(ident: &CapIdentity, inner: BridgeError) -> Self {
         Self {
-            kind,
+            kind: ErrorKind::LogicPanic,
             inner: InnerError::Capability(ident.clone(), inner),
-            location,
         }
     }
 
@@ -190,7 +64,6 @@ impl PyroductError {
         Self {
             kind: ErrorKind::LoadingError,
             inner: InnerError::CapabilityLoading(ident.clone(), error.to_string()),
-            location: None,
         }
     }
 
@@ -199,13 +72,15 @@ impl PyroductError {
         Self {
             kind: ErrorKind::LinkingError,
             inner: InnerError::CapabilityLinking(ident.clone(), error.to_string()),
-            location: None,
         }
     }
 
     /// Create a new user-facing error from a module FfiError with automatic location tracking
-    pub fn from_module(module: &ModIdentity, inner: FfiError) -> Self {
-        Self::from_module_with_location(module, inner, None)
+    pub fn from_module(ident: &ModIdentity, inner: BridgeError) -> Self {
+        Self {
+            kind: ErrorKind::LogicPanic,
+            inner: InnerError::Module(ident.clone(), inner),
+        }
     }
 
     /// Create a new user-facing error from a module FfiError with automatic location tracking
@@ -213,21 +88,6 @@ impl PyroductError {
         Self {
             kind: ErrorKind::Unknown,
             inner: InnerError::ModuleUnknown(module.clone(), error.to_string()),
-            location: None,
-        }
-    }
-
-    /// Create a new user-facing error from a module FfiError with explicit location
-    pub fn from_module_with_location(
-        module: &ModIdentity,
-        inner: FfiError,
-        location: Option<ErrorLocation>,
-    ) -> Self {
-        let kind = Self::classify_error(&inner);
-        Self {
-            kind,
-            inner: InnerError::Module(module.clone(), inner),
-            location,
         }
     }
 
@@ -236,7 +96,6 @@ impl PyroductError {
         Self {
             kind: ErrorKind::LinkingError,
             inner: InnerError::ModuleLinking(module.clone(), error.to_string()),
-            location: None,
         }
     }
 
@@ -247,7 +106,6 @@ impl PyroductError {
         Self {
             kind: ErrorKind::Infrastructure,
             inner: InnerError::Infrastructure(error.to_string()),
-            location: None,
         }
     }
 
@@ -255,7 +113,6 @@ impl PyroductError {
         Self {
             kind: ErrorKind::IoError,
             inner: InnerError::ModuleSerialization(module.clone(), error.to_string()),
-            location: None,
         }
     }
 
@@ -263,7 +120,6 @@ impl PyroductError {
         Self {
             kind: ErrorKind::IoError,
             inner: InnerError::ModuleMemory(module.clone(), error.to_string()),
-            location: None,
         }
     }
 
@@ -271,7 +127,6 @@ impl PyroductError {
         Self {
             kind: ErrorKind::IoError,
             inner: InnerError::ModuleValidation(module.clone(), error.to_string()),
-            location: None,
         }
     }
 
@@ -279,32 +134,9 @@ impl PyroductError {
         Self {
             kind: ErrorKind::Unknown,
             inner: InnerError::ModuleExecution(module.clone(), error.to_string()),
-            location: None,
         }
     }
 
-    // ----------------------------
-
-    fn classify_error(error: &FfiError) -> ErrorKind {
-        match error {
-            // Logic panics - both user logic and wasm-side panics
-            FfiError::ModuleLogicPanicked(_)
-            | FfiError::CapabilityLogicPanicked(_)
-            | FfiError::DeserializationPanicked(_, _)
-            | FfiError::SerializationPanicked(_, _) => ErrorKind::LogicPanic,
-
-            // I/O errors - serialization, deserialization, validation
-            FfiError::HostSideCapability
-            | FfiError::NullPointer(_)
-            | FfiError::ZeroLength(_)
-            | FfiError::ValidationFailed(_, _)
-            | FfiError::DeserializationFailed(_, _)
-            | FfiError::SerializationFailed(_, _)
-            | FfiError::ToRowFailed(_)
-            | FfiError::FuturePolledAfterCompletion
-            | FfiError::UnknownTag(_) => ErrorKind::IoError,
-        }
-    }
 
     /// Get the path to the capability or module that errored
     pub fn path(&self) -> &Path {
@@ -316,6 +148,7 @@ impl PyroductError {
             | InnerError::CapabilityLoading(ident, _) => &ident.path,
             InnerError::Module(ident, _)
             | InnerError::ModuleLinking(ident, _)
+            | InnerError::ModuleLoading(ident, _)
             | InnerError::ModuleUnknown(ident, _)
             | InnerError::ModuleSerialization(ident, _)
             | InnerError::ModuleMemory(ident, _)

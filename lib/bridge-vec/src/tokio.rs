@@ -1,9 +1,9 @@
 //! Tokio integration
 
-use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use std::io::{Error, ErrorKind};
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::io::{Error, ErrorKind};
+use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::BridgeVec;
 
@@ -31,46 +31,49 @@ impl AsyncWrite for BridgeVec {
 // --- Framing Helpers ---
 
 /// Reads a `BridgeVec` from an async stream (TCP/Unix).
-/// 
+///
 /// This performs the framing logic:
 /// 1. Reads the 16-byte header.
 /// 2. Validates the Magic number.
 /// 3. Reads the length, capacity, versions, and status.
 /// 4. Allocates the vector.
 /// 5. Reads the exact payload into the vector.
-pub async fn read_from_stream<R>(src: &mut R) -> io::Result<BridgeVec> 
-where 
-    R: AsyncRead + Unpin
+pub async fn read_from_stream<R>(src: &mut R) -> io::Result<BridgeVec>
+where
+    R: AsyncRead + Unpin,
 {
     let mut header_buf = [0u8; 16];
-    
+
     // 1. Read the full 16-byte header
     src.read_exact(&mut header_buf).await?;
 
     // 2. Parse fields (Little Endian for multi-byte integers)
     // 0x00 - 0x03: Magic
     let magic = u32::from_le_bytes(header_buf[0..4].try_into().unwrap());
-    
+
     // 0x04 - 0x07: Length
     let len = u32::from_le_bytes(header_buf[4..8].try_into().unwrap()) as usize;
-    
+
     // 0x08 - 0x0B: Capacity
     let cap = u32::from_le_bytes(header_buf[8..12].try_into().unwrap()) as usize;
-    
+
     // 0x0C: Wire Format
     let wire_format = header_buf[12];
-    
+
     // 0x0D: User Version
     let version = header_buf[13];
-    
+
     // 0x0E: Error Version
     let error_version = header_buf[14];
-    
+
     // 0x0F: Status
     let status = header_buf[15];
 
     if magic != crate::MAGIC_VAL {
-        return Err(Error::new(ErrorKind::InvalidData, "Invalid BridgeVec magic header"));
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "Invalid BridgeVec magic header",
+        ));
     }
 
     // 3. Allocate and set metadata
@@ -84,9 +87,12 @@ where
     if len > 0 {
         let mut reader = src.take(len as u64);
         let bytes_read = io::copy(&mut reader, &mut vec).await?;
-        
+
         if bytes_read != len as u64 {
-            return Err(Error::new(ErrorKind::UnexpectedEof, "Stream ended before full payload was received"));
+            return Err(Error::new(
+                ErrorKind::UnexpectedEof,
+                "Stream ended before full payload was received",
+            ));
         }
     }
 
@@ -99,35 +105,35 @@ where
 /// This writes the header (with version/status) followed by the data payload.
 pub async fn write_to_stream<W>(dest: &mut W, vec: &BridgeVec) -> io::Result<()>
 where
-    W: AsyncWrite + Unpin
+    W: AsyncWrite + Unpin,
 {
     // Use native-endian writes to match the read_from_stream logic.
     // Note: Use write_all for single bytes to avoid endian confusion, though u8 is safe.
 
     // 0x00: Magic
-    dest.write_u32_le(crate::MAGIC_VAL).await?;  
-    
+    dest.write_u32_le(crate::MAGIC_VAL).await?;
+
     // 0x04: Length
-    dest.write_u32_le(vec.len() as u32).await?;          
-    
+    dest.write_u32_le(vec.len() as u32).await?;
+
     // 0x08: Capacity
-    dest.write_u32_le(vec.capacity() as u32).await?;     
-    
+    dest.write_u32_le(vec.capacity() as u32).await?;
+
     // 0x0C: Wire Format
-    dest.write_u8(vec.wire_format()).await?;             
-    
+    dest.write_u8(vec.wire_format()).await?;
+
     // 0x0D: User Version
-    dest.write_u8(vec.version()).await?;             
+    dest.write_u8(vec.version()).await?;
 
     // 0x0E: Error Version
     dest.write_u8(vec.error_version()).await?;
 
     // 0x0F: Status
-    dest.write_u8(vec.status()).await?;              
+    dest.write_u8(vec.status()).await?;
 
     // Payload
     dest.write_all(vec.as_slice()).await?;
-    
+
     Ok(())
 }
 
@@ -142,7 +148,7 @@ mod tests {
         // Create a vec with specific metadata to test byte-order
         let mut original = BridgeVec::with_capacity(16);
         original.extend_from_slice(b"endian-test-data");
-        
+
         // Use distinct values for all byte fields
         original.set_wire_format(0xAA);
         original.set_version(0xBB);
@@ -161,8 +167,8 @@ mod tests {
         let magic_bytes = &stream[0..4];
         let magic_val = u32::from_ne_bytes(magic_bytes.try_into().unwrap());
         assert_eq!(
-            magic_val, 
-            crate::MAGIC_VAL, 
+            magic_val,
+            crate::MAGIC_VAL,
             "Magic value byte order mismatch in stream"
         );
 
@@ -185,7 +191,7 @@ mod tests {
         let mut original = BridgeVec::with_capacity(0);
         original.set_status(1);
         original.set_error_version(5);
-        
+
         let mut stream = Vec::new();
         write_to_stream(&mut stream, &original).await.unwrap();
 
@@ -205,6 +211,9 @@ mod tests {
 
         let result = read_from_stream(&mut reader).await;
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(
+            result.unwrap_err().kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
     }
 }

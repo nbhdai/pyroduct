@@ -40,13 +40,18 @@ fn test_simple_struct_matches_rkyv() {
 
     // Serialize via Bridgable
     let vec = val.serialize().expect("Bridgable serialization failed");
-    
+
     // Serialize via rkyv directly
-    let correct_vec = rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
+    let correct_vec =
+        rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
 
     // Check alignment
     let data_addr = vec.data_ptr() as usize;
-    assert_eq!(data_addr % 16, 0, "Data payload must start on 16-byte boundary");
+    assert_eq!(
+        data_addr % 16,
+        0,
+        "Data payload must start on 16-byte boundary"
+    );
 
     // Debug output
     println!("BridgeVec: {:?}", vec);
@@ -55,12 +60,16 @@ fn test_simple_struct_matches_rkyv() {
     println!("rkyv bytes: {:x?}", correct_vec.as_slice());
 
     // Verify bytes match
-    assert_eq!(vec.as_slice(), correct_vec.as_slice(), "Serialized bytes must match rkyv output");
+    assert_eq!(
+        vec.as_slice(),
+        correct_vec.as_slice(),
+        "Serialized bytes must match rkyv output"
+    );
 
     // Verify we can access the archived data
     let slice = vec.as_slice();
     let access_result = rkyv::access::<ArchivedSimpleStruct, rkyv::rancor::Error>(slice);
-    
+
     if let Err(e) = &access_result {
         panic!("Access failed! Error: {:?}", e);
     }
@@ -78,13 +87,18 @@ fn test_with_vec_matches_rkyv() {
     };
 
     let vec = val.serialize().expect("Bridgable serialization failed");
-    let correct_vec = rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
+    let correct_vec =
+        rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
 
-    assert_eq!(vec.as_slice(), correct_vec.as_slice(), "Serialized bytes must match rkyv output");
+    assert_eq!(
+        vec.as_slice(),
+        correct_vec.as_slice(),
+        "Serialized bytes must match rkyv output"
+    );
 
     let slice = vec.as_slice();
     let access_result = rkyv::access::<ArchivedWithVec, rkyv::rancor::Error>(slice);
-    
+
     if let Err(e) = &access_result {
         panic!("Access failed! Error: {:?}", e);
     }
@@ -105,13 +119,18 @@ fn test_nested_matches_rkyv() {
     };
 
     let vec = val.serialize().expect("Bridgable serialization failed");
-    let correct_vec = rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
+    let correct_vec =
+        rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
 
-    assert_eq!(vec.as_slice(), correct_vec.as_slice(), "Serialized bytes must match rkyv output");
+    assert_eq!(
+        vec.as_slice(),
+        correct_vec.as_slice(),
+        "Serialized bytes must match rkyv output"
+    );
 
     let slice = vec.as_slice();
     let access_result = rkyv::access::<ArchivedNested, rkyv::rancor::Error>(slice);
-    
+
     if let Err(e) = &access_result {
         panic!("Access failed! Error: {:?}", e);
     }
@@ -128,13 +147,18 @@ fn test_enum_matches_rkyv() {
     };
 
     let vec = val.serialize().expect("Bridgable serialization failed");
-    let correct_vec = rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
+    let correct_vec =
+        rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
 
-    assert_eq!(vec.as_slice(), correct_vec.as_slice(), "Serialized bytes must match rkyv output");
+    assert_eq!(
+        vec.as_slice(),
+        correct_vec.as_slice(),
+        "Serialized bytes must match rkyv output"
+    );
 
     let slice = vec.as_slice();
     let access_result = rkyv::access::<ArchivedStatus, rkyv::rancor::Error>(slice);
-    
+
     if let Err(e) = &access_result {
         panic!("Access failed! Error: {:?}", e);
     }
@@ -162,9 +186,14 @@ fn test_large_data_matches_rkyv() {
     };
 
     let vec = val.serialize().expect("Bridgable serialization failed");
-    let correct_vec = rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
+    let correct_vec =
+        rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
 
-    assert_eq!(vec.as_slice(), correct_vec.as_slice(), "Serialized bytes must match rkyv output");
+    assert_eq!(
+        vec.as_slice(),
+        correct_vec.as_slice(),
+        "Serialized bytes must match rkyv output"
+    );
 }
 
 #[test]
@@ -175,9 +204,14 @@ fn test_empty_collections_matches_rkyv() {
     };
 
     let vec = val.serialize().expect("Bridgable serialization failed");
-    let correct_vec = rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
+    let correct_vec =
+        rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
 
-    assert_eq!(vec.as_slice(), correct_vec.as_slice(), "Serialized bytes must match rkyv output");
+    assert_eq!(
+        vec.as_slice(),
+        correct_vec.as_slice(),
+        "Serialized bytes must match rkyv output"
+    );
 }
 
 #[test]
@@ -188,7 +222,12 @@ fn test_boundary_values_match_rkyv() {
     };
 
     let vec = val.serialize().expect("Bridgable serialization failed");
-    let correct_vec = rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
+    let correct_vec =
+        rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
 
-    assert_eq!(vec.as_slice(), correct_vec.as_slice(), "Serialized bytes must match rkyv output");
+    assert_eq!(
+        vec.as_slice(),
+        correct_vec.as_slice(),
+        "Serialized bytes must match rkyv output"
+    );
 }

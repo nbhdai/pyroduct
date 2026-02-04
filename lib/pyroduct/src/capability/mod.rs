@@ -2,35 +2,20 @@
 pub mod logger;
 pub mod safe_async;
 pub mod safe_call;
-pub mod safe_io;
 pub mod safe_lifecycle;
+use std::ffi::c_void;
+
+use bridge_vec::BridgeError;
 pub use logger::init_logging;
 
-pub use serde;
 
-use crate::{
-    capability::safe_io::make_error_output,
-    capability_host::ffi::FfiBorrowedFutureResult,
-    errors::FfiError,
-};
-
-impl From<Result<COutput, FfiError>> for FfiResult {
-    fn from(result: Result<COutput, FfiError>) -> Self {
-        match result {
-            Ok(output) => FfiResult::ok(output),
-            Err(error) => make_error_output(error),
-        }
+#[tracing::instrument]
+pub unsafe fn get_capability_state<'a, T>(
+    host_state_ptr: *mut c_void,
+) -> Result<&'a mut T, BridgeError> {
+    if host_state_ptr.is_null() {
+        tracing::error!("get_capability_state: host_state_ptr is null");
+        return Err(BridgeError::NullPointer);
     }
-}
-
-impl From<FfiError> for FfiResult {
-    fn from(error: FfiError) -> Self {
-        make_error_output(error)
-    }
-}
-
-impl<'a> From<FfiError> for FfiBorrowedFutureResult<'a> {
-    fn from(error: FfiError) -> Self {
-        FfiBorrowedFutureResult::EarlyError(make_error_output(error))
-    }
+    Ok(unsafe { &mut *(host_state_ptr as *mut T) })
 }

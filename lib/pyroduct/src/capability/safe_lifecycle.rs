@@ -1,165 +1,218 @@
-use std::sync::OnceLock;
-
-use async_ffi::BorrowingFfiFuture;
-use bridge_vec::{BridgeVec, Bridgeable};
-use futures::FutureExt;
-use tokio::runtime::Runtime;
-use tracing::{debug, trace};
-
-use crate::{
-    errors::FfiError,
-    module_capability::panic::{clear_last_panic, recover_panic_info},
+use std::{
+    ffi::c_void,
+    panic::{self, AssertUnwindSafe},
 };
 
-use super::safe_io;
+use async_ffi::BorrowingFfiFuture;
+use bridge_vec::{BridgeError, BridgeVec, CapturedError, ffi::{clear_last_panic, get_runtime, recover_panic_info}};
+use futures::FutureExt;
+use tracing::{debug, error, trace};
 
-// There is async functions in this plugin.
-static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+use crate::{
+    capability_host::ffi::{
+        FfiBorrowedFutureObjectResult, FfiBorrowedFutureResult, FfiInitResult,
+    },
+};
 
-pub fn get_runtime() -> &'static Runtime {
-    RUNTIME.get_or_init(|| {
-        trace!("get_runtime: initializing tokio runtime");
-        Runtime::new().expect("Failed to create Tokio runtime in plugin")
-    })
-}
+/// For new that doesn't have a config.
+#[derive(serde::Deserialize)]
+pub struct EmptyConfig {}
 
-/// Result type for async FFI calls - either an early error or a future
-pub enum FfiBorrowedFutureResult<'a> {
-    EarlyError(BridgeVec),
-    Future(BorrowingFfiFuture<'a, BridgeVec>),
-}
+// --- Sync Wrappers ---
 
-impl<'a> From<FfiError> for FfiBorrowedFutureResult<'a> {
-    fn from(error: FfiError) -> Self {
-        FfiBorrowedFutureResult::EarlyError(safe_io::make_error_output(error))
+/// Safe wrapper for Sync Init functions.
+/// The closure receives `Option<C>` directly.
+#[track_caller]
+#[tracing::instrument(skip(init_fn))]
+pub unsafe fn execute_safe_init<C, S, F>(
+    config_ptr: *const u8,
+    config_len: usize,
+    init_fn: F,
+) -> FfiInitResult
+where
+    C: serde::de::DeserializeOwned,
+    S: 'static,
+    F: FnOnce(Option<C>) -> S + panic::UnwindSafe,
+{
+    trace!("execute_safe_init: entering");
+
+    // Deserialize as Option<C> - the JSON can be null or the actual config
+    let config: Option<C> = if config_ptr.is_null() || config_len == 0 {
+        None
+    } else {
+        let config_bytes = unsafe { std::slice::from_raw_parts(config_ptr, config_len) };
+        match serde_json::from_slice::<Option<C>>(config_bytes) {
+            Ok(config) => config,
+            Err(err) => {
+                let error = CapturedError::new(err).with_location(location)
+                
+                return BridgeVec::from_transport_error(&detailed_err).into();
+            }
+        }
+    };
+
+    clear_last_panic();
+
+    trace!("execute_safe_init: executing init_fn");
+    let result = panic::catch_unwind(AssertUnwindSafe(|| init_fn(config)));
+
+    match result {
+        Ok(state) => {
+            debug!("execute_safe_init: state created successfully");
+            FfiInitResult::ok(Box::into_raw(Box::new(state)) as *mut c_void)
+        }
+        Err(_) => {
+            let panic_info = recover_panic_info();
+            error!(panic = ?panic_info, "execute_safe_init: panic caught during initialization");
+            BridgeError::RemoteError(panic_info).into()
+        }
     }
 }
 
-pub fn execute_safe_async<'a, Fut, O>(fut: Fut) -> FfiBorrowedFutureResult<'a>
+#[tracing::instrument(skip(reset_fn))]
+pub unsafe fn execute_safe_reset<S, F>(state_ptr: *mut c_void, reset_fn: F) -> *const u8
 where
-    Fut: std::future::Future<Output = O> + Send + 'a,
-    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
+    S: 'static,
+    F: FnOnce(&mut S) + panic::UnwindSafe,
 {
-    trace!("execute_safe_async: preparing future");
-    let _guard = get_runtime().enter();
+    trace!("execute_safe_reset: entering");
 
-    FfiBorrowedFutureResult::Future(BorrowingFfiFuture::<'a>::new(async move {
-        trace!("execute_safe_async: future polling started");
+    if state_ptr.is_null() {
+        error!("execute_safe_reset: state pointer is null");
+        return BridgeError::NullPointer.to_vec().into_raw();
+    }
+
+    let state = unsafe { &mut *(state_ptr as *mut S) };
+
+    clear_last_panic();
+
+    trace!("execute_safe_reset: executing reset_fn");
+    let result = panic::catch_unwind(AssertUnwindSafe(|| reset_fn(state)));
+
+    match result {
+        Ok(_) => {
+            debug!("execute_safe_reset: state reset successfully");
+            BridgeVec::ok().into_raw()
+        }
+        Err(_) => {
+            let panic_info = recover_panic_info();
+            error!(panic = ?panic_info, "execute_safe_reset: panic caught during reset");
+            BridgeError::RemoteError(panic_info).to_vec().into_raw()
+        }
+    }
+}
+
+// --- Async Wrappers ---
+
+/// Safe wrapper for Async Init functions.
+/// Returns FfiBorrowedFutureObjectResult.
+/// The closure receives `Option<C>` directly.
+#[tracing::instrument(skip(init_fn))]
+pub unsafe fn execute_safe_async_init<'a, C, S, Fut, F>(
+    config_ptr: *const u8,
+    config_len: usize,
+    init_fn: F,
+) -> FfiBorrowedFutureObjectResult<'a>
+where
+    C: serde::de::DeserializeOwned + Send + 'static,
+    S: Send + 'static,
+    Fut: std::future::Future<Output = S> + Send + 'a,
+    F: FnOnce(Option<C>) -> Fut + Send + 'a,
+{
+    trace!("execute_safe_async_init: entering");
+
+    // Deserialize as Option<C> - the JSON can be null or the actual config
+    let config: Option<C> = if config_ptr.is_null() || config_len == 0 {
+        None
+    } else {
+        let config_bytes = unsafe { std::slice::from_raw_parts(config_ptr, config_len) };
+        match serde_json::from_slice::<Option<C>>(config_bytes) {
+            Ok(config) => config,
+            Err(err) => {
+                let location = std::panic::Location::caller();
+                let error = Some(err.to_string());
+                // Capture stack trace to pinpoint where the conversion happened
+                let backtrace = std::backtrace::Backtrace::capture();
+                let cause = match backtrace.status() {
+                    std::backtrace::BacktraceStatus::Captured => Some(backtrace.to_string()),
+                    _ => None,
+                };
+
+                let detailed_err = CapturedError {
+                    message: err.to_string(),
+                    file: location.file().to_string(),
+                    line: location.line(),
+                    column: location.column(),
+                    error,
+                    cause,
+                };
+                
+                return BridgeVec::from_transport_error(&detailed_err).into();
+            }
+        }
+    };
+
+    // 2. Return Borrowing Future
+    let _guard = get_runtime().enter();
+    FfiBorrowedFutureObjectResult::Future(BorrowingFfiFuture::<'a>::new(async move {
+        trace!("execute_safe_async_init: future polling started");
         clear_last_panic();
-        let result = std::panic::AssertUnwindSafe(fut).catch_unwind().await;
+
+        // Note: We move the deserialized config into the future here
+        let result = AssertUnwindSafe(init_fn(config)).catch_unwind().await;
 
         match result {
-            Ok(logic_result) => {
-                debug!("execute_safe_async: logic completed successfully");
-                safe_io::make_output(&logic_result)
+            Ok(state) => {
+                debug!("execute_safe_async_init: async init completed successfully");
+                FfiInitResult::ok(Box::into_raw(Box::new(state)) as *mut c_void)
             }
             Err(_) => {
-                let panic = recover_panic_info();
-                trace!(panic = ?panic, "execute_safe_async: panic caught during async execution");
-                safe_io::make_error_output(FfiError::CapabilityLogicPanicked(panic))
+                let panic_info = recover_panic_info();
+                error!(panic = ?panic_info, "execute_safe_async_init: panic caught during async init");
+                BridgeError::RemoteError(panic_info).into()
             }
         }
     }))
 }
 
-/// Complete call with state, client, and input
-pub fn sci_call<'a, S, C, I, O, F, Fut>(
-    client_state_ptr: *const u8,
-    client_state_len: usize,
-    input_ptr: *const u8,
-    input_len: usize,
-    host_state_ptr: *mut std::ffi::c_void,
-    func: F,
+/// Safe wrapper for Async Reset functions.
+/// Returns FfiBorrowedFutureResult (which wraps FfiResult).
+#[tracing::instrument(skip(reset_fn))]
+pub unsafe fn execute_safe_async_reset<'a, S, Fut, F>(
+    state_ptr: *mut c_void,
+    reset_fn: F,
 ) -> FfiBorrowedFutureResult<'a>
 where
-    S: Send + 'a,
-    C: Bridgeable + Send + 'a,
-    I: Bridgeable + Send + 'a,
-    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
-    F: FnOnce(&'a mut S, C, I) -> Fut + Send + 'a,
-    Fut: std::future::Future<Output = O> + Send + 'a,
+    S: Send + 'static,
+    Fut: std::future::Future<Output = ()> + Send + 'a,
+    F: FnOnce(&'a mut S) -> Fut + Send + 'a,
 {
-    let state = match unsafe { safe_io::get_capability_state::<'a, S>(host_state_ptr) } {
-        Ok(state) => state,
-        Err(error) => return error.into(),
-    };
+    trace!("execute_safe_async_reset: entering");
 
-    let client: C = match unsafe { safe_io::get_input::<C>(client_state_ptr, client_state_len) } {
-        Ok(client) => client,
-        Err(error) => return error.into(),
-    };
+    if state_ptr.is_null() {
+        error!("execute_safe_reset: state pointer is null");
+        return BridgeError::NullPointer.into();
+    }
 
-    let input: I = match unsafe { safe_io::get_input::<I>(input_ptr, input_len) } {
-        Ok(input) => input,
-        Err(error) => return error.into(),
-    };
+    let state = unsafe { &mut *(state_ptr as *mut S) };
 
-    execute_safe_async((func)(state, client, input))
-}
+    let _guard = get_runtime().enter();
+    FfiBorrowedFutureResult::Future(BorrowingFfiFuture::<'a>::new(async move {
+        trace!("execute_safe_async_reset: future polling started");
+        clear_last_panic();
 
-/// Call with state and client (no input)
-pub fn sc_call<'a, S, C, O, F, Fut>(
-    client_state_ptr: *const u8,
-    client_state_len: usize,
-    _input_ptr: *const u8,
-    _input_len: usize,
-    host_state_ptr: *mut std::ffi::c_void,
-    func: F,
-) -> FfiBorrowedFutureResult<'a>
-where
-    S: Send + 'a,
-    C: Bridgeable + Send + 'a,
-    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
-    F: FnOnce(&'a mut S, C) -> Fut + Send + 'a,
-    Fut: std::future::Future<Output = O> + Send + 'a,
-{
-    let state = match unsafe { safe_io::get_capability_state::<'a, S>(host_state_ptr) } {
-        Ok(state) => state,
-        Err(error) => return error.into(),
-    };
+        let result = AssertUnwindSafe(reset_fn(state)).catch_unwind().await;
 
-    let client: C = match unsafe { safe_io::get_input::<C>(client_state_ptr, client_state_len) } {
-        Ok(client) => client,
-        Err(error) => return error.into(),
-    };
-    execute_safe_async((func)(state, client))
-}
-
-/// Call with input only (no state or client)
-pub fn i_call<'a, I, O, F, Fut>(
-    _client_state_ptr: *const u8,
-    _client_state_len: usize,
-    input_ptr: *const u8,
-    input_len: usize,
-    _host_state_ptr: *mut std::ffi::c_void,
-    func: F,
-) -> FfiBorrowedFutureResult<'a>
-where
-    I: Bridgeable + Send + 'a,
-    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
-    F: FnOnce(I) -> Fut + Send + 'a,
-    Fut: std::future::Future<Output = O> + Send + 'a,
-{
-    let input: I = match unsafe { safe_io::get_input::<I>(input_ptr, input_len) } {
-        Ok(input) => input,
-        Err(error) => return error.into(),
-    };
-    execute_safe_async((func)(input))
-}
-
-/// Call with no arguments
-pub fn empty_call<'a, O, F, Fut>(
-    _client_state_ptr: *const u8,
-    _client_state_len: usize,
-    _input_ptr: *const u8,
-    _input_len: usize,
-    _host_state_ptr: *mut std::ffi::c_void,
-    func: F,
-) -> FfiBorrowedFutureResult<'a>
-where
-    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
-    F: FnOnce() -> Fut + Send + 'a,
-    Fut: std::future::Future<Output = O> + Send + 'a,
-{
-    execute_safe_async((func)())
+        match result {
+            Ok(_) => {
+                debug!("execute_safe_async_reset: async reset completed successfully");
+                BridgeVec::ok().into_raw()
+            }
+            Err(_) => {
+                let panic_info = recover_panic_info();
+                error!(panic = ?panic_info, "execute_safe_async_reset: panic caught during async reset");
+                BridgeError::RemoteError(panic_info).to_vec().into_raw()
+            }
+        }
+    }))
 }

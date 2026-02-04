@@ -7,7 +7,7 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use bridge_vec::BridgeVec;
+use bridge_vec::{BridgeError, BridgeVec};
 use tracing::{debug, error, trace};
 
 pub struct InitResultBridge;
@@ -16,7 +16,7 @@ impl InitResultBridge {
     pub unsafe fn from_ffi(
         res: FfiInitResult,
         ident: &CapIdentity,
-    ) -> Result<*mut c_void, PyroductError> {
+    ) -> Result<*mut c_void, BridgeError> {
         trace!(tag = res.tag, "InitResultBridge: processing FFI result");
         match res.tag {
             0 => {
@@ -25,7 +25,9 @@ impl InitResultBridge {
             }
             1 => {
                 debug!("InitResultBridge: initialization failed, deserializing error");
-                Err(unsafe { deserialize_error(res.error) }.to_capability_error(ident))
+                let bridge_error = unsafe { BridgeVec::from_raw(res.error) }?;
+                let bridge_error = bridge_error.parse_as_error();
+                Err(bridge_error.to_capability_error(ident))
             }
             _ => {
                 error!(tag = res.tag, "InitResultBridge: unknown tag received");

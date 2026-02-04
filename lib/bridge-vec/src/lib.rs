@@ -2,9 +2,9 @@
 //!
 //! `bridge_vec` provides a specialized buffer type optimized for moving complex Rust types
 //! across boundaries (like FFI to dynamically loaded rust) or process boundaries with zero copy overhead.
-//! 
-//! It is meant to provide a unified data structure to safely pass across ffi, tcp, wasm, and unix-sockets 
-//! to other rust libraries. 
+//!
+//! It is meant to provide a unified data structure to safely pass across ffi, tcp, wasm, and unix-sockets
+//! to other rust libraries.
 //!
 //! ## How it works
 //!
@@ -19,7 +19,7 @@
 //! 4.  **Access**: On the receiving end, the pointer is reconstructed into a `BridgeVec`. The data can
 //!     then be accessed immediately (zero-copy) via `parse()`, or fully deserialized back into a Rust type.
 //!
-//! ## Example
+//! ### Example
 //!
 //! ```rust
 //! use bridge_vec::{bridgeable, BridgeVec, Bridgeable};
@@ -67,7 +67,102 @@
 //!     Ok(())
 //! }
 //! ```
-//! 
+//!
+//! ## Results
+//!
+//! Results are supported with dedicated functions. `serialize_result` and `parse_result`.
+//! The wire format handles this natively.
+//!
+//! ### Example: Result Transport
+//!
+//! ```rust
+//! use bridge_vec::{bridgeable, BridgeVec, Bridgeable};
+//!
+//! // 1. Define Success Type
+//! #[bridgeable]
+//! #[derive(Debug, PartialEq)]
+//! struct Response {
+//!     id: u32,
+//!     payload: String,
+//! }
+//!
+//! // 2. Define Error Type
+//! #[bridgeable]
+//! #[derive(Debug, PartialEq)]
+//! struct ApiError {
+//!     code: u16,
+//!     reason: String,
+//! }
+//!
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // --- Success Case ---
+//!     let success: Result<Response, ApiError> = Ok(Response {
+//!         id: 101,
+//!         payload: "Data retrieved".to_string(),
+//!     });
+//!
+//!     // Serialize: Sets Status = 0 (ValidData)
+//!     let vec = BridgeVec::serialize_result(&success)?;
+//!     assert_eq!(vec.status(), 0);
+//!
+//!     // Parse: Returns Result<TypedBuf<Response>, TypedBuf<ApiError>>
+//!     match BridgeVec::parse_result::<Response, ApiError>(vec)? {
+//!         Ok(data) => assert_eq!(data.payload, "Data retrieved"),
+//!         Err(_) => panic!("Expected success"),
+//!     }
+//!
+//!     // --- Failure Case ---
+//!     let failure: Result<Response, ApiError> = Err(ApiError {
+//!         code: 404,
+//!         reason: "Not Found".to_string(),
+//!     });
+//!
+//!     // Serialize: Sets Status = 1 (UserError)
+//!     let vec_err = BridgeVec::serialize_result(&failure)?;
+//!     assert_eq!(vec_err.status(), 1);
+//!
+//!     // Parse: Returns Err(TypedBuf<ApiError>)
+//!     match BridgeVec::parse_result::<Response, ApiError>(vec_err)? {
+//!         Ok(_) => panic!("Expected error"),
+//!         Err(e) => {
+//!             assert_eq!(e.code, 404);
+//!             assert_eq!(e.reason, "Not Found");
+//!         }
+//!     }
+//!
+//!     Ok(())
+//! }
+//! ```
+//!
+//! # FFI Safety & Panic Handling
+//!
+//! This module provides the safety layer required when crossing FFI boundaries (e.g., calling
+//! into a dynamic library or from a C host). It ensures that panics in Rust code do not
+//! unwind across the FFI boundary, which is undefined behavior.
+//!
+//! ### Features
+//!
+//! 1. **Panic Catching**: Wraps execution in `catch_unwind` to contain panics.
+//! 2. **Rich Error Reporting**: Installs a custom panic hook to capture file, line, and message details
+//!    into Thread Local Storage (TLS) before the stack unwinds.
+//! 3. **Transport Error Serialization**: Converts panics or serialization failures into a
+//!    `BridgeVec` with `Status::TransportError` (2), allowing the caller to receive a structured
+//!    error report safely.
+//!
+//! ### Usage
+//!
+//! Use `execute_safe` to wrap any logic intended for FFI export:
+//!
+//! ```ignore
+//! #[no_mangle]
+//! pub extern "C" fn my_ffi_func() -> *mut u8 {
+//!     bridge_vec::ffi::execute_safe(|| {
+//!         // Your logic here
+//!         process_data()
+//!     }).into_raw()
+//! }
+//! ```
+//!
 //! # Memory Layout & Header Protocol
 //!
 //! `BridgeVec` utilizes a custom 16-byte aligned memory layout compatible with FFI
@@ -115,15 +210,25 @@
 //! * **`2` (Transport Error)**: The payload is a serialized `RkyvFfiError`, or a transport error. Indicates a system failure (e.g., serialization panic, validation failure) rather than a logic error.
 //! * **`3` (Utf8Error)**: The payload is a raw UTF-8 string. Used as a catastrophic fallback if system error serialization fails.
 //! * **`4` (ValidUtf8)**: Reserved/Unused.
-//! 
-//! ## Do Not Use In Production (yet)
-//! 
-//! We're going to dog food this until we get versioning correct
-
-//! # BridgeVec: Zero-Copy Transport
 //!
-//! `bridge_vec` provides a specialized buffer type optimized for moving complex Rust types
-//! across boundaries (like FFI to dynamically loaded rust) or process boundaries with zero copy overhead.
+//! //! `BridgeVec` optimizes `Result<T, E>` transport by lifting the variant discriminant into the
+//! **Status** header field. This avoids the overhead of serializing the `Result` enum wrapper
+//! and allows the receiving end to immediately distinguish between success and failure before
+//! parsing the payload.
+//!
+//! - **Success (`Ok(T)`)**:
+//!   - **Status**: `0` (ValidData)
+//!   - **Payload**: Serialized `T`
+//!   - **Version**: Uses the `User Version` field.
+//!
+//! - **Failure (`Err(E)`)**:
+//!   - **Status**: `1` (UserError)
+//!   - **Payload**: Serialized `E`
+//!   - **Version**: Uses the `User Error Version` field.
+//!
+//! ## Do Not Use In Production (yet)
+//!
+//! We're going to dog food this until we get versioning correct
 
 use std::alloc::{self, Layout};
 use std::hash::Hasher;
@@ -135,13 +240,16 @@ use std::{fmt, io, slice};
 // Re-export rkyv for users
 pub use rkyv;
 
-// Assume these modules exist in your crate structure
-mod result;
 mod common;
 pub mod ffi;
 pub mod ser_de;
-pub mod tokio;
+mod captured;
+
 pub use rkyv::rancor::Error as RancorError;
+
+// Async is not supported for wasm 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod tokio;
 
 // Re-export derive macro
 pub use bridge_derive::bridgeable;
@@ -149,92 +257,170 @@ pub use bridge_derive::bridgeable;
 pub(crate) const MAGIC_VAL: u32 = 0x7079726F; // "pyro"
 pub const PROTOCOL_VERSION: u8 = 1;
 
-use thiserror::Error;
 use rkyv::rancor;
+use thiserror::Error;
+
+pub use captured::CapturedError;
+
 
 /// The central error type for BridgeVec operations.
+/// 
+/// This enum maps directly to the `DataStatus` header field:
+/// - **Local Errors**: Issues detected by this process (Status 100-149).
+/// - **Remote Errors**: Issues reported by the foreign process (Status 3, 150-199).
 #[derive(Error)]
 pub enum BridgeError {
-    // Status code mismatches
+    // --- User Logic Mismatches ---
     
-    #[error("The data is marked as a user error")]
+    #[error("The data is marked as a user error (Status 1)")]
     UserError(ErrorVec),
 
-    #[error("The data is marked as a user success")]
+    #[error("The data is marked as a user success (Status 0) but an error was expected")]
     UserSuccess(BridgeVec),
 
-    #[error("Unknown data status code: {0}")]
-    UnknownStatus(u8, BridgeVec),
+    /// Status 3: The remote process panicked or crashed.
+    #[error("Remote Code Panic: {0}")]
+    RemotePanic(Box<CapturedError>),
 
+    // --- Remote Transport Failures (Payload is JSON CapturedError) ---
+    
+    /// Status 150: Remote failed to serialize the return value.
+    #[error("Remote Serialization Error: {0}")]
+    RemoteSerialization(Box<CapturedError>),
 
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] rancor::Error),
+    /// Status 151: Remote failed to deserialize the arguments we sent.
+    #[error("Remote Deserialization Error: {0}")]
+    RemoteDeserialization(Box<CapturedError>),
 
-    #[error("Transport error {0}")]
-    Transport(serde_json::Value),
+    /// Status 152: Remote transport layer failure.
+    #[error("Remote Transport Error: {0}")]
+    RemoteTransport(Box<CapturedError>),
 
-    /// Wrapper for IO errors (Tokio/Network).
-    #[error("I/O error: {0}")]
+    // --- Remote Protocol Complaints (Remote received bad data from us) ---
+    
+    /// Status 153
+    #[error("Remote received a Null Pointer from us")]
+    RemoteNullPointer,
+
+    /// Status 154
+    #[error("Remote received a Misaligned Pointer from us")]
+    RemoteMisalignedPointer,
+
+    /// Status 155
+    #[error("Remote received an Invalid Header (Magic Mismatch) from us")]
+    RemoteInvalidHeader,
+
+    /// Status 156
+    #[error("Remote failed layout/capacity calculation based on our header")]
+    RemoteLayoutError,
+
+    // --- Local Processing Errors (Status 100-104) ---
+
+    /// Status 100 & 101: Wrapper for rkyv/rancor errors occurring locally.
+    #[error("Local Serialization error: {0}")]
+    Serialization(rancor::Error),
+
+     #[error("Local Serialization panic: {0}")]
+    SerializationPanic(Box<CapturedError>),
+
+    #[error("Local Validation error: {0}")]
+    Validation(rancor::Error),
+
+    #[error("Local Validation panic: {0}")]
+    ValidationPanic(Box<CapturedError>),
+
+    #[error("Local Deserialization error: {0}")]
+    Deserialization(rancor::Error),
+
+    #[error("Local Deserialization panic: {0}")]
+    DeserializationPanic(Box<CapturedError>),
+
+    /// Status 102: Generic local transport issues.
+    #[error("Local Transport error: {0}")]
+    Transport(String),
+
+    /// Status 103: Wrapper for std::io::Error.
+    #[error("Local I/O error: {0}")]
     Io(#[from] std::io::Error),
 
-    /// Wrapper for UTF-8 encoding/decoding errors.
-    #[error("UTF-8 error: {0}")]
+    /// Status 104: Wrapper for UTF-8 errors.
+    #[error("Local UTF-8 error: {0}")]
     Utf8(#[from] std::str::Utf8Error),
 
-    // --- Memory / Pointer Errors (replacing &'static str in lib.rs) ---
+    // --- Local Memory/Protocol Errors (Status 105-109) ---
 
+    /// Status 105
     #[error("BridgeVec pointer is null")]
     NullPointer,
 
+    /// Status 106
     #[error("BridgeVec pointer is not 16-byte aligned")]
     MisalignedPointer,
 
+    /// Status 107
     #[error("Invalid Magic Header: expected 0x7079726F")]
     InvalidHeader,
 
+    /// Status 108
     #[error("Capacity overflow or invalid layout calculation")]
     LayoutError,
 
-    // --- FFI / Protocol Errors ---
-
-    #[error("Remote system error: {0}")]
-    RemoteError(String),
-
+    /// Status 109
     #[error("Protocol mismatch: Stream ended unexpectedly")]
     UnexpectedEof,
+
+    // --- Fallback ---
+
+    #[error("Unknown data status code: {0}")]
+    UnknownStatus(u8, BridgeVec),
 }
 
 impl fmt::Debug for BridgeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UserError(_) => f.debug_tuple("UserError").finish(),
-            Self::UserSuccess(_) => f.debug_tuple("UserSuccess").finish(),
-            Self::Serialization(arg0) => f.debug_tuple("Serialization").field(arg0).finish(),
-            Self::Transport(arg0) => f.debug_tuple("Transport").field(arg0).finish(),
-            Self::Io(arg0) => f.debug_tuple("Io").field(arg0).finish(),
-            Self::Utf8(arg0) => f.debug_tuple("Utf8").field(arg0).finish(),
+            Self::UserError(_) => write!(f, "UserError(...)"),
+            Self::UserSuccess(_) => write!(f, "UserSuccess(...)"),
+            Self::RemotePanic(e) => f.debug_tuple("RemotePanic").field(e).finish(),
+            Self::RemoteSerialization(e) => f.debug_tuple("RemoteSerialization").field(e).finish(),
+            Self::RemoteDeserialization(e) => f.debug_tuple("RemoteDeserialization").field(e).finish(),
+            Self::RemoteTransport(e) => f.debug_tuple("RemoteTransport").field(e).finish(),
+            Self::RemoteNullPointer => write!(f, "RemoteNullPointer"),
+            Self::RemoteMisalignedPointer => write!(f, "RemoteMisalignedPointer"),
+            Self::RemoteInvalidHeader => write!(f, "RemoteInvalidHeader"),
+            Self::RemoteLayoutError => write!(f, "RemoteLayoutError"),
+            Self::Serialization(e) => f.debug_tuple("Serialization").field(e).finish(),
+            Self::SerializationPanic(e) => f.debug_tuple("SerializationPanic").field(e).finish(),
+            Self::Validation(e) => f.debug_tuple("Validation").field(e).finish(),
+            Self::ValidationPanic(e) => f.debug_tuple("ValidationPanic").field(e).finish(),
+            Self::Deserialization(e) => f.debug_tuple("Deserialization").field(e).finish(),
+            Self::DeserializationPanic(e) => f.debug_tuple("DeserializationPanic").field(e).finish(),
+            Self::Transport(s) => f.debug_tuple("Transport").field(s).finish(),
+            Self::Io(e) => f.debug_tuple("Io").field(e).finish(),
+            Self::Utf8(e) => f.debug_tuple("Utf8").field(e).finish(),
             Self::NullPointer => write!(f, "NullPointer"),
             Self::MisalignedPointer => write!(f, "MisalignedPointer"),
             Self::InvalidHeader => write!(f, "InvalidHeader"),
             Self::LayoutError => write!(f, "LayoutError"),
-            Self::RemoteError(arg0) => f.debug_tuple("RemoteError").field(arg0).finish(),
             Self::UnexpectedEof => write!(f, "UnexpectedEof"),
-            Self::UnknownStatus(arg0, _) => f.debug_tuple("UnknownStatus").field(arg0).finish(),
+            Self::UnknownStatus(code, _) => f.debug_tuple("UnknownStatus").field(code).finish(),
         }
     }
 }
+
 
 /// A specialized Result type for BridgeVec operations.
 pub type BridgeResult<T> = Result<T, BridgeError>;
 
 /// Trait automatically derived by `#[bridgeable]`
 pub trait Bridgeable: ::rkyv::Archive + Sized {
-    fn serialize(&self) -> Result<BridgeVec, RancorError>;
-    fn unchecked_parse(vec: BridgeVec) -> Result<TypedBuf<Self>, RancorError>;
+    fn deserialize(vec: &TypedBuf<Self>) -> Result<Self, BridgeError>;
+    fn serialize(&self) -> Result<BridgeVec, BridgeError>;
+    fn unchecked_parse(vec: BridgeVec) -> Result<TypedBuf<Self>, BridgeError>;
+    
     fn parse(vec: BridgeVec) -> Result<TypedBuf<Self>, BridgeError> {
         if vec.parsed_status() == Ok(DataStatus::ValidData) {
-                let buf = Self::unchecked_parse(vec)?;
-                Ok(buf)
+            let buf = Self::unchecked_parse(vec)?;
+            Ok(buf)
         } else {
             Err(vec.parse_as_error())
         }
@@ -249,19 +435,10 @@ pub trait Bridgeable: ::rkyv::Archive + Sized {
     }
 }
 
-pub trait ResultBridgeable<T, E> 
-    where 
-        T: Bridgeable,
-        E: Bridgeable,
-{
-    fn serialize(&self) -> Result<BridgeVec, RancorError>;
-    fn parse(vec: BridgeVec) -> Result<Result<TypedBuf<T>, TypedBuf<E>>, BridgeError>;
-}
-
 /// A 16-byte aligned buffer with a self-describing header.
 /// Compatible with FFI passing as a raw pointer or TCP/Unix framing.
-/// 
-/// 
+///
+///
 pub struct BridgeVec {
     ptr: NonNull<u8>,
 }
@@ -291,14 +468,62 @@ pub struct BridgeVecRef<'a> {
     _marker: PhantomData<&'a [u8]>,
 }
 
-/// Status codes located at Offset 0x0F
+/// Status codes located at Offset 0x0F in the header.
+/// 
+/// - **0-1**: User Logic (Success/Failure)
+/// - **3**: Caught Remote Error (Panic/Crash)
+/// - **4-99**: Reserved
+/// - **100-149**: Reserved for Local/Proxy errors
+/// - **150-199**: Remote Execution & Memory Safety errors
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataStatus {
+    /// The payload is a valid `rkyv` archived `T`.
     ValidData = 0,
+    /// The payload is a valid `rkyv` archived `E` (User Logic Error).
     UserError = 1,
-    TransportError = 2,
-    Utf8Error = 3,
+    
+    /// The remote code panicked or failed in an unhandled way.
+    /// Payload is `CapturedError` as JSON.
+    CodeError = 3,
+
+    // --- Local Errors (100-149) ---
+    // Used when the error occurs locally before leaving the bridge.
+    LocalSerialization = 100,
+    LocalDeserialization = 101,
+    LocalTransport = 102,
+    LocalIo = 103,
+    LocalUtf8 = 104,
+    LocalNullPointer = 105,
+    LocalMisalignedPointer = 106,
+    LocalInvalidHeader = 107,
+    LocalLayoutError = 108,
+    LocalUnexpectedEof = 109,
+
+    // --- Remote Execution Errors (150-152) ---
+    
+    /// The remote service failed to serialize the return value.
+    /// Payload is `CapturedError` (JSON).
+    RemoteSerialization = 150,
+    /// The remote service failed to serialize the return value.
+    /// Payload is `CapturedError` (JSON).
+    RemoteDeserialization = 151,
+    
+    /// Generic remote transport failure.
+    /// Payload is JSON encoded, but depends on the transport.
+    RemoteTransport = 152,
+
+    // --- Remote Memory Safety Errors (153-156) ---
+    // These indicate the remote side received invalid memory from us.
+
+    /// Remote received a Null Pointer.
+    RemoteNullPointer = 153,
+    /// Remote received a Misaligned Pointer.
+    RemoteMisalignedPointer = 154,
+    /// Remote received an Invalid Header (Magic Mismatch).
+    RemoteInvalidHeader = 155,
+    /// Remote failed layout/capacity calculation.
+    RemoteLayoutError = 156,
 }
 
 impl BridgeVec {
@@ -340,9 +565,12 @@ impl BridgeVec {
             ptr::write(raw.add(Self::OFFSET_MAGIC) as *mut u32, MAGIC_VAL);
             ptr::write(raw.add(Self::OFFSET_LEN) as *mut u32, 0);
             ptr::write(raw.add(Self::OFFSET_CAP) as *mut u32, total_cap as u32);
-            
+
             // Byte fields
-            ptr::write(raw.add(Self::OFFSET_WIRE_FORMAT) as *mut u8, PROTOCOL_VERSION);
+            ptr::write(
+                raw.add(Self::OFFSET_WIRE_FORMAT) as *mut u8,
+                PROTOCOL_VERSION,
+            );
             ptr::write(raw.add(Self::OFFSET_USER_VERSION) as *mut u8, 0);
             ptr::write(raw.add(Self::OFFSET_ERR_VERSION) as *mut u8, 0);
             ptr::write(raw.add(Self::OFFSET_STATUS) as *mut u8, 0); // Default: ValidData
@@ -359,19 +587,17 @@ impl BridgeVec {
     /// - `ptr` must have been created by `BridgeVec::into_raw()` or equivalent
     /// - Caller must ensure no other owner exists for this allocation
     /// - Caller transfers ownership to the returned `BridgeVec`
-    pub unsafe fn from_raw(ptr: *const u8) -> Result<Self, &'static str> {
+    pub unsafe fn from_raw(ptr: *const u8) -> Result<Self, BridgeError> {
         if ptr.is_null() {
-            return Err("Pointer is null");
+            return Err(BridgeError::NullPointer);
         }
-
         if (ptr as usize) % Self::ALIGN != 0 {
-            return Err("Pointer is not 16-byte aligned");
+            return Err(BridgeError::MisalignedPointer);
         }
 
-        // Verify Magic Number
         let magic = unsafe { ptr::read(ptr.add(Self::OFFSET_MAGIC) as *const u32) };
         if magic != MAGIC_VAL {
-            return Err("Invalid magic header");
+            return Err(BridgeError::InvalidHeader);
         }
 
         Ok(Self {
@@ -385,18 +611,17 @@ impl BridgeVec {
     /// - `ptr` must point to a valid BridgeVec allocation
     /// - The allocation must remain valid for lifetime `'a`
     /// - Caller must not free or reallocate the memory during `'a`
-    pub unsafe fn borrow_raw<'a>(ptr: *const u8) -> Result<BridgeVecRef<'a>, &'static str> {
+    pub unsafe fn borrow_raw<'a>(ptr: *const u8) -> Result<BridgeVecRef<'a>, BridgeError> {
         if ptr.is_null() {
-            return Err("Pointer is null");
+            return Err(BridgeError::NullPointer);
         }
-
         if (ptr as usize) % Self::ALIGN != 0 {
-            return Err("Pointer is not 16-byte aligned");
+            return Err(BridgeError::MisalignedPointer);
         }
 
         let magic = unsafe { ptr::read(ptr.add(Self::OFFSET_MAGIC) as *const u32) };
         if magic != MAGIC_VAL {
-            return Err("Invalid magic header");
+            return Err(BridgeError::InvalidHeader);
         }
 
         Ok(BridgeVecRef {
@@ -406,10 +631,10 @@ impl BridgeVec {
     }
 
     /// Consumes self and returns the raw pointer.
-    /// 
+    ///
     /// Caller is responsible for eventually reconstructing via `from_raw`
     /// and dropping, or manually deallocating with the correct layout.
-    pub fn into_raw(self) -> *mut u8 {
+    pub fn into_raw(self) -> *const u8 {
         let ptr = self.ptr.as_ptr();
         std::mem::forget(self);
         ptr
@@ -428,16 +653,41 @@ impl BridgeVec {
         match self.status() {
             0 => Ok(DataStatus::ValidData),
             1 => Ok(DataStatus::UserError),
-            2 => Ok(DataStatus::TransportError),
-            3 => Ok(DataStatus::Utf8Error),
-            err => Err(err),
+            3 => Ok(DataStatus::CodeError),
+            
+            100 => Ok(DataStatus::LocalSerialization),
+            101 => Ok(DataStatus::LocalDeserialization),
+            102 => Ok(DataStatus::LocalTransport),
+            103 => Ok(DataStatus::LocalIo),
+            104 => Ok(DataStatus::LocalUtf8),
+            105 => Ok(DataStatus::LocalNullPointer),
+            106 => Ok(DataStatus::LocalMisalignedPointer),
+            107 => Ok(DataStatus::LocalInvalidHeader),
+            108 => Ok(DataStatus::LocalLayoutError),
+            109 => Ok(DataStatus::LocalUnexpectedEof),
+
+            150 => Ok(DataStatus::RemoteSerialization),
+            151 => Ok(DataStatus::RemoteDeserialization),
+            152 => Ok(DataStatus::RemoteTransport),
+            
+            153 => Ok(DataStatus::RemoteNullPointer),
+            154 => Ok(DataStatus::RemoteMisalignedPointer),
+            155 => Ok(DataStatus::RemoteInvalidHeader),
+            156 => Ok(DataStatus::RemoteLayoutError),
+            
+            other => Err(other),
         }
     }
 
     /// Sets the status code in the header (Offset 0x0F).
     #[inline]
     pub fn set_status(&mut self, status: u8) {
-        unsafe { ptr::write(self.ptr.as_ptr().add(Self::OFFSET_STATUS) as *mut u8, status) }
+        unsafe {
+            ptr::write(
+                self.ptr.as_ptr().add(Self::OFFSET_STATUS) as *mut u8,
+                status,
+            )
+        }
     }
 
     /// Gets the User Version (Offset 0x0D).
@@ -449,7 +699,12 @@ impl BridgeVec {
     /// Sets the User Version (Offset 0x0D).
     #[inline]
     pub fn set_version(&mut self, version: u8) {
-        unsafe { ptr::write(self.ptr.as_ptr().add(Self::OFFSET_USER_VERSION) as *mut u8, version) }
+        unsafe {
+            ptr::write(
+                self.ptr.as_ptr().add(Self::OFFSET_USER_VERSION) as *mut u8,
+                version,
+            )
+        }
     }
 
     /// Gets the User Error Version (Offset 0x0E).
@@ -461,7 +716,12 @@ impl BridgeVec {
     /// Sets the User Error Version (Offset 0x0E).
     #[inline]
     pub fn set_error_version(&mut self, version: u8) {
-        unsafe { ptr::write(self.ptr.as_ptr().add(Self::OFFSET_ERR_VERSION) as *mut u8, version) }
+        unsafe {
+            ptr::write(
+                self.ptr.as_ptr().add(Self::OFFSET_ERR_VERSION) as *mut u8,
+                version,
+            )
+        }
     }
 
     /// Gets the Wire Format Version (Offset 0x0C).
@@ -474,7 +734,27 @@ impl BridgeVec {
     #[doc(hidden)]
     #[inline]
     pub fn set_wire_format(&mut self, version: u8) {
-        unsafe { ptr::write(self.ptr.as_ptr().add(Self::OFFSET_WIRE_FORMAT) as *mut u8, version) }
+        unsafe {
+            ptr::write(
+                self.ptr.as_ptr().add(Self::OFFSET_WIRE_FORMAT) as *mut u8,
+                version,
+            )
+        }
+    }
+
+    /// Is this a Ok message?
+    pub fn is_ok(&self) -> bool {
+        self.status() == 0
+    }
+
+    /// Is this a error message?
+    pub fn is_err(&self) -> bool {
+        self.status() == 1
+    }
+
+    /// Is this a transport error?
+    pub fn is_bridge_err(&self) -> bool {
+        self.status() != 0 && self.status() != 1
     }
 
     // --- Data Accessors ---
@@ -546,9 +826,7 @@ impl BridgeVec {
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        unsafe {
-            slice::from_raw_parts_mut(self.ptr.as_ptr().add(Self::HEADER_SIZE), self.len())
-        }
+        unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr().add(Self::HEADER_SIZE), self.len()) }
     }
 
     pub fn clear(&mut self) {
@@ -594,41 +872,28 @@ impl BridgeVec {
             if new_ptr.is_null() {
                 alloc::handle_alloc_error(Layout::from_size_align(new_cap, Self::ALIGN).unwrap());
             }
-            ptr::write(
-                new_ptr.add(Self::OFFSET_CAP) as *mut u32,
-                new_cap as u32,
-            );
+            ptr::write(new_ptr.add(Self::OFFSET_CAP) as *mut u32, new_cap as u32);
             self.ptr = NonNull::new_unchecked(new_ptr);
         }
     }
 
-    pub(crate) fn from_transport_error<E: serde::Serialize + std::error::Error>(error: &E) -> Self {
-        // Start with a reasonable default capacity to avoid immediate re-allocs
-        let mut vec = BridgeVec::with_capacity(128);
-
-        // Stream JSON directly into the BridgeVec (zero intermediate copy)
-        match serde_json::to_writer(&mut vec, error) {
-            Ok(_) => {
-                vec.set_status(DataStatus::TransportError as u8);
-                vec
-            }
-            Err(e) => {
-                // Critical Fallback: JSON serialization failed.
-                // We clear the buffer (in case partially written JSON exists) 
-                // and write a raw panic string.
-                vec.clear();
-                
-                let fallback_msg = format!(
-                    "{{\"type\": \"Critical\", \"info\": \"JSON Serialization failed: {}\", \"for\": \"{}\"}}", 
-                    e,
-                    error,
-                );
-                
-                vec.extend_from_slice(fallback_msg.as_bytes());
-                vec.set_status(DataStatus::Utf8Error as u8); // Status 3
-                vec
-            }
+    /// Returns a new, owned BridgeVec representing Ok(()).
+    /// This performs an allocation so it can be safely dropped later.
+    pub fn ok() -> Self {
+        // We cannot return a pointer to static memory because BridgeVec::drop 
+        // will try to deallocate it. We must allocate new memory.
+        let vec = Self::with_capacity(0);
+        
+        // We explicitly overwrite the header with UNIT_BYTES to ensure 
+        // it matches the "official" static representation exactly.
+        unsafe {
+            ptr::copy_nonoverlapping(
+                UNIT_HEADER.0.as_ptr(), 
+                vec.ptr.as_ptr(), 
+                Self::HEADER_SIZE
+            );
         }
+        vec
     }
 }
 
@@ -649,7 +914,7 @@ impl<'a> BridgeVecRef<'a> {
     pub fn version(&self) -> u8 {
         unsafe { ptr::read(self.ptr.add(BridgeVec::OFFSET_USER_VERSION) as *const u8) }
     }
-    
+
     #[inline]
     pub fn error_version(&self) -> u8 {
         unsafe { ptr::read(self.ptr.add(BridgeVec::OFFSET_ERR_VERSION) as *const u8) }
@@ -684,6 +949,21 @@ impl<'a> BridgeVecRef<'a> {
 
     pub fn as_packet_slice(&self) -> &'a [u8] {
         unsafe { slice::from_raw_parts(self.ptr, BridgeVec::HEADER_SIZE + self.len()) }
+    }
+}
+
+impl BridgeVecRef<'static> {
+    /// Returns a static reference to the global Ok header.
+    /// This is Zero-Copy and Zero-Allocation.
+    pub fn ok() -> BridgeVecRef<'static> {
+        // SAFETY: 
+        // 1. UNIT_HEADER is static, so it lives for 'static.
+        // 2. UNIT_HEADER is #[repr(align(16))], satisfying alignment.
+        // 3. The bytes are valid (checked by UNIT_BYTES definition).
+        BridgeVecRef {
+            ptr: UNIT_HEADER.0.as_ptr(),
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -780,10 +1060,37 @@ impl io::Write for BridgeVec {
     }
 }
 
+/// Raw 16-byte header representing `Ok(())` (Unit).
+/// 
+/// Use this to write directly to network streams without heap allocation.
+/// 
+/// DO NOT RETURN THIS IN AN FFI SITUATION
+///
+/// Layout:
+/// - Magic:   0x7079726F ("pyro") (Little Endian: 6F 72 79 70)
+/// - Len:     0
+/// - Cap:     16 (Minimal Header Size)
+/// - WireFmt: 1 (PROTOCOL_VERSION)
+/// - Status:  0 (ValidData)
+const UNIT_BYTES: [u8; 16] = [
+    0x6F, 0x72, 0x79, 0x70, // 0x00: Magic
+    0x00, 0x00, 0x00, 0x00, // 0x04: Len (0)
+    0x10, 0x00, 0x00, 0x00, // 0x08: Cap (16)
+    0x01,                   // 0x0C: WireFormat (1)
+    0x00,                   // 0x0D: UserVer
+    0x00,                   // 0x0E: ErrVer
+    0x00,                   // 0x0F: Status (ValidData)
+];
+#[repr(C, align(16))]
+struct AlignedHeader([u8; 16]);
+
+// A static, aligned instance of the unit bytes
+static UNIT_HEADER: AlignedHeader = AlignedHeader(UNIT_BYTES);
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::alloc::{alloc, dealloc, Layout};
+    use std::alloc::{Layout, alloc, dealloc};
     use std::ptr;
 
     // =============================================================================
@@ -799,19 +1106,19 @@ mod tests {
         assert!(vec.capacity() >= BridgeVec::HEADER_SIZE);
     }
 
-#[test]
-fn test_with_capacity_small() {
-    let vec = BridgeVec::with_capacity(10);
-    assert_eq!(vec.len(), 0);
-    assert!(vec.capacity() >= 10 + BridgeVec::HEADER_SIZE);
-}
+    #[test]
+    fn test_with_capacity_small() {
+        let vec = BridgeVec::with_capacity(10);
+        assert_eq!(vec.len(), 0);
+        assert!(vec.capacity() >= 10 + BridgeVec::HEADER_SIZE);
+    }
 
-#[test]
-fn test_with_capacity_large() {
-    let vec = BridgeVec::with_capacity(10000);
-    assert_eq!(vec.len(), 0);
-    assert!(vec.capacity() >= 10000 + BridgeVec::HEADER_SIZE);
-}
+    #[test]
+    fn test_with_capacity_large() {
+        let vec = BridgeVec::with_capacity(10000);
+        assert_eq!(vec.len(), 0);
+        assert!(vec.capacity() >= 10000 + BridgeVec::HEADER_SIZE);
+    }
 
     #[test]
     fn test_default_header_values() {
@@ -848,17 +1155,17 @@ fn test_with_capacity_large() {
     }
 
     #[test]
-fn test_alignment_preserved_after_grow() {
-    let mut vec = BridgeVec::with_capacity(10);
-    
-    // Force multiple reallocations
-    for i in 0..1000 {
-        vec.push(i as u8);
+    fn test_alignment_preserved_after_grow() {
+        let mut vec = BridgeVec::with_capacity(10);
+
+        // Force multiple reallocations
+        for i in 0..1000 {
+            vec.push(i as u8);
+        }
+
+        let addr = vec.as_ptr() as usize;
+        assert_eq!(addr % 16, 0, "Alignment must be preserved after realloc");
     }
-    
-    let addr = vec.as_ptr() as usize;
-    assert_eq!(addr % 16, 0, "Alignment must be preserved after realloc");
-}
 
     // =============================================================================
     // Header Accessors
@@ -867,19 +1174,19 @@ fn test_alignment_preserved_after_grow() {
     #[test]
     fn test_header_byte_packing() {
         let mut vec = BridgeVec::with_capacity(10);
-        
+
         // Write distinct values to all 4 byte fields
         vec.set_wire_format(0xAA);
         vec.set_version(0xBB);
         vec.set_error_version(0xCC);
         vec.set_status(0xDD);
-        
+
         // Verify read back
         assert_eq!(vec.wire_format(), 0xAA);
         assert_eq!(vec.version(), 0xBB);
         assert_eq!(vec.error_version(), 0xCC);
         assert_eq!(vec.status(), 0xDD);
-        
+
         // Verify via raw slice to ensure correct offsets
         let raw = vec.as_packet_slice();
         assert_eq!(raw[12], 0xAA); // Wire Format
@@ -893,11 +1200,61 @@ fn test_alignment_preserved_after_grow() {
         // In previous buggy versions, writing status as u16 would overwrite data
         let mut vec = BridgeVec::with_capacity(1);
         vec.push(0xFF); // Data at offset 16
-        
+
         vec.set_status(0xEE); // Write to offset 15
-        
+
         assert_eq!(vec.status(), 0xEE);
-        assert_eq!(vec.as_slice()[0], 0xFF, "Setting status must not corrupt data");
+        assert_eq!(
+            vec.as_slice()[0],
+            0xFF,
+            "Setting status must not corrupt data"
+        );
+    }
+
+    // =============================================================================
+    // OK / Unit Construction
+    // =============================================================================
+
+    #[test]
+    fn test_bridge_vec_ok() {
+        let vec = BridgeVec::ok();
+
+        // Check Header correctness
+        assert_eq!(vec.len(), 0);
+        assert_eq!(vec.capacity(), 16);
+        assert_eq!(vec.status(), 0); // ValidData
+        assert_eq!(vec.wire_format(), 1);
+
+        // Check Memory Layout
+        assert_eq!(vec.as_ptr() as usize % 16, 0, "Owned Ok must be aligned");
+        
+        // Ensure it is actually owned (drop shouldn't panic/segfault)
+        drop(vec); 
+    }
+
+    #[test]
+    fn test_bridge_vec_ref_ok() {
+        let vec_ref = BridgeVecRef::ok();
+
+        assert_eq!(vec_ref.len(), 0);
+        assert_eq!(vec_ref.status(), 0);
+        assert_eq!(vec_ref.as_ptr() as usize % 16, 0, "Static Ref must be aligned");
+        
+        // Validate against raw bytes
+        let slice = vec_ref.as_packet_slice();
+        assert_eq!(slice, &UNIT_BYTES, "Ref should point to UNIT_BYTES content");
+    }
+
+    #[test]
+    fn test_ok_interoperability() {
+        let owned = BridgeVec::ok();
+        let reference = BridgeVecRef::ok();
+
+        // They should be byte-equivalent
+        assert_eq!(owned.as_packet_slice(), reference.as_packet_slice());
+        
+        // But distinct addresses (Owned is on heap, Ref is in static text/data segment)
+        assert_ne!(owned.as_ptr(), reference.as_ptr());
     }
 
     // =============================================================================
@@ -933,79 +1290,79 @@ fn test_alignment_preserved_after_grow() {
     }
 
     #[test]
-fn test_extend_from_slice_empty() {
-    let mut vec = BridgeVec::with_capacity(10);
-    vec.extend_from_slice(&[]);
-    
-    assert_eq!(vec.len(), 0);
-    assert!(vec.is_empty());
-}
+    fn test_extend_from_slice_empty() {
+        let mut vec = BridgeVec::with_capacity(10);
+        vec.extend_from_slice(&[]);
 
-#[test]
-fn test_extend_from_slice_small() {
-    let mut vec = BridgeVec::with_capacity(10);
-    vec.extend_from_slice(&[1, 2, 3, 4, 5]);
-    
-    assert_eq!(vec.len(), 5);
-    assert_eq!(vec.as_slice(), &[1, 2, 3, 4, 5]);
-}
+        assert_eq!(vec.len(), 0);
+        assert!(vec.is_empty());
+    }
 
-#[test]
-fn test_extend_from_slice_multiple() {
-    let mut vec = BridgeVec::with_capacity(10);
-    
-    vec.extend_from_slice(&[1, 2, 3]);
-    vec.extend_from_slice(&[4, 5, 6]);
-    vec.extend_from_slice(&[7, 8, 9]);
-    
-    assert_eq!(vec.len(), 9);
-    assert_eq!(vec.as_slice(), &[1, 2, 3, 4, 5, 6, 7, 8, 9]);
-}
+    #[test]
+    fn test_extend_from_slice_small() {
+        let mut vec = BridgeVec::with_capacity(10);
+        vec.extend_from_slice(&[1, 2, 3, 4, 5]);
 
-#[test]
-fn test_extend_from_slice_triggers_grow() {
-    let mut vec = BridgeVec::with_capacity(5);
-    let pattern: Vec<u8> = (0..200).collect();
-    
-    vec.extend_from_slice(&pattern);
-    
-    assert_eq!(vec.len(), 200);
-    assert_eq!(vec.as_slice(), &pattern[..]);
-}
+        assert_eq!(vec.len(), 5);
+        assert_eq!(vec.as_slice(), &[1, 2, 3, 4, 5]);
+    }
 
-#[test]
-fn test_clear_empty() {
-    let mut vec = BridgeVec::with_capacity(10);
-    vec.clear();
-    
-    assert_eq!(vec.len(), 0);
-    assert!(vec.is_empty());
-}
+    #[test]
+    fn test_extend_from_slice_multiple() {
+        let mut vec = BridgeVec::with_capacity(10);
 
-#[test]
-fn test_clear_with_data() {
-    let mut vec = BridgeVec::with_capacity(10);
-    vec.extend_from_slice(&[1, 2, 3, 4, 5]);
-    
-    let cap_before = vec.capacity();
-    vec.clear();
-    
-    assert_eq!(vec.len(), 0);
-    assert!(vec.is_empty());
-    assert_eq!(vec.capacity(), cap_before); // Capacity unchanged
-}
+        vec.extend_from_slice(&[1, 2, 3]);
+        vec.extend_from_slice(&[4, 5, 6]);
+        vec.extend_from_slice(&[7, 8, 9]);
 
-#[test]
-fn test_clear_then_reuse() {
-    let mut vec = BridgeVec::with_capacity(10);
-    
-    vec.extend_from_slice(&[1, 2, 3]);
-    vec.clear();
-    vec.extend_from_slice(&[4, 5, 6, 7]);
-    
-    assert_eq!(vec.len(), 4);
-    assert_eq!(vec.as_slice(), &[4, 5, 6, 7]);
-}
+        assert_eq!(vec.len(), 9);
+        assert_eq!(vec.as_slice(), &[1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    }
+
+    #[test]
+    fn test_extend_from_slice_triggers_grow() {
+        let mut vec = BridgeVec::with_capacity(5);
+        let pattern: Vec<u8> = (0..200).collect();
+
+        vec.extend_from_slice(&pattern);
+
+        assert_eq!(vec.len(), 200);
+        assert_eq!(vec.as_slice(), &pattern[..]);
+    }
+
+    #[test]
+    fn test_clear_empty() {
+        let mut vec = BridgeVec::with_capacity(10);
+        vec.clear();
+
+        assert_eq!(vec.len(), 0);
+        assert!(vec.is_empty());
+    }
+
+    #[test]
+    fn test_clear_with_data() {
+        let mut vec = BridgeVec::with_capacity(10);
+        vec.extend_from_slice(&[1, 2, 3, 4, 5]);
+
+        let cap_before = vec.capacity();
+        vec.clear();
+
+        assert_eq!(vec.len(), 0);
+        assert!(vec.is_empty());
+        assert_eq!(vec.capacity(), cap_before); // Capacity unchanged
+    }
+
+    #[test]
+    fn test_clear_then_reuse() {
+        let mut vec = BridgeVec::with_capacity(10);
+
+        vec.extend_from_slice(&[1, 2, 3]);
+        vec.clear();
+        vec.extend_from_slice(&[4, 5, 6, 7]);
+
+        assert_eq!(vec.len(), 4);
+        assert_eq!(vec.as_slice(), &[4, 5, 6, 7]);
+    }
 
     // =============================================================================
     // Slice Access
@@ -1030,24 +1387,24 @@ fn test_clear_then_reuse() {
     }
 
     #[test]
-fn test_deref() {
-    let mut vec = BridgeVec::with_capacity(10);
-    vec.extend_from_slice(b"test");
-    
-    let slice: &[u8] = &vec;
-    assert_eq!(slice, b"test");
-}
+    fn test_deref() {
+        let mut vec = BridgeVec::with_capacity(10);
+        vec.extend_from_slice(b"test");
 
-#[test]
-fn test_deref_mut() {
-    let mut vec = BridgeVec::with_capacity(10);
-    vec.extend_from_slice(&[1, 2, 3]);
-    
-    let slice: &mut [u8] = &mut vec;
-    slice[1] = 99;
-    
-    assert_eq!(vec.as_slice(), &[1, 99, 3]);
-}
+        let slice: &[u8] = &vec;
+        assert_eq!(slice, b"test");
+    }
+
+    #[test]
+    fn test_deref_mut() {
+        let mut vec = BridgeVec::with_capacity(10);
+        vec.extend_from_slice(&[1, 2, 3]);
+
+        let slice: &mut [u8] = &mut vec;
+        slice[1] = 99;
+
+        assert_eq!(vec.as_slice(), &[1, 99, 3]);
+    }
 
     // =============================================================================
     // Clone
@@ -1075,95 +1432,96 @@ fn test_deref_mut() {
     }
 
     #[test]
-fn test_clone_with_data() {
-    let mut original = BridgeVec::with_capacity(10);
-    original.extend_from_slice(b"hello world");
-    original.set_status(42);
-    original.set_wire_format(7);
-    
-    let cloned = original.clone();
-    
-    assert_eq!(cloned.as_slice(), b"hello world");
-    assert_eq!(cloned.status(), 42);
-    assert_eq!(cloned.wire_format(), 7);
-    
-    // Verify independence
-    assert_ne!(original.as_ptr(), cloned.as_ptr());
-}
+    fn test_clone_with_data() {
+        let mut original = BridgeVec::with_capacity(10);
+        original.extend_from_slice(b"hello world");
+        original.set_status(42);
+        original.set_wire_format(7);
 
+        let cloned = original.clone();
 
-#[test]
-fn test_eq_empty() {
-    let a = BridgeVec::with_capacity(10);
-    let b = BridgeVec::with_capacity(20);
-    
-    assert_eq!(a, b);
-}
+        assert_eq!(cloned.as_slice(), b"hello world");
+        assert_eq!(cloned.status(), 42);
+        assert_eq!(cloned.wire_format(), 7);
 
-#[test]
-fn test_eq_same_data() {
-    let mut a = BridgeVec::with_capacity(10);
-    let mut b = BridgeVec::with_capacity(20);
-    
-    a.extend_from_slice(b"test");
-    b.extend_from_slice(b"test");
-    
-    assert_eq!(a, b);
-}
+        // Verify independence
+        assert_ne!(original.as_ptr(), cloned.as_ptr());
+    }
 
-#[test]
-fn test_eq_different_data() {
-    let mut a = BridgeVec::with_capacity(10);
-    let mut b = BridgeVec::with_capacity(10);
-    
-    a.extend_from_slice(b"hello");
-    b.extend_from_slice(b"world");
-    
-    assert_ne!(a, b);
-}
+    #[test]
+    fn test_eq_empty() {
+        let a = BridgeVec::with_capacity(10);
+        let b = BridgeVec::with_capacity(20);
+
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_eq_same_data() {
+        let mut a = BridgeVec::with_capacity(10);
+        let mut b = BridgeVec::with_capacity(20);
+
+        a.extend_from_slice(b"test");
+        b.extend_from_slice(b"test");
+
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_eq_different_data() {
+        let mut a = BridgeVec::with_capacity(10);
+        let mut b = BridgeVec::with_capacity(10);
+
+        a.extend_from_slice(b"hello");
+        b.extend_from_slice(b"world");
+
+        assert_ne!(a, b);
+    }
 
     // =============================================================================
     // from_raw
     // =============================================================================
 
-
-#[test]
-fn test_from_raw_null() {
-    let result = unsafe { BridgeVec::from_raw(std::ptr::null()) };
-    assert!(result.is_err());
-    assert_eq!(result.err(), Some("Pointer is null"));
-}
-
-#[test]
-fn test_from_raw_misaligned() {
-    let layout = Layout::from_size_align(64, 16).unwrap();
-    let ptr = unsafe { alloc(layout) };
-    
-    let bad_ptr = unsafe { ptr.add(1) };
-    let result = unsafe { BridgeVec::from_raw(bad_ptr) };
-    
-    assert!(result.is_err());
-    assert_eq!(result.err(), Some("Pointer is not 16-byte aligned"));
-    
-    unsafe { dealloc(ptr, layout); }
-}
-
-#[test]
-fn test_from_raw_bad_magic() {
-    let layout = Layout::from_size_align(32, 16).unwrap();
-    let ptr = unsafe { alloc(layout) };
-    
-    unsafe {
-        ptr::write(ptr as *mut u32, 0xDEADBEEF);
+    #[test]
+    fn test_from_raw_null() {
+        let result = unsafe { BridgeVec::from_raw(std::ptr::null()) };
+        assert!(result.is_err());
+        assert!(matches!(result.err(), Some(BridgeError::NullPointer)));
     }
-    
-    let result = unsafe { BridgeVec::from_raw(ptr) };
-    
-    assert!(result.is_err());
-    assert_eq!(result.err(), Some("Invalid magic header"));
-    
-    unsafe { dealloc(ptr, layout); }
-}
+
+    #[test]
+    fn test_from_raw_misaligned() {
+        let layout = Layout::from_size_align(64, 16).unwrap();
+        let ptr = unsafe { alloc(layout) };
+
+        let bad_ptr = unsafe { ptr.add(1) };
+        let result = unsafe { BridgeVec::from_raw(bad_ptr) };
+
+        assert!(result.is_err());
+        assert!(matches!(result.err(), Some(BridgeError::MisalignedPointer)));
+        unsafe {
+            dealloc(ptr, layout);
+        }
+    }
+
+    #[test]
+    fn test_from_raw_bad_magic() {
+        let layout = Layout::from_size_align(32, 16).unwrap();
+        let ptr = unsafe { alloc(layout) };
+
+        unsafe {
+            ptr::write(ptr as *mut u32, 0xDEADBEEF);
+        }
+
+        let result = unsafe { BridgeVec::from_raw(ptr) };
+
+        assert!(result.is_err());
+        assert!(matches!(result.err(), Some(BridgeError::InvalidHeader)));
+
+        unsafe {
+            dealloc(ptr, layout);
+        }
+    }
 
     #[test]
     fn test_from_raw_valid() {
@@ -1181,114 +1539,112 @@ fn test_from_raw_bad_magic() {
         assert_eq!(reconstructed.as_slice(), &[0xAA, 0xBB, 0xCC]);
     }
 
+    #[test]
+    fn test_into_raw_ownership_transfer() {
+        let mut vec = BridgeVec::with_capacity(10);
+        vec.extend_from_slice(b"test");
+        vec.set_status(42);
 
-#[test]
-fn test_into_raw_ownership_transfer() {
-    let mut vec = BridgeVec::with_capacity(10);
-    vec.extend_from_slice(b"test");
-    vec.set_status(42);
-    
-    let ptr = vec.into_raw();
-    // vec is now consumed
-    
-    let recovered = unsafe { BridgeVec::from_raw(ptr).unwrap() };
-    assert_eq!(recovered.as_slice(), b"test");
-    assert_eq!(recovered.status(), 42);
-}
+        let ptr = vec.into_raw();
+        // vec is now consumed
 
-#[test]
-fn test_into_raw_roundtrip_preserves_all() {
-    let mut vec = BridgeVec::with_capacity(100);
-    vec.extend_from_slice(b"roundtrip test data");
-    vec.set_status(0x12);
-    vec.set_wire_format(0x56);
-    
-    let ptr = vec.into_raw();
-    let recovered = unsafe { BridgeVec::from_raw(ptr).unwrap() };
-    
-    assert_eq!(recovered.as_slice(), b"roundtrip test data");
-    assert_eq!(recovered.status(), 0x12);
-    assert_eq!(recovered.wire_format(), 0x56);
-}
-
-
-#[test]
-fn test_borrow_raw_null() {
-    let result = unsafe { BridgeVec::borrow_raw(std::ptr::null()) };
-    assert!(result.is_err());
-    assert_eq!(result.err(), Some("Pointer is null"));
-}
-
-#[test]
-fn test_borrow_raw_misaligned() {
-    let layout = Layout::from_size_align(64, 16).unwrap();
-    let ptr = unsafe { alloc(layout) };
-    
-    let bad_ptr = unsafe { ptr.add(1) };
-    let result = unsafe { BridgeVec::borrow_raw(bad_ptr) };
-    
-    assert!(result.is_err());
-    assert_eq!(result.err(), Some("Pointer is not 16-byte aligned"));
-    
-    unsafe { dealloc(ptr, layout); }
-}
-
-#[test]
-fn test_borrow_raw_bad_magic() {
-    let layout = Layout::from_size_align(32, 16).unwrap();
-    let ptr = unsafe { alloc(layout) };
-    
-    unsafe {
-        ptr::write(ptr as *mut u32, 0xDEADBEEF);
+        let recovered = unsafe { BridgeVec::from_raw(ptr).unwrap() };
+        assert_eq!(recovered.as_slice(), b"test");
+        assert_eq!(recovered.status(), 42);
     }
-    
-    let result = unsafe { BridgeVec::borrow_raw(ptr) };
-    
-    assert!(result.is_err());
-    assert_eq!(result.err(), Some("Invalid magic header"));
-    
-    unsafe { dealloc(ptr, layout); }
-}
 
+    #[test]
+    fn test_into_raw_roundtrip_preserves_all() {
+        let mut vec = BridgeVec::with_capacity(100);
+        vec.extend_from_slice(b"roundtrip test data");
+        vec.set_status(0x12);
+        vec.set_wire_format(0x56);
 
-#[test]
-fn test_borrow_raw_non_owning() {
-    let mut original = BridgeVec::with_capacity(50);
-    original.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
-    original.set_status(7);
-    original.set_wire_format(3);
-    
-    let borrowed = unsafe { 
-        BridgeVec::borrow_raw(original.as_ptr()).expect("Should borrow from valid ptr") 
-    };
-    
-    assert_eq!(borrowed.len(), 3);
-    assert_eq!(borrowed.status(), 7);
-    assert_eq!(borrowed.wire_format(), 3);
-    assert_eq!(borrowed.as_slice(), &[0xAA, 0xBB, 0xCC]);
-    
-    // Original still valid
-    assert_eq!(original.len(), 3);
-    assert_eq!(original.as_slice(), &[0xAA, 0xBB, 0xCC]);
-}
+        let ptr = vec.into_raw();
+        let recovered = unsafe { BridgeVec::from_raw(ptr).unwrap() };
 
-#[test]
-fn test_borrow_raw_does_not_drop() {
-    let mut original = BridgeVec::with_capacity(50);
-    original.extend_from_slice(b"test");
-    
-    {
-        let _borrowed = unsafe { 
-            BridgeVec::borrow_raw(original.as_ptr()).unwrap() 
+        assert_eq!(recovered.as_slice(), b"roundtrip test data");
+        assert_eq!(recovered.status(), 0x12);
+        assert_eq!(recovered.wire_format(), 0x56);
+    }
+
+    #[test]
+    fn test_borrow_raw_null() {
+        let result = unsafe { BridgeVec::borrow_raw(std::ptr::null()) };
+        assert!(result.is_err());
+        assert!(matches!(result.err(), Some(BridgeError::NullPointer)));
+    }
+
+    #[test]
+    fn test_borrow_raw_misaligned() {
+        let layout = Layout::from_size_align(64, 16).unwrap();
+        let ptr = unsafe { alloc(layout) };
+
+        let bad_ptr = unsafe { ptr.add(1) };
+        let result = unsafe { BridgeVec::borrow_raw(bad_ptr) };
+
+        assert!(result.is_err());
+        assert!(matches!(result.err(), Some(BridgeError::MisalignedPointer)));
+
+        unsafe {
+            dealloc(ptr, layout);
+        }
+    }
+
+    #[test]
+    fn test_borrow_raw_bad_magic() {
+        let layout = Layout::from_size_align(32, 16).unwrap();
+        let ptr = unsafe { alloc(layout) };
+
+        unsafe {
+            ptr::write(ptr as *mut u32, 0xDEADBEEF);
+        }
+
+        let result = unsafe { BridgeVec::borrow_raw(ptr) };
+
+        assert!(result.is_err());
+        assert!(matches!(result.err(), Some(BridgeError::InvalidHeader)));
+
+        unsafe {
+            dealloc(ptr, layout);
+        }
+    }
+
+    #[test]
+    fn test_borrow_raw_non_owning() {
+        let mut original = BridgeVec::with_capacity(50);
+        original.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
+        original.set_status(7);
+        original.set_wire_format(3);
+
+        let borrowed = unsafe {
+            BridgeVec::borrow_raw(original.as_ptr()).expect("Should borrow from valid ptr")
         };
-        // borrowed goes out of scope here but should NOT free memory
-    }
-    
-    // Original should still be valid
-    assert_eq!(original.as_slice(), b"test");
-}
 
-    
+        assert_eq!(borrowed.len(), 3);
+        assert_eq!(borrowed.status(), 7);
+        assert_eq!(borrowed.wire_format(), 3);
+        assert_eq!(borrowed.as_slice(), &[0xAA, 0xBB, 0xCC]);
+
+        // Original still valid
+        assert_eq!(original.len(), 3);
+        assert_eq!(original.as_slice(), &[0xAA, 0xBB, 0xCC]);
+    }
+
+    #[test]
+    fn test_borrow_raw_does_not_drop() {
+        let mut original = BridgeVec::with_capacity(50);
+        original.extend_from_slice(b"test");
+
+        {
+            let _borrowed = unsafe { BridgeVec::borrow_raw(original.as_ptr()).unwrap() };
+            // borrowed goes out of scope here but should NOT free memory
+        }
+
+        // Original should still be valid
+        assert_eq!(original.as_slice(), b"test");
+    }
+
     // =============================================================================
     // BridgeVecRef
     // =============================================================================
@@ -1299,100 +1655,102 @@ fn test_borrow_raw_does_not_drop() {
         vec.extend_from_slice(b"ref");
         vec.set_status(10);
         vec.set_error_version(20);
-        
+
         let borrowed = unsafe { BridgeVec::borrow_raw(vec.as_ptr()).unwrap() };
-        
+
         assert_eq!(borrowed.status(), 10);
         assert_eq!(borrowed.error_version(), 20);
         assert_eq!(borrowed.as_slice(), b"ref");
     }
 
+    #[test]
+    fn test_grow_preserves_header() {
+        let mut vec = BridgeVec::with_capacity(10);
+        vec.set_status(42);
+        vec.set_wire_format(99);
 
+        // Force grow
+        let pattern: Vec<u8> = (0..500).map(|i| i as u8).collect();
+        vec.extend_from_slice(&pattern);
 
-#[test]
-fn test_grow_preserves_header() {
-    let mut vec = BridgeVec::with_capacity(10);
-    vec.set_status(42);
-    vec.set_wire_format(99);
-    
-    // Force grow
-    let pattern: Vec<u8> = (0..500).map(|i| i as u8).collect();
-    vec.extend_from_slice(&pattern);
-    
-    assert_eq!(vec.status(), 42, "Status must be preserved across realloc");
-    assert_eq!(vec.wire_format(), 99, "Version must be preserved across realloc");
-    assert_eq!(vec.as_slice(), &pattern[..]);
-}
-
-#[test]
-fn test_grow_preserves_data() {
-    let mut vec = BridgeVec::with_capacity(10);
-    
-    for i in 0u8..=255 {
-        vec.push(i);
+        assert_eq!(vec.status(), 42, "Status must be preserved across realloc");
+        assert_eq!(
+            vec.wire_format(),
+            99,
+            "Version must be preserved across realloc"
+        );
+        assert_eq!(vec.as_slice(), &pattern[..]);
     }
-    
-    // Verify all data intact
-    for i in 0u8..=255 {
-        assert_eq!(vec.as_slice()[i as usize], i);
-    }
-}
 
-#[test]
-fn test_grow_maintains_alignment() {
-    let mut vec = BridgeVec::with_capacity(1);
-    
-    for _ in 0..10 {
-        // Each iteration should trigger growth
-        let current_cap = vec.capacity();
-        while vec.len() + BridgeVec::HEADER_SIZE < current_cap {
-            vec.push(0);
+    #[test]
+    fn test_grow_preserves_data() {
+        let mut vec = BridgeVec::with_capacity(10);
+
+        for i in 0u8..=255 {
+            vec.push(i);
         }
-        vec.push(0); // Trigger grow
-        
-        let addr = vec.as_ptr() as usize;
-        assert_eq!(addr % 16, 0, "Must remain 16-byte aligned after grow");
-    }
-} 
-#[test]
-fn test_large_allocation() {
-    let mut vec = BridgeVec::with_capacity(1_000_000);
-    let data = vec![0xABu8; 1_000_000];
-    
-    vec.extend_from_slice(&data);
-    
-    assert_eq!(vec.len(), 1_000_000);
-    assert!(vec.as_slice().iter().all(|&b| b == 0xAB));
-}
 
-#[test]
-fn test_mixed_operations() {
-    let mut vec = BridgeVec::with_capacity(10);
-    
-    vec.push(1);
-    vec.extend_from_slice(&[2, 3, 4]);
-    vec.push(5);
-    vec.set_status(100);
-    vec.extend_from_slice(&[6, 7]);
-    vec.push(8);
-    
-    assert_eq!(vec.as_slice(), &[1, 2, 3, 4, 5, 6, 7, 8]);
-    assert_eq!(vec.status(), 100);
-}
-
-#[test]
-fn test_clear_and_refill_multiple_times() {
-    let mut vec = BridgeVec::with_capacity(10);
-    
-    for round in 0..5 {
-        vec.clear();
-        for i in 0..50 {
-            vec.push((round * 50 + i) as u8);
+        // Verify all data intact
+        for i in 0u8..=255 {
+            assert_eq!(vec.as_slice()[i as usize], i);
         }
+    }
+
+    #[test]
+    fn test_grow_maintains_alignment() {
+        let mut vec = BridgeVec::with_capacity(1);
+
+        for _ in 0..10 {
+            // Each iteration should trigger growth
+            let current_cap = vec.capacity();
+            while vec.len() + BridgeVec::HEADER_SIZE < current_cap {
+                vec.push(0);
+            }
+            vec.push(0); // Trigger grow
+
+            let addr = vec.as_ptr() as usize;
+            assert_eq!(addr % 16, 0, "Must remain 16-byte aligned after grow");
+        }
+    }
+    #[test]
+    fn test_large_allocation() {
+        let mut vec = BridgeVec::with_capacity(1_000_000);
+        let data = vec![0xABu8; 1_000_000];
+
+        vec.extend_from_slice(&data);
+
+        assert_eq!(vec.len(), 1_000_000);
+        assert!(vec.as_slice().iter().all(|&b| b == 0xAB));
+    }
+
+    #[test]
+    fn test_mixed_operations() {
+        let mut vec = BridgeVec::with_capacity(10);
+
+        vec.push(1);
+        vec.extend_from_slice(&[2, 3, 4]);
+        vec.push(5);
+        vec.set_status(100);
+        vec.extend_from_slice(&[6, 7]);
+        vec.push(8);
+
+        assert_eq!(vec.as_slice(), &[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(vec.status(), 100);
+    }
+
+    #[test]
+    fn test_clear_and_refill_multiple_times() {
+        let mut vec = BridgeVec::with_capacity(10);
+
+        for round in 0..5 {
+            vec.clear();
+            for i in 0..50 {
+                vec.push((round * 50 + i) as u8);
+            }
+            assert_eq!(vec.len(), 50);
+        }
+
+        // Final state should be last round's data
         assert_eq!(vec.len(), 50);
     }
-    
-    // Final state should be last round's data
-    assert_eq!(vec.len(), 50);
-}
 }
