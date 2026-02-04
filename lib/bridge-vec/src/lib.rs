@@ -251,8 +251,44 @@ pub use rkyv::rancor::Error as RancorError;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tokio;
 
-// Re-export derive macro
-pub use bridge_derive::bridgeable;
+// Documented by the lib.
+pub use bridge_derive::bridgeable; 
+
+/// Registers the library identity and metadata for the bridge system.
+///
+/// This macro generates a `Library` struct and a registration function used to identify 
+/// the current binary during RPC operations and error reporting. 
+/// The identity is stored in a global static and automatically captured by 
+/// `CapturedError` instances.
+///
+/// ### Generated Items
+/// The macro generates a `pub struct Library` with the following constants:
+/// * **`META`**: A custom metadata string passed to the macro (defaults to `""`).
+/// * **`NAME`**: The name of the crate, pulled from `CARGO_PKG_NAME` at compile time.
+/// * **`VERSION`**: The crate version from `CARGO_PKG_VERSION`.
+/// * **`AUTHORS`**: The crate authors from `CARGO_PKG_AUTHORS`.
+///
+/// It also defines a private method `register_info()` that populates the global 
+/// `APP_IDENTITY` static in the bridge's captured error module.
+///
+/// ### Usage
+/// 
+/// **Basic usage:**
+/// ```rust
+/// bridge_vec::library!();
+/// ```
+///
+/// **With custom metadata:**
+/// ```rust
+/// bridge_vec::library!("pyroduct-engine");
+/// ```
+///
+/// ### Integration with `CapturedError`
+/// When this macro is used and the library identity is registered, any `CapturedError` 
+/// created thereafter will automatically include this identity. This is 
+/// particularly useful for debugging remote errors in an RPC system where you need 
+/// to know exactly which version and crate produced a panic or failure.
+pub use bridge_derive::library;
 
 pub(crate) const MAGIC_VAL: u32 = 0x7079726F; // "pyro"
 pub const PROTOCOL_VERSION: u8 = 1;

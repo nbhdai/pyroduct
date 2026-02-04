@@ -2,6 +2,38 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Item, Meta, Path, parse_quote, punctuated::Punctuated, token::Comma};
 
+/// Creates a function we can use to register the library identity
+pub fn create_ident(import_location: Path, meta: &str) -> TokenStream {
+    quote! {
+        // Consistent name to make sure they're not duplicating this.
+        #[derive(Debug, Clone, Copy)]
+        pub struct Library;
+
+        impl Library {
+            pub const META: &'static str = #meta;
+            pub const NAME: &'static str = env!("CARGO_PKG_NAME");
+            pub const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+            pub const AUTHORS: &'static str = env!("CARGO_PKG_AUTHORS");
+
+            /// Returns the serializable info struct
+            /// Added 'static lifetime to resolve E0106
+            fn register_info() -> #import_location::captured::LibraryInfo<'static> {
+                let info = #import_location::captured::LibraryInfo {
+                    meta: ::std::borrow::Cow::Borrowed(Self::META),
+                    name: ::std::borrow::Cow::Borrowed(Self::NAME),
+                    version: ::std::borrow::Cow::Borrowed(Self::VERSION),
+                    authors: ::std::borrow::Cow::Borrowed(Self::AUTHORS),
+                    // Adding filename as seen in captured.rs struct definition
+                    filename: ::std::borrow::Cow::Borrowed(file!()),
+                };
+                
+                #import_location::captured::register_app_identity(info.clone());
+                info
+            }
+        }
+    }
+}
+
 /// Attribute macro that adds rkyv serialization and the Bridgeable trait.
 ///
 /// Usage: #[bridgeable(derive(Debug, PartialEq))]

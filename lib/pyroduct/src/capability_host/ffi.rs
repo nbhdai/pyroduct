@@ -11,27 +11,23 @@ pub type LogCallback = unsafe extern "C" fn(u64, *const u8, usize);
 
 #[repr(C)]
 pub struct FfiInitResult {
-    /// 0 = Ok, 1 = error
-    pub tag: u8,
     /// The opaque state pointer (valid if tag == 0)
     pub state: *mut c_void,
-    /// The serialized error as a BridgeVec. 
-    /// If tag is 0, this is probably null
+    /// The serialized Result<(),BridgeError> as a BridgeVec. 
+    /// If not Ok<()> this contains the error.
     pub error: *const u8,
 }
 
 impl FfiInitResult {
     pub fn ok(state: *mut c_void) -> Self {
         Self {
-            tag: 0,
             state,
-            error: ptr::null(),
+            error: BridgeVec::ok().into_raw(),
         }
     }
 
     pub fn err(error: *const u8) -> Self {
         Self {
-            tag: 1,
             state: ptr::null_mut(),
             error,
         }
@@ -41,20 +37,8 @@ impl FfiInitResult {
 impl<'a> From<BridgeError> for FfiInitResult {
     fn from(value: BridgeError) -> Self {
         Self {
-            tag: 1,
             state: ptr::null_mut(),
             error: value.encode().into_raw(),
-        }
-    }
-}
-
-
-impl<'a> From<BridgeVec> for FfiInitResult {
-    fn from(value: BridgeVec) -> Self {
-        Self {
-            tag: 1,
-            state: ptr::null_mut(),
-            error: value.into_raw(),
         }
     }
 }
@@ -101,12 +85,6 @@ pub enum FfiBorrowedFutureObjectResult<'a> {
 
 impl<'a> From<BridgeError> for FfiBorrowedFutureObjectResult<'a> {
     fn from(value: BridgeError) -> Self {
-        FfiBorrowedFutureObjectResult::EarlyError(value.into())
-    }
-}
-
-impl<'a> From<BridgeVec> for FfiBorrowedFutureObjectResult<'a> {
-    fn from(value: BridgeVec) -> Self {
         FfiBorrowedFutureObjectResult::EarlyError(value.into())
     }
 }

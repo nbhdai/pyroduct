@@ -5,6 +5,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use bridge_vec::{BridgeError, BridgeVec, CapturedError};
 use pin_project::pin_project;
 use tracing::{error, info, trace};
 use wasmtime::Linker;
@@ -18,7 +19,7 @@ use crate::{
     errors::PyroductError,
     host::{
         capability::WasmArgs,
-        ffi_bridge::{AsyncExecFuture, ExecutionResultBridge, InitResultBridge},
+        ffi_bridge::{AsyncExecFuture, InitResultBridge},
         wasm_bridge::{HarnessState, WasmMemory},
     },
 };
@@ -129,7 +130,7 @@ impl CapClass {
         let capability_init = match self.init_fn {
             ClassInitFn::Sync(func) => {
                 let res = unsafe { func(config_ptr, config_len) };
-                let state = unsafe { InitResultBridge::from_ffi(res, &self.ident)? };
+                let state = unsafe { InitResultBridge::from_ffi(res)? };
                 CapabilityInit::Sync {
                     ident: self.ident.clone(),
                     reset_fn: self.reset_fn.clone(),
@@ -370,7 +371,7 @@ pub enum CapabilityInit<'a> {
 }
 
 impl<'a> Future for CapabilityInit<'a> {
-    type Output = PyroductResult<ClassState>;
+    type Output = Result<ClassState, BridgeError>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -422,12 +423,13 @@ impl<'a> Future for CapabilityInit<'a> {
 #[pin_project(project = CapReset)]
 pub enum CapabilityReset<'a> {
     Async(#[pin] AsyncExecFuture<'a>),
-    SyncOrNull(CapIdentity, Option<PyroductResult<()>>),
+    SyncOrNull(CapIdentity, Option<Result<(), BridgeError>>),
 }
 
 impl<'a> Future for CapabilityReset<'a> {
-    type Output = PyroductResult<()>;
+    type Output = Result<(), BridgeError>;
 
+    #[track_caller]
     fn poll(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -441,7 +443,7 @@ impl<'a> Future for CapabilityReset<'a> {
             CapReset::SyncOrNull(ident, result) => match result.take() {
                 Some(result) => std::task::Poll::Ready(result),
                 None => std::task::Poll::Ready(Err(
-                    FfiError::FuturePolledAfterCompletion.to_capability_error(ident)
+                    BridgeError::CodePanic(CapturedError::new("AsyncInitFuture: polled after completion").with_location(std::panic::Location::caller()).into())
                 )),
             },
         }
@@ -450,7 +452,7 @@ impl<'a> Future for CapabilityReset<'a> {
 
 pub enum AsyncInitState<'a> {
     Ffi(async_ffi::BorrowingFfiFuture<'a, FfiInitResult>),
-    Ready(Option<Result<*mut c_void, PyroductError>>),
+    Ready(Option<Result<*mut c_void, BridgeError>>),
 }
 
 /// Wrapper for the async init future that handles both pending futures and early errors.
@@ -468,9 +470,10 @@ impl<'a> AsyncInitFuture<'a> {
             }
             FfiBorrowedFutureObjectResult::EarlyError(val) => {
                 trace!("AsyncInitFuture: created from EarlyError variant");
-                // Convert the early result immediately
-                let result = unsafe { InitResultBridge::from_ffi(val, ident) };
-                AsyncInitState::Ready(Some(result))
+                match unsafe { BridgeVec::from_raw(val.error) } {
+                    Ok(err_vec) => AsyncInitState::Ready(Some(Err(err_vec.parse_as_error()))),
+                    Err(err) => AsyncInitState::Ready(Some(Err(err))),
+                }
             }
         };
         Self {
@@ -481,8 +484,9 @@ impl<'a> AsyncInitFuture<'a> {
 }
 
 impl<'a> Future for AsyncInitFuture<'a> {
-    type Output = Result<*mut c_void, PyroductError>;
+    type Output = Result<*mut c_void, BridgeError>;
 
+    #[track_caller]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // We need to move these out to avoid borrow checker issues when calling from_ffi
         let ident = self.ident.clone();
@@ -499,7 +503,7 @@ impl<'a> Future for AsyncInitFuture<'a> {
                 trace!("AsyncInitFuture: returning ready result");
                 Poll::Ready(res.take().unwrap_or_else(|| {
                     error!("AsyncInitFuture: polled after completion");
-                    Err(FfiError::FuturePolledAfterCompletion.to_capability_error(&ident))
+                    Err(BridgeError::CodePanic(CapturedError::new("AsyncInitFuture: polled after completion").with_location(std::panic::Location::caller()).into()))
                 }))
             }
         }

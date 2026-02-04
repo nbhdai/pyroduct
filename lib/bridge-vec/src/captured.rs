@@ -1,4 +1,4 @@
-use std::backtrace::Backtrace;
+use std::{backtrace::Backtrace, borrow::Cow};
 use std::fmt;
 use std::panic::Location;
 
@@ -6,6 +6,25 @@ use rkyv::rancor;
 use thiserror::Error;
 
 use crate::{BridgeVec, ErrorVec};
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LibraryInfo<'a> {
+    pub meta: Cow<'a, str>,
+    pub name: Cow<'a, str>,
+    pub version: Cow<'a, str>,
+    pub authors: Cow<'a, str>,
+    pub filename: Cow<'a, str>,
+}
+
+// Add this global static to store the identity of the currently running binary
+static APP_IDENTITY: std::sync::OnceLock<LibraryInfo<'static>> = std::sync::OnceLock::new();
+
+/// Called by the binary's `main()` to register its identity.
+/// This ensures all CapturedErrors created in this process carry this tag.
+pub fn register_app_identity(info: LibraryInfo<'static>) {
+    // We ignore the result; if it's already set, we keep the original (first-one-wins)
+    let _ = APP_IDENTITY.set(info);
+}
 
 /// Whether the error occurred locally or on the remote service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -473,13 +492,19 @@ pub struct CapturedError {
     pub column: u32,
 
     /// The stringified source error (e.g. "permission denied")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 
     /// Additional context or causal chain
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cause: Option<String>,
 
     /// Full stack trace, captured on demand
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stack_trace: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library: Option<LibraryInfo<'static>>,
 }
 
 impl CapturedError {
@@ -494,6 +519,7 @@ impl CapturedError {
             error: None,
             cause: None,
             stack_trace: None,
+            library: APP_IDENTITY.get().cloned(),
         }
     }
 
@@ -547,7 +573,8 @@ impl CapturedError {
 fn predict_captured_error_size(err: &CapturedError) -> usize {
     // Fixed JSON overhead: {"message":"","file":"","line":,"column":,"error":,"cause":}
     // Keys + colons + commas + braces + quotes ≈ 70 bytes
-    const FIXED_OVERHEAD: usize = 70;
+    // Adding a 10 byte buffer
+    const FIXED_OVERHEAD: usize = 70 + 10;
 
     // u32 max is 10 digits
     const MAX_U32_DIGITS: usize = 10;
@@ -559,12 +586,23 @@ fn predict_captured_error_size(err: &CapturedError) -> usize {
 
     match &err.error {
         Some(s) => size += s.len() + 2, // + quotes
-        None => size += 4,              // null
+        None => {},              // null
     }
 
     match &err.cause {
         Some(s) => size += s.len() + 2,
-        None => size += 4,
+        None => {},
+    }
+
+    if let Some(lib) = &err.library {
+        // Keys overhead: {"meta":"","name":"","version":"","authors":"","filename":""}
+        // Approx 60 chars for keys/quotes/commas
+        size += 60; 
+        size += lib.meta.len();
+        size += lib.name.len();
+        size += lib.version.len();
+        size += lib.authors.len();
+        size += lib.filename.len();
     }
 
     size

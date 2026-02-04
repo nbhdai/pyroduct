@@ -1,105 +1,42 @@
-use crate::CapIdentity;
 use crate::capability_host::ffi::{FfiBorrowedFutureResult, FfiInitResult};
-use crate::errors::{FfiError, PyroductError};
 use std::{
     ffi::c_void,
     future::Future,
     pin::Pin,
     task::{Context, Poll},
 };
-use bridge_vec::{BridgeError, BridgeVec};
-use tracing::{debug, error, trace};
+use bridge_vec::{BridgeError, BridgeVec, CapturedError};
+use pin_project::pin_project;
+use tracing::{error, trace};
 
 pub struct InitResultBridge;
 
 impl InitResultBridge {
     pub unsafe fn from_ffi(
         res: FfiInitResult,
-        ident: &CapIdentity,
     ) -> Result<*mut c_void, BridgeError> {
-        trace!(tag = res.tag, "InitResultBridge: processing FFI result");
-        match res.tag {
-            0 => {
-                debug!("InitResultBridge: initialization successful");
-                Ok(res.state)
-            }
-            1 => {
-                debug!("InitResultBridge: initialization failed, deserializing error");
-                let bridge_error = unsafe { BridgeVec::from_raw(res.error) }?;
-                let bridge_error = bridge_error.parse_as_error();
-                Err(bridge_error.to_capability_error(ident))
-            }
-            _ => {
-                error!(tag = res.tag, "InitResultBridge: unknown tag received");
-                Err(FfiError::UnknownTag(res.tag).to_capability_error(ident))
-            }
-        }
-    }
-}
-
-pub struct ExecutionResultBridge;
-
-impl ExecutionResultBridge {
-    pub unsafe fn from_ffi(res: *const u8, ident: &CapIdentity) -> Result<BridgeVec, PyroductError> {
-        trace!(
-            tag = res.tag,
-            "ExecutionResultBridge: processing FFI result"
-        );
-        match res.tag {
-            0 => {
-                debug!("ExecutionResultBridge: execution successful");
-                Ok(unsafe { consume_output(res.output) })
-            }
-            1 | 2 => {
-                debug!("ExecutionResultBridge: execution failed (error)");
-                Err(unsafe { deserialize_error(res.output) }.to_capability_error(ident))
-            }
-            _ => {
-                error!(tag = res.tag, "ExecutionResultBridge: unknown tag received");
-                Err(FfiError::UnknownTag(res.tag).to_capability_error(ident))
-            }
-        }
-    }
-
-    pub unsafe fn expected_null_from_ffi(
-        res: FfiResult,
-        ident: &CapIdentity,
-    ) -> Result<(), PyroductError> {
-        trace!(
-            tag = res.tag,
-            "ExecutionResultBridge: processing void FFI result"
-        );
-        match res.tag {
-            0 => {
-                if !res.output.ptr.is_null() {
-                    error!(
-                        "ExecutionResultBridge: Reset not returning a null pointer for the Ok, Ignoring"
-                    );
-                }
-                Ok(())
-            }
-            1 | 2 => Err(unsafe { deserialize_error(res.output) }.to_capability_error(ident)),
-            _ => {
-                error!(tag = res.tag, "ExecutionResultBridge: unknown tag received");
-                Err(FfiError::UnknownTag(res.tag).to_capability_error(ident))
-            }
+        let potential_error = unsafe { BridgeVec::from_raw(res.error) }?;
+        if potential_error.is_ok() {
+            Ok(res.state)
+        } else {
+            Err(potential_error.parse_as_error())
         }
     }
 }
 
 pub enum AsyncExecState<'a> {
     Ffi(async_ffi::BorrowingFfiFuture<'a, *const u8>),
-    Ready(Option<Result<BridgeVec, PyroductError>>),
+    Ready(Option<Result<BridgeVec, BridgeError>>),
 }
 
 /// Wrapper for the async execution future that handles both pending futures and early errors.
+#[pin_project]
 pub struct AsyncExecFuture<'a> {
     state: AsyncExecState<'a>,
-    ident: CapIdentity,
 }
 
 impl<'a> AsyncExecFuture<'a> {
-    pub fn new(res: FfiBorrowedFutureResult<'a>, ident: &CapIdentity) -> Self {
+    pub fn new(res: FfiBorrowedFutureResult<'a>) -> Self {
         let state = match res {
             FfiBorrowedFutureResult::Future(fut) => {
                 trace!("AsyncExecFuture: created from Future variant");
@@ -108,28 +45,26 @@ impl<'a> AsyncExecFuture<'a> {
             FfiBorrowedFutureResult::EarlyError(val) => {
                 trace!("AsyncExecFuture: created from EarlyError variant");
                 // Convert the early result immediately
-                let result = unsafe { ExecutionResultBridge::from_ffi(val, ident) };
-                AsyncExecState::Ready(Some(result))
+                AsyncExecState::Ready(Some(unsafe { BridgeVec::from_raw(val) }))
             }
         };
         Self {
             state,
-            ident: ident.clone(),
         }
     }
 }
 
 impl<'a> Future for AsyncExecFuture<'a> {
-    type Output = Result<BridgeVec, PyroductError>;
+    type Output = Result<BridgeVec, BridgeError>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let ident = self.ident.clone();
-
-        match &mut self.state {
+    #[track_caller]
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut this = self.project();
+        match &mut this.state {
             AsyncExecState::Ffi(fut) => match Pin::new(fut).poll(cx) {
                 Poll::Ready(res) => {
                     trace!("AsyncExecFuture: underlying future ready");
-                    Poll::Ready(unsafe { ExecutionResultBridge::from_ffi(res, &ident) })
+                    Poll::Ready(unsafe { BridgeVec::from_raw(res) })
                 }
                 Poll::Pending => Poll::Pending,
             },
@@ -137,7 +72,9 @@ impl<'a> Future for AsyncExecFuture<'a> {
                 trace!("AsyncExecFuture: returning ready result");
                 Poll::Ready(res.take().unwrap_or_else(|| {
                     error!("AsyncExecFuture: polled after completion");
-                    Err(FfiError::FuturePolledAfterCompletion.to_capability_error(&ident))
+                    Err(
+                    BridgeError::CodePanic(CapturedError::new("AsyncInitFuture: polled after completion").with_location(std::panic::Location::caller()).with_backtrace(std::backtrace::Backtrace::capture()).into())
+                    )
                 }))
             }
         }

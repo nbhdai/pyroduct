@@ -267,6 +267,7 @@ impl BridgeVec {
                 error: Some("Failed to deserialize error details".into()),
                 cause: None,
                 stack_trace: None,
+                library: None,
             })
         }
     }
