@@ -463,6 +463,7 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
+ "serde_json",
  "syn",
 ]
 
@@ -478,6 +479,7 @@ dependencies = [
 name = "bridge-vec"
 version = "0.1.0"
 dependencies = [
+ "arrow-scalars",
  "async-ffi",
  "bridge-derive",
  "futures",

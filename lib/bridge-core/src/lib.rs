@@ -1,36 +1,90 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Item, Meta, Path, parse_quote, punctuated::Punctuated, token::Comma};
+use syn::{Ident, Item, LitStr, Meta, Path, Token, parse::{Parse, ParseStream}, parse_quote, punctuated::Punctuated, token::Comma};
+
+pub struct LibraryArgs {
+    pub meta: String,
+    pub no_ffi: bool,
+}
+
+impl Parse for LibraryArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut meta = String::new();
+        let mut no_ffi = false;
+
+        // Loop through comma-separated arguments
+        while !input.is_empty() {
+            if input.peek(LitStr) {
+                let s: LitStr = input.parse()?;
+                meta = s.value();
+            } else if input.peek(Ident) {
+                let id: Ident = input.parse()?;
+                if id == "NoFFI" {
+                    no_ffi = true;
+                }
+            }
+
+            // Consume optional comma
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            } else {
+                break;
+            }
+        }
+
+        Ok(LibraryArgs { meta, no_ffi })
+    }
+}
 
 /// Creates a function we can use to register the library identity
-pub fn create_ident(import_location: Path, meta: &str) -> TokenStream {
-    quote! {
-        // Consistent name to make sure they're not duplicating this.
+pub fn create_ident(import_location: syn::Path, meta: &str, no_ffi: bool) -> proc_macro2::TokenStream {
+    // Determine if we should generate FFI-related tokens
+    let ffi_exports = if !no_ffi {
+        quote::quote! {
+            #[unsafe(no_mangle)]
+            pub extern "C" fn library_json_ptr() -> *const u8 {
+                LIBRARY_IDENTITY_DATA.as_ptr()
+            }
+
+            #[unsafe(no_mangle)]
+            pub extern "C" fn library_json_len() -> usize {
+                LIBRARY_IDENTITY_DATA.len()
+            }
+        }
+    } else {
+        quote::quote! {}
+    };
+
+    quote::quote! {
         #[derive(Debug, Clone, Copy)]
         pub struct Library;
+
+        pub const LIBRARY_IDENTITY_DATA: &'static str = concat!(
+            "{",
+            "\"meta\": \"", #meta, "\",",
+            "\"name\": \"", env!("CARGO_PKG_NAME"), "\",",
+            "\"version\": \"", env!("CARGO_PKG_VERSION"), "\"",
+            "}"
+        );
 
         impl Library {
             pub const META: &'static str = #meta;
             pub const NAME: &'static str = env!("CARGO_PKG_NAME");
             pub const VERSION: &'static str = env!("CARGO_PKG_VERSION");
-            pub const AUTHORS: &'static str = env!("CARGO_PKG_AUTHORS");
 
-            /// Returns the serializable info struct
-            /// Added 'static lifetime to resolve E0106
-            fn register_info() -> #import_location::captured::LibraryInfo<'static> {
+            pub fn register_info() -> #import_location::captured::LibraryInfo<'static> {
                 let info = #import_location::captured::LibraryInfo {
                     meta: ::std::borrow::Cow::Borrowed(Self::META),
                     name: ::std::borrow::Cow::Borrowed(Self::NAME),
                     version: ::std::borrow::Cow::Borrowed(Self::VERSION),
-                    authors: ::std::borrow::Cow::Borrowed(Self::AUTHORS),
-                    // Adding filename as seen in captured.rs struct definition
-                    filename: ::std::borrow::Cow::Borrowed(file!()),
                 };
+                #import_location::captured::register_app_identity(info.clone(), LIBRARY_IDENTITY_DATA);
                 
-                #import_location::captured::register_app_identity(info.clone());
                 info
             }
         }
+
+        #ffi_exports
     }
 }
 

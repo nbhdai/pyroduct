@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 
 use crate::TypedBuf;
+use crate::header::BridgeHeaderMut;
 use crate::{BridgeError, BridgeVec, Bridgeable, PROTOCOL_VERSION};
 
 // --- Primitive Types ---
@@ -507,6 +508,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::header::BridgeHeader;
+
     use super::*;
 
     #[test]

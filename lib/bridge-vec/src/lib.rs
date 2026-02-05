@@ -230,7 +230,6 @@
 
 use std::alloc::{self, Layout};
 use std::hash::Hasher;
-use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::ptr::{self, NonNull};
 use std::{fmt, io, slice};
@@ -242,8 +241,10 @@ pub mod captured;
 mod common;
 pub mod ffi;
 pub mod ser_de;
-
-pub use captured::DataStatus;
+pub mod value;
+pub mod header;
+pub mod view;
+pub mod view_mut;
 
 pub use rkyv::rancor::Error as RancorError;
 
@@ -290,10 +291,9 @@ pub use bridge_derive::bridgeable;
 /// to know exactly which version and crate produced a panic or failure.
 pub use bridge_derive::library;
 
-pub(crate) const MAGIC_VAL: u32 = 0x7079726F; // "pyro"
-pub const PROTOCOL_VERSION: u8 = 1;
-
 pub use captured::{BridgeError, CapturedError};
+
+use crate::header::{BridgeData, BridgeHeader, BridgeHeaderMut, BridgeParser, DataStatus, MAGIC_VAL, OwnedBridgeData, PROTOCOL_VERSION};
 
 /// A specialized Result type for BridgeVec operations.
 pub type BridgeResult<T> = Result<T, BridgeError>;
@@ -305,7 +305,7 @@ pub trait Bridgeable: ::rkyv::Archive + Sized {
     fn unchecked_parse(vec: BridgeVec) -> Result<TypedBuf<Self>, BridgeError>;
 
     fn parse(vec: BridgeVec) -> Result<TypedBuf<Self>, BridgeError> {
-        if vec.parsed_status() == Ok(DataStatus::ValidData) {
+        if vec.status() == Ok(DataStatus::ValidData) {
             let buf = Self::unchecked_parse(vec)?;
             Ok(buf)
         } else {
@@ -313,7 +313,7 @@ pub trait Bridgeable: ::rkyv::Archive + Sized {
         }
     }
     fn parse_error(vec: ErrorVec) -> Result<TypedBuf<Self>, BridgeError> {
-        if vec.0.parsed_status() == Ok(DataStatus::UserError) {
+        if vec.0.status() == Ok(DataStatus::UserError) {
             let buf = Self::unchecked_parse(vec.0)?;
             Ok(buf)
         } else {
@@ -348,11 +348,20 @@ where
 unsafe impl Send for BridgeVec {}
 unsafe impl Sync for BridgeVec {}
 
-/// A borrowed, non-owning view into a BridgeVec buffer.
-/// Does not free memory on drop.
-pub struct BridgeVecRef<'a> {
-    ptr: *const u8,
-    _marker: PhantomData<&'a [u8]>,
+impl BridgeData for BridgeVec {
+    #[inline]
+    fn header(&self) -> &[u8; 16] {
+        // SAFETY: Same as header(), but mutable.
+        unsafe { &*(self.ptr.as_ptr() as *const [u8; 16]) }
+    }
+}
+
+impl OwnedBridgeData for BridgeVec {
+    #[inline]
+    fn header_mut(&mut self) -> &mut [u8; 16] {
+        // SAFETY: Same as header(), but mutable.
+        unsafe { &mut *(self.ptr.as_ptr() as *mut [u8; 16]) }
+    }
 }
 
 impl BridgeVec {
@@ -417,45 +426,10 @@ impl BridgeVec {
     /// - Caller must ensure no other owner exists for this allocation
     /// - Caller transfers ownership to the returned `BridgeVec`
     pub unsafe fn from_raw(ptr: *const u8) -> Result<Self, BridgeError> {
-        if ptr.is_null() {
-            return Err(BridgeError::null_pointer());
-        }
-        if (ptr as usize) % Self::ALIGN != 0 {
-            return Err(BridgeError::misaligned_pointer());
-        }
-
-        let magic = unsafe { ptr::read(ptr.add(Self::OFFSET_MAGIC) as *const u32) };
-        if magic != MAGIC_VAL {
-            return Err(BridgeError::invalid_header());
-        }
+        (unsafe { BridgeParser::check_raw(ptr) })?;
 
         Ok(Self {
             ptr: unsafe { NonNull::new_unchecked(ptr as *mut u8) },
-        })
-    }
-
-    /// Creates a non-owning borrowed view from a raw pointer.
-    ///
-    /// # Safety
-    /// - `ptr` must point to a valid BridgeVec allocation
-    /// - The allocation must remain valid for lifetime `'a`
-    /// - Caller must not free or reallocate the memory during `'a`
-    pub unsafe fn borrow_raw<'a>(ptr: *const u8) -> Result<BridgeVecRef<'a>, BridgeError> {
-        if ptr.is_null() {
-            return Err(BridgeError::null_pointer());
-        }
-        if (ptr as usize) % Self::ALIGN != 0 {
-            return Err(BridgeError::misaligned_pointer());
-        }
-
-        let magic = unsafe { ptr::read(ptr.add(Self::OFFSET_MAGIC) as *const u32) };
-        if magic != MAGIC_VAL {
-            return Err(BridgeError::invalid_header());
-        }
-
-        Ok(BridgeVecRef {
-            ptr,
-            _marker: PhantomData,
         })
     }
 
@@ -469,134 +443,7 @@ impl BridgeVec {
         ptr
     }
 
-    // --- Header Accessors ---
-
-    /// Gets the status code from the header (Offset 0x0F).
-    #[inline]
-    pub fn status(&self) -> u8 {
-        unsafe { ptr::read(self.ptr.as_ptr().add(Self::OFFSET_STATUS) as *const u8) }
-    }
-
-    #[inline]
-    pub fn parsed_status(&self) -> Result<DataStatus, u8> {
-        match self.status() {
-            0 => Ok(DataStatus::ValidData),
-            1 => Ok(DataStatus::UserError),
-            3 => Ok(DataStatus::CodeError),
-
-            100 => Ok(DataStatus::LocalSerialization),
-            101 => Ok(DataStatus::LocalDeserialization),
-            102 => Ok(DataStatus::LocalTransport),
-            103 => Ok(DataStatus::LocalIo),
-            104 => Ok(DataStatus::LocalUtf8),
-            105 => Ok(DataStatus::LocalNullPointer),
-            106 => Ok(DataStatus::LocalMisalignedPointer),
-            107 => Ok(DataStatus::LocalInvalidHeader),
-            108 => Ok(DataStatus::LocalLayoutError),
-            109 => Ok(DataStatus::LocalUnexpectedEof),
-
-            150 => Ok(DataStatus::RemoteSerialization),
-            151 => Ok(DataStatus::RemoteDeserialization),
-            152 => Ok(DataStatus::RemoteTransport),
-
-            153 => Ok(DataStatus::RemoteNullPointer),
-            154 => Ok(DataStatus::RemoteMisalignedPointer),
-            155 => Ok(DataStatus::RemoteInvalidHeader),
-            156 => Ok(DataStatus::RemoteLayoutError),
-
-            other => Err(other),
-        }
-    }
-
-    #[doc(hidden)]
-    /// Sets the status code in the header (Offset 0x0F).
-    #[inline]
-    pub fn set_status(&mut self, status: DataStatus) {
-        self.set_status_u8(status as u8);
-    }
-
-    #[doc(hidden)]
-    /// Sets the status code in the header (Offset 0x0F).
-    #[inline]
-    pub fn set_status_u8(&mut self, status: u8) {
-        unsafe {
-            ptr::write(
-                self.ptr.as_ptr().add(Self::OFFSET_STATUS) as *mut u8,
-                status,
-            )
-        }
-    }
-
-    /// Gets the User Version (Offset 0x0D).
-    #[inline]
-    pub fn version(&self) -> u8 {
-        unsafe { ptr::read(self.ptr.as_ptr().add(Self::OFFSET_USER_VERSION) as *const u8) }
-    }
-
-    /// Sets the User Version (Offset 0x0D).
-    #[inline]
-    pub fn set_version(&mut self, version: u8) {
-        unsafe {
-            ptr::write(
-                self.ptr.as_ptr().add(Self::OFFSET_USER_VERSION) as *mut u8,
-                version,
-            )
-        }
-    }
-
-    /// Gets the User Error Version (Offset 0x0E).
-    #[inline]
-    pub fn error_version(&self) -> u8 {
-        unsafe { ptr::read(self.ptr.as_ptr().add(Self::OFFSET_ERR_VERSION) as *const u8) }
-    }
-
-    /// Sets the User Error Version (Offset 0x0E).
-    #[inline]
-    pub fn set_error_version(&mut self, version: u8) {
-        unsafe {
-            ptr::write(
-                self.ptr.as_ptr().add(Self::OFFSET_ERR_VERSION) as *mut u8,
-                version,
-            )
-        }
-    }
-
-    /// Gets the Wire Format Version (Offset 0x0C).
-    #[doc(hidden)]
-    #[inline]
-    pub fn wire_format(&self) -> u8 {
-        unsafe { ptr::read(self.ptr.as_ptr().add(Self::OFFSET_WIRE_FORMAT) as *const u8) }
-    }
-
-    #[doc(hidden)]
-    #[inline]
-    pub fn set_wire_format(&mut self, version: u8) {
-        unsafe {
-            ptr::write(
-                self.ptr.as_ptr().add(Self::OFFSET_WIRE_FORMAT) as *mut u8,
-                version,
-            )
-        }
-    }
-
-    /// Is this a Ok message?
-    pub fn is_ok(&self) -> bool {
-        self.status() == 0
-    }
-
-    /// Is this a error message?
-    pub fn is_err(&self) -> bool {
-        self.status() == 1
-    }
-
-    /// Is this a transport error?
-    pub fn is_bridge_err(&self) -> bool {
-        self.status() != 0 && self.status() != 1
-    }
-
-    // --- Data Accessors ---
-
-    pub fn as_ptr(&self) -> *const u8 {
+    pub(crate) fn header_ptr(&self) -> *const u8 {
         self.ptr.as_ptr()
     }
 
@@ -604,20 +451,11 @@ impl BridgeVec {
         unsafe { self.ptr.as_ptr().add(Self::HEADER_SIZE) }
     }
 
-    #[inline]
-    pub fn len(&self) -> usize {
-        unsafe { ptr::read(self.ptr.as_ptr().add(Self::OFFSET_LEN) as *const u32) as usize }
-    }
-
-    #[inline]
     pub fn capacity(&self) -> usize {
-        unsafe { ptr::read(self.ptr.as_ptr().add(Self::OFFSET_CAP) as *const u32) as usize }
+        self.header_capacity() as usize
     }
 
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
+    // --- Data Accessors ---
 
     /// Returns a slice containing the Header (16 bytes) AND the Data (len bytes).
     pub fn as_packet_slice(&self) -> &[u8] {
@@ -661,6 +499,7 @@ impl BridgeVec {
     pub fn as_slice(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.data_ptr(), self.len()) }
     }
+
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr().add(Self::HEADER_SIZE), self.len()) }
@@ -724,93 +563,9 @@ impl BridgeVec {
         // We explicitly overwrite the header with UNIT_BYTES to ensure
         // it matches the "official" static representation exactly.
         unsafe {
-            ptr::copy_nonoverlapping(UNIT_HEADER.0.as_ptr(), vec.ptr.as_ptr(), Self::HEADER_SIZE);
+            ptr::copy_nonoverlapping(header::UNIT_HEADER.0.as_ptr(), vec.ptr.as_ptr(), Self::HEADER_SIZE);
         }
         vec
-    }
-}
-
-// --- BridgeVecRef Implementation ---
-
-impl<'a> BridgeVecRef<'a> {
-    #[inline]
-    pub fn status(&self) -> u8 {
-        unsafe { ptr::read(self.ptr.add(BridgeVec::OFFSET_STATUS) as *const u8) }
-    }
-
-    #[inline]
-    pub fn wire_format(&self) -> u8 {
-        unsafe { ptr::read(self.ptr.add(BridgeVec::OFFSET_WIRE_FORMAT) as *const u8) }
-    }
-
-    #[inline]
-    pub fn version(&self) -> u8 {
-        unsafe { ptr::read(self.ptr.add(BridgeVec::OFFSET_USER_VERSION) as *const u8) }
-    }
-
-    #[inline]
-    pub fn error_version(&self) -> u8 {
-        unsafe { ptr::read(self.ptr.add(BridgeVec::OFFSET_ERR_VERSION) as *const u8) }
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
-        unsafe { ptr::read(self.ptr.add(BridgeVec::OFFSET_LEN) as *const u32) as usize }
-    }
-
-    #[inline]
-    pub fn capacity(&self) -> usize {
-        unsafe { ptr::read(self.ptr.add(BridgeVec::OFFSET_CAP) as *const u32) as usize }
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub fn as_ptr(&self) -> *const u8 {
-        self.ptr
-    }
-
-    pub fn data_ptr(&self) -> *const u8 {
-        unsafe { self.ptr.add(BridgeVec::HEADER_SIZE) }
-    }
-
-    pub fn as_slice(&self) -> &'a [u8] {
-        unsafe { slice::from_raw_parts(self.data_ptr(), self.len()) }
-    }
-
-    pub fn as_packet_slice(&self) -> &'a [u8] {
-        unsafe { slice::from_raw_parts(self.ptr, BridgeVec::HEADER_SIZE + self.len()) }
-    }
-}
-
-impl BridgeVecRef<'static> {
-    /// Returns a static reference to the global Ok header.
-    /// This is Zero-Copy and Zero-Allocation.
-    pub fn ok() -> BridgeVecRef<'static> {
-        // SAFETY:
-        // 1. UNIT_HEADER is static, so it lives for 'static.
-        // 2. UNIT_HEADER is #[repr(align(16))], satisfying alignment.
-        // 3. The bytes are valid (checked by UNIT_BYTES definition).
-        BridgeVecRef {
-            ptr: UNIT_HEADER.0.as_ptr(),
-            _marker: PhantomData,
-        }
-    }
-}
-
-impl<'a> fmt::Debug for BridgeVecRef<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BridgeVecRef")
-            .field("len", &self.len())
-            .field("capacity", &self.capacity())
-            .field("status", &self.status())
-            .field("wire_fmt", &self.wire_format())
-            .field("usr_ver", &self.version())
-            .field("err_ver", &self.error_version())
-            .field("data", &self.as_slice())
-            .finish()
     }
 }
 
@@ -822,7 +577,7 @@ impl Clone for BridgeVec {
 
         new_vec.extend_from_slice(self.as_slice());
 
-        new_vec.set_status_u8(self.status());
+        new_vec.set_status_u8(self.status_u8());
         new_vec.set_wire_format(self.wire_format());
         new_vec.set_version(self.version());
         new_vec.set_error_version(self.error_version());
@@ -893,33 +648,6 @@ impl io::Write for BridgeVec {
     }
 }
 
-/// Raw 16-byte header representing `Ok(())` (Unit).
-///
-/// Use this to write directly to network streams without heap allocation.
-///
-/// DO NOT RETURN THIS IN AN FFI SITUATION
-///
-/// Layout:
-/// - Magic:   0x7079726F ("pyro") (Little Endian: 6F 72 79 70)
-/// - Len:     0
-/// - Cap:     16 (Minimal Header Size)
-/// - WireFmt: 1 (PROTOCOL_VERSION)
-/// - Status:  0 (ValidData)
-const UNIT_BYTES: [u8; 16] = [
-    0x6F, 0x72, 0x79, 0x70, // 0x00: Magic
-    0x00, 0x00, 0x00, 0x00, // 0x04: Len (0)
-    0x10, 0x00, 0x00, 0x00, // 0x08: Cap (16)
-    0x01, // 0x0C: WireFormat (1)
-    0x00, // 0x0D: UserVer
-    0x00, // 0x0E: ErrVer
-    0x00, // 0x0F: Status (ValidData)
-];
-#[repr(C, align(16))]
-struct AlignedHeader([u8; 16]);
-
-// A static, aligned instance of the unit bytes
-static UNIT_HEADER: AlignedHeader = AlignedHeader(UNIT_BYTES);
-
 
 #[cfg(test)]
 mod unit_tests {
@@ -932,7 +660,7 @@ mod unit_tests {
         // Check Header correctness
         assert_eq!(vec.len(), 0);
         assert_eq!(vec.capacity(), 16);
-        assert_eq!(vec.status(), 0); // ValidData
+        assert_eq!(vec.status(), Ok(DataStatus::ValidData));
         assert_eq!(vec.wire_format(), 1);
 
         // Check Memory Layout
@@ -940,34 +668,5 @@ mod unit_tests {
 
         // Ensure it is actually owned (drop shouldn't panic/segfault)
         drop(vec);
-    }
-
-    #[test]
-    fn test_bridge_vec_ref_ok() {
-        let vec_ref = BridgeVecRef::ok();
-
-        assert_eq!(vec_ref.len(), 0);
-        assert_eq!(vec_ref.status(), 0);
-        assert_eq!(
-            vec_ref.as_ptr() as usize % 16,
-            0,
-            "Static Ref must be aligned"
-        );
-
-        // Validate against raw bytes
-        let slice = vec_ref.as_packet_slice();
-        assert_eq!(slice, &UNIT_BYTES, "Ref should point to UNIT_BYTES content");
-    }
-
-    #[test]
-    fn test_ok_interoperability() {
-        let owned = BridgeVec::ok();
-        let reference = BridgeVecRef::ok();
-
-        // They should be byte-equivalent
-        assert_eq!(owned.as_packet_slice(), reference.as_packet_slice());
-
-        // But distinct addresses (Owned is on heap, Ref is in static text/data segment)
-        assert_ne!(owned.as_ptr(), reference.as_ptr());
     }
 }

@@ -16,6 +16,7 @@ use std::ops::Deref;
 use std::panic::Location;
 
 use crate::captured::{ErrorKind, ErrorPayload};
+use crate::header::{BridgeHeader, BridgeHeaderMut};
 use crate::{BridgeError, Bridgeable, CapturedError, DataStatus, ErrorVec};
 
 // Define thread-local scratch space to reuse allocations.
@@ -59,7 +60,7 @@ impl BridgeVec {
             Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, RancorError>,
         >,
     {
-        if self.parsed_status() == Ok(DataStatus::ValidData) {
+        if self.status() == Ok(DataStatus::ValidData) {
             let buf = self.unchecked_parse::<T>()?;
             Ok(buf)
         } else {
@@ -79,7 +80,7 @@ impl BridgeVec {
             Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, RancorError>,
         >,
     {
-        match self.parsed_status() {
+        match self.status() {
             Ok(DataStatus::ValidData) => {
                 let buf = self.unchecked_parse::<T>()?;
                 Ok(Ok(buf))
@@ -181,7 +182,7 @@ impl BridgeVec {
     /// to deserialize the payload as a JSON `CapturedError`.
     /// Parse this BridgeVec as an error based on its status code.
     pub fn parse_as_error(self) -> BridgeError {
-        match self.parsed_status() {
+        match self.status() {
             Ok(DataStatus::ValidData) => BridgeError::UserSuccess(self),
             Ok(DataStatus::UserError) => BridgeError::UserError(ErrorVec(self)),
 
@@ -201,11 +202,7 @@ impl BridgeVec {
             )),
             Ok(DataStatus::RemoteIo) => BridgeError::remote_io(self.extract_captured_error()),
             Ok(DataStatus::RemoteUtf8) => BridgeError::remote_utf8(self.extract_captured_error()),
-            Ok(DataStatus::RemoteUnexpectedEof) => BridgeError::remote(ErrorKind::NullPointer),
-            Ok(DataStatus::RemoteNullPointer) => BridgeError::remote(ErrorKind::NullPointer),
-            Ok(DataStatus::RemoteMisalignedPointer) => {
-                BridgeError::remote(ErrorKind::MisalignedPointer)
-            }
+            Ok(DataStatus::RemoteUnexpectedEof) => BridgeError::remote(ErrorKind::InvalidHeader),
             Ok(DataStatus::RemoteInvalidHeader) => BridgeError::remote(ErrorKind::InvalidHeader),
             Ok(DataStatus::RemoteLayoutError) => BridgeError::remote(ErrorKind::LayoutError),
 
@@ -240,10 +237,6 @@ impl BridgeVec {
                     "UTF-8: {}",
                     msg
                 ))))
-            }
-            Ok(DataStatus::LocalNullPointer) => BridgeError::local(ErrorKind::NullPointer),
-            Ok(DataStatus::LocalMisalignedPointer) => {
-                BridgeError::local(ErrorKind::MisalignedPointer)
             }
             Ok(DataStatus::LocalInvalidHeader) => BridgeError::local(ErrorKind::InvalidHeader),
             Ok(DataStatus::LocalLayoutError) => BridgeError::local(ErrorKind::LayoutError),
@@ -288,7 +281,7 @@ impl ErrorVec {
             Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, RancorError>,
         >,
     {
-        if self.0.parsed_status() == Ok(DataStatus::ValidData) {
+        if self.0.status() == Ok(DataStatus::ValidData) {
             let buf = self.0.unchecked_parse::<T>()?;
             Ok(buf)
         } else {
@@ -323,6 +316,11 @@ impl BridgeError {
                 err_vec.set_status(DataStatus::CodeError);
                 err_vec
             }
+            BridgeError::Header(error) => {
+                let mut err_vec=  CapturedError::new(error.to_string()).with_location(Location::caller()).encode();
+                err_vec.set_status(DataStatus::RemoteInvalidHeader);
+                err_vec
+            }
 
             BridgeError::Bridge { kind, .. } => {
                 let error: Option<Box<CapturedError>> = match kind {
@@ -332,8 +330,6 @@ impl BridgeError {
                     ErrorKind::Transport(error_payload) => Some(error_payload.into()),
                     ErrorKind::Io(io_payload) => Some(io_payload.into()),
                     ErrorKind::Utf8(utf8_payload) => Some(utf8_payload.into()),
-                    ErrorKind::NullPointer => None,
-                    ErrorKind::MisalignedPointer => None,
                     ErrorKind::InvalidHeader => None,
                     ErrorKind::LayoutError => None,
                     ErrorKind::UnexpectedEof => None,

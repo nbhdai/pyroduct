@@ -14,11 +14,15 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+# Should be optional
+arrow-scalars = { path = "../arrow-scalars", default-features = false, features = [] }
+
 # Async (not for wasm)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio.workspace = true
 async-ffi.workspace = true
 futures.workspace = true
+
 
 [dev-dependencies]
 trybuild.workspace = true

@@ -5,7 +5,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use bridge_vec::{BridgeError, BridgeVec, CapturedError};
+use bridge_vec::{BridgeError, BridgeVec, CapturedError, captured::LibraryInfo};
 use pin_project::pin_project;
 use tracing::{error, info, trace};
 use wasmtime::Linker;
@@ -44,13 +44,13 @@ pub struct CapFunction {
 impl CapFunction {
     pub fn new(func: &FunctionExport<'_>, ident: &CapIdentity) -> PyroductResult<Self> {
         if func.capability.is_null() {
-            return Err(PyroductError::from_capability_loading(
+            return Err(PyroductError::from_loading(
                 ident,
                 "FunctionExport capability name pointer is null",
             ));
         }
         if func.name.is_null() {
-            return Err(PyroductError::from_capability_loading(
+            return Err(PyroductError::from_loading(
                 ident,
                 "FunctionExport function name pointer is null",
             ));
@@ -79,15 +79,15 @@ impl CapFunction {
 }
 
 impl CapClass {
-    pub fn new(ident: &CapIdentity, class: &ClassExport<'_>) -> PyroductResult<Self> {
+    pub fn new(ident: &LibraryInfo<'static>, class: &ClassExport<'_>) -> PyroductResult<Self> {
         if class.ptr.is_null() {
-            return Err(PyroductError::from_capability_loading(
+            return Err(PyroductError::from_loading(
                 ident,
                 "ClassExport methods pointer is null",
             ));
         }
         if class.len == 0 {
-            return Err(PyroductError::from_capability_loading(
+            return Err(PyroductError::from_loading(
                 ident,
                 "ClassExport has no methods",
             ));

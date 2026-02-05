@@ -7,6 +7,7 @@ use std::time::Duration;
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::BridgeVec;
+use crate::header::{BridgeHeader, BridgeHeaderMut};
 
 // --- Constants ---
 
@@ -170,7 +171,7 @@ where
     dest.write_u8(vec.error_version()).await?;
 
     // 0x0F: Status
-    dest.write_u8(vec.status()).await?;
+    dest.write_u8(vec.status_u8()).await?;
 
     // Payload
     dest.write_all(vec.as_slice()).await?;
@@ -181,7 +182,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::BridgeVec;
+    use crate::{BridgeVec, header::{BridgeHeader, BridgeHeaderMut}};
     use std::io::Cursor;
 
     #[tokio::test]
@@ -194,7 +195,7 @@ mod tests {
         original.set_wire_format(0xAA);
         original.set_version(0xBB);
         original.set_error_version(0xCC);
-        original.set_status_u8(0xDD);
+        original.set_status(crate::header::DataStatus::LocalIo);
 
         let mut stream = Vec::new();
 
@@ -224,13 +225,13 @@ mod tests {
         assert_eq!(recovered.wire_format(), 0xAA);
         assert_eq!(recovered.version(), 0xBB);
         assert_eq!(recovered.error_version(), 0xCC);
-        assert_eq!(recovered.status(), 0xDD);
+        assert_eq!(recovered.status(), Ok(crate::header::DataStatus::LocalIo));
     }
 
     #[tokio::test]
     async fn test_read_empty_payload() {
         let mut original = BridgeVec::with_capacity(0);
-        original.set_status_u8(1);
+        original.set_status(crate::header::DataStatus::UserError);
         original.set_error_version(5);
 
         let mut stream = Vec::new();
@@ -240,7 +241,7 @@ mod tests {
         let recovered = read_from_stream(&mut reader,  None).await.unwrap();
 
         assert_eq!(recovered.len(), 0);
-        assert_eq!(recovered.status(), 1);
+        assert_eq!(recovered.status(), Ok(crate::header::DataStatus::UserError));
         assert_eq!(recovered.error_version(), 5);
     }
 

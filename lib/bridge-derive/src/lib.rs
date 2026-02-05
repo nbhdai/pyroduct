@@ -1,5 +1,5 @@
 use proc_macro::TokenStream;
-use syn::{Item, LitStr, Meta, parse_macro_input, parse_quote, punctuated::Punctuated};
+use syn::{Item, Meta, parse_macro_input, parse_quote, punctuated::Punctuated};
 
 #[proc_macro_attribute]
 pub fn bridgeable(args: TokenStream, input: TokenStream) -> TokenStream {
@@ -15,12 +15,11 @@ pub fn bridgeable(args: TokenStream, input: TokenStream) -> TokenStream {
 
 #[proc_macro]
 pub fn library(input: TokenStream) -> TokenStream {
-    let meta_string = if input.is_empty() {
-        "".to_string()
-    } else {
-        let lit = parse_macro_input!(input as LitStr);
-        lit.value()
-    };
+    let args = parse_macro_input!(input as bridge_core::LibraryArgs);
 
-    bridge_core::create_ident(parse_quote!(::bridge_vec), &meta_string).into()
+    bridge_core::create_ident(
+        syn::parse_quote!(::bridge_vec), 
+        &args.meta, 
+        args.no_ffi
+    ).into()
 }

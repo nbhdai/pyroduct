@@ -26,7 +26,7 @@
 //! ```rust,ignore
 //! use bridge_vec::ffi;
 //!
-//! #[no_mangle]
+//! #[unsafe(no_mangle)]
 //! pub extern "C" fn my_plugin_function() -> *const u8 {
 //!     // execute_safe ensures that no matter what happens in the closure
 //!     // (panic, error, success), a valid *const u8 BridgeVec pointer is returned.
@@ -60,8 +60,9 @@ use std::panic::{self, AssertUnwindSafe, Location, PanicHookInfo};
 use std::sync::Once;
 use tracing::{debug, error, trace};
 
+use crate::header::{BridgeHeaderMut, DataStatus};
 // Assuming these exist in your crate based on the snippet
-use crate::{BridgeError, BridgeVec, Bridgeable, CapturedError, DataStatus, TypedBuf};
+use crate::{BridgeError, BridgeVec, Bridgeable, CapturedError, TypedBuf};
 
 
 thread_local! {

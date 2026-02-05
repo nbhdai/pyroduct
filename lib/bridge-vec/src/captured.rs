@@ -1,3 +1,5 @@
+// TODO: Make the "library" ALWAYS encode in the error messages and use a zerovec format.
+
 use std::{backtrace::Backtrace, borrow::Cow};
 use std::fmt;
 use std::panic::Location;
@@ -5,6 +7,7 @@ use std::panic::Location;
 use rkyv::rancor;
 use thiserror::Error;
 
+use crate::header::{DataStatus, ParseError};
 use crate::{BridgeVec, ErrorVec};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -12,18 +15,50 @@ pub struct LibraryInfo<'a> {
     pub meta: Cow<'a, str>,
     pub name: Cow<'a, str>,
     pub version: Cow<'a, str>,
-    pub authors: Cow<'a, str>,
-    pub filename: Cow<'a, str>,
+}
+
+impl<'a> fmt::Display for LibraryInfo<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Compact output format: name vversion (meta)
+        write!(f, "lib: {} v{} ({})", self.name, self.version, self.meta)
+    }
 }
 
 // Add this global static to store the identity of the currently running binary
-static APP_IDENTITY: std::sync::OnceLock<LibraryInfo<'static>> = std::sync::OnceLock::new();
+static APP_IDENTITY: std::sync::OnceLock<(LibraryInfo<'static>, &'static str)> = std::sync::OnceLock::new();
 
 /// Called by the binary's `main()` to register its identity.
 /// This ensures all CapturedErrors created in this process carry this tag.
-pub fn register_app_identity(info: LibraryInfo<'static>) {
+pub fn register_app_identity(info: LibraryInfo<'static>, encoded: &'static str) {
     // We ignore the result; if it's already set, we keep the original (first-one-wins)
-    let _ = APP_IDENTITY.set(info);
+    let _ = APP_IDENTITY.set((info, encoded));
+}
+
+pub fn library() -> Option<&'static LibraryInfo<'static>> {
+    APP_IDENTITY.get().map(|l| &l.0)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn library_json(len: *mut usize) -> *const u8 {
+    // 1. Retrieve the encoded JSON string from the global OnceLock
+    // If it hasn't been set yet, we return an empty result.
+    let json_str = match APP_IDENTITY.get() {
+        Some((_, encoded)) => encoded,
+        None => {
+            if !len.is_null() {
+                unsafe { *len = 0; }
+            }
+            return std::ptr::null();
+        }
+    };
+
+    // 2. Write the length to the C-provided pointer (if it's not null)
+    if !len.is_null() {
+        unsafe { *len = json_str.len(); }
+    }
+
+    // 3. Return the pointer to the bytes
+    json_str.as_ptr()
 }
 
 /// Whether the error occurred locally or on the remote service.
@@ -56,6 +91,9 @@ pub enum BridgeError {
         origin: ErrorOrigin,
         kind: ErrorKind,
     },
+
+    #[error("Bad header: {0}")]
+    Header(#[from] ParseError),
 
     /// Unknown status code.
     #[error("unknown status code: {0}")]
@@ -101,6 +139,28 @@ impl BridgeError {
         )
     }
 
+    /// Returns true if this error originated remotely.
+    pub fn library(&self) -> Option<&LibraryInfo<'static>> {
+        match self {
+            BridgeError::UserError(_) => library(),
+            BridgeError::UserSuccess(_) => library(),
+            BridgeError::UnknownStatus(_, _) => library(),
+            BridgeError::Header(_) => library(),
+            BridgeError::CodePanic(captured_error) => captured_error.library.as_ref(),
+            BridgeError::Bridge { kind, .. } => match kind {
+                ErrorKind::Serialization(error_payload)
+                | ErrorKind::Deserialization(error_payload)
+                | ErrorKind::Validation(error_payload)
+                | ErrorKind::Transport(error_payload) => error_payload.library(),
+                ErrorKind::Io(io_payload) => io_payload.library(),
+                ErrorKind::Utf8(utf8_payload) => utf8_payload.library(),
+                ErrorKind::InvalidHeader => library(),
+                ErrorKind::LayoutError => library(),
+                ErrorKind::UnexpectedEof => library(),
+            },
+        }
+    }
+
     /// Returns the error kind if this is a Bridge error.
     pub fn kind(&self) -> Option<&ErrorKind> {
         match self {
@@ -127,6 +187,7 @@ impl fmt::Debug for BridgeError {
         match self {
             Self::UserError(_) => f.debug_tuple("UserError").finish(),
             Self::UserSuccess(_) => f.debug_tuple("UserSuccess").finish(),
+            Self::Header(h) => f.debug_tuple("Header").field(h).finish(),
             Self::CodePanic(arg0) => f.debug_tuple("CodePanic").field(arg0).finish(),
             Self::Bridge { origin, kind } => f
                 .debug_struct("Bridge")
@@ -180,6 +241,15 @@ impl From<&IoPayload> for Box<CapturedError> {
     }
 }
 
+impl IoPayload {
+    pub fn library(&self) -> Option<&LibraryInfo<'static>> {
+        match self {
+            IoPayload::Error(_) => library(),
+            IoPayload::Captured(captured_error) => captured_error.library.as_ref(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum Utf8Payload {
     Error(std::str::Utf8Error),
@@ -213,6 +283,15 @@ impl From<&Utf8Payload> for Box<CapturedError> {
     }
 }
 
+impl Utf8Payload {
+    pub fn library(&self) -> Option<&LibraryInfo<'static>> {
+        match self {
+            Utf8Payload::Error(_) => library(),
+            Utf8Payload::Captured(captured_error) => captured_error.library.as_ref(),
+        }
+    }
+}
+
 /// The specific kind of bridge/transport error that occurred.
 #[derive(Debug)]
 pub enum ErrorKind {
@@ -228,11 +307,7 @@ pub enum ErrorKind {
     Io(IoPayload),
     /// UTF-8 decoding error.
     Utf8(Utf8Payload),
-    /// Pointer was null.
-    NullPointer,
-    /// Pointer was not properly aligned.
-    MisalignedPointer,
-    /// Magic header bytes were invalid.
+    /// Header was invalid
     InvalidHeader,
     /// Layout/capacity calculation failed.
     LayoutError,
@@ -249,8 +324,6 @@ impl ErrorKind {
             ErrorKind::Transport(_) => ErrorStatus::Transport,
             ErrorKind::Io(_) => ErrorStatus::Io,
             ErrorKind::Utf8(_) => ErrorStatus::Utf8,
-            ErrorKind::NullPointer => ErrorStatus::NullPointer,
-            ErrorKind::MisalignedPointer => ErrorStatus::MisalignedPointer,
             ErrorKind::InvalidHeader => ErrorStatus::InvalidHeader,
             ErrorKind::LayoutError => ErrorStatus::LayoutError,
             ErrorKind::UnexpectedEof => ErrorStatus::UnexpectedEof,
@@ -267,8 +340,6 @@ pub enum ErrorStatus {
     Transport,
     Io,
     Utf8,
-    NullPointer,
-    MisalignedPointer,
     InvalidHeader,
     LayoutError,
     UnexpectedEof,
@@ -283,8 +354,6 @@ impl ErrorStatus {
             ErrorStatus::Transport => DataStatus::LocalTransport,
             ErrorStatus::Io => DataStatus::LocalIo,
             ErrorStatus::Utf8 => DataStatus::LocalUtf8,
-            ErrorStatus::NullPointer => DataStatus::LocalNullPointer,
-            ErrorStatus::MisalignedPointer => DataStatus::LocalMisalignedPointer,
             ErrorStatus::InvalidHeader => DataStatus::LocalInvalidHeader,
             ErrorStatus::LayoutError => DataStatus::LocalLayoutError,
             ErrorStatus::UnexpectedEof => DataStatus::LocalUnexpectedEof,
@@ -299,8 +368,6 @@ impl ErrorStatus {
             ErrorStatus::Transport => DataStatus::RemoteTransport,
             ErrorStatus::Io => DataStatus::RemoteIo,
             ErrorStatus::Utf8 => DataStatus::RemoteUtf8,
-            ErrorStatus::NullPointer => DataStatus::RemoteNullPointer,
-            ErrorStatus::MisalignedPointer => DataStatus::RemoteMisalignedPointer,
             ErrorStatus::InvalidHeader => DataStatus::RemoteInvalidHeader,
             ErrorStatus::LayoutError => DataStatus::RemoteLayoutError,
             ErrorStatus::UnexpectedEof => DataStatus::RemoteUnexpectedEof,
@@ -308,52 +375,7 @@ impl ErrorStatus {
     }
 }
 
-/// Status codes located at Offset 0x0F in the header.
-///
-/// - **0-1**: User Logic (Success/Failure)
-/// - **3**: Caught Remote Error (Panic/Crash)
-/// - **4-99**: Reserved
-/// - **100-149**: Reserved for Local/Proxy errors
-/// - **150-199**: Remote Execution & Memory Safety errors
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DataStatus {
-    /// The payload is a valid `rkyv` archived `T`.
-    ValidData = 0,
-    /// The payload is a valid `rkyv` archived `E` (User Logic Error).
-    UserError = 1,
-    /// The remote code panicked or failed in an unhandled way.
-    /// Payload is `CapturedError` as JSON.
-    CodeError = 3,
 
-    // --- Local Errors (100-149) ---
-    // Used when the error occurs locally before leaving the bridge.
-    LocalSerialization = 101,
-    LocalDeserialization = 102,
-    LocalValidation = 103,
-    LocalTransport = 104,
-    LocalIo = 105,
-    LocalUtf8 = 106,
-    LocalNullPointer = 107,
-    LocalMisalignedPointer = 108,
-    LocalInvalidHeader = 109,
-    LocalLayoutError = 110,
-    LocalUnexpectedEof = 111,
-
-    // --- Remote Errors (150-199) ---
-    // Used when the error occurs locally before leaving the bridge.
-    RemoteSerialization = 151,
-    RemoteDeserialization = 152,
-    RemoteValidation = 153,
-    RemoteTransport = 154,
-    RemoteIo = 155,
-    RemoteUtf8 = 156,
-    RemoteNullPointer = 157,
-    RemoteMisalignedPointer = 158,
-    RemoteInvalidHeader = 159,
-    RemoteLayoutError = 160,
-    RemoteUnexpectedEof = 161,
-}
 
 /// Payload for errors - either a local rancor error or a captured remote error.
 #[derive(Debug)]
@@ -364,6 +386,16 @@ pub enum ErrorPayload {
     Captured(Box<CapturedError>),
     /// Simple string message.
     Message(String),
+}
+
+impl ErrorPayload {
+    pub fn library(&self) -> Option<&LibraryInfo<'static>> {
+        match self {
+            ErrorPayload::Rancor(_) => library(),
+            ErrorPayload::Captured(captured_error) => captured_error.library.as_ref(),
+            ErrorPayload::Message(_) => library(),
+        }
+    }
 }
 
 impl fmt::Display for ErrorPayload {
@@ -413,9 +445,7 @@ impl fmt::Display for ErrorKind {
             ErrorKind::Transport(e) => write!(f, "transport error: {}", e),
             ErrorKind::Io(e) => write!(f, "I/O error: {}", e),
             ErrorKind::Utf8(e) => write!(f, "UTF-8 error: {}", e),
-            ErrorKind::NullPointer => write!(f, "null pointer"),
-            ErrorKind::MisalignedPointer => write!(f, "misaligned pointer"),
-            ErrorKind::InvalidHeader => write!(f, "invalid magic header"),
+            ErrorKind::InvalidHeader => write!(f, "invalid header"),
             ErrorKind::LayoutError => write!(f, "layout/capacity error"),
             ErrorKind::UnexpectedEof => write!(f, "unexpected end of stream"),
         }
@@ -458,18 +488,6 @@ impl BridgeError {
 
     pub fn remote_utf8(err: Box<CapturedError>) -> Self {
         Self::remote(ErrorKind::Utf8(Utf8Payload::Captured(err)))
-    }
-
-    pub fn null_pointer() -> Self {
-        Self::local(ErrorKind::NullPointer)
-    }
-
-    pub fn misaligned_pointer() -> Self {
-        Self::local(ErrorKind::MisalignedPointer)
-    }
-
-    pub fn invalid_header() -> Self {
-        Self::local(ErrorKind::InvalidHeader)
     }
 
     pub fn layout_error() -> Self {
@@ -519,7 +537,7 @@ impl CapturedError {
             error: None,
             cause: None,
             stack_trace: None,
-            library: APP_IDENTITY.get().cloned(),
+            library: APP_IDENTITY.get().map(|l| l.0.clone()),
         }
     }
 
@@ -601,8 +619,6 @@ fn predict_captured_error_size(err: &CapturedError) -> usize {
         size += lib.meta.len();
         size += lib.name.len();
         size += lib.version.len();
-        size += lib.authors.len();
-        size += lib.filename.len();
     }
 
     size

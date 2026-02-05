@@ -1,3 +1,4 @@
+use bridge_vec::BridgeResult;
 use futures::future::try_join_all;
 use libloading::{Library, Symbol};
 use tracing::Span;
@@ -8,7 +9,6 @@ use crate::errors::PyroductError;
 use crate::host::class::{CapClass, CapabilityInit};
 use crate::host::pipeline::CapabilityDef;
 use crate::host::wasm_bridge::HarnessState;
-use crate::{CapIdentity, ModIdentity, PyroductResult};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
@@ -37,12 +37,9 @@ pub struct Capability {
 }
 
 impl Capability {
-    pub unsafe fn load<P: AsRef<Path>>(path: P) -> PyroductResult<Self> {
-        let ident = CapIdentity {
-            path: path.as_ref().into(),
-        };
+    pub unsafe fn load<P: AsRef<Path>>(path: P) -> BridgeResult<Self> {
         let library = unsafe { Library::new(path.as_ref()) }
-            .map_err(|e| PyroductError::from_capability_loading(&ident, e.to_string()))?;
+            .map_err(|e| PyroductError::from_loading(&ident, e.to_string()))?;
 
         let capability_span =
             tracing::span!(tracing::Level::INFO, "CAPABILITY", name = &ident.name());
@@ -52,7 +49,7 @@ impl Capability {
 
         let manifest_fn: Symbol<CapabilityRegisterFn> =
             unsafe { library.get(b"capability_manifest") }.map_err(|e| {
-                PyroductError::from_capability_loading(
+                PyroductError::from_loading(
                     &ident,
                     format!("Unable to get the manifest symbol: {e}"),
                 )
@@ -72,11 +69,11 @@ impl Capability {
     pub fn init(
         &self,
         config: Option<&serde_json::Value>,
-    ) -> PyroductResult<CapabilityInit<'static>> {
+    ) -> BridgeResult<CapabilityInit<'static>> {
         self.class.init(config)
     }
 
-    pub fn link(&self, linker: &mut Linker<HarnessState>, cap_index: usize) -> PyroductResult<()> {
+    pub fn link(&self, linker: &mut Linker<HarnessState>, cap_index: usize) -> BridgeResult<()> {
         self.class.link(linker, self.span_id, cap_index)?;
         Ok(())
     }
@@ -94,7 +91,7 @@ impl Capabilities {
         }
     }
 
-    pub fn load(&mut self, name: &str, path: &Path) -> PyroductResult<()> {
+    pub fn load(&mut self, name: &str, path: &Path) -> BridgeResult<()> {
         let cap = unsafe { Arc::new(Capability::load(path)?) };
         self.capabilities.insert(name.to_string(), cap);
         Ok(())
@@ -104,14 +101,14 @@ impl Capabilities {
         &mut self,
         names: impl Iterator<Item = &'a str>,
         paths: impl Iterator<Item = &'a Path>,
-    ) -> PyroductResult<()> {
+    ) -> BridgeResult<()> {
         let capabilities = names
             .zip(paths)
             .map(|(n, p)| {
                 let cap = unsafe { Arc::new(Capability::load(p)?) };
                 Ok((n.to_string(), cap))
             })
-            .collect::<PyroductResult<HashMap<_, _>>>()?;
+            .collect::<BridgeResult<HashMap<_, _>>>()?;
         self.capabilities.extend(capabilities);
         Ok(())
     }
@@ -120,7 +117,7 @@ impl Capabilities {
         &self,
         names: impl Iterator<Item = &'a str>,
         linker: &mut Linker<HarnessState>,
-    ) -> PyroductResult<()> {
+    ) -> BridgeResult<()> {
         for (cap_index, name) in names.enumerate() {
             let cap = self
                 .capabilities
@@ -135,7 +132,7 @@ impl Capabilities {
         &self,
         module: &ModIdentity,
         configs: &[CapabilityDef],
-    ) -> PyroductResult<HarnessState> {
+    ) -> BridgeResult<HarnessState> {
         let mut inits = Vec::new();
         let mut capabilities = Vec::new();
 
