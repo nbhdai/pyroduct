@@ -10,11 +10,7 @@ host = []
 module = []
 
 [dependencies]
-bridge-vec.workspace = true
-
-arrow.workspace = true
-arrow-scalars = { path = "../arrow-scalars", default-features = false, features = [] }
-arrow-derive = { path = "../arrow-derive", default-features = false, features = ["pyroduct"] }
+pyro-vec.workspace = true
 
 module-derive = { path = "../module-derive" }
 rkyv.workspace = true

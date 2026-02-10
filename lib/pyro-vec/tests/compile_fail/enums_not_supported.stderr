@@ -1,0 +1,5 @@
+error: ToRow can only be derived for structs with fields
+ --> tests/compile_fail/enums_not_supported.rs:6:6
+  |
+6 | enum NotAllowed {
+  |      ^^^^^^^^^^

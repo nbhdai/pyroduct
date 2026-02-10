@@ -1,31 +1,25 @@
 [workspace]
 members = [ 
     "error",
-    "arrow-scalars",
-    "arrow-derive",
-    "arrow-file",
     "capability-core",
     "capability-derive",
     "module-core",
     "module-derive",
     "pyroduct",
     "cli",
-    "bridge-vec",
-    "bridge-core",
-    "bridge-derive",
+    "pyro-vec",
+    "pyro-core",
+    "pyro-derive",
 ]
 
 default-members = [
-    "arrow-scalars",
-    "arrow-derive",
-    "arrow-file",
     "capability-core",
     "module-core",
     "module-derive",
     "pyroduct",
     "cli",
-    "bridge-vec",
-    "bridge-core",
+    "pyro-vec",
+    "pyro-core",
 ]
 resolver = "2"
 
@@ -35,15 +29,12 @@ authors = ["Sven Cattell"]
 edition = "2024"
 
 [workspace.dependencies]
-bridge-core = { path = "bridge-core" }
-bridge-derive = { path = "bridge-derive" }
-bridge-vec = { path = "bridge-vec" }
-arrow-scalars = { path = "arrow-scalars" }
-arrow-file = { path = "arrow-file" }
+pyro-core = { path = "pyro-core" }
+pyro-derive = { path = "pyro-derive" }
+pyro-vec = { path = "pyro-vec" }
 pyroduct = { path = "pyroduct" }
 capability-core = { path = "capability-core" }
 capability-derive = { path = "capability-derive" }
-arrow-derive = { path = "arrow-derive" }
 module-core = { path = "module-core" }
 module-derive = { path = "module-derive" }
 pyroduct-error = { path = "error" }

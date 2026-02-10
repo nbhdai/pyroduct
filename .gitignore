@@ -1,10 +1,11 @@
 target
 .DS_Store
 .direnv
+result
+
 capabilities/**/interface
 capabilities/**/Cargo.*
 capabilities/**/*.json
 modules/**/Cargo.*
 
 artifacts
-result

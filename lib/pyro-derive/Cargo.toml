@@ -1,0 +1,12 @@
+[package]
+name = "pyro-derive"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+pyro-core.workspace = true
+syn.workspace = true
