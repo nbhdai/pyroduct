@@ -1,25 +1,17 @@
 [workspace]
 members = [ 
-    "error",
-    "capability-core",
-    "capability-derive",
-    "module-core",
-    "module-derive",
     "pyroduct",
-    "cli",
-    "pyro-vec",
     "pyro-core",
     "pyro-derive",
+    "cli",
+    "arrow-file",
 ]
 
 default-members = [
-    "capability-core",
-    "module-core",
-    "module-derive",
     "pyroduct",
-    "cli",
-    "pyro-vec",
     "pyro-core",
+    "cli",
+    "arrow-file",
 ]
 resolver = "2"
 
@@ -31,13 +23,8 @@ edition = "2024"
 [workspace.dependencies]
 pyro-core = { path = "pyro-core" }
 pyro-derive = { path = "pyro-derive" }
-pyro-vec = { path = "pyro-vec" }
 pyroduct = { path = "pyroduct" }
-capability-core = { path = "capability-core" }
-capability-derive = { path = "capability-derive" }
-module-core = { path = "module-core" }
-module-derive = { path = "module-derive" }
-pyroduct-error = { path = "error" }
+arrow-file = { path = "arrow-file" }
 
 # Errors and reporting
 anyhow = "1.0.100"
@@ -47,7 +34,7 @@ tracing-subscriber = "0.3.22"
 tracing-test = "0.2.5"
 
 # Serialization
-rkyv = "0.8.13"
+rkyv = "0.8.14"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 serde_yaml = "1.0.149"
@@ -57,7 +44,7 @@ half = { version = "2.7.1", features = ["serde", "rkyv"] }
 # Arrow 
 arrow = "57.2.0"
 parquet = "57.2.0"
-arrow-schema = { version = "57.2.0" , features = [ "serde" ]}
+arrow-schema = "57.2.0"
 
 # I/O and hashing
 bytes = "1.11.0"
@@ -72,12 +59,13 @@ flate2 = "1.1.8"
 clap = { version = "4.5", features = ["derive"] }
 
 # Async and ffi
-wasmtime = "40.0.1"
+wasmtime = "41.0.3"
 pin-project = "1.1.10"
-libloading = "0.9.0"
 tokio = { version = "1.49.0", features = ["full"] }
 futures = "0.3.31"
 async-ffi = "0.5.0"
+object = { version = "0.38.1", features = ["macho"] }
+libloading = "0.9.0"
 
 # Macro & Expansion
 cargo_toml = "0.22.3"

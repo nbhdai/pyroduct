@@ -1,7 +1,0 @@
-error: Output field count (3) doesn't match tuple element count (2)
- --> tests/module/compile_fail/tuple_count_mismatch.rs:3:1
-  |
-3 | #[module(output = (a, b, c))]  // ERROR: 3 fields but tuple has 2 elements
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |
-  = note: this error originates in the attribute macro `module` (in Nightly builds, run with -Z macro-backtrace for more info)

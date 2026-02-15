@@ -1,0 +1,248 @@
+use std::collections::HashMap;
+use std::ops::Deref;
+use std::path::Path;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{Arc, RwLock};
+
+use libloading::{Library, Symbol};
+use object::{Object, ObjectSymbol, SymbolKind};
+use thiserror::Error;
+use tracing::Span;
+
+use crate::PyroVec;
+use crate::ffi::{CapabilityRegisterFn, ClassExport, ForeignClass, ForeignObject};
+use crate::format::{PyroFormat, Writer};
+use crate::json::Json;
+
+// =============================================================================
+// Error
+// =============================================================================
+
+#[derive(Error, Debug)]
+pub enum CapabilityLoading {
+    #[error("Failed to load library '{path}': {reason}")]
+    LibraryOpen { path: String, reason: String },
+
+    #[error("Failed to read library file '{path}': {reason}")]
+    FileRead { path: String, reason: String },
+
+    #[error("Failed to parse library binary '{path}': {reason}")]
+    BinaryParse { path: String, reason: String },
+
+    #[error("Failed to register capability '{symbol}' from '{path}': {reason}")]
+    Registration {
+        path: String,
+        symbol: String,
+        reason: String,
+    },
+
+    #[error("No symbols with the 'pyro_' prefix found in '{path}'")]
+    NoCapabilitiesFound { path: String },
+
+    // --- Configuration Stage Errors ---
+    #[error("Configuration provided for unknown capability '{name}'")]
+    CapabilityNotFound { name: String },
+
+    #[error("Failed to serialize configuration for '{class}': {reason}")]
+    ConfigSerialization { class: String, reason: String },
+
+    #[error("Failed to instantiate capability '{class}': {reason}")]
+    Instantiation { class: String, reason: String },
+}
+
+// =============================================================================
+// Logging callback (Unchanged)
+// =============================================================================
+
+static LOG_CALLBACK_SPANS: RwLock<Vec<Span>> = RwLock::new(Vec::new());
+static NEXT_CAPABILITY_ID: AtomicI64 = AtomicI64::new(0);
+
+unsafe extern "C" fn log_callback(id: i64, msg: *const u8, msg_len: usize) {
+    let data = unsafe { std::slice::from_raw_parts(msg, msg_len) };
+    let log_msg = String::from_utf8_lossy(data);
+    let msg = log_msg.trim_end();
+    let spans = LOG_CALLBACK_SPANS.read().unwrap();
+
+    if let Some(s) = spans.get(id as usize) {
+        let _enter = s.enter();
+        tracing::debug!("{}", msg);
+    }
+}
+
+fn allocate_span(name: &str) -> i64 {
+    let span = tracing::span!(tracing::Level::INFO, "CAPABILITY", name = name);
+    let mut spans = LOG_CALLBACK_SPANS.write().unwrap();
+    let id = spans.len() as i64;
+    spans.push(span);
+    id
+}
+
+// =============================================================================
+// Symbol scanning (Unchanged)
+// =============================================================================
+
+pub struct ScannedSymbol {
+    pub name: String,
+    pub address: u64,
+}
+
+pub fn scan_pyro_symbols(path: &Path) -> Result<Vec<ScannedSymbol>, CapabilityLoading> {
+    let path_str = path.display().to_string();
+
+    let bin_data = std::fs::read(path).map_err(|e| CapabilityLoading::FileRead {
+        path: path_str.clone(),
+        reason: e.to_string(),
+    })?;
+
+    let file = object::File::parse(&*bin_data).map_err(|e| CapabilityLoading::BinaryParse {
+        path: path_str.clone(),
+        reason: e.to_string(),
+    })?;
+
+    let mut symbols = Vec::new();
+
+    for symbol in file.symbols() {
+        if symbol.kind() != SymbolKind::Text || !symbol.is_global() || symbol.is_undefined() {
+            continue;
+        }
+        let name = match symbol.name() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+
+        let clean = name.strip_prefix('_').unwrap_or(name);
+
+        if clean.starts_with("pyro_") {
+            symbols.push(ScannedSymbol {
+                name: clean.to_string(),
+                address: symbol.address(),
+            });
+        }
+    }
+
+    Ok(symbols)
+}
+
+// =============================================================================
+// Library loader
+// =============================================================================
+
+pub struct CapabilityLibrary {
+    pub capabilities: HashMap<String, Arc<ForeignClass>>,
+}
+
+impl CapabilityLibrary {
+    pub unsafe fn load(path: &Path) -> Result<Self, CapabilityLoading> {
+        let path_str = path.display().to_string();
+
+        // 1. Scan
+        let pyro_symbols = scan_pyro_symbols(path)?;
+
+        if pyro_symbols.is_empty() {
+            return Err(CapabilityLoading::NoCapabilitiesFound { path: path_str });
+        }
+
+        // 2. Load
+        let library = Arc::new(unsafe { Library::new(path) }.map_err(|e| {
+            CapabilityLoading::LibraryOpen {
+                path: path_str.clone(),
+                reason: e.to_string(),
+            }
+        })?);
+
+        // 3. Register
+        let mut capabilities = HashMap::with_capacity(pyro_symbols.len());
+
+        for sym in &pyro_symbols {
+            let sym_cstr = format!("{}\0", sym.name);
+
+            let register_fn: Symbol<CapabilityRegisterFn> =
+                match unsafe { library.get(sym_cstr.as_bytes()) } {
+                    Ok(f) => f,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Symbol '{}' found in binary but could not be loaded: {}",
+                            sym.name,
+                            e
+                        );
+                        continue;
+                    }
+                };
+
+            let capability_id = NEXT_CAPABILITY_ID.fetch_add(1, Ordering::Relaxed);
+            let _span_id = allocate_span(&sym.name);
+
+            let export: ClassExport<'static> = unsafe { register_fn(capability_id, log_callback) };
+
+            let class =
+                unsafe { ForeignClass::from_export(library.clone(), export) }.map_err(|e| {
+                    CapabilityLoading::Registration {
+                        path: path_str.clone(),
+                        symbol: sym.name.clone(),
+                        reason: e.to_string(),
+                    }
+                })?;
+
+            capabilities.insert(class.name().to_string(), Arc::new(class));
+        }
+
+        if capabilities.is_empty() {
+            return Err(CapabilityLoading::NoCapabilitiesFound { path: path_str });
+        }
+
+        Ok(Self { capabilities })
+    }
+
+    /// Iterates through the provided configuration map, serializes the config data,
+    /// and instantiates the requested capabilities.
+    pub async fn instantiate_from_config(
+        &self,
+        config: &HashMap<String, serde_json::Value>,
+    ) -> Result<Capability, CapabilityLoading> {
+        let mut objects = HashMap::new();
+
+        for (class_name, config_val) in config {
+            // 1. Validate that the class exists in the loaded library
+            let class = self.capabilities.get(class_name).ok_or_else(|| {
+                CapabilityLoading::CapabilityNotFound {
+                    name: class_name.clone(),
+                }
+            })?;
+
+            // 2. Serialize the config value to a PyroVec using JSON format
+            let writer = Json::<serde_json::Value>::new_writer(PyroVec::with_capacity(300));
+
+            let vec =
+                writer
+                    .write(config_val)
+                    .map_err(|e| CapabilityLoading::ConfigSerialization {
+                        class: class_name.clone(),
+                        reason: e.to_string(),
+                    })?;
+
+            // 3. Call create_instance on the ForeignClass
+            let handle = class.create_instance(vec.view()).await.map_err(|e| {
+                CapabilityLoading::Instantiation {
+                    class: class_name.clone(),
+                    reason: e.to_string(),
+                }
+            })?;
+
+            objects.insert(class_name.clone(), handle);
+        }
+
+        Ok(Capability { objects })
+    }
+}
+
+pub struct Capability {
+    objects: HashMap<String, ForeignObject>,
+}
+
+impl Deref for Capability {
+    type Target = HashMap<String, ForeignObject>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.objects
+    }
+}

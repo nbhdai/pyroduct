@@ -5,8 +5,7 @@ authors.workspace = true
 edition.workspace = true
 
 [dependencies]
-module-core.workspace = true
-capability-core.workspace = true
+pyro-core.workspace = true
 pyroduct.workspace = true
 wasmtime.workspace = true
 arrow-file.workspace = true

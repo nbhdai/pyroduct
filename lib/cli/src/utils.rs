@@ -133,7 +133,7 @@ impl InterfaceGenerator {
             .with_context(|| format!("Failed to read source: {:?}", source_path))?;
 
         let (lib_rs_content, doc_string, config_string) =
-            capability_core::generate_interface(&original_source, &cap_name, &cap_version)
+            pyro_core::ffi::generate_interface(&original_source, &cap_name, &cap_version)
                 .map_err(|r| format_syn_error(&original_source, r))
                 .context("Failed to generate client code")?;
         let doc_string = doc_string.context("Failed to generate documentation")?;

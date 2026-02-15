@@ -9,3 +9,10 @@ proc-macro2.workspace = true
 quote.workspace = true
 syn.workspace = true
 serde_json.workspace = true
+
+heck.workspace = true
+prettyplease.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+similar = "2.7"

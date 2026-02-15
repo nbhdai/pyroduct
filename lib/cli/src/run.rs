@@ -5,9 +5,10 @@ use anyhow::{Context, Result, anyhow};
 use clap::ValueEnum;
 use fs_err as fs;
 
-use pyroduct::arrow_scalars::schema::infer_schema;
+use pyroduct::value::arrow::PreBatch;
+use pyroduct::value::schema::infer_schema;
 use pyroduct::{
-    arrow_scalars::{ArrowRow, PreBatch},
+    value::PyroRow,
     host::{Capabilities, Pipeline, PipelineConfig, PipelineDef, PipelinePool},
 };
 
@@ -65,10 +66,10 @@ pub async fn run(config_path: &Path, input_json: &str) -> Result<()> {
     let pipeline_def = PipelineDef::load(&config, &mut capabilities)?;
     let mut pipeline = Pipeline::new(&pipeline_def, &capabilities).await?;
 
-    // 2. Parse Input directly to ArrowRow
-    tracing::debug!("Parsing input JSON directly to ArrowRow");
-    let input_row: ArrowRow<'static> =
-        serde_json::from_str(input_json).context("Failed to deserialize input JSON to ArrowRow")?;
+    // 2. Parse Input directly to PyroRow
+    tracing::debug!("Parsing input JSON directly to PyroRow");
+    let input_row: PyroRow<'static> =
+        serde_json::from_str(input_json).context("Failed to deserialize input JSON to PyroRow")?;
 
     // 3. Execute
     tracing::info!("Executing pipeline...");

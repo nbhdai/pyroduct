@@ -1,0 +1,7 @@
+error[E0433]: failed to resolve: could not find `wasm_module` in `pyroduct`
+ --> tests/compile_fail/module/struct_missing_to_row.rs:7:1
+  |
+7 | #[module(output = NoToRow)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^ could not find `wasm_module` in `pyroduct`
+  |
+  = note: this error originates in the attribute macro `module` (in Nightly builds, run with -Z macro-backtrace for more info)

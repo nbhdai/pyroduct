@@ -1,5 +1,0 @@
-error: ToRow cannot be derived for structs with generic parameters (types, lifetimes, or consts)
- --> tests/compile_fail/generics_not_supported_to.rs:6:21
-  |
-6 | struct GenericStruct<T> {
-  |                     ^^^

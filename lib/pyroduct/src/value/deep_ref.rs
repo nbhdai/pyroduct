@@ -1,0 +1,505 @@
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::rc::Rc;
+use std::sync::Arc;
+
+pub trait DeepRef {
+    // The associated type allows Foo to return FooRef, and Bar to return BarRef
+    type Ref<'a>
+    where
+        Self: 'a;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a>;
+}
+
+// =========================================================================
+// 1. Primitive Scalars (Identity Transformation)
+// =========================================================================
+// For primitives, the "Ref" is just a copy of the value itself.
+
+macro_rules! impl_primitive_deep_ref {
+    ($($t:ty),*) => {
+        $(
+            impl DeepRef for $t {
+                type Ref<'a> = $t;
+                fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+                    *self
+                }
+            }
+        )*
+    };
+}
+
+impl_primitive_deep_ref!(
+    bool, char, u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize, f32, f64
+);
+
+// =========================================================================
+// 2. Strings
+// =========================================================================
+
+impl DeepRef for String {
+    type Ref<'a> = &'a str;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        self.as_str()
+    }
+}
+
+impl DeepRef for Vec<String> {
+    type Ref<'a> = Vec<&'a str>;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        self.iter().map(|s| s.as_str()).collect()
+    }
+}
+
+impl DeepRef for Vec<&String> {
+    type Ref<'a>
+        = Vec<&'a str>
+    where
+        Self: 'a;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        self.iter().map(|s| s.as_str()).collect()
+    }
+}
+
+impl DeepRef for str {
+    type Ref<'a> = &'a str;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        self
+    }
+}
+
+impl DeepRef for Vec<&str> {
+    type Ref<'a>
+        = &'a [&'a str]
+    where
+        Self: 'a;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        self.as_slice()
+    }
+}
+
+// =========================================================================
+// 3. Primitive Vectors (Zero-Copy Optimization)
+// =========================================================================
+// We manually implement these to ensure Vec<u8> returns &[u8] (slice)
+// rather than Vec<&u8> (allocation).
+
+macro_rules! impl_vec_primitive_deep_ref {
+    ($($t:ty),*) => {
+        $(
+            impl DeepRef for Vec<$t> {
+                type Ref<'a> = &'a [$t];
+
+                fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+                    self.as_slice()
+                }
+            }
+
+            // Also implement for the slice itself, just in case
+            impl DeepRef for [$t] {
+                type Ref<'a> = &'a [$t];
+
+                fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+                    self
+                }
+            }
+        )*
+    };
+}
+
+impl_vec_primitive_deep_ref!(
+    bool, char, u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize, f32, f64
+);
+
+// =========================================================================
+// 4. Collections and Tuples
+// =========================================================================
+
+impl<K: DeepRef, V: DeepRef> DeepRef for HashMap<K, V>
+where
+    for<'a> <K as DeepRef>::Ref<'a>: Eq + std::hash::Hash,
+{
+    type Ref<'a>
+        = HashMap<K::Ref<'a>, V::Ref<'a>>
+    where
+        K: 'a,
+        V: 'a;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        self.iter()
+            .map(|(k, v)| (k.as_deep_ref(), v.as_deep_ref()))
+            .collect()
+    }
+}
+
+impl<K: DeepRef, V: DeepRef> DeepRef for (K, V) {
+    type Ref<'a>
+        = (K::Ref<'a>, V::Ref<'a>)
+    where
+        K: 'a,
+        V: 'a;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        (self.0.as_deep_ref(), self.1.as_deep_ref())
+    }
+}
+
+// =========================================================================
+// 5. Wrappers (Option, Box, Arc, Rc, Cow)
+// =========================================================================
+
+impl<T: DeepRef> DeepRef for Option<T> {
+    type Ref<'a>
+        = Option<T::Ref<'a>>
+    where
+        T: 'a;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        self.as_ref().map(|inner| inner.as_deep_ref())
+    }
+}
+
+impl<T: DeepRef + ?Sized> DeepRef for Box<T> {
+    type Ref<'a>
+        = T::Ref<'a>
+    where
+        T: 'a;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        (**self).as_deep_ref()
+    }
+}
+
+impl<T: DeepRef + ?Sized> DeepRef for Arc<T> {
+    type Ref<'a>
+        = T::Ref<'a>
+    where
+        T: 'a;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        (**self).as_deep_ref()
+    }
+}
+
+impl<T: DeepRef + ?Sized> DeepRef for Rc<T> {
+    type Ref<'a>
+        = T::Ref<'a>
+    where
+        T: 'a;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        (**self).as_deep_ref()
+    }
+}
+
+impl<'c, T: DeepRef + ToOwned + ?Sized> DeepRef for Cow<'c, T> {
+    type Ref<'a>
+        = T::Ref<'a>
+    where
+        T: 'a,
+        'c: 'a;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        (**self).as_deep_ref()
+    }
+}
+
+// =========================================================================
+// 6. Rkyv Archived Implementations
+// =========================================================================
+
+use rkyv::boxed::ArchivedBox;
+use rkyv::option::ArchivedOption;
+use rkyv::string::ArchivedString;
+use rkyv::vec::ArchivedVec;
+
+// ArchivedString -> &str
+impl DeepRef for ArchivedString {
+    type Ref<'a> = &'a str;
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        self.as_str()
+    }
+}
+
+// ArchivedString -> &str
+impl DeepRef for ArchivedVec<ArchivedString> {
+    type Ref<'a> = Vec<&'a str>;
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        self.iter().map(|s| s.as_str()).collect()
+    }
+}
+
+// -------------------------------------------------------------------------
+// Single-Byte / Endian-Neutral Primitives
+// -------------------------------------------------------------------------
+// For types where Archived<T> == T (u8, i8, bool, char).
+// We removed u16+, i16+, f32+ from here because they are handled
+// by the endian-specific macro below.
+
+macro_rules! impl_rkyv_vec_neutral {
+    ($($t:ty),*) => {
+        $(
+            impl DeepRef for ArchivedVec<$t> {
+                type Ref<'a> = &'a [$t];
+                fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+                    self.as_slice()
+                }
+            }
+        )*
+    };
+}
+
+impl_rkyv_vec_neutral!(bool, char, u8, i8);
+
+// -------------------------------------------------------------------------
+// Multi-Byte Little Endian Primitives
+// -------------------------------------------------------------------------
+// This handles u32_le -> u32, ArchivedVec<u32_le> -> &[u32], etc.
+
+#[cfg(target_endian = "little")]
+mod little_endian_impls {
+    use super::{ArchivedVec, DeepRef};
+    // Import the Little Endian wrapper types used by rkyv
+    use rkyv::rend::{
+        f32_le, f64_le, i16_le, i32_le, i64_le, i128_le, u16_le, u32_le, u64_le, u128_le,
+    };
+
+    macro_rules! impl_rkyv_le_primitive {
+        ($($le:ty => $native:ty),*) => {
+            $(
+                // 1. Scalar Implementation (e.g., i32_le -> i32)
+                impl DeepRef for $le {
+                    type Ref<'a> = $native;
+
+                    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+                        // LE types implement NativeEndian, allowing conversion to native.
+                        self.to_native()
+                    }
+                }
+
+                // 2. Vector Implementation (e.g., ArchivedVec<i32_le> -> &[i32])
+                // We perform a zero-copy cast from &[i32_le] to &[i32].
+                impl DeepRef for ArchivedVec<$le> {
+                    type Ref<'a> = &'a [$native];
+
+                    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+                        // SAFETY:
+                        // 1. We are protected by #[cfg(target_endian = "little")].
+                        // 2. The _le types are #[repr(transparent)] wrappers around the native types.
+                        // 3. The memory layout is identical on LE systems.
+                        let slice = self.as_slice();
+                        unsafe {
+                            std::slice::from_raw_parts(
+                                slice.as_ptr() as *const $native,
+                                slice.len(),
+                            )
+                        }
+                    }
+                }
+            )*
+        }
+    }
+
+    impl_rkyv_le_primitive!(
+        u16_le => u16,
+        u32_le => u32,
+        u64_le => u64,
+        u128_le => u128,
+        i16_le => i16,
+        i32_le => i32,
+        i64_le => i64,
+        i128_le => i128,
+        f32_le => f32,
+        f64_le => f64
+    );
+}
+
+// ArchivedOption<T>
+impl<TA> DeepRef for ArchivedOption<TA>
+where
+    TA: DeepRef,
+{
+    type Ref<'a>
+        = Option<TA::Ref<'a>>
+    where
+        TA: 'a;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        self.as_ref().map(|inner| inner.as_deep_ref())
+    }
+}
+
+// ArchivedBox<T>
+impl<TA: DeepRef> DeepRef for ArchivedBox<TA> {
+    type Ref<'a>
+        = TA::Ref<'a>
+    where
+        TA: 'a;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        (**self).as_deep_ref()
+    }
+}
+
+// =========================================================================
+// 7. PyroValue / PyroRow / PrimitiveValueList  (Normal types)
+// =========================================================================
+//
+// These impls allow PyroValue<'a> and PyroRow<'a> to participate in the
+// DeepRef ecosystem. The Ref output re-borrows into PyroValue<'a> /
+// PyroRow<'a> with a shorter (or equal) lifetime, achieving zero-copy
+// where possible (primitives are copied, strings/slices are re-borrowed).
+
+use super::{PrimitiveValueList, PyroRow, PyroValue, Time};
+use half::f16;
+
+// --- Time ---
+// Time is Copy (i128 wrapper), so Ref is just Time.
+impl DeepRef for Time {
+    type Ref<'a> = Time;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        *self
+    }
+}
+
+// --- PrimitiveValueList ---
+// Re-borrows the inner Cow slices so the output lifetime is tied to &self.
+impl<'v> DeepRef for PrimitiveValueList<'v> {
+    type Ref<'a>
+        = PrimitiveValueList<'a>
+    where
+        'v: 'a;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        match self {
+            PrimitiveValueList::Bool(c) => PrimitiveValueList::Bool(Cow::Borrowed(c.as_ref())),
+            PrimitiveValueList::U8(c) => PrimitiveValueList::U8(Cow::Borrowed(c.as_ref())),
+            PrimitiveValueList::U16(c) => PrimitiveValueList::U16(Cow::Borrowed(c.as_ref())),
+            PrimitiveValueList::U32(c) => PrimitiveValueList::U32(Cow::Borrowed(c.as_ref())),
+            PrimitiveValueList::U64(c) => PrimitiveValueList::U64(Cow::Borrowed(c.as_ref())),
+            PrimitiveValueList::I8(c) => PrimitiveValueList::I8(Cow::Borrowed(c.as_ref())),
+            PrimitiveValueList::I16(c) => PrimitiveValueList::I16(Cow::Borrowed(c.as_ref())),
+            PrimitiveValueList::I32(c) => PrimitiveValueList::I32(Cow::Borrowed(c.as_ref())),
+            PrimitiveValueList::I64(c) => PrimitiveValueList::I64(Cow::Borrowed(c.as_ref())),
+            PrimitiveValueList::F16(c) => PrimitiveValueList::F16(Cow::Borrowed(c.as_ref())),
+            PrimitiveValueList::F32(c) => PrimitiveValueList::F32(Cow::Borrowed(c.as_ref())),
+            PrimitiveValueList::F64(c) => PrimitiveValueList::F64(Cow::Borrowed(c.as_ref())),
+        }
+    }
+}
+
+// --- PyroValue ---
+// Produces a PyroValue<'a> that borrows all string/slice data from &'a self.
+// Primitives are copied (they're small scalars); complex recursive types
+// (List, Group, MapInternal) are re-borrowed element-wise.
+impl<'v> DeepRef for PyroValue<'v> {
+    type Ref<'a>
+        = PyroValue<'a>
+    where
+        'v: 'a;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        match self {
+            // Scalars: Copy
+            PyroValue::Null => PyroValue::Null,
+            PyroValue::Bool(v) => PyroValue::Bool(*v),
+            PyroValue::I8(v) => PyroValue::I8(*v),
+            PyroValue::I16(v) => PyroValue::I16(*v),
+            PyroValue::I32(v) => PyroValue::I32(*v),
+            PyroValue::I64(v) => PyroValue::I64(*v),
+            PyroValue::U8(v) => PyroValue::U8(*v),
+            PyroValue::U16(v) => PyroValue::U16(*v),
+            PyroValue::U32(v) => PyroValue::U32(*v),
+            PyroValue::U64(v) => PyroValue::U64(*v),
+            PyroValue::F16(v) => PyroValue::F16(*v),
+            PyroValue::F32(v) => PyroValue::F32(*v),
+            PyroValue::F64(v) => PyroValue::F64(*v),
+            PyroValue::Timestamp(t) => PyroValue::Timestamp(*t),
+
+            // String: re-borrow the Cow's inner &str
+            PyroValue::Str(cow) => PyroValue::Str(Cow::Borrowed(cow.as_ref())),
+
+            // PrimitiveList: re-borrow inner slices
+            PyroValue::PrimitiveList(pl) => PyroValue::PrimitiveList(pl.as_deep_ref()),
+
+            // Group (PyroRow): re-borrow
+            PyroValue::Group(row) => PyroValue::Group(row.as_deep_ref()),
+
+            // List: recursively re-borrow each element
+            PyroValue::List(items) => {
+                PyroValue::List(items.iter().map(|v| v.as_deep_ref()).collect())
+            }
+
+            // MapInternal: recursively re-borrow key-value pairs
+            PyroValue::MapInternal(pairs) => PyroValue::MapInternal(
+                pairs
+                    .iter()
+                    .map(|(k, v)| (k.as_deep_ref(), v.as_deep_ref()))
+                    .collect(),
+            ),
+        }
+    }
+}
+
+// --- PyroRow ---
+// A PyroRow is a Vec<RowItem> where RowItem { key: Cow<str>, value: PyroValue }.
+// We re-borrow both the key strings and the values.
+impl<'v> DeepRef for PyroRow<'v> {
+    type Ref<'a>
+        = PyroRow<'a>
+    where
+        'v: 'a;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        // PyroRow already has a to_ref() method that does exactly this.
+        // We delegate to it for consistency.
+        self.clone()
+    }
+}
+
+// =========================================================================
+// 8. half::f16 (not a std primitive, needs explicit impl)
+// =========================================================================
+
+impl DeepRef for f16 {
+    type Ref<'a> = f16;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        *self
+    }
+}
+
+// Also the Vec/slice variants for f16
+impl DeepRef for Vec<f16> {
+    type Ref<'a> = &'a [f16];
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        self.as_slice()
+    }
+}
+
+impl DeepRef for [f16] {
+    type Ref<'a> = &'a [f16];
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        self
+    }
+}
+
+// =========================================================================
+// 9. ArchivedVec<f16>
+// =========================================================================
+
+impl DeepRef for ArchivedVec<f16> {
+    type Ref<'a> = &'a [f16];
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        self.as_slice()
+    }
+}

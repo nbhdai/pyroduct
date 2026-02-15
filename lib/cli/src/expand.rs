@@ -7,8 +7,7 @@ use crate::cargo::{CapabilityManifest, ModuleManifest};
 use crate::symbols;
 use crate::utils::{InterfaceGenerator, format_syn_error};
 
-use capability_core::generate_capability;
-use module_core::generate_module;
+use pyro_core::{ffi::generate_capability, module::generate_module};
 
 pub fn expand(path: &Path, bin_mode: bool, lockfile: bool) -> Result<()> {
     let is_cap = path.join("Capability.toml").exists();
