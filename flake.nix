@@ -87,7 +87,7 @@
             ${lib.optionalString pkgs.stdenv.isDarwin ''
               unset DEVELOPER_DIR
               echo "  - SDKROOT: ''${SDKROOT:-default}"
-            ''}
+            ''}`
             
             echo "Development shell loaded!"
             echo ""
