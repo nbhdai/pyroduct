@@ -10,7 +10,7 @@ impl CpuServer {
     
     fn new() -> Self { Self }
     fn reset(&mut self) {}
-    fn new_client(&self, _client: &CpuClient) {}
+    fn register(&self, _client: &CpuClient) {}
     
     /// Returns the number of vcpus the host machine has
     fn get_cpu_count(&self, _client: &CpuClient) -> u32 {

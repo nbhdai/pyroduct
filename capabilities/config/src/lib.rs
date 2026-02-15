@@ -46,7 +46,7 @@ impl TransformServer {
     }
 
     /// Validate client prefix
-    fn new_client(&self, client: &TransformClient) -> Result<(), String> {
+    fn register(&self, client: &TransformClient) -> Result<(), String> {
         if client.prefix.len() > 100 {
             return Err("Prefix too long".to_string());
         }

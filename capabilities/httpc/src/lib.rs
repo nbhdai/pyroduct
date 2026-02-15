@@ -51,7 +51,7 @@ impl HttpServer {
     async fn reset(&mut self) {}
     
     /// Validates and prepares a new client instance.
-    fn new_client(&self, _client: &HttpClient) -> Result<(), String> {
+    fn register(&self, _client: &HttpClient) -> Result<(), String> {
         Ok(())
     }
     

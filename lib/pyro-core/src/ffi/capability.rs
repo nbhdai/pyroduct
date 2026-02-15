@@ -399,7 +399,7 @@ impl CapabilityImpl {
         let method_decls: Vec<_> = self
             .methods
             .iter()
-            .map(|m| m.generate_client_method(None))
+            .map(|m| m.generate_client_wasm())
             .collect();
 
         quote! {

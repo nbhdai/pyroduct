@@ -411,8 +411,8 @@ impl ImplMethod {
         let fn_wasm_name = self.class.wasm_name(&self.name);
         quote! {
             pub fn #fn_wasm_name(
-                cs_ptr: ::pyroduct::PyroViewPtr,
-                in_ptr: ::pyroduct::PyroViewPtr,
+                cs_ptr: *const u8,
+                in_ptr: *const u8,
             ) -> *mut u8;
         }
     }

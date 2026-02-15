@@ -40,7 +40,7 @@ impl CounterServer {
     }
 
     /// Validate client start value
-    fn new_client(&self, client: &CounterClient) -> Result<(), String> {
+    fn register(&self, client: &CounterClient) -> Result<(), String> {
         if client.start_value > self.max_value {
             return Err(format!(
                 "start_value {} exceeds max_value {}",

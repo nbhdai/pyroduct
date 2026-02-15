@@ -71,7 +71,7 @@ impl RagServer {
     async fn reset(&mut self) {}
     
     /// Validates and prepares a new RAG client.
-    fn new_client(&self, _client: &RagClient) -> Result<(), String> {
+    fn register(&self, _client: &RagClient) -> Result<(), String> {
         Ok(())
     }
     
