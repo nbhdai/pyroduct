@@ -1,4 +1,4 @@
-#[pyroduct::bridgeable]
+#[pyroduct::magma]
 pub struct SimpleClient;
 
 

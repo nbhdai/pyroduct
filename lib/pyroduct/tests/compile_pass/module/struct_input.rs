@@ -1,11 +1,11 @@
-#[pyroduct::bridgeable]
+#[pyroduct::magma]
 struct CallMessage {
     message: String,
     role: String,
 }
 
 #[pyroduct::module(output = (output, messages))]
-fn process<'a>(input: &[CallMessageRef<'_>]) -> Result<(String, Vec<CallMessage>), String> {
+fn process<'a>(input: &[CallMessageRef<'_>]) -> anyhow::Result<(String, Vec<CallMessage>)> {
     let output = input.first().ok_or("Empty chat history".to_string())?;
     Ok((
         output.message.to_string(),

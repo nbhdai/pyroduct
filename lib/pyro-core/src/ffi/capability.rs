@@ -287,29 +287,12 @@ impl CapabilityImpl {
 
         let init_ffi = self.init_fn.generate_ffi(server);
         let reset_ffi = self.reset_fn.generate_ffi(server);
-        let drop_ffi = self.generate_drop_ffi();
         let register_ffi = self.register_fn.generate_capability_ffi();
 
         quote! {
             #init_ffi
-            #drop_ffi
             #reset_ffi
             #register_ffi
-        }
-    }
-
-    fn generate_drop_ffi(&self) -> TokenStream {
-        let server = &self.ident.state_tn;
-        let server_snake = AsSnakeCase(server.to_string()).to_string();
-        let drop_name = format_ident!("p__{}__ffi_drop", server_snake);
-
-        quote! {
-            #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn #drop_name(state: *mut std::ffi::c_void) {
-                if !state.is_null() {
-                    drop(unsafe { Box::from_raw(state as *mut #server) });
-                }
-            }
         }
     }
 
@@ -334,8 +317,6 @@ impl CapabilityImpl {
 
         let class_name_static = format_ident!("p__{}", server_upper);
         let class_name_string = format!("p__{}", server_snake);
-
-        let drop_name = format_ident!("p__{}__ffi_drop", server_snake);
 
         let static_strs: Vec<_> = self
             .methods
@@ -369,10 +350,11 @@ impl CapabilityImpl {
                 ::pyroduct::capability::init_logging(id, log_callback);
 
                 ::pyroduct::ffi::ClassExport {
+                    name: CAPABILITY_NAME_VERSION.as_ptr(),
+                    name_len: CAPABILITY_NAME_VERSION.len(),
                     len: #exports_array_name.len(),
                     ptr: #exports_array_name.as_ptr() as *mut _,
                     init: #init_export,
-                    drop: ::pyroduct::ffi::ClassDropFn::Sync(#drop_name),
                     reset: #reset_export,
                     register: #register_export,
                 }
@@ -567,10 +549,11 @@ mod tests {
                 ::pyroduct::capability::init_logging(id, log_callback);
 
                 ::pyroduct::ffi::ClassExport {
+                    name: CAPABILITY_NAME_VERSION.as_ptr(),
+                    name_len: CAPABILITY_NAME_VERSION.len(),
                     len: p__TEST_SERVER__METHODS.len(),
                     ptr: p__TEST_SERVER__METHODS.as_ptr() as *mut _,
                     init: ::pyroduct::ffi::ClassInitFn::Sync(p__test_server__ffi_init),
-                    drop: ::pyroduct::ffi::ClassDropFn::Sync(p__test_server__ffi_drop),
                     reset: ::pyroduct::ffi::ClassResetFn::Sync(p__test_server__ffi_reset),
                     register: ::pyroduct::ffi::ClientRegisterFn::Sync(p__test_server__register__ffi),
                 }

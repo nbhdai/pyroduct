@@ -135,30 +135,19 @@ pub fn bridgeable(
         ..
     } = args;
 
-    // 1. Construct the `rkyv` attributes
-    let base_derives = quote! {
-        #[derive(#import_location::rkyv_8::rkyv::Archive, #import_location::rkyv_8::rkyv::Serialize, #import_location::rkyv_8::rkyv::Deserialize)]
-    };
-
-    let pass_through_attr = if !derives_to_pass.is_empty() {
-        quote! { #[rkyv(attr(derive(#(#derives_to_pass),*)))] }
-    } else {
-        quote! {}
-    };
-
-    let compare_attr = if !compares_to_add.is_empty() {
-        quote! { #[rkyv(compare(#(#compares_to_add),*))] }
-    } else {
-        quote! {}
-    };
-
-    item.attrs.push(parse_quote!(#base_derives));
+    let mut rkyv_pass = Vec::with_capacity(5);
+    rkyv_pass.push(quote!(crate = #import_location::rkyv_8::rkyv));
     if !derives_to_pass.is_empty() {
-        item.attrs.push(parse_quote!(#pass_through_attr));
-    }
+        rkyv_pass.push(quote! { attr(derive(#(#derives_to_pass),*)) });
+    };
+
     if !compares_to_add.is_empty() {
-        item.attrs.push(parse_quote!(#compare_attr));
-    }
+        rkyv_pass.push(quote! { compare(#(#compares_to_add),*) });
+    };
+
+    item.attrs.push(parse_quote!(#[derive(#import_location::rkyv_8::rkyv::Archive, #import_location::rkyv_8::rkyv::Serialize, #import_location::rkyv_8::rkyv::Deserialize)]));
+    item.attrs.push(parse_quote!(#[rkyv(#(#rkyv_pass),*)]));
+
     let (name, impl_generics, ty_generics, where_clause) = (
         &item.ident,
         item.generics.split_for_impl().0,

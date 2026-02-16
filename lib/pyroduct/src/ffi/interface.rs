@@ -247,6 +247,41 @@ pub struct InitResult {
     error: PyroVecPtr,
 }
 
+/// Generate a typed dropper for a given state type `S`.
+///
+/// # Safety
+/// The pointer must have been created by `Box::into_raw(Box::new(s))` where `s: S`.
+unsafe extern "C" fn typed_dropper<S>(ptr: *mut std::ffi::c_void) {
+    if !ptr.is_null() {
+        drop(unsafe { Box::from_raw(ptr as *mut S) });
+    }
+}
+
+impl InitResult {
+    /// Construct a successful `InitResult` from a state value.
+    pub fn init_ok<S: 'static>(state: S) -> InitResult {
+        let state_ptr = Box::into_raw(Box::new(state)) as *mut std::ffi::c_void;
+        InitResult {
+            state: PyroObjectPtr {
+                state: state_ptr,
+                dropper: typed_dropper::<S>,
+            },
+            error: PyroVec::ok().into_raw(),
+        }
+    }
+
+    /// Construct an error `InitResult` from a `PyroError`.
+    pub fn init_err(err: PyroError) -> InitResult {
+        InitResult {
+            state: PyroObjectPtr {
+                state: std::ptr::null_mut(),
+                dropper: typed_dropper::<()>,
+            },
+            error: err.encode().into_raw(),
+        }
+    }
+}
+
 #[repr(C)]
 pub enum FutureInitResult<'a> {
     EarlyError(InitResult),

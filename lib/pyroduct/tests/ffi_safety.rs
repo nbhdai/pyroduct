@@ -4,7 +4,7 @@ use pyroduct::{
         PyroObject, PyroRefObjectPtr,
         guest::{
             panic_wrap::execute_safe,
-            safe_call::{empty_call, i_call, sc_call, sci_call},
+            safe_call::{empty_call, i_call, sc_call, sci_call_result},
         },
     },
     format::{HasReceiver, Receiver},
@@ -437,7 +437,7 @@ fn test_sci_call_success() {
     .ship()
     .unwrap();
 
-    let res_ptr = sci_call::<MockServer, UserData, UserData, UserData, UserError, _>(
+    let res_ptr = sci_call_result::<MockServer, UserData, UserData, UserData, UserError, _>(
         state.ref_ptr(),
         client_vec.view().ptr(),
         input_vec.view().ptr(),
@@ -469,7 +469,7 @@ fn test_sci_call_user_error() {
     .ship()
     .unwrap();
 
-    let res_ptr = sci_call::<MockServer, UserData, UserData, UserData, UserError, _>(
+    let res_ptr = sci_call_result::<MockServer, UserData, UserData, UserData, UserError, _>(
         state.ref_ptr(),
         client_vec.view().ptr(),
         input_vec.view().ptr(),

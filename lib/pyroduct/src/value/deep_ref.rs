@@ -73,17 +73,6 @@ impl DeepRef for str {
     }
 }
 
-impl DeepRef for Vec<&str> {
-    type Ref<'a>
-        = &'a [&'a str]
-    where
-        Self: 'a;
-
-    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
-        self.as_slice()
-    }
-}
-
 // =========================================================================
 // 3. Primitive Vectors (Zero-Copy Optimization)
 // =========================================================================

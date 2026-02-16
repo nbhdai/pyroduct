@@ -3,7 +3,7 @@ pub struct SerialConfig {
     pub ports: Vec<String>,
 }
 
-#[pyroduct::bridgeable]
+#[pyroduct::magma]
 #[derive(Clone)]
 pub struct SerialHandle {
     pub id: u64,

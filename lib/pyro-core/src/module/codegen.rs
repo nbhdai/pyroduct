@@ -69,7 +69,7 @@ pub fn expand(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStream> {
     let expanded = quote! {
         #[unsafe(no_mangle)]
         pub extern "C" fn exter_call(input_ptr: *mut u8) -> *const u8 {
-            #[::pyroduct::bridgeable]
+            #[::pyroduct::magma]
             struct __Input {
                 #(#input_fields,)*
             }
@@ -82,7 +82,8 @@ pub fn expand(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStream> {
                 })
             };
 
-            ::pyroduct::wasm::wasm::wasm_row_main::<__Input, #output_name, _>(input_ptr, input_len, call)
+
+            ::pyroduct::wasm::wasm::wasm_row_main::<__Input, #output_name, _>(input_ptr, call)
         }
 
         #(#fn_attrs)*
@@ -129,7 +130,7 @@ fn generate_output(
         // Pattern 1: Single named field
         OutputSpec::SingleField(field_name) => {
             let struct_def = quote! {
-                #[derive(::pyroduct::ToRow)]
+                #[::pyroduct::magma]
                 struct __Output {
                     #field_name: #return_type,
                 }

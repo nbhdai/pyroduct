@@ -5,7 +5,7 @@ pub struct HttpConfig {
 }
 
 
-#[pyroduct::bridgeable]
+#[pyroduct::magma]
 pub struct HttpClient;
 
 pub struct HttpServer {

@@ -197,10 +197,11 @@ impl ImplMethod {
         let input_struct = self.inputs.input_struct(&self.name, Some(&self.class));
 
         // Determine the helper function based on what's present (in "sci" order)
-        let helper_fn = if !self.inputs.is_empty() {
-            format_ident!("sci_call")
-        } else {
-            format_ident!("sc_call")
+        let helper_fn = match (!self.inputs.is_empty() , self.class.error_tn.is_some()) {
+            (true, true) => format_ident!("sci_call_result"),
+            (true, false) => format_ident!("sci_call"),
+            (false, true) => format_ident!("sc_call_result"),
+            (false, false) => format_ident!("sc_call"),
         };
 
         // Determine generic parameters based on what's present
@@ -235,14 +236,14 @@ impl ImplMethod {
 
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn #fn_ffi_name #func_lifetime(
-                capability_state_ptr: ::pyroduct::ffi::PyroObject,
+                capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
                 client_state_ptr: ::pyroduct::PyroViewPtr,
                 input_ptr: ::pyroduct::PyroViewPtr,
             ) -> #ffi_ret {
                 #call_path::<#generics>(
+                    capability_state_ptr.ptr(),
                     client_state_ptr,
                     input_ptr,
-                    capability_state_ptr.ptr(),
                     #closure_params #body
                 )
             }
@@ -269,8 +270,12 @@ impl ImplMethod {
         }
 
         // Return type (O)
-        let return_type = &self.output.to_type();
+        let return_type = &self.output.ty();
         generics.push(quote!(#return_type));
+
+        if let Some(err) = self.output.err() {
+            generics.push(quote!(#err));
+        }
 
         // Function type for the closure
         generics.push(quote!(_));
@@ -393,16 +398,31 @@ impl ImplMethod {
                 }
             }
             None => {
-                let output_type = &self.output.to_type();
+                let output_type = &self.output.ty();
                 let output_return = &self.output.to_return_type();
-                quote! {
-                    #(#attrs)*
-                    fn #name(#(#args),*) #output_return {
-                        #i_struct
+                match self.output.err() {
+                    Some(err) => {
+                        quote! {
+                            #(#attrs)*
+                            fn #name(#(#args),*) #output_return {
+                                #i_struct
 
-                        self.__call_from_wasm::<#i_name, #output_type, _>(#i_fill, #wasm_call)
+                                self.__call_result_from_wasm::<#i_name, #output_type, #err, _>(#i_fill, #wasm_call)
+                            }
+                        }
+                    }
+                    None => {
+                        quote! {
+                            #(#attrs)*
+                            fn #name(#(#args),*) #output_return {
+                                #i_struct
+
+                                self.__call_from_wasm::<#i_name, #output_type, _>(#i_fill, #wasm_call)
+                            }
+                        }
                     }
                 }
+                
             }
         }
     }
@@ -524,14 +544,19 @@ mod tests {
         assert!(err.to_string().contains("not value self"));
     }
 
-    fn mock_method_base(name: &str, is_async: bool) -> ImplMethod {
+    fn mock_method_base(name: &str, is_async: bool, has_err: bool) -> ImplMethod {
+        let (error_tn, output) = if has_err {
+            (Some(parse_quote!(MockError)), FnOutput::Result(parse_quote!(u32), parse_quote!(MockError)))
+        } else {
+            (None, FnOutput::Single(parse_quote!(u32)))
+        };
         let class = Rc::new(CapabilityIdent {
             pkg_name: "cap_name".to_string(),
             pkg_version: "0.1.0".to_string(),
             config_tn: None,
             state_tn: format_ident!("MockServer"),
             client_tn: format_ident!("MockClient"),
-            error_tn: None,
+            error_tn,
         });
 
         ImplMethod {
@@ -540,7 +565,7 @@ mod tests {
             client_param: format_ident!("client"),
             inputs: InputParams::None,
             // Default to u32 as seen in test expectations
-            output: FnOutput::Single(parse_quote!(u32)),
+            output,
             is_async,
             is_mutable_self: false,
             body: parse_quote!({ 0 }),
@@ -553,7 +578,7 @@ mod tests {
     // ========================================================================
     #[test]
     fn test_case_4_async_no_input_with_client() {
-        let ffi = mock_method_base("test_async_client", true);
+        let ffi = mock_method_base("test_async_client", true, false);
 
         let capability_tokens = ffi.generate_server_ffi();
         let module_tokens = ffi.generate_client_method(None);
@@ -566,7 +591,7 @@ mod tests {
         let output_capability = quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn p__mock_server__test_async_client__ffi<'a>(
-                capability_state_ptr: ::pyroduct::ffi::PyroObject,
+                capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
                 client_state_ptr: ::pyroduct::PyroViewPtr,
                 input_ptr: ::pyroduct::PyroViewPtr,
             ) -> ::pyroduct::ffi::FuturePyroVec<'a> {
@@ -577,9 +602,9 @@ mod tests {
                     _,
                     _,
                 >(
+                    capability_state_ptr.ptr(),
                     client_state_ptr,
                     input_ptr,
-                    capability_state_ptr.ptr(),
                     |state, client| async move { state.test_async_client(&client).await },
                 )
             }
@@ -619,9 +644,8 @@ mod tests {
     // ========================================================================
     #[test]
     fn test_case_5_sync_single_input_with_client() {
-        let mut ffi = mock_method_base("test_sync_client_input", false);
+        let mut ffi = mock_method_base("test_sync_client_input", false, true);
         ffi.inputs = InputParams::One(format_ident!("x"), parse_quote!(i32));
-
         let capability_tokens = ffi.generate_server_ffi();
         let module_tokens = ffi.generate_client_method(None);
         let module_tokens = quote! {
@@ -633,20 +657,21 @@ mod tests {
         let output_capability = quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn p__mock_server__test_sync_client_input__ffi(
-                capability_state_ptr: ::pyroduct::ffi::PyroObject,
+                capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
                 client_state_ptr: ::pyroduct::PyroViewPtr,
                 input_ptr: ::pyroduct::PyroViewPtr,
             ) -> ::pyroduct::PyroVecPtr {
-                ::pyroduct::ffi::guest::safe_call::sci_call::<
+                ::pyroduct::ffi::guest::safe_call::sci_call_result::<
                     MockServer,
                     MockClient,
                     i32,
                     u32,
+                    MockError,
                     _,
                 >(
+                    capability_state_ptr.ptr(),
                     client_state_ptr,
                     input_ptr,
-                    capability_state_ptr.ptr(),
                     |state, client, input| state.test_sync_client_input(&client, input),
                 )
             }
@@ -656,10 +681,11 @@ mod tests {
 
         let output_module = quote! {
             impl Mod {
-                fn test_sync_client_input(&self, x: i32) -> u32 {
-                    self.__call_from_wasm::<
+                fn test_sync_client_input(&self, x: i32) -> Result<u32, MockError> {
+                    self.__call_result_from_wasm::<
                             i32,
                             u32,
+                            MockError,
                             _,
                         >(
                         Some(&x),
@@ -685,7 +711,7 @@ mod tests {
     // ========================================================================
     #[test]
     fn test_case_full_sci() {
-        let mut ffi = mock_method_base("test_sci_multi", true);
+        let mut ffi = mock_method_base("test_sci_multi", true, false);
         ffi.inputs = InputParams::Many(vec![
             (format_ident!("a"), parse_quote!(i32)),
             (format_ident!("b"), parse_quote!(i32)),
@@ -708,7 +734,7 @@ mod tests {
 
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn p__mock_server__test_sci_multi__ffi<'a>(
-                capability_state_ptr: ::pyroduct::ffi::PyroObject,
+                capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
                 client_state_ptr: ::pyroduct::PyroViewPtr,
                 input_ptr: ::pyroduct::PyroViewPtr,
             ) -> ::pyroduct::ffi::FuturePyroVec<'a> {
@@ -720,9 +746,9 @@ mod tests {
                     _,
                     _,
                 >(
+                    capability_state_ptr.ptr(),
                     client_state_ptr,
                     input_ptr,
-                    capability_state_ptr.ptr(),
                     |state, client, input| async move {
                         state.test_sci_multi(&client, input.a, input.b).await
                     },

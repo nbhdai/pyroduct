@@ -160,7 +160,7 @@ impl InitFn {
             (quote!(#t), quote!(|config| #server::new(config)))
         } else {
             (
-                quote!(::pyroduct::capability::safe_lifecycle::EmptyConfig),
+                quote!(::pyroduct::ffi::guest::safe_lifecycle::EmptyConfig),
                 quote!(|_| #server::new()),
             )
         };
@@ -175,11 +175,10 @@ impl InitFn {
             quote! {
                 #[unsafe(no_mangle)]
                 pub extern "C" fn #init_name<'a>(
-                    config_ptr: *const u8,
-                    config_len: usize
+                    config_ptr: ::pyroduct::PyroViewPtr,
                 ) -> ::pyroduct::ffi::FutureInitResult<'a> {
                     unsafe {
-                        ::pyroduct::capability::safe_lifecycle::execute_safe_async_init::<
+                        ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_async_init::<
                             'a,
                             #config_type,
                             #server,
@@ -187,7 +186,6 @@ impl InitFn {
                             _,
                         >(
                             config_ptr,
-                            config_len,
                             #async_closure,
                         )
                     }
@@ -197,17 +195,15 @@ impl InitFn {
             quote! {
                 #[unsafe(no_mangle)]
                 pub extern "C" fn #init_name(
-                    config_ptr: *const u8,
-                    config_len: usize
+                    config_ptr: ::pyroduct::PyroViewPtr,
                 ) -> ::pyroduct::ffi::InitResult {
                     unsafe {
-                        ::pyroduct::capability::safe_lifecycle::execute_safe_init::<
+                        ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_init::<
                             #config_type,
                             #server,
                             _,
                         >(
                             config_ptr,
-                            config_len,
                             #closure,
                         )
                     }
@@ -283,13 +279,11 @@ mod tests {
         let expected = quote! {
             #[unsafe(no_mangle)]
             pub extern "C" fn p__greeter_server__ffi_init(
-                config_ptr: *const u8,
-                config_len: usize
+                config_ptr: ::pyroduct::PyroViewPtr,
             ) -> ::pyroduct::ffi::InitResult {
                 unsafe {
-                    ::pyroduct::capability::safe_lifecycle::execute_safe_init::<GreeterConfig, GreeterServer, _>(
+                    ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_init::<GreeterConfig, GreeterServer, _>(
                         config_ptr,
-                        config_len,
                         |config| GreeterServer::new(config)
                     )
                 }
@@ -320,13 +314,11 @@ mod tests {
         let expected = quote! {
             #[unsafe(no_mangle)]
             pub extern "C" fn p__greeter_server__ffi_init<'a>(
-                config_ptr: *const u8,
-                config_len: usize
+                config_ptr: ::pyroduct::PyroViewPtr,
             ) -> ::pyroduct::ffi::FutureInitResult<'a> {
                 unsafe {
-                    ::pyroduct::capability::safe_lifecycle::execute_safe_async_init::<'a, GreeterConfig, GreeterServer, _, _>(
+                    ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_async_init::<'a, GreeterConfig, GreeterServer, _, _>(
                         config_ptr,
-                        config_len,
                         |config| async move { GreeterServer::new(config).await }
                     )
                 }

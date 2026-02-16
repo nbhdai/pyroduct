@@ -297,4 +297,8 @@ impl PyroError {
     pub fn unexpected_eof() -> Self {
         Self::local(ErrorKind::UnexpectedEof)
     }
+
+    pub fn null_pointer() -> Self {
+        Self::Header(ParseError::NullPointer)
+    }
 }

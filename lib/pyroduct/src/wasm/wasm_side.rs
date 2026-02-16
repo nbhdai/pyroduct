@@ -5,7 +5,7 @@ use crate::bridgeable::BridgeableZeroCopy;
 use crate::format::{PyroZeroCopyFormat, Receiver};
 use crate::header::{DataStatus, PyroHeaderMut};
 use crate::value::PyroRow;
-use crate::{Bridgeable, BridgeableResult, CapturedError, PyroError};
+use crate::{Bridgeable, BridgeableResult, CapturedError, DeepRef, PyroError, ToRow};
 use crate::{PyroVec, header::PyroData};
 
 #[derive(Debug, Hash, PartialEq, Eq)]
@@ -151,10 +151,17 @@ pub fn _test_reinsert_input(ptr: *mut u8, vec: PyroVec) {
 ///     wasm_row_main(ptr, main_fn)
 /// }
 /// ```
-pub fn wasm_row_main<'a, 'b, F: Fn(PyroRow<'a>) -> Result<PyroRow<'b>, anyhow::Error>>(
+pub fn wasm_row_main<'a, 'b, I, O, F>(
     input_ptr: *mut u8,
     func: F,
-) -> *const u8 {
+) -> *const u8 
+    where
+        I: DeepRef + 'static,
+        for <'c> <I as DeepRef>::Ref<'c>: TryFrom<PyroRow<'c>>,
+        O: ToRow,
+        F: Fn(I::Ref<'a>) -> Result<O, anyhow::Error>
+
+{
     let input_vec = match get_input(input_ptr) {
         Some(vec) => vec,
         None => {
@@ -174,10 +181,22 @@ pub fn wasm_row_main<'a, 'b, F: Fn(PyroRow<'a>) -> Result<PyroRow<'b>, anyhow::E
         Ok(vec) => vec,
         Err(err) => return to_output(err.encode()),
     };
-    let input = PyroRow::from(&*input_row);
+    let input_row = PyroRow::from(&*input_row);
+    let input: I::Ref<'_> = match input_row.try_into() {
+        Ok(input) => input,
+        Err(_) => {
+            let result = Err(anyhow::anyhow!(
+                "Unable to extract input",
+            ));
+            return to_output(encode_result(result));
+        }
+    };
+    let output = (func)(input);
 
-    let result_vec = encode_result((func)(input));
-    to_output(result_vec)
+    to_output(match output {
+        Ok(o) => encode_result(Ok(o.to_row())),
+        Err(err) => encode_result(Err(err)),
+    })
 }
 
 fn encode_result<'a>(result: anyhow::Result<PyroRow<'a>>) -> PyroVec {

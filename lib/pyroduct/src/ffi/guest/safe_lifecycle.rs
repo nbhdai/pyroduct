@@ -1,16 +1,41 @@
-use std::{
-    ffi::c_void,
-    panic::{self, AssertUnwindSafe},
-};
+use std::panic::{self, AssertUnwindSafe};
 
 use async_ffi::BorrowingFfiFuture;
 use futures::FutureExt;
 use tracing::{debug, error, trace};
 
+use crate::ffi::{FutureInitResult, FuturePyroVec, InitResult, PyroRefObjectPtr};
+use crate::ffi::guest::panic_wrap::get_runtime;
+use crate::panic::{clear_last_panic, recover_panic_info, register_ffi_panic_hook};
+use crate::view::{PyroView, PyroViewPtr};
+use crate::{CapturedError, PyroError, PyroVec, PyroVecPtr};
 
-/// For new that doesn't have a config.
+/// For `new` that doesn't have a config.
 #[derive(serde::Deserialize)]
 pub struct EmptyConfig {}
+
+
+
+/// Deserialize config from a `PyroViewPtr` as `Option<C>`.
+///
+/// Returns `None` if the view is empty/null, otherwise deserializes the JSON payload.
+fn deserialize_config<C: serde::de::DeserializeOwned>(
+    config: PyroViewPtr,
+) -> Result<Option<C>, PyroError> {
+    if config.ptr.is_null() || config.len == 0 {
+        return Ok(None);
+    }
+
+    let view = unsafe { PyroView::from_ptr(config) }?;
+    let slice: &[u8] = &*view;
+
+    serde_json::from_slice::<Option<C>>(slice).map_err(|err| {
+        let error = CapturedError::new(format!("Json Serialization: {err}"))
+            .with_location(std::panic::Location::caller())
+            .with_backtrace(std::backtrace::Backtrace::capture());
+        PyroError::serialization(error)
+    })
+}
 
 // --- Sync Wrappers ---
 
@@ -19,8 +44,7 @@ pub struct EmptyConfig {}
 #[track_caller]
 #[tracing::instrument(skip(init_fn))]
 pub unsafe fn execute_safe_init<C, S, F>(
-    config_ptr: *const u8,
-    config_len: usize,
+    config: PyroViewPtr,
     init_fn: F,
 ) -> InitResult
 where
@@ -29,19 +53,11 @@ where
     F: FnOnce(Option<C>) -> S + panic::UnwindSafe,
 {
     trace!("execute_safe_init: entering");
+    register_ffi_panic_hook();
 
-    // Deserialize as Option<C> - the JSON can be null or the actual config
-    let config: Option<C> = if config_ptr.is_null() || config_len == 0 {
-        None
-    } else {
-        let config_bytes = unsafe { std::slice::from_raw_parts(config_ptr, config_len) };
-        match serde_json::from_slice::<Option<C>>(config_bytes) {
-            Ok(config) => config,
-            Err(err) => {
-                let error = CapturedError::new(format!("Json Serialization: {err}")).with_location(std::panic::Location::caller()).with_backtrace(std::backtrace::Backtrace::capture());
-                return BridgeError::serialization_panic(error.into()).into();
-            }
-        }
+    let config: Option<C> = match deserialize_config(config) {
+        Ok(c) => c,
+        Err(err) => return InitResult::init_err(err),
     };
 
     clear_last_panic();
@@ -52,45 +68,49 @@ where
     match result {
         Ok(state) => {
             debug!("execute_safe_init: state created successfully");
-            FfiInitResult::ok(Box::into_raw(Box::new(state)) as *mut c_void)
+            InitResult::init_ok(state)
         }
         Err(_) => {
             let panic_info = recover_panic_info();
             error!(panic = ?panic_info, "execute_safe_init: panic caught during initialization");
-            BridgeError::CodePanic(panic_info).into()
+            InitResult::init_err(PyroError::CodePanic(panic_info))
         }
     }
 }
 
-#[tracing::instrument(skip(reset_fn))]
-pub unsafe fn execute_safe_reset<S, F>(state_ptr: *mut c_void, reset_fn: F) -> *const u8
+/// Safe wrapper for Sync Reset functions.
+pub unsafe fn execute_safe_reset<S, F>(
+    state: PyroRefObjectPtr,
+    reset_fn: F,
+) -> PyroVecPtr
 where
     S: 'static,
     F: FnOnce(&mut S) + panic::UnwindSafe,
 {
     trace!("execute_safe_reset: entering");
+    register_ffi_panic_hook();
 
-    if state_ptr.is_null() {
+    if state.state.is_null() {
         error!("execute_safe_reset: state pointer is null");
-        return BridgeError::null_pointer().encode().into_raw();
+        return PyroError::null_pointer().encode().into_raw();
     }
 
-    let state = unsafe { &mut *(state_ptr as *mut S) };
+    let s = unsafe { &mut *(state.state as *mut S) };
 
     clear_last_panic();
 
     trace!("execute_safe_reset: executing reset_fn");
-    let result = panic::catch_unwind(AssertUnwindSafe(|| reset_fn(state)));
+    let result = panic::catch_unwind(AssertUnwindSafe(|| reset_fn(s)));
 
     match result {
         Ok(_) => {
             debug!("execute_safe_reset: state reset successfully");
-            BridgeVec::ok().into_raw()
+            PyroVec::ok().into_raw()
         }
         Err(_) => {
             let panic_info = recover_panic_info();
             error!(panic = ?panic_info, "execute_safe_reset: panic caught during reset");
-            BridgeError::CodePanic(panic_info).encode().into_raw()
+            PyroError::CodePanic(panic_info).encode().into_raw()
         }
     }
 }
@@ -98,14 +118,13 @@ where
 // --- Async Wrappers ---
 
 /// Safe wrapper for Async Init functions.
-/// Returns FfiBorrowedFutureObjectResult.
+/// Returns `FutureInitResult`.
 /// The closure receives `Option<C>` directly.
 #[tracing::instrument(skip(init_fn))]
 pub unsafe fn execute_safe_async_init<'a, C, S, Fut, F>(
-    config_ptr: *const u8,
-    config_len: usize,
+    config: PyroViewPtr,
     init_fn: F,
-) -> FfiBorrowedFutureObjectResult<'a>
+) -> FutureInitResult<'a>
 where
     C: serde::de::DeserializeOwned + Send + 'static,
     S: Send + 'static,
@@ -113,81 +132,71 @@ where
     F: FnOnce(Option<C>) -> Fut + Send + 'a,
 {
     trace!("execute_safe_async_init: entering");
+    register_ffi_panic_hook();
 
-    // Deserialize as Option<C> - the JSON can be null or the actual config
-    let config: Option<C> = if config_ptr.is_null() || config_len == 0 {
-        None
-    } else {
-        let config_bytes = unsafe { std::slice::from_raw_parts(config_ptr, config_len) };
-        match serde_json::from_slice::<Option<C>>(config_bytes) {
-            Ok(config) => config,
-            Err(err) => {
-                let error = CapturedError::new(format!("Json Serialization: {err}")).with_location(std::panic::Location::caller()).with_backtrace(std::backtrace::Backtrace::capture());
-                return BridgeError::serialization_panic(error.into()).into();
-            }
-        }
+    let config: Option<C> = match deserialize_config(config) {
+        Ok(c) => c,
+        Err(err) => return FutureInitResult::EarlyError(InitResult::init_err(err)),
     };
 
-    // 2. Return Borrowing Future
     let _guard = get_runtime().enter();
-    FfiBorrowedFutureObjectResult::Future(BorrowingFfiFuture::<'a>::new(async move {
+    FutureInitResult::Future(BorrowingFfiFuture::<'a>::new(async move {
         trace!("execute_safe_async_init: future polling started");
         clear_last_panic();
 
-        // Note: We move the deserialized config into the future here
         let result = AssertUnwindSafe(init_fn(config)).catch_unwind().await;
 
         match result {
             Ok(state) => {
                 debug!("execute_safe_async_init: async init completed successfully");
-                FfiInitResult::ok(Box::into_raw(Box::new(state)) as *mut c_void)
+                InitResult::init_ok(state)
             }
             Err(_) => {
                 let panic_info = recover_panic_info();
                 error!(panic = ?panic_info, "execute_safe_async_init: panic caught during async init");
-                BridgeError::CodePanic(panic_info).into()
+                InitResult::init_err(PyroError::CodePanic(panic_info))
             }
         }
     }))
 }
 
 /// Safe wrapper for Async Reset functions.
-/// Returns FfiBorrowedFutureResult (which wraps FfiResult).
-#[tracing::instrument(skip(reset_fn))]
+/// Returns `FuturePyroVec`.
 pub unsafe fn execute_safe_async_reset<'a, S, Fut, F>(
-    state_ptr: *mut c_void,
+    state: PyroRefObjectPtr,
     reset_fn: F,
-) -> FfiBorrowedFutureResult<'a>
+) -> FuturePyroVec<'a>
 where
     S: Send + 'static,
     Fut: std::future::Future<Output = ()> + Send + 'a,
     F: FnOnce(&'a mut S) -> Fut + Send + 'a,
 {
     trace!("execute_safe_async_reset: entering");
+    register_ffi_panic_hook();
 
-    if state_ptr.is_null() {
-        error!("execute_safe_reset: state pointer is null");
-        return BridgeError::null_pointer().into();
+    if state.state.is_null() {
+        error!("execute_safe_async_reset: state pointer is null");
+        return FuturePyroVec::from(PyroError::null_pointer().encode());
     }
 
-    let state = unsafe { &mut *(state_ptr as *mut S) };
+    let s = unsafe { &mut *(state.state as *mut S) };
 
     let _guard = get_runtime().enter();
-    FfiBorrowedFutureResult::Future(BorrowingFfiFuture::<'a>::new(async move {
+    FuturePyroVec::Future(BorrowingFfiFuture::<'a>::new(async move {
         trace!("execute_safe_async_reset: future polling started");
         clear_last_panic();
 
-        let result = AssertUnwindSafe(reset_fn(state)).catch_unwind().await;
+        let result = AssertUnwindSafe(reset_fn(s)).catch_unwind().await;
 
         match result {
             Ok(_) => {
                 debug!("execute_safe_async_reset: async reset completed successfully");
-                BridgeVec::ok().into_raw()
+                PyroVec::ok().into_raw()
             }
             Err(_) => {
                 let panic_info = recover_panic_info();
                 error!(panic = ?panic_info, "execute_safe_async_reset: panic caught during async reset");
-                BridgeError::CodePanic(panic_info).encode().into_raw()
+                PyroError::CodePanic(panic_info).encode().into_raw()
             }
         }
     }))

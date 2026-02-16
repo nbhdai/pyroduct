@@ -93,9 +93,9 @@ impl ResetFn {
             quote! {
                 #[unsafe(no_mangle)]
                 pub unsafe extern "C" fn #reset_name<'a>(
-                    state: *mut std::ffi::c_void
+                    state: ::pyroduct::ffi::PyroRefObjectPtr,
                 ) -> ::pyroduct::ffi::FuturePyroVec<'a> {
-                    ::pyroduct::capability::safe_lifecycle::execute_safe_async_reset::<#server, _, _>(
+                    ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_async_reset::<#server, _, _>(
                         state,
                         |state| async move { state.reset().await },
                     )
@@ -105,9 +105,9 @@ impl ResetFn {
             quote! {
                 #[unsafe(no_mangle)]
                 pub unsafe extern "C" fn #reset_name(
-                    state: *mut std::ffi::c_void
+                    state: ::pyroduct::ffi::PyroRefObjectPtr,
                 ) -> ::pyroduct::PyroVecPtr {
-                    ::pyroduct::capability::safe_lifecycle::execute_safe_reset::<#server, _>(
+                    ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_reset::<#server, _>(
                         state,
                         |state| state.reset(),
                     )
@@ -164,9 +164,9 @@ mod tests {
         let expected = quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn p__greeter_server__ffi_reset(
-                state: *mut std::ffi::c_void
+                state: ::pyroduct::ffi::PyroRefObjectPtr,
             ) -> ::pyroduct::PyroVecPtr {
-                ::pyroduct::capability::safe_lifecycle::execute_safe_reset::<GreeterServer, _>(
+                ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_reset::<GreeterServer, _>(
                     state,
                     |state| state.reset(),
                 )
@@ -190,9 +190,9 @@ mod tests {
         let expected = quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn p__greeter_server__ffi_reset<'a>(
-                state: *mut std::ffi::c_void
+                state: ::pyroduct::ffi::PyroRefObjectPtr,
             ) -> ::pyroduct::ffi::FuturePyroVec<'a> {
-                ::pyroduct::capability::safe_lifecycle::execute_safe_async_reset::<GreeterServer, _, _>(
+                ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_async_reset::<GreeterServer, _, _>(
                     state,
                     |state| async move { state.reset().await },
                 )

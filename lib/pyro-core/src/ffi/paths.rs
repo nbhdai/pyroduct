@@ -320,7 +320,7 @@ impl FnOutput {
         }
     }
 
-    pub fn to_type(&self) -> Type {
+    pub fn ty(&self) -> Type {
         match self {
             // Maps back to no return arrow (void)
             FnOutput::None => parse_quote!(()),
@@ -329,11 +329,20 @@ impl FnOutput {
             FnOutput::Single(ty) => ty.clone(),
 
             // Maps back to "-> Result<T, E>"
-            FnOutput::Result(ok, err) => {
-                // Construct the "Result<T, E>" type using quote
-                let result_ty: Type = parse_quote!(Result<#ok, #err>);
-                result_ty
-            }
+            FnOutput::Result(ok, _) => ok.clone(),
+        }
+    }
+
+    pub fn err(&self) -> Option<&Type> {
+        match self {
+            // Maps back to no return arrow (void)
+            FnOutput::None => None,
+
+            // Maps back to "-> T"
+            FnOutput::Single(_) => None,
+
+            // Maps back to "-> Result<T, E>"
+            FnOutput::Result(_, err) => Some(err)
         }
     }
 }
