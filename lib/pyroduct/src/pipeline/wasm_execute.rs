@@ -1,13 +1,11 @@
 use std::cmp::min;
 use std::sync::Arc;
 
-use crate::errors::PyroductError;
-use crate::host::capability::Capabilities;
-use crate::host::pipeline::PipelineDef;
-use crate::host::wasm_bridge::HarnessState;
-use crate::{ModIdentity, PyroductResult};
+use crate::PyroError;
+use crate::{PyroRow, pipeline::capability::Capabilities};
+use crate::pipeline::pipeline::PipelineDef;
+use crate::pipeline::wasm_bridge::HarnessState;
 use arrow::array::RecordBatch;
-use arrow_scalars::{ArrowRow, Rowable};
 
 use rkyv::rancor;
 use serde::{Deserialize, Serialize};
@@ -34,10 +32,10 @@ impl Harness {
         // So we can link against the capabilities we've got.
         capabilities: &Capabilities,
         harness_state: HarnessState,
-    ) -> Result<Self, PyroductError> {
+    ) -> Result<Self, PyroError> {
         let ident = harness_state.module.clone();
         let module = Module::from_binary(engine, wasm_bytes).map_err(|err| {
-            PyroductError::from_module_linking(
+            PyroError::from_module_linking(
                 &ident,
                 format!("Unable to parse the wasm binary: {err}"),
             )
@@ -67,7 +65,7 @@ impl Harness {
                 },
             )
             .map_err(|err| {
-                PyroductError::from_module_linking(
+                PyroError::from_module_linking(
                     &ident,
                     format!("Module does not have a sutible log function: {err}"),
                 )
@@ -79,18 +77,18 @@ impl Harness {
             .instantiate_async(&mut store, &module)
             .await
             .map_err(|err| {
-                PyroductError::from_module_linking(
+                PyroError::from_module_linking(
                     &ident,
                     format!("Unable to instantiate the module: {err}"),
                 )
             })?;
         let memory = instance.get_memory(&mut store, "memory").ok_or_else(|| {
-            PyroductError::from_module_linking(&ident, format!("Module does not have a memory"))
+            PyroError::from_module_linking(&ident, format!("Module does not have a memory"))
         })?;
         let alloc_func = instance
             .get_typed_func::<i32, i32>(&mut store, "alloc")
             .map_err(|err| {
-                PyroductError::from_module_linking(
+                PyroError::from_module_linking(
                     &ident,
                     format!("Module does not have a sutible Alloc: {err}"),
                 )
@@ -98,7 +96,7 @@ impl Harness {
         let call_func = instance
             .get_typed_func::<(i32, i32), (i32, i32)>(&mut store, "exter_call")
             .map_err(|err| {
-                PyroductError::from_module_linking(
+                PyroError::from_module_linking(
                     &ident,
                     format!("Module does not have a sutible call function: {err}"),
                 )
@@ -117,14 +115,14 @@ impl Harness {
     #[instrument(skip(self, input), fields(module = %self.ident.name()))]
     pub async fn process(
         &mut self,
-        input: &ArrowRow<'_>,
-    ) -> Result<Result<ArrowRow<'static>, String>, PyroductError> {
+        input: &PyroRow<'_>,
+    ) -> Result<Result<PyroRow<'static>, String>, PyroError> {
         debug!("Resetting capability states...");
         self.store.data_mut().reset().await?;
 
-        debug!("Serializing ArrowRow input...");
+        debug!("Serializing PyroRow input...");
         let data = rkyv::to_bytes::<rancor::Error>(input).map_err(|e| {
-            PyroductError::from_module_serialization(
+            PyroError::from_module_serialization(
                 &self.ident,
                 format!("Failed to serialize input: {}", e),
             )
@@ -136,7 +134,7 @@ impl Harness {
             .call_async(&mut self.store, data.len() as i32)
             .await
             .map_err(|e| {
-                PyroductError::from_module_memory(
+                PyroError::from_module_memory(
                     &self.ident,
                     format!("Failed to allocate module input: {}", e),
                 )
@@ -146,7 +144,7 @@ impl Harness {
         self.memory
             .write(&mut self.store, ptr as usize, data.as_slice())
             .map_err(|e| {
-                PyroductError::from_module_memory(
+                PyroError::from_module_memory(
                     &self.ident,
                     format!("Failed to write module input: {}", e),
                 )
@@ -159,7 +157,7 @@ impl Harness {
             .await
             .map_err(|error| {
                 self.store.data_mut().take_error().unwrap_or_else(|| {
-                    PyroductError::from_module_unknown(
+                    PyroError::from_module_unknown(
                         &self.ident,
                         format!("Unknown during call error: {error}"),
                     )
@@ -174,17 +172,17 @@ impl Harness {
                 start + len
             );
             error!("{}", msg);
-            return Err(PyroductError::from_module_memory(&self.ident, msg));
+            return Err(PyroError::from_module_memory(&self.ident, msg));
         }
         let slice = &memory[start as usize..(start + len) as usize];
 
-        // Access the archived Result<ArrowRow, String>
-        type ReturnType<'a> = Result<ArrowRow<'a>, String>;
+        // Access the archived Result<PyroRow, String>
+        type ReturnType<'a> = Result<PyroRow<'a>, String>;
         let archived = rkyv::access::<<ReturnType as rkyv::Archive>::Archived, rancor::Error>(
             slice,
         )
         .map_err(|e| {
-            PyroductError::from_module_validation(
+            PyroError::from_module_validation(
                 &self.ident,
                 format!("Failed to validate call return: {}", e),
             )
@@ -193,7 +191,7 @@ impl Harness {
         match archived {
             rkyv::result::ArchivedResult::Ok(archived_row) => {
                 debug!("Result deserialized successfully (Ok).");
-                Ok(Ok(ArrowRow::from(archived_row).into_owned()))
+                Ok(Ok(PyroRow::from(archived_row).into_owned()))
             }
             rkyv::result::ArchivedResult::Err(error) => {
                 debug!("Result deserialized successfully (Err).");
@@ -215,7 +213,7 @@ impl Pipeline {
         config.async_support(true);
 
         let engine = Engine::new(&config).map_err(|e| {
-            PyroductError::from_infrastructure(format!("Failed to create Wasmtime engine: {}", e))
+            PyroError::from_infrastructure(format!("Failed to create Wasmtime engine: {}", e))
         })?;
 
         for (index, wasm_def) in def.pipeline.iter().enumerate() {
@@ -236,12 +234,12 @@ impl Pipeline {
     #[instrument(skip(self, input))]
     pub async fn process(
         &mut self,
-        mut input: ArrowRow<'_>,
-    ) -> Result<Result<ArrowRow<'static>, Failure>, PyroductError> {
+        mut input: PyroRow<'_>,
+    ) -> Result<Result<PyroRow<'static>, Failure>, PyroError> {
         let pipeline_len = self.steps.len();
         info!("Pipeline Start: Executing {} steps", pipeline_len);
 
-        let mut result: ArrowRow<'static> = input.clone().into_owned();
+        let mut result: PyroRow<'static> = input.clone().into_owned();
 
         for (i, step) in self.steps.iter_mut().enumerate() {
             debug!(
@@ -291,7 +289,7 @@ pub struct Failure {
     pub row_index: usize,
     pub error: String,
     /// Stores the state of the data at the moment of failure
-    pub partial_data: ArrowRow<'static>,
+    pub partial_data: PyroRow<'static>,
 }
 
 pub struct PipelinePool {
@@ -309,12 +307,12 @@ impl PipelinePool {
     /// Results are streamed back via a channel and collected by the main thread.
     ///
     /// Returns:
-    /// - `Vec<(usize, ArrowRow<'static>)>`: Unsorted results containing the row index and data.
+    /// - `Vec<(usize, PyroRow<'static>)>`: Unsorted results containing the row index and data.
     /// - `Vec<Failure>`: List of rows that encountered logic errors, with their partial state.
     pub async fn process_batch(
         &self,
         batch: &RecordBatch,
-    ) -> Result<(Vec<ArrowRow<'static>>, Vec<Failure>), PyroductError> {
+    ) -> Result<(Vec<PyroRow<'static>>, Vec<Failure>), PyroError> {
         let total_rows = batch.num_rows();
         if total_rows == 0 {
             return Ok((Vec::new(), Vec::new()));
@@ -323,7 +321,7 @@ impl PipelinePool {
         let pipelines = {
             let mut guard = self.pipelines.lock().await;
             if guard.is_empty() {
-                return Err(PyroductError::from_infrastructure(
+                return Err(PyroError::from_infrastructure(
                     "Pipeline pool is empty or exhausted".to_string(),
                 ));
             }
@@ -370,13 +368,13 @@ impl PipelinePool {
                             Err(e) => Err(Failure {
                                 row_index: absolute_index,
                                 error: e.to_string(),
-                                partial_data: ArrowRow::empty(),
+                                partial_data: PyroRow::empty(),
                             }),
                         },
                         Err(e) => Err(Failure {
                             row_index: absolute_index,
                             error: e.to_string(),
-                            partial_data: ArrowRow::empty(),
+                            partial_data: PyroRow::empty(),
                         }),
                     };
 

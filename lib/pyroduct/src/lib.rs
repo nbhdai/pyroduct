@@ -1,6 +1,6 @@
 //! # PyroVec: Zero-Copy Transport
 //!
-//! `pyro_vec` provides a specialized buffer type optimized for moving complex Rust types
+//! `pyroduct` provides a specialized buffer type optimized for moving complex Rust types
 //! across boundaries (like FFI to dynamically loaded Rust) or process boundaries with zero-copy
 //! overhead.
 //!
@@ -27,10 +27,9 @@
 //! The attribute macro is the primary entry point for users. It accepts the following syntax:
 //!
 //! ```rust,ignore
-//! #[bridgeable]                                      // bare minimum
-//! #[bridgeable(Document)]                            // + Documented impl (JSON type spec)
-//! #[bridgeable(derive(Debug, PartialEq))]            // + derives on the archived type
-//! #[bridgeable(derive(Debug, PartialEq), Document)]  // all of the above
+//! #[magma]                                      // bare minimum
+//! #[magma(derive(Debug, PartialEq))]            // + derives on the archived type
+//! #[magma(derive(Debug, PartialEq), Document)]  // all of the above
 //! ```
 //!
 //! **What it generates:**
@@ -48,10 +47,10 @@
 //! ### Basic example
 //!
 //! ```rust,ignore
-//! use pyro_vec::{bridgeable, Bridgeable};
-//! use pyro_vec::format::HasReceiver;
+//! use pyroduct::{magma, Bridgeable};
+//! use pyroduct::format::HasReceiver;
 //!
-//! #[bridgeable]
+//! #[magma]
 //! #[derive(Debug, PartialEq)]
 //! struct UserProfile {
 //!     id: u32,
@@ -67,10 +66,10 @@
 //!     };
 //!
 //!     // Ship — serialize into a PyroVec
-//!     let pyro_vec = original.ship()?;
+//!     let pyroduct = original.ship()?;
 //!
 //!     // --- FFI / transport boundary ---
-//!     let ptr = pyro_vec.into_raw();
+//!     let ptr = pyroduct.into_raw();
 //!     let passed_vec = unsafe { PyroVec::from_raw(ptr) }?;
 //!     // ---------------------------------
 //!
@@ -104,16 +103,16 @@
 //! ### Example: Result transport
 //!
 //! ```rust,ignore
-//! use pyro_vec::{bridgeable, Bridgeable, BridgeableResult};
+//! use pyroduct::{magma, Bridgeable, BridgeableResult};
 //!
-//! #[bridgeable]
+//! #[magma]
 //! #[derive(Debug, PartialEq)]
 //! struct Response {
 //!     id: u32,
 //!     payload: String,
 //! }
 //!
-//! #[bridgeable]
+//! #[magma]
 //! #[derive(Debug, PartialEq)]
 //! struct ApiError {
 //!     code: u16,
@@ -133,51 +132,6 @@
 //!     Ok(typed_ok)  => assert_eq!(typed_ok.id, 101),
 //!     Err(typed_err) => panic!("expected success"),
 //! }
-//! ```
-//!
-//! ## Documentation / Schema generation
-//!
-//! When `Document` is passed to the macro, the type also implements the [`documented::Documented`]
-//! trait. This produces a [`documented::TypeSpec`] that can be rendered as JSON, giving
-//! FFI / WASM / RPC consumers a machine-readable schema for every bridgeable type.
-//!
-//! ```rust,ignore
-//! use pyro_vec::{bridgeable, documented::{Documented, schema_to_json}};
-//!
-//! #[bridgeable(Document)]
-//! #[derive(Debug)]
-//! struct UserProfile {
-//!     id: u32,
-//!     username: String,
-//!     tags: Vec<String>,
-//! }
-//!
-//! #[bridgeable(Document)]
-//! #[derive(Debug)]
-//! enum ApiError {
-//!     NotFound,
-//!     Forbidden { reason: String },
-//! }
-//!
-//! // Single type spec
-//! println!("{}", UserProfile::spec().to_json());
-//! // {
-//! //   "name": "UserProfile",
-//! //   "kind": "struct",
-//! //   "version": 0,
-//! //   "fields": [
-//! //     { "name": "id", "type": "u32" },
-//! //     { "name": "username", "type": "String" },
-//! //     { "name": "tags", "type": "Vec<String>" }
-//! //   ]
-//! // }
-//!
-//! // Full service schema
-//! let schema = schema_to_json(&[
-//!     UserProfile::spec(),
-//!     ApiError::spec(),
-//! ]);
-//! std::fs::write("schema.json", &schema).unwrap();
 //! ```
 //!
 //! # FFI Safety & Panic Handling
@@ -202,7 +156,7 @@
 //! ```rust,ignore
 //! #[unsafe(no_mangle)]
 //! pub extern "C" fn my_ffi_func() -> *const u8 {
-//!     pyro_vec::ffi::execute_safe(|| {
+//!     pyroduct::ffi::execute_safe(|| {
 //!         // Your logic here
 //!         process_data()
 //!     })
@@ -287,7 +241,7 @@ pub mod value;
 pub mod vec_buf;
 mod view;
 pub mod wasm;
-// pub mod pipeline;
+pub mod pipeline;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod ffi;
@@ -338,12 +292,12 @@ pub use pyro_derive::Document;
 ///
 /// **Basic usage:**
 /// ```rust
-/// pyro_vec::library!();
+/// pyroduct::library!();
 /// ```
 ///
 /// **With custom metadata:**
 /// ```rust
-/// pyro_vec::library!("pyroduct-engine");
+/// pyroduct::library!("pyroduct-engine");
 /// ```
 ///
 /// ### Integration with `CapturedError`
@@ -360,7 +314,7 @@ pub type PyroResult<T> = Result<T, PyroError>;
 ///
 /// Example:
 /// ```rust
-/// use pyro_vec::{FromRow, DeepRef};
+/// use pyroduct::{FromRow, DeepRef};
 ///
 /// #[derive(FromRow, DeepRef)]
 /// struct Foo { val: String }
@@ -375,7 +329,7 @@ pub use pyro_derive::{FromRow, RefFromRow};
 ///
 /// Example:
 /// ```rust
-/// use pyro_vec::DeepRef;
+/// use pyroduct::DeepRef;
 ///
 /// #[derive(DeepRef)]
 /// struct Foo { val: String }
@@ -405,7 +359,7 @@ pub use pyro_derive::DeepRefArchived;
 ///
 /// Example:
 /// ```rust
-/// use pyro_vec::ToRow;
+/// use pyroduct::ToRow;
 ///
 /// #[derive(ToRow)]
 /// struct Foo { val: String }
@@ -494,7 +448,7 @@ pub use pyro_derive::config;
 ///     pub ports: Vec<String>,
 /// }
 ///
-/// #[pyroduct::client]
+/// #[pyroduct::magma]
 /// pub struct SerialHandle {
 ///     pub id: u64,
 /// }
@@ -521,7 +475,7 @@ pub use pyro_derive::config;
 ///         self.next_id = 0;
 ///     }
 ///
-///     fn new_client(&self, client: &SerialHandle) -> Result<(), String> {
+///     fn register(&self, client: &SerialHandle) -> Result<(), String> {
 ///         if client.id > 100 {
 ///             return Err("Invalid client ID".to_string());
 ///         }
@@ -557,7 +511,7 @@ pub use pyro_derive::capability;
 /// use pyroduct::*;
 ///  
 /// #[module(output = output)]
-/// pub fn call(input: &str) -> Result<String, String> {
+/// pub fn call(input: &str) -> Result<String> {
 ///     Ok(format!("Hello, {}", input))
 /// }
 /// ```
@@ -566,7 +520,7 @@ pub use pyro_derive::capability;
 /// use pyroduct::*;
 ///
 /// #[module(output = (count, data))]
-/// fn process(input: &str) -> Result<(u32, Vec<u8>), String> {
+/// fn process(input: &str) -> Result<(u32, Vec<u8>)> {
 ///     Ok((input.len() as u32, input.as_bytes().to_vec()))
 /// }
 /// ```
@@ -574,14 +528,14 @@ pub use pyro_derive::capability;
 /// ```rust
 /// use pyroduct::*;
 ///
-/// #[derive(ToRow)]
+/// #[magma]
 /// struct ProcessResult {
 ///     count: u32,
 ///     data: Vec<u8>,
 /// }
 ///
 /// #[module(output = ProcessResult)]
-/// fn process(input: &str) -> Result<ProcessResult, String> {
+/// fn process(input: &str) -> Result<ProcessResult> {
 ///     Ok(ProcessResult { count: 42, data: vec![] })
 /// }
 /// ```
@@ -589,15 +543,15 @@ pub use pyro_derive::capability;
 /// ```rust
 /// use pyroduct::*;
 ///
-/// #[derive(FromRow, DeepRef, ToRow)]
+/// #[magma]
 /// struct CallMessage {
 ///     message: String,
 ///     role: String,
 /// }
 ///
 /// #[module(output = (output, messages))]
-/// fn process(input: &[CallMessageRef<'_>]) -> Result<(String, Vec<CallMessage>), String> {
-///     let output = input.first().ok_or("Empty chat history".to_string())?;
+/// fn process(input: &[CallMessageRef<'_>]) -> Result<(String, Vec<CallMessage>)> {
+///     let output = input.first().ok_or(anyhow::anyhow!("Empty chat history"))?;
 ///     Ok((
 ///         output.message.to_string(),
 ///         vec![
