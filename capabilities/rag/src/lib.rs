@@ -19,7 +19,7 @@ pub struct RagDocument {
 }
 
 /// The Pyroduct interface item for the RAG Client.
-#[pyroduct::interface_item]
+#[pyroduct::magma]
 pub struct RagClient;
 
 /// Internal representation of a document after it has been processed into a vector.
@@ -126,7 +126,7 @@ impl RagServer {
 }
 
 /// A search result containing the matched document and its relevance score.
-#[pyroduct::interface_item]
+#[pyroduct::magma]
 pub struct SearchResult {
     /// The identifier of the matched document.
     pub id: String,

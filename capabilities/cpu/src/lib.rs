@@ -1,4 +1,4 @@
-#[pyroduct::interface_item]
+#[pyroduct::magma]
 pub struct CpuClient;
 
 pub struct CpuServer;

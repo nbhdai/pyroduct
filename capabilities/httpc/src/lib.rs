@@ -19,7 +19,7 @@ pub struct HttpConfig {
 }
 
 /// The Pyroduct interface item representing the HTTP Client.
-#[pyroduct::interface_item]
+#[pyroduct::magma]
 pub struct HttpClient;
 
 /// The internal state of the HTTP Server capability.

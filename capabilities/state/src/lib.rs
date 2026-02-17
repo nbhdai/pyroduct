@@ -3,7 +3,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[pyroduct::interface_item]
+#[pyroduct::magma]
 pub struct CounterClient {
     pub start_value: u64,
 }

@@ -20,9 +20,9 @@ pub type LogCallback = unsafe extern "C" fn(i64, *const u8, usize);
 
 #[repr(C)]
 pub struct MethodExport<'a> {
-    func: Function<'a>,
-    name: *const u8,
-    name_len: usize,
+    pub func: Function<'a>,
+    pub name: *const u8,
+    pub name_len: usize,
 }
 
 /// We expect the return to be a future that resolves into a bridge vec.
@@ -453,13 +453,13 @@ impl<'a> Future for ClientRegisterFuture<'a> {
 
 #[repr(C)]
 pub struct ClassExport<'a> {
-    name: *const u8,
-    name_len: usize,
-    ptr: *const MethodExport<'a>,
-    init: ClassInitFn<'a>,
-    reset: ClassResetFn<'a>,
-    register: ClientRegisterFn<'a>,
-    len: usize,
+    pub name: *const u8,
+    pub name_len: usize,
+    pub ptr: *const MethodExport<'a>,
+    pub init: ClassInitFn<'a>,
+    pub reset: ClassResetFn<'a>,
+    pub register: ClientRegisterFn<'a>,
+    pub len: usize,
 }
 
 pub type CapabilityRegisterFn<'a> =

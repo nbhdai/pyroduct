@@ -24,10 +24,10 @@ impl CapConfig {
         // 2. Validate Documentation
         Self::validate_docs(&input, doc_rec)?;
 
-        // 3. Add cfg(feature = "capability") gate
-        let cfg_gate: Attribute = parse_quote!(
-            #[cfg(feature = "capability")]
-        );
+        // // 3. Add cfg(feature = "capability") gate
+        // let cfg_gate: Attribute = parse_quote!(
+        //     #[cfg(feature = "capability")]
+        // );
 
         let serde_crate: Attribute = parse_quote!(
             #[serde(crate = "::pyroduct::serde")]
@@ -41,7 +41,7 @@ impl CapConfig {
         // Insert in reverse order of appearance
         input.attrs.insert(0, serde_crate);
         input.attrs.insert(0, serde_derive);
-        input.attrs.insert(0, cfg_gate);
+        // input.attrs.insert(0, cfg_gate);
 
         Ok(Self { input })
     }
@@ -116,7 +116,6 @@ mod tests {
         let output = expand_config(code, DocRec::NoReq);
 
         let expected = quote! {
-            #[cfg(feature = "capability")]
             #[derive(::pyroduct::serde::Serialize, ::pyroduct::serde::Deserialize)]
             #[serde(crate = "::pyroduct::serde")]
             pub struct MyConfig {
@@ -193,7 +192,6 @@ mod tests {
         // 3. Define Expected Output
         // Derives added, generics preserved, debug preserved.
         let expected = quote! {
-            #[cfg(feature = "capability")]
             #[derive(::pyroduct::serde::Serialize, ::pyroduct::serde::Deserialize)]
             #[serde(crate = "::pyroduct::serde")]
             #[derive(Clone, Debug)]
@@ -217,7 +215,6 @@ mod tests {
 
         // 3. Define Expected Output
         let expected = quote! {
-            #[cfg(feature = "capability")]
             #[derive(::pyroduct::serde::Serialize, ::pyroduct::serde::Deserialize)]
             #[serde(crate = "::pyroduct::serde")]
             pub struct TupleConfig(String, u32);

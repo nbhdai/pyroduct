@@ -1,7 +1,7 @@
 //! Provides async operations for testing async capability lifecycle and method calls.
 use std::sync::Mutex;
 
-#[pyroduct::interface_item]
+#[pyroduct::magma]
 pub struct TransformClient {
     pub prefix: String,
 }

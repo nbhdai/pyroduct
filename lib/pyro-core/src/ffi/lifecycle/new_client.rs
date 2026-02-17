@@ -219,9 +219,9 @@ impl NewClientFn {
         let wasm_call = self.generate_wasm_call(module);
 
         let return_type = if let Some(err) = &self.error_type {
-            quote!(Result<::pyroduct::module_capability::Client<Self>, #err>)
+            quote!(Result<::pyroduct::wasm::wasm::Client<Self>, #err>)
         } else {
-            quote!(::pyroduct::module_capability::Client<Self>)
+            quote!(::pyroduct::wasm::wasm::Client<Self>)
         };
 
         let result_handling = if let Some(error_ty) = &self.error_type {

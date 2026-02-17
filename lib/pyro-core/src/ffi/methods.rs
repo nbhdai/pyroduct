@@ -241,7 +241,7 @@ impl ImplMethod {
                 input_ptr: ::pyroduct::PyroViewPtr,
             ) -> #ffi_ret {
                 #call_path::<#generics>(
-                    capability_state_ptr.ptr(),
+                    capability_state_ptr,
                     client_state_ptr,
                     input_ptr,
                     #closure_params #body
@@ -602,7 +602,7 @@ mod tests {
                     _,
                     _,
                 >(
-                    capability_state_ptr.ptr(),
+                    capability_state_ptr,
                     client_state_ptr,
                     input_ptr,
                     |state, client| async move { state.test_async_client(&client).await },
@@ -669,7 +669,7 @@ mod tests {
                     MockError,
                     _,
                 >(
-                    capability_state_ptr.ptr(),
+                    capability_state_ptr,
                     client_state_ptr,
                     input_ptr,
                     |state, client, input| state.test_sync_client_input(&client, input),
@@ -746,7 +746,7 @@ mod tests {
                     _,
                     _,
                 >(
-                    capability_state_ptr.ptr(),
+                    capability_state_ptr,
                     client_state_ptr,
                     input_ptr,
                     |state, client, input| async move {
