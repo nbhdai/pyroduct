@@ -1,15 +1,15 @@
 //! Test FromRow with nested structs
 
-use pyroduct::{FromRow, PyroValue, PyroRow};
+use pyroduct::{FromRow, RefFromRow, DeepRef, PyroValue, PyroRow};
 
-#[derive(FromRow)]
+#[derive(FromRow, RefFromRow, DeepRef)]
 struct Address {
     street: String,
     city: String,
     zip: u32,
 }
 
-#[derive(FromRow)]
+#[derive(FromRow, RefFromRow, DeepRef)]
 struct Person {
     name: String,
     age: i32,
@@ -29,7 +29,7 @@ fn main() {
         ("address", PyroValue::List(vec![PyroValue::Group(addr_row)])),
     ]);
 
-    let p = Person::try_from(&person_row).unwrap();
+    let p = PersonRef::try_from(&person_row).unwrap();
     
     assert_eq!(p.name, "Bob");
     assert_eq!(p.age, 30);

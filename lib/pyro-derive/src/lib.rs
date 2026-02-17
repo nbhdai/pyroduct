@@ -1,6 +1,7 @@
 use proc_macro::TokenStream;
 use pyro_core::format::bridgeable::DocRec;
 use syn::{ItemFn, ItemStruct, parse_macro_input, parse_quote, parse2};
+use quote::quote;
 
 #[proc_macro_attribute]
 pub fn bridgeable(args: TokenStream, input: TokenStream) -> TokenStream {
@@ -45,6 +46,19 @@ pub fn document(input: TokenStream) -> TokenStream {
     }
 }
 
+#[proc_macro_derive(DocumentRef)]
+pub fn document_ref(input: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(input as ItemStruct);
+    match pyro_core::format::documentation::ref_documentation(
+        &item,
+        &parse_quote!(::pyroduct),
+        DocRec::NoReq,
+    ) {
+        Ok(v) => v.into(),
+        Err(error) => error.to_compile_error().into(),
+    }
+}
+
 #[proc_macro_derive(DeepRef)]
 pub fn derive_deep_ref(input: TokenStream) -> TokenStream {
     let item = parse_macro_input!(input as ItemStruct);
@@ -66,19 +80,43 @@ pub fn derive_deep_ref_archived(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(FromRow)]
 pub fn derive_from_row(input: TokenStream) -> TokenStream {
     let item = parse_macro_input!(input as ItemStruct);
-    match pyro_core::format::from_row::from_row(&item, &parse_quote!(::pyroduct)) {
-        Ok(v) => v.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
+    let doc = match pyro_core::format::documentation::generate_documented_impl(
+        &item,
+        &parse_quote!(::pyroduct),
+        DocRec::NoReq,
+    ) {
+        Ok(v) => v,
+        Err(error) => return error.to_compile_error().into(),
+    };
+    let from = match pyro_core::format::from_row::from_row(&item, &parse_quote!(::pyroduct)) {
+        Ok(v) => v,
+        Err(error) => return error.to_compile_error().into(),
+    };
+    quote!{
+        #doc
+        #from
+    }.into()
 }
 
 #[proc_macro_derive(RefFromRow)]
 pub fn derive_ref_from_row(input: TokenStream) -> TokenStream {
     let item = parse_macro_input!(input as ItemStruct);
-    match pyro_core::format::from_row::ref_from_row(&item, &parse_quote!(::pyroduct)) {
-        Ok(v) => v.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
+    let doc = match pyro_core::format::documentation::ref_documentation(
+        &item,
+        &parse_quote!(::pyroduct),
+        DocRec::NoReq,
+    ) {
+        Ok(v) => v,
+        Err(error) => return error.to_compile_error().into(),
+    };
+    let from = match pyro_core::format::from_row::ref_from_row(&item, &parse_quote!(::pyroduct)) {
+        Ok(v) => v,
+        Err(error) => return error.to_compile_error().into(),
+    };
+    quote!{
+        #doc
+        #from
+    }.into()
 }
 
 #[proc_macro_derive(ToRow)]

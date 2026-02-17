@@ -1,5 +1,5 @@
 use crate::format::bridgeable::DocRec;
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::{Fields, ItemStruct, Path, Type, parse_quote};
 
 /// Holds the parsed structure data required to generate the API docs.
@@ -131,6 +131,59 @@ impl MagmaDocumentation {
             }
         })
     }
+
+    /// Same as `generate`, but implements `TypeableRow` for `FooRef<'_>` instead of `Foo`.
+    /// The schema content (fields, types, docs) is identical — only the implementor differs.
+    pub fn generate_for_ref(&self, import_location: &Path) -> syn::Result<proc_macro2::TokenStream> {
+        let values_path = quote! { #import_location::value };
+        let ref_name = format_ident!("{}Ref", self.ident);
+
+        let field_entries: Vec<proc_macro2::TokenStream> = self
+            .fields
+            .iter()
+            .map(|f| {
+                let fname = &f.name;
+                let fty = &f.ty;
+
+                let doc_setter = match &f.doc {
+                    Some(doc_str) => quote! {
+                        field.documentation = Some(::std::borrow::Cow::Borrowed(#doc_str));
+                    },
+                    None => quote! {},
+                };
+
+                quote! {
+                    {
+                        let mut field = #values_path::PyroField::<'static>::new(
+                            #fname,
+                            <#fty as #values_path::Typeable>::pyro_type(),
+                            <#fty as #values_path::Typeable>::is_nullable(),
+                        );
+                        #doc_setter
+                        field
+                    }
+                }
+            })
+            .collect();
+
+        let struct_doc_quote = match &self.doc {
+            Some(d) => quote! { Some(::std::borrow::Cow::Borrowed(#d)) },
+            None => quote! { None },
+        };
+
+        Ok(quote! {
+            impl #values_path::TypeableRow for #ref_name<'_> {
+                fn schema() -> #values_path::PyroSchema<'static> {
+                    #values_path::PyroSchema {
+                        fields: ::std::borrow::Cow::Owned(vec![
+                            #(#field_entries),*
+                        ]),
+                        documentation: #struct_doc_quote,
+                    }
+                }
+            }
+        })
+    }
 }
 
 /// Generates the `Typeable` impl for the item.
@@ -144,6 +197,21 @@ pub fn generate_documented_impl(
 
     // Phase 2: Generate
     documentation.generate(import_location)
+}
+
+
+/// Generates a `TypeableRow` impl for the `FooRef<'_>` struct produced by `deep_ref`.
+///
+/// The schema is identical to the owned type's schema — field names, types, nullability,
+/// and doc-strings are all sourced from the original struct. Only the implementor changes:
+/// `FooRef<'_>` instead of `Foo`.
+pub fn ref_documentation(
+    item: &ItemStruct,
+    import_location: &Path,
+    doc_rec: DocRec,
+) -> syn::Result<proc_macro2::TokenStream> {
+    let documentation = MagmaDocumentation::from_item(item, doc_rec)?;
+    documentation.generate_for_ref(import_location)
 }
 
 /// Helper: Iterates over attributes to find `#[doc = "..."]` and joins them.

@@ -128,15 +128,12 @@ impl<'a> std::convert::TryFrom<&::pyroduct::PyroValue<'a>> for Address {
         }
     }
 }
-struct Person<S, T> {
-    name: S,
+struct Person {
+    name: String,
     age: i32,
-    address: T,
+    address: Vec<Address>,
 }
-impl<
-    S: ::pyroduct::value::Typeable,
-    T: ::pyroduct::value::Typeable,
-> ::pyroduct::value::TypeableRow for Person<S, T> {
+impl ::pyroduct::value::TypeableRow for Person {
     fn schema() -> ::pyroduct::value::PyroSchema<'static> {
         ::pyroduct::value::PyroSchema {
             fields: ::std::borrow::Cow::Owned(
@@ -147,8 +144,8 @@ impl<
                                 'static,
                             >::new(
                                 "name",
-                                <S as ::pyroduct::value::Typeable>::pyro_type(),
-                                <S as ::pyroduct::value::Typeable>::is_nullable(),
+                                <String as ::pyroduct::value::Typeable>::pyro_type(),
+                                <String as ::pyroduct::value::Typeable>::is_nullable(),
                             );
                             field
                         },
@@ -167,8 +164,8 @@ impl<
                                 'static,
                             >::new(
                                 "address",
-                                <T as ::pyroduct::value::Typeable>::pyro_type(),
-                                <T as ::pyroduct::value::Typeable>::is_nullable(),
+                                <Vec<Address> as ::pyroduct::value::Typeable>::pyro_type(),
+                                <Vec<Address> as ::pyroduct::value::Typeable>::is_nullable(),
                             );
                             field
                         },
@@ -179,11 +176,7 @@ impl<
         }
     }
 }
-impl<
-    'a,
-    S: std::convert::TryFrom<::pyroduct::PyroValue<'a>>,
-    T: std::convert::TryFrom<::pyroduct::PyroValue<'a>>,
-> std::convert::TryFrom<::pyroduct::PyroRow<'a>> for Person<S, T> {
+impl<'a> std::convert::TryFrom<::pyroduct::PyroRow<'a>> for Person {
     type Error = ::pyroduct::PyroRow<'a>;
     fn try_from(row: ::pyroduct::PyroRow<'a>) -> Result<Self, Self::Error> {
         let result = (|| -> Result<Self, &'static str> {
@@ -203,22 +196,26 @@ impl<
                     val.try_into().map_err(|_| "Failed to convert field 'age'")?
                 },
                 address: {
-                    let val = row
-                        .get("address")
-                        .ok_or_else(|| "Missing field: address")?
-                        .clone();
-                    val.try_into().map_err(|_| "Failed to convert field 'address'")?
+                    match row.get("address").ok_or_else(|| "Missing field: address")? {
+                        ::pyroduct::PyroValue::List(items) => {
+                            items
+                                .iter()
+                                .map(|v| {
+                                    v.clone()
+                                        .try_into()
+                                        .map_err(|_| "Failed to convert element in field 'address'")
+                                })
+                                .collect::<Result<Vec<Address>, _>>()?
+                        }
+                        _ => return Err("Expected List for field 'address'"),
+                    }
                 },
             })
         })();
         result.map_err(|_| row)
     }
 }
-impl<
-    'a,
-    S: std::convert::TryFrom<::pyroduct::PyroValue<'a>>,
-    T: std::convert::TryFrom<::pyroduct::PyroValue<'a>>,
-> std::convert::TryFrom<&::pyroduct::PyroRow<'a>> for Person<S, T> {
+impl<'a> std::convert::TryFrom<&::pyroduct::PyroRow<'a>> for Person {
     type Error = &'static str;
     fn try_from(row: &::pyroduct::PyroRow<'a>) -> Result<Self, Self::Error> {
         Ok(Self {
@@ -231,20 +228,24 @@ impl<
                 val.try_into().map_err(|_| "Failed to convert field 'age'")?
             },
             address: {
-                let val = row
-                    .get("address")
-                    .ok_or_else(|| "Missing field: address")?
-                    .clone();
-                val.try_into().map_err(|_| "Failed to convert field 'address'")?
+                match row.get("address").ok_or_else(|| "Missing field: address")? {
+                    ::pyroduct::PyroValue::List(items) => {
+                        items
+                            .iter()
+                            .map(|v| {
+                                v.clone()
+                                    .try_into()
+                                    .map_err(|_| "Failed to convert element in field 'address'")
+                            })
+                            .collect::<Result<Vec<Address>, _>>()?
+                    }
+                    _ => return Err("Expected List for field 'address'"),
+                }
             },
         })
     }
 }
-impl<
-    'a,
-    S: std::convert::TryFrom<::pyroduct::PyroValue<'a>>,
-    T: std::convert::TryFrom<::pyroduct::PyroValue<'a>>,
-> std::convert::TryFrom<::pyroduct::PyroValue<'a>> for Person<S, T> {
+impl<'a> std::convert::TryFrom<::pyroduct::PyroValue<'a>> for Person {
     type Error = ::pyroduct::PyroValue<'a>;
     fn try_from(value: ::pyroduct::PyroValue<'a>) -> Result<Self, Self::Error> {
         match value {
@@ -260,11 +261,7 @@ impl<
         }
     }
 }
-impl<
-    'a,
-    S: std::convert::TryFrom<::pyroduct::PyroValue<'a>>,
-    T: std::convert::TryFrom<::pyroduct::PyroValue<'a>>,
-> std::convert::TryFrom<&::pyroduct::PyroValue<'a>> for Person<S, T> {
+impl<'a> std::convert::TryFrom<&::pyroduct::PyroValue<'a>> for Person {
     type Error = &'static str;
     fn try_from(value: &::pyroduct::PyroValue<'a>) -> Result<Self, Self::Error> {
         match value {
@@ -284,7 +281,77 @@ fn main() {
     let person_row = PyroRow::from([
         ("name", PyroValue::from("Bob")),
         ("age", PyroValue::I32(30)),
-        ("address", PyroValue::Group(addr_row)),
+        (
+            "address",
+            PyroValue::List(
+                <[_]>::into_vec(::alloc::boxed::box_new([PyroValue::Group(addr_row)])),
+            ),
+        ),
     ]);
-    let _p = Person::<String, Address>::try_from(&person_row).unwrap();
+    let p = Person::try_from(&person_row).unwrap();
+    match (&p.name, &"Bob") {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    match (&p.age, &30) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    match (&p.address.street, &"123 Main St") {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    match (&p.address.city, &"Springfield") {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    match (&p.address.zip, &12345) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
 }

@@ -148,6 +148,7 @@ impl NewClientFn {
     pub fn generate_capability_ffi(&self) -> TokenStream {
         let fn_ffi_name = self.class.ffi_name(&self.fn_name);
         let client_type = &self.client_type;
+        let state_type = &self.class.state_tn;
 
         // Helper to deserialize the client and call the method
         let body = if let Some(_) = &self.error_type {
@@ -159,7 +160,7 @@ impl NewClientFn {
 
                 ::pyroduct::ffi::guest::panic_wrap::execute_safe_result(|| {
                     // Reconstruct state from raw pointer
-                    let state = unsafe { &*(capability_state_ptr.state as *const _) };
+                    let state = unsafe { &*(capability_state_ptr.state as *const #state_type) };
                     state.new_client(&client)
                 })
             }
@@ -171,7 +172,7 @@ impl NewClientFn {
                 };
 
                 ::pyroduct::ffi::guest::panic_wrap::execute_safe(|| {
-                    let state = unsafe { &*(capability_state_ptr.state as *const _) };
+                    let state = unsafe { &*(capability_state_ptr.state as *const #state_type) };
                     state.new_client(&client)
                 })
             }

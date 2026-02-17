@@ -154,8 +154,12 @@ pub(crate) fn map_type_to_ref(ty: &Type) -> (TokenStream, bool) {
             let segment = path.segments.last().unwrap();
             let ident_str = segment.ident.to_string();
 
+            // Check if it is a wrapper around `str` (Arc<str>, Box<str>, etc)
+            if is_string_like(ty) {
+                return (quote! { &'a str }, false);
+            }
+
             match ident_str.as_str() {
-                "String" => (quote! { &'a str }, false),
                 "bool" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "f16"
                 | "f32" | "f64" => {
                     let ident = &segment.ident;
@@ -178,8 +182,22 @@ pub(crate) fn map_type_to_ref(ty: &Type) -> (TokenStream, bool) {
                 "Option" => {
                     if let PathArguments::AngleBracketed(args) = &segment.arguments {
                         if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
-                            let (inner_ref, is_prim) = map_type_to_ref(inner_ty);
-                            return (quote! { Option<#inner_ref> }, is_prim);
+                            // Recursively map the inner type
+                            
+                            // 1. If inner is primitive (i32), Option<i32> is Copy (effectively),
+                            //    so we keep Option<i32>.
+                            if is_primitive(inner_ty) {
+                                return (quote! { Option<#inner_ty> }, true);
+                            }
+                            
+                            // 2. If inner is string-like (String, Arc<str>), we want Option<&'a str>
+                            if is_string_like(inner_ty) {
+                                return (quote! { Option<&'a str> }, false);
+                            }
+                            
+                            // 3. Otherwise, map normally (e.g., Option<MyStruct> -> Option<MyStructRef>)
+                            let (inner_ref, _) = map_type_to_ref(inner_ty);
+                            return (quote! { Option<#inner_ref> }, false);
                         }
                     }
                     (quote! { Option<()> }, false)
@@ -202,16 +220,23 @@ fn generate_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream {
             let segment = path.segments.last().unwrap();
             let ident_str = segment.ident.to_string();
 
+            // Direct String-like types (Arc<str>, String, Box<str>) -> &str
+            if is_string_like(ty) {
+                // as_deref works for Option, but for Arc<str>/String we usually use as_ref() or &*
+                // String: .as_str()
+                // Arc<str>: &**self.field or .as_ref()
+                if ident_str == "String" {
+                    return quote! { #field_name: self.#field_name.as_str() };
+                } else {
+                    return quote! { #field_name: &self.#field_name };
+                }
+            }
+
             match ident_str.as_str() {
                 // Primitives: Copy
                 "bool" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "f16"
                 | "f32" | "f64" => {
                     quote! { #field_name: self.#field_name }
-                }
-
-                // String: Borrow as &str
-                "String" => {
-                    quote! { #field_name: self.#field_name.as_str() }
                 }
 
                 // Vec
@@ -221,6 +246,13 @@ fn generate_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream {
                             if is_primitive(inner_ty) {
                                 // Primitive vec: borrow as slice
                                 quote! { #field_name: self.#field_name.as_slice() }
+                            } else if is_string_like(inner_ty) {
+                                // Vec<String>, Vec<Arc<str>> -> Vec<&str>
+                                if ident_str == "String" || is_string(inner_ty) {
+                                    quote! { #field_name: self.#field_name.iter().map(|x| x.as_str()).collect() }
+                                } else {
+                                    quote! { #field_name: self.#field_name.iter().map(|x| x.as_ref()).collect() }
+                                }
                             } else {
                                 // Complex vec: map to Vec<Ref>
                                 quote! {
@@ -240,10 +272,13 @@ fn generate_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream {
                     if let PathArguments::AngleBracketed(args) = &segment.arguments {
                         if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
                             if is_primitive(inner_ty) {
+                                // Option<i32>: Copy
                                 quote! { #field_name: self.#field_name }
-                            } else if is_string(inner_ty) {
+                            } else if is_string_like(inner_ty) {
+                                // Option<String>, Option<Arc<str>> -> .as_deref() gives Option<&str>
                                 quote! { #field_name: self.#field_name.as_deref() }
                             } else {
+                                // Option<Struct> -> map(as_deep_ref)
                                 quote! { #field_name: self.#field_name.as_ref().map(|x| x.as_deep_ref()) }
                             }
                         } else {
@@ -273,26 +308,36 @@ fn generate_rkyv_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream 
             let ident_str = segment.ident.to_string();
 
             match ident_str.as_str() {
-                "bool" | "i8" | "i16_le" | "i32_le" | "i64_le" | "u8_le" | "u16_le" | "u32_le" | "u64_le" | "f16_le"
-                | "f32_le" | "f64_le" => {
-                    quote! { #field_name: self.#field_name.into() }
+                // 1. Single-byte or simple primitives (Usually Copy in Rkyv)
+                "bool" | "i8" | "u8" => {
+                    quote! { #field_name: self.#field_name }
                 }
 
-                // String: ArchivedString has .as_str()
-                "ArchivedString" => {
+                // 2. Multi-byte Endian-Specific Primitives (Rkyv wrappers)
+                "i16" | "i16_le" | "i32" | "i32_le" | "i64" | "i64_le" | 
+                "u16" | "u16_le" | "u32" | "u32_le" | "u64" | "u64_le" | 
+                "f16" | "f16_le" | "f32" | "f32_le" | "f64" | "f64_le" => {
+                    quote! { #field_name: self.#field_name.to_native() }
+                }
+
+                // 3. String: ArchivedString has .as_str()
+                "String" | "ArchivedString" => {
                     quote! { #field_name: self.#field_name.as_str() }
                 }
 
-                // Vec
-                "ArchivedVec" => {
+                // 4. Vec
+                "Vec" | "ArchivedVec" => {
                     if let PathArguments::AngleBracketed(args) = &segment.arguments {
                         if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
                             if is_primitive(inner_ty) {
-                                // Primitive vec: borrow as slice
-                                // Note: This assumes Archived<T> has the same layout as T (Little Endian Context)
                                 quote! { #field_name: self.#field_name.as_slice() }
+                            } else if is_string_like(inner_ty) {
+                                // ArchivedVec<ArchivedString>. Inner (in struct def) is String.
+                                // We iterate and get &ArchivedString. .as_str() works.
+                                quote! {
+                                    #field_name: self.#field_name.iter().map(|x| x.as_str()).collect()
+                                }
                             } else {
-                                // Complex vec: map to Vec<Ref>
                                 quote! {
                                     #field_name: self.#field_name.iter().map(|x| x.as_deep_ref()).collect()
                                 }
@@ -305,20 +350,27 @@ fn generate_rkyv_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream 
                     }
                 }
 
-                // Option
-                "ArchivedOption" => {
+                // 5. Option
+                "Option" | "ArchivedOption" => {
                     if let PathArguments::AngleBracketed(args) = &segment.arguments {
                         if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
                             if is_primitive(inner_ty) {
                                 // ArchivedOption<ArchivedPrimitive> -> .as_ref() gives Option<&ArchivedPrimitive>
-                                // We need to convert &ArchivedPrimitive to Primitive.
-                                // We deref (copy) and convert into native.
+                                // We need Option<Primitive>.
+                                // .to_native() converts &ArchivedPrimitive (Copy) to Primitive
                                 quote! { 
-                                    #field_name: self.#field_name.as_ref().map(|x| (*x).into()) 
+                                    #field_name: self.#field_name.as_ref().map(|x| x.to_native()) 
                                 }
-                            } else if is_string(inner_ty) {
-                                quote! { #field_name: self.#field_name.as_deref() }
+                            } else if is_string_like(inner_ty) {
+                                // ArchivedOption<ArchivedString>. 
+                                // We need Option<&str>.
+                                // as_ref() -> Option<&ArchivedString>
+                                // .map(|x| x.as_str()) -> Option<&str>
+                                quote! { 
+                                    #field_name: self.#field_name.as_ref().map(|x| x.as_str()) 
+                                }
                             } else {
+                                // Standard nested struct
                                 quote! { #field_name: self.#field_name.as_ref().map(|x| x.as_deep_ref()) }
                             }
                         } else {
@@ -369,4 +421,33 @@ fn is_string(ty: &Type) -> bool {
     } else {
         false
     }
+}
+
+// Helper to identify "String-like" types that should become &'a str
+// Covers: String, Arc<str>, Box<str>, Cow<str>
+fn is_string_like(ty: &Type) -> bool {
+    if let Type::Path(TypePath { path, .. }) = ty {
+        let segment = path.segments.last().unwrap();
+        let ident = segment.ident.to_string();
+
+        // 1. Simple String
+        if ident == "String" {
+            return true;
+        }
+
+        // 2. Wrappers (Arc, Box, Cow)
+        if matches!(ident.as_str(), "Arc" | "Box" | "Cow" | "Rc") {
+            if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
+                    // Check if inner is "str"
+                    if let Type::Path(TypePath { path: inner_path, .. }) = inner_ty {
+                        if let Some(inner_seg) = inner_path.segments.last() {
+                            return inner_seg.ident == "str";
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
 }

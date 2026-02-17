@@ -33,7 +33,7 @@ fn main() {
     
     assert_eq!(p.name, "Bob");
     assert_eq!(p.age, 30);
-    assert_eq!(p.address[0].street, "123 Main St");
-    assert_eq!(p.address[0].city, "Springfield");
-    assert_eq!(p.address[0].zip, 12345);
+    assert_eq!(p.address.street, "123 Main St");
+    assert_eq!(p.address.city, "Springfield");
+    assert_eq!(p.address.zip, 12345);
 }

@@ -20,6 +20,8 @@ pub fn magma(
     // 1. Generate Documentation (takes &Item, &Path)
     let documentation =
         documentation::generate_documented_impl(&item, &import_location, args.doc_rec)?;
+    let ref_documentation =
+        documentation::ref_documentation(&item, &import_location, args.doc_rec)?;
 
     // 2. Generate Bridgeable
     // Note: This consumes 'args' and 'item', so we use clones for the others.
@@ -43,6 +45,7 @@ pub fn magma(
 
     Ok(quote! {
         #documentation
+        #ref_documentation
         #bridge_tokens
         #deep_ref
         #deep_ref_rkyv

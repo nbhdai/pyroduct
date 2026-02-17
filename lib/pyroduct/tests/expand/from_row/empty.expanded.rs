@@ -1,6 +1,14 @@
 //! Test FromRow with empty struct (edge case)
 use pyroduct::{FromRow, RefFromRow, DeepRef, PyroRow};
 struct Empty {}
+impl ::pyroduct::value::TypeableRow for Empty {
+    fn schema() -> ::pyroduct::value::PyroSchema<'static> {
+        ::pyroduct::value::PyroSchema {
+            fields: ::std::borrow::Cow::Owned(::alloc::vec::Vec::new()),
+            documentation: None,
+        }
+    }
+}
 impl<'a> std::convert::TryFrom<::pyroduct::PyroRow<'a>> for Empty {
     type Error = ::pyroduct::PyroRow<'a>;
     fn try_from(row: ::pyroduct::PyroRow<'a>) -> Result<Self, Self::Error> {
@@ -41,10 +49,18 @@ impl<'a> std::convert::TryFrom<&::pyroduct::PyroValue<'a>> for Empty {
         }
     }
 }
+impl ::pyroduct::value::TypeableRow for EmptyRef<'_> {
+    fn schema() -> ::pyroduct::value::PyroSchema<'static> {
+        ::pyroduct::value::PyroSchema {
+            fields: ::std::borrow::Cow::Owned(::alloc::vec::Vec::new()),
+            documentation: None,
+        }
+    }
+}
 impl<'a> std::convert::TryFrom<::pyroduct::PyroRow<'a>> for EmptyRef<'a> {
     type Error = ::pyroduct::PyroRow<'a>;
     fn try_from(row: ::pyroduct::PyroRow<'a>) -> Result<Self, Self::Error> {
-        let result = (|| -> Result<Self, String> {
+        let result = (|| -> Result<Self, &'static str> {
             Ok(Self {
                 _phantom: std::marker::PhantomData,
             })
@@ -53,7 +69,7 @@ impl<'a> std::convert::TryFrom<::pyroduct::PyroRow<'a>> for EmptyRef<'a> {
     }
 }
 impl<'a> std::convert::TryFrom<&::pyroduct::PyroRow<'a>> for EmptyRef<'a> {
-    type Error = String;
+    type Error = &'static str;
     fn try_from(row: &::pyroduct::PyroRow<'a>) -> Result<Self, Self::Error> {
         Ok(Self {
             _phantom: std::marker::PhantomData,
@@ -77,13 +93,13 @@ impl<'a> std::convert::TryFrom<::pyroduct::PyroValue<'a>> for EmptyRef<'a> {
     }
 }
 impl<'a> std::convert::TryFrom<&::pyroduct::PyroValue<'a>> for EmptyRef<'a> {
-    type Error = String;
+    type Error = &'static str;
     fn try_from(value: &::pyroduct::PyroValue<'a>) -> Result<Self, Self::Error> {
         match value {
             ::pyroduct::PyroValue::Group(r) => {
                 <Self as std::convert::TryFrom<&::pyroduct::PyroRow<'a>>>::try_from(r)
             }
-            _ => Err("Expected Group".to_string()),
+            _ => Err("Expected Group"),
         }
     }
 }

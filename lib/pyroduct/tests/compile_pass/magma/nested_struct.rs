@@ -7,7 +7,7 @@ struct Inner {
 
 #[magma]
 struct Outer {
-    inner: Inner,
+    inner: Vec<Inner>,
     count: u32,
 }
 

@@ -10,3 +10,4 @@ proc-macro = true
 [dependencies]
 pyro-core.workspace = true
 syn.workspace = true
+quote.workspace = true

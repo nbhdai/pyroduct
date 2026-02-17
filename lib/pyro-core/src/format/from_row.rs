@@ -209,9 +209,8 @@ pub fn ref_from_row(input: &ItemStruct, import_location: &Path) -> syn::Result<T
         let name_str = name.to_string();
         let ty = &f.ty;
 
-        // IMPORTANT: The mapped type must use the lifetime 'a from the impl block,
-        // not 'deep_ref_lifetime
-        //let mapped_type = quote! { <#ty as #import_location::DeepRef>::Ref<#lifetime> };
+        // IMPORTANT: The mapped_type provided here (via map_type_to_ref) is correct.
+        // It correctly maps Option<String> -> Option<&'a str> and Option<i32> -> Option<i32>.
         let (mapped_type, is_primitive) = map_type_to_ref(ty);
         if !is_primitive {
             lifetime_used = true;
@@ -246,7 +245,7 @@ pub fn ref_from_row(input: &ItemStruct, import_location: &Path) -> syn::Result<T
             type Error = #import_location::PyroRow<'a>;
 
             fn try_from(row: #import_location::PyroRow<'a>) -> Result<Self, Self::Error> {
-                let result = (|| -> Result<Self, String> {
+                let result = (|| -> Result<Self, &'static str> {
                     Ok(Self {
                         #(#ref_field_extractions,)*
                         #phantom_init
@@ -261,7 +260,7 @@ pub fn ref_from_row(input: &ItemStruct, import_location: &Path) -> syn::Result<T
         // TryFrom<&PyroRow<'a>> for StructRef<'a> (Reference)
         // -----------------------------------------------------------------
         impl #impl_g std::convert::TryFrom<& #import_location::PyroRow<'a>> for #ref_struct_name < #(#ref_struct_args),* > #where_clause {
-            type Error = String;
+            type Error = &'static str;
 
             fn try_from(row: & #import_location::PyroRow<'a>) -> Result<Self, Self::Error> {
                 Ok(Self {
@@ -292,14 +291,14 @@ pub fn ref_from_row(input: &ItemStruct, import_location: &Path) -> syn::Result<T
         // TryFrom<&PyroValue<'a>> for StructRef<'a> (Reference)
         // -----------------------------------------------------------------
         impl #impl_g std::convert::TryFrom<& #import_location::PyroValue<'a>> for #ref_struct_name < #(#ref_struct_args),* > #where_clause {
-            type Error = String;
+            type Error = &'static str;
 
             fn try_from(value: & #import_location::PyroValue<'a>) -> Result<Self, Self::Error> {
                 match value {
                     #import_location::PyroValue::Group(r) => {
                         <Self as std::convert::TryFrom<& #import_location::PyroRow<'a>>>::try_from(r)
                     }
-                    _ => Err("Expected Group".to_string())
+                    _ => Err("Expected Group")
                 }
             }
         }
@@ -317,7 +316,7 @@ fn generate_field_try_from_ref(
     name_str: &str,
     missing_err: &str,
     field_err: &str,
-    mapped_type: &TokenStream,
+    _mapped_type: &TokenStream, // Unused variable, we calculate inner type logic manually
     original_ty: &Type,
     import_location: &Path,
 ) -> syn::Result<TokenStream> {
@@ -326,26 +325,10 @@ fn generate_field_try_from_ref(
         let inner_ty = get_option_inner(original_ty)
             .ok_or_else(|| syn::Error::new_spanned(original_ty, "Malformed Option type"))?;
 
-        // IMPORTANT: We cannot rely on 'deep_ref_lifetime here, we must construct the type dynamically
-        // But since mapped_type is passed in already correctly constructed as <Ty as DeepRef>::Ref<'a>,
-        // We need to re-derive the inner mapped type.
-        // Or simpler: We trust the logic that if original_ty is Option<T>, mapped_type is Option<TRef>.
-        // BUT, DeepRef maps Option<T> -> Option<TRef>.
-        // So mapped_type passed in IS Option<TRef>.
-        // However, the helper code below tries to cast the value to <InnerMapped>.
+        // FIX: Do not blindly project <inner_ty as DeepRef>.
+        // Use map_type_to_ref to get the actual target type (e.g. i32, &'a str, or Ref).
+        let (inner_mapped, _) = map_type_to_ref(inner_ty);
 
-        // Let's extract the inner type of the MAPPED type.
-        // Actually, simpler: <#inner_ty as DeepRef>::Ref<'a>
-
-        // We need the lifetime 'a. We can't easily get it passed down as a variable without changing sig.
-        // But we know mapped_type contains it.
-        // Let's assume the caller passed <Option<T> as DeepRef>::Ref<'a>, which resolves to Option<<T as DeepRef>::Ref<'a>>.
-        // We can just use mapped_type directly if we cast the whole Option?
-        // No, because TryFrom is usually on the inner value.
-
-        // Hack: Use the Import Location to reconstruct the inner mapped type
-        // relying on the fact that mapped_type = <#ty as ...>::Ref<'a>
-        let inner_mapped = quote! { <#inner_ty as #import_location::DeepRef>::Ref<'a> };
         Ok(quote! {
             #name: {
                 match row.get(#name_str) {
@@ -358,7 +341,10 @@ fn generate_field_try_from_ref(
             }
         })
     } else {
-        // For non-Option, we can use the mapped_type directly
+        // For non-Option, mapped_type (from argument) is already correct.
+        // Recalculating it to be safe and consistent with Option fix above.
+        let (mapped_type, _) = map_type_to_ref(original_ty);
+        
         Ok(quote! {
             #name: {
                 let val = row.get(#name_str)
@@ -412,7 +398,10 @@ fn generate_field_try_from_owned(
     } else if is_vec_of_struct(ty) {
         let inner_ty =
             get_vec_inner(ty).ok_or_else(|| syn::Error::new_spanned(ty, "Malformed Vec type"))?;
-
+        let fail = format!("Failed to convert element in field '{}'", name_str);
+        let unexpected = format!("Expected List for field '{}'", name_str);
+        
+        // FIX: map_err must be applied inside the closure, on the Result returned by try_into()
         Ok(quote! {
             #name: {
                 match row.get(#name_str)
@@ -420,11 +409,10 @@ fn generate_field_try_from_owned(
                 {
                     #import_location::PyroValue::List(items) => {
                         items.iter()
-                            .map(|v| v.clone().try_into()
-                                .map_err(|_| format!("Failed to convert element in field '{}'", #name_str)))
+                            .map(|v| v.clone().try_into().map_err(|_| #fail))
                             .collect::<Result<Vec<#inner_ty>, _>>()?
                     }
-                    _ => return Err(format!("Expected List for field '{}'", #name_str)),
+                    _ => return Err(#unexpected),
                 }
             }
         })

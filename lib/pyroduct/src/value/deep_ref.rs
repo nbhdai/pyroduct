@@ -12,39 +12,6 @@ pub trait DeepRef {
     fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a>;
 }
 
-// =========================================================================
-// 1. Primitive Scalars (Identity Transformation)
-// =========================================================================
-// For primitives, the "Ref" is just a copy of the value itself.
-
-macro_rules! impl_primitive_deep_ref {
-    ($($t:ty),*) => {
-        $(
-            impl DeepRef for $t {
-                type Ref<'a> = $t;
-                fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
-                    *self
-                }
-            }
-        )*
-    };
-}
-
-impl_primitive_deep_ref!(
-    bool, char, u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize, f32, f64
-);
-
-// =========================================================================
-// 2. Strings
-// =========================================================================
-
-impl DeepRef for String {
-    type Ref<'a> = &'a str;
-
-    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
-        self.as_str()
-    }
-}
 
 impl DeepRef for Vec<String> {
     type Ref<'a> = Vec<&'a str>;
@@ -65,13 +32,6 @@ impl DeepRef for Vec<&String> {
     }
 }
 
-impl DeepRef for str {
-    type Ref<'a> = &'a str;
-
-    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
-        self
-    }
-}
 
 // =========================================================================
 // 3. Primitive Vectors (Zero-Copy Optimization)
@@ -176,6 +136,28 @@ impl<T: DeepRef + ?Sized> DeepRef for Arc<T> {
     }
 }
 
+impl<T: DeepRef> DeepRef for [T] {
+    type Ref<'a>
+        = Vec<T::Ref<'a>>
+    where
+        T: 'a;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        self.iter().map(|t| t.as_deep_ref()).collect()
+    }
+}
+
+impl<T: DeepRef> DeepRef for Vec<T> {
+    type Ref<'a>
+        = Vec<T::Ref<'a>>
+    where
+        T: 'a;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        (**self).as_deep_ref()
+    }
+}
+
 impl<T: DeepRef + ?Sized> DeepRef for Rc<T> {
     type Ref<'a>
         = T::Ref<'a>
@@ -207,14 +189,6 @@ use rkyv::boxed::ArchivedBox;
 use rkyv::option::ArchivedOption;
 use rkyv::string::ArchivedString;
 use rkyv::vec::ArchivedVec;
-
-// ArchivedString -> &str
-impl DeepRef for ArchivedString {
-    type Ref<'a> = &'a str;
-    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
-        self.as_str()
-    }
-}
 
 // ArchivedString -> &str
 impl DeepRef for ArchivedVec<ArchivedString> {
@@ -262,16 +236,6 @@ mod little_endian_impls {
     macro_rules! impl_rkyv_le_primitive {
         ($($le:ty => $native:ty),*) => {
             $(
-                // 1. Scalar Implementation (e.g., i32_le -> i32)
-                impl DeepRef for $le {
-                    type Ref<'a> = $native;
-
-                    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
-                        // LE types implement NativeEndian, allowing conversion to native.
-                        self.to_native()
-                    }
-                }
-
                 // 2. Vector Implementation (e.g., ArchivedVec<i32_le> -> &[i32])
                 // We perform a zero-copy cast from &[i32_le] to &[i32].
                 impl DeepRef for ArchivedVec<$le> {
@@ -328,6 +292,18 @@ where
 impl<TA: DeepRef> DeepRef for ArchivedBox<TA> {
     type Ref<'a>
         = TA::Ref<'a>
+    where
+        TA: 'a;
+
+    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
+        (**self).as_deep_ref()
+    }
+}
+
+// ArchivedBox<T>
+impl<TA: DeepRef> DeepRef for ArchivedVec<TA> {
+    type Ref<'a>
+        = Vec<TA::Ref<'a>>
     where
         TA: 'a;
 
@@ -453,17 +429,6 @@ impl<'v> DeepRef for PyroRow<'v> {
     }
 }
 
-// =========================================================================
-// 8. half::f16 (not a std primitive, needs explicit impl)
-// =========================================================================
-
-impl DeepRef for f16 {
-    type Ref<'a> = f16;
-
-    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
-        *self
-    }
-}
 
 // Also the Vec/slice variants for f16
 impl DeepRef for Vec<f16> {
@@ -479,16 +444,5 @@ impl DeepRef for [f16] {
 
     fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
         self
-    }
-}
-
-// =========================================================================
-// 9. ArchivedVec<f16>
-// =========================================================================
-
-impl DeepRef for ArchivedVec<f16> {
-    type Ref<'a> = &'a [f16];
-    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
-        self.as_slice()
     }
 }
