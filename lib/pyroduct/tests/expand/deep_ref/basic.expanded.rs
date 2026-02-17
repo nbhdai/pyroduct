@@ -5,18 +5,18 @@ struct User {
     username: String,
     score: i32,
 }
-pub struct UserRef<'deep_ref_lifetime> {
-    id: <u32 as ::pyroduct::DeepRef>::Ref<'deep_ref_lifetime>,
-    username: <String as ::pyroduct::DeepRef>::Ref<'deep_ref_lifetime>,
-    score: <i32 as ::pyroduct::DeepRef>::Ref<'deep_ref_lifetime>,
+pub struct UserRef<'a> {
+    id: u32,
+    username: &'a str,
+    score: i32,
 }
 impl ::pyroduct::DeepRef for User {
-    type Ref<'deep_ref_lifetime> = UserRef<'deep_ref_lifetime>;
+    type Ref<'a> = UserRef<'a>;
     fn as_deep_ref(&self) -> Self::Ref<'_> {
         UserRef {
-            id: <u32 as ::pyroduct::DeepRef>::as_deep_ref(&self.id),
-            username: <String as ::pyroduct::DeepRef>::as_deep_ref(&self.username),
-            score: <i32 as ::pyroduct::DeepRef>::as_deep_ref(&self.score),
+            id: self.id,
+            username: self.username.as_str(),
+            score: self.score,
         }
     }
 }

@@ -1,11 +1,11 @@
 //! Test FromRow with empty struct (edge case)
 use pyroduct::DeepRef;
 struct Empty {}
-pub struct EmptyRef<'deep_ref_lifetime> {
-    _phantom: std::marker::PhantomData<&'deep_ref_lifetime ()>,
+pub struct EmptyRef<'a> {
+    _phantom: std::marker::PhantomData<&'a ()>,
 }
 impl ::pyroduct::DeepRef for Empty {
-    type Ref<'deep_ref_lifetime> = EmptyRef<'deep_ref_lifetime>;
+    type Ref<'a> = EmptyRef<'a>;
     fn as_deep_ref(&self) -> Self::Ref<'_> {
         EmptyRef {
             _phantom: std::marker::PhantomData,

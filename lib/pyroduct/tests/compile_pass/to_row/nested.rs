@@ -11,16 +11,16 @@ struct Address {
 #[derive(ToRow)]
 struct Person {
     name: String,
-    address: Address,
+    address: Vec<Address>,
 }
 
 fn main() {
     let person = Person {
         name: "Alice".to_string(),
-        address: Address {
+        address: vec![Address {
             street: "123 Main".to_string(),
             zip: 12345,
-        },
+        }],
     };
     
     let _row = person.to_row();

@@ -1,5 +1,5 @@
-error: ToRow can only be derived for structs with fields
+error: expected `struct`
  --> tests/compile_fail/to_row/enums_not_supported.rs:6:1
   |
 6 | enum NotAllowed {
-  |      ^^^^^^^^^^
+  | ^^^^

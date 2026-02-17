@@ -1,294 +1,78 @@
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    GenericParam, Ident, ItemStruct, Lifetime, LifetimeParam, Path, PathSegment, TraitBound, Type,
-    WherePredicate, parse_quote,
+    GenericArgument, Ident, ItemStruct, Path, PathArguments, Type, TypePath,
 };
 
+/// Main function to generate the Deep Reference struct and implementation.
+/// Accepts a list of additional derives to apply to the generated struct.
 pub fn deep_ref(
     input: &ItemStruct,
     import_location: &Path,
     derives_to_pass: &Vec<Ident>,
 ) -> syn::Result<TokenStream> {
-    // let input: DeriveInput = syn::parse2(input)?;
+    if !input.generics.params.is_empty() {
+        return Err(syn::Error::new_spanned(
+            &input.generics,
+            "DeepRef cannot be derived for structs with generic parameters (types, lifetimes, or consts)",
+        ));
+    }
 
-    let struct_name = input.ident.clone();
+    let struct_name = &input.ident;
     let ref_struct_name = format_ident!("{}Ref", struct_name);
+    
+    // ItemStruct stores fields directly
+    let fields = &input.fields;
 
-    // 1. Prepare Generics for the Ref Struct Definition
-    // We want: struct PersonRef<'deep_ref_lifetime, TRef>
-    let mut ref_struct_generics = syn::Generics::default();
+    // 1. Generate the Reference Struct Definition
+    let mut lifetime_used = false;
+    let ref_fields = fields
+        .iter()
+        .map(|f| {
+            let name = &f.ident;
+            let vis = &f.vis;
+            let ty = &f.ty;
+            let (mapped_type, is_primitive) = map_type_to_ref(ty);
 
-    // Always add the lifetime first
-    let lifetime = Lifetime::new("'deep_ref_lifetime", Span::call_site());
-    ref_struct_generics
-        .params
-        .push(GenericParam::Lifetime(LifetimeParam::new(lifetime.clone())));
-
-    // Map original generic params (T) to new ref params (TRef)
-    let mut param_map = std::collections::HashMap::new();
-
-    for param in &input.generics.params {
-        match param {
-            GenericParam::Type(type_param) => {
-                let old_ident = &type_param.ident;
-                let new_ident = format_ident!("{}Ref", old_ident);
-
-                // Store mapping T -> TRef
-                param_map.insert(old_ident.clone(), new_ident.clone());
-
-                // Add TRef to the Ref struct generics
-                ref_struct_generics
-                    .params
-                    .push(GenericParam::Type(syn::TypeParam::from(new_ident)));
+            if !is_primitive {
+                lifetime_used = true;
             }
-            GenericParam::Const(const_param) => {
-                ref_struct_generics
-                    .params
-                    .push(GenericParam::Const(const_param.clone()));
-            }
-            GenericParam::Lifetime(lp) => {
-                ref_struct_generics
-                    .params
-                    .push(GenericParam::Lifetime(lp.clone()));
-            }
-        }
-    }
 
-    let mut ref_fields = Vec::with_capacity(input.fields.len());
+            quote! { #vis #name: #mapped_type }
+        })
+        .collect::<Vec<_>>();
 
-    for f in &input.fields {
-        let name = &f.ident;
-        let vis = &f.vis;
-        let ty = &f.ty;
-
-        let mut replaced = false;
-        if let syn::Type::Path(type_path) = ty {
-            if type_path.qself.is_none() && type_path.path.segments.len() == 1 {
-                let seg = &type_path.path.segments[0];
-                if let Some(new_ident) = param_map.get(&seg.ident) {
-                    ref_fields.push(quote! { #vis #name: #new_ident });
-                    replaced = true;
-                }
-            }
-        }
-
-        if !replaced {
-            ref_fields
-                .push(quote! { #vis #name: <#ty as #import_location::DeepRef>::Ref<#lifetime> });
-        }
-    }
-
-    let (phantom_field, phantom_init) = if ref_fields.is_empty() {
-        (
-            quote! { _phantom: std::marker::PhantomData<&'deep_ref_lifetime ()> },
-            quote! { _phantom: std::marker::PhantomData },
-        )
+    let phantom_field = if !lifetime_used {
+        quote! { _phantom: std::marker::PhantomData<&'a ()> }
     } else {
-        (quote! {}, quote! {})
-    };
-
-    let derives = if derives_to_pass.is_empty() {
         quote! {}
-    } else {
-        quote! { #[derive(#(#derives_to_pass,)*)] }
     };
 
+    // Inject the user-provided derives here
     let struct_def = quote! {
-        #derives
-        pub struct #ref_struct_name #ref_struct_generics {
+        #[derive(#(#derives_to_pass),*)]
+        pub struct #ref_struct_name<'a> {
             #(#ref_fields,)*
             #phantom_field
         }
     };
 
-    // 3. Prepare Generics for the Impl Block
-    let mut impl_generics = input.generics.clone();
-    let mut deep_ref_bound_path = import_location.clone();
-    deep_ref_bound_path
-        .segments
-        .push(PathSegment::from(format_ident!("DeepRef")));
-
-    // Add DeepRef bound to all original type parameters
-    for param in impl_generics.params.iter_mut() {
-        if let GenericParam::Type(t) = param {
-            t.bounds.push(syn::TypeParamBound::Trait(TraitBound {
-                paren_token: None,
-                modifier: syn::TraitBoundModifier::None,
-                lifetimes: None,
-                path: deep_ref_bound_path.clone(),
-            }));
-        }
-    }
-
-    let (impl_g, ty_g, where_clause) = impl_generics.split_for_impl();
-
-    let mut ref_struct_args = Vec::new();
-    ref_struct_args.push(quote! { #lifetime });
-
-    let mut associated_type_bounds = Vec::new();
-
-    for param in &input.generics.params {
-        match param {
-            GenericParam::Type(t) => {
-                let ident = &t.ident;
-                ref_struct_args
-                    .push(quote! { <#ident as #import_location::DeepRef>::Ref<#lifetime> });
-
-                // Add the bound: T: 'deep_ref_lifetime
-                associated_type_bounds.push(quote! { #ident: #lifetime });
-            }
-            GenericParam::Const(c) => {
-                let ident = &c.ident;
-                ref_struct_args.push(quote! { #ident });
-            }
-            GenericParam::Lifetime(l) => {
-                let ident = &l.lifetime;
-                ref_struct_args.push(quote! { #ident });
-            }
-        }
-    }
-
-    // 5. Conversions
-    let mut field_conversions = Vec::with_capacity(input.fields.len());
-    for f in &input.fields {
-        let field_name = f
-            .ident
-            .as_ref()
-            .ok_or_else(|| syn::Error::new_spanned(f, "DeepRef requires named fields"))?;
+    // 2. Generate the DeepRef Implementation for the Owned type
+    let field_conversions = fields.iter().map(|f| {
+        let field_name = f.ident.as_ref().unwrap();
         let ty = &f.ty;
-        field_conversions.push(quote! { #field_name: <#ty as #import_location::DeepRef>::as_deep_ref(&self.#field_name) });
-    }
+        generate_field_conversion(field_name, ty)
+    });
 
-    // Added the where clause specifically to the associated type definition
-    let impl_owned = quote! {
-        impl #impl_g #import_location::DeepRef for #struct_name #ty_g #where_clause {
-            type Ref<'deep_ref_lifetime> = #ref_struct_name < #(#ref_struct_args),* >
-            where #(#associated_type_bounds),*;
-
-            fn as_deep_ref(&self) -> Self::Ref<'_> {
-                #ref_struct_name {
-                    #(#field_conversions,)*
-                    #phantom_init
-                }
-            }
-        }
-    };
-
-    let expanded = quote! {
-        #struct_def
-        #impl_owned
-    };
-
-    Ok(TokenStream::from(expanded))
-}
-
-pub fn deep_ref_rkyv(input: &ItemStruct, import_location: &Path) -> syn::Result<TokenStream> {
-    let struct_name = &input.ident;
-    let ref_struct_name = format_ident!("{}Ref", struct_name);
-
-    // 1. Setup Paths
-    // The prompt implies import_location is the root (e.g., ::pyroduct),
-    // so we derive rkyv location from it.
-    let deep_ref_path = &import_location;
-    let rkyv_path = quote! { #import_location::rkyv_8::rkyv };
-
-    // 2. Prepare Generics for the Impl Block
-    // We need to modify the generics of the original struct to add bounds:
-    // T: DeepRef + Archive
-    let mut impl_generics = input.generics.clone();
-    let mut where_clause = impl_generics.make_where_clause().clone();
-    let mut ty_g: Vec<Type> = Vec::new();
-
-    // The lifetime for the HRTB (Higher-Rank Trait Bound)
-    let lifetime = Lifetime::new("'deep_ref_lifetime", Span::call_site());
-
-    for param in impl_generics.params.iter_mut() {
-        if let GenericParam::Type(t) = param {
-            let ident = &t.ident;
-
-            // Add T: DeepRef + Archive bounds
-            t.bounds.push(parse_quote!(#deep_ref_path::DeepRef));
-            t.bounds.push(parse_quote!(#rkyv_path::Archive));
-
-            ty_g.push(parse_quote!(#rkyv_path::Archived<#ident>));
-
-            // Add the complex GAT bound:
-            // for<'deep_ref_lifetime> <T as Archive>::Archived: DeepRef<Ref = <T as DeepRef>::Ref<'deep_ref_lifetime>>
-            // Note: We use parse_quote to construct this complex predicate
-            let predicate: WherePredicate = parse_quote! {
-                for<#lifetime> <#rkyv_path::Archived<#ident>: #deep_ref_path::DeepRef<Ref<'deep_ref_lifetime> = <#ident as #deep_ref_path::DeepRef>::Ref<#lifetime>>
-            };
-            where_clause.predicates.push(predicate);
-        }
-    }
-
-    let (impl_g, _, _) = impl_generics.split_for_impl();
-
-    // 3. Prepare Arguments for the Ref struct (UserRef<...>)
-    // The Ref struct needs: 'deep_ref_lifetime, followed by mapped types
-    let mut ref_struct_args = Vec::new();
-    ref_struct_args.push(quote! { #lifetime });
-
-    // We also need bounds for the associated type definition
-    let mut associated_type_bounds = Vec::new();
-
-    for param in &input.generics.params {
-        match param {
-            GenericParam::Type(t) => {
-                let ident = &t.ident;
-                // Map T -> <T as DeepRef>::Ref<'deep_ref_lifetime>
-                ref_struct_args
-                    .push(quote! { <#ident as #deep_ref_path::DeepRef>::Ref<#lifetime> });
-
-                // Add the bound T: 'deep_ref_lifetime to the associated type where clause
-                associated_type_bounds.push(
-                    quote! { <#ident as ::pyroduct::rkyv_8::rkyv::Archive>::Archived: #lifetime },
-                );
-                // associated_type_bounds.push(quote! { #ident : #lifetime });
-            }
-            GenericParam::Const(c) => {
-                let ident = &c.ident;
-                ref_struct_args.push(quote! { #ident });
-            }
-            GenericParam::Lifetime(l) => {
-                let ident = &l.lifetime;
-                ref_struct_args.push(quote! { #ident });
-            }
-        }
-    }
-
-    let mut field_conversions = Vec::with_capacity(input.fields.len());
-    for f in &input.fields {
-        let name = f
-            .ident
-            .as_ref()
-            .ok_or_else(|| syn::Error::new_spanned(f, "DeepRef requires named fields"))?;
-        let ty = &f.ty;
-
-        // conversion logic:
-        // <<Type as Archive>::Archived as DeepRef>::as_deep_ref(&self.field)
-        field_conversions.push(quote! {
-            #name: <<#ty as #rkyv_path::Archive>::Archived as #deep_ref_path::DeepRef>::as_deep_ref(&self.#name)
-        });
-    }
-
-    // Handle PhantomData initialization if the struct has no fields
-    // (Matching the behavior of the provided deep_ref function)
-    let phantom_init = if field_conversions.is_empty() {
+    let phantom_init = if !lifetime_used {
         quote! { _phantom: std::marker::PhantomData }
     } else {
         quote! {}
     };
 
-    // 5. Final Impl Construction
-    // Target: <Struct<T> as Archive>::Archived
-    let target_type = quote! { #rkyv_path::Archived<#struct_name <#(#ty_g),*> > };
-
-    let expanded = quote! {
-        impl #impl_g #deep_ref_path::DeepRef for #target_type #where_clause {
-            type Ref<'deep_ref_lifetime> = #ref_struct_name < #(#ref_struct_args),* >
-            where #(#associated_type_bounds),*;
+    let impl_owned = quote! {
+        impl #import_location::DeepRef for #struct_name {
+            type Ref<'a> = #ref_struct_name<'a>;
 
             fn as_deep_ref(&self) -> Self::Ref<'_> {
                 #ref_struct_name {
@@ -299,5 +83,290 @@ pub fn deep_ref_rkyv(input: &ItemStruct, import_location: &Path) -> syn::Result<
         }
     };
 
-    Ok(TokenStream::from(expanded))
+    Ok(quote! {
+        #struct_def
+        #impl_owned
+    })
+}
+
+/// Specialized function for Rkyv.
+/// Generates the standard DeepRef stuff, PLUS an implementation for the Archived variant.
+pub fn deep_ref_rkyv(input: &ItemStruct, import_location: &Path) -> syn::Result<TokenStream> {
+    let struct_name = &input.ident;
+    // Standard rkyv naming convention: Archived + StructName
+    let archived_struct_name = format_ident!("Archived{}", struct_name);
+    let ref_struct_name = format_ident!("{}Ref", struct_name);
+
+    // 2. Generate the conversions for the Archived fields
+    // We iterate over the *original* fields to determine types, but generate logic
+    // that assumes we are operating on the *Archived* struct.
+    let fields = &input.fields;
+    let rkyv_field_conversions = fields.iter().map(|f| {
+        let field_name = f.ident.as_ref().unwrap();
+        let ty = &f.ty;
+        generate_rkyv_field_conversion(field_name, ty)
+    });
+
+    // Determine if we need phantom data init (same logic as main function)
+    let mut lifetime_used = false;
+    for f in fields {
+        let (_, is_prim) = map_type_to_ref(&f.ty);
+        if !is_prim {
+            lifetime_used = true;
+            break;
+        }
+    }
+
+    let phantom_init = if !lifetime_used {
+        quote! { _phantom: std::marker::PhantomData }
+    } else {
+        quote! {}
+    };
+
+    // 3. Generate the DeepRef implementation for the Archived struct
+    let impl_archived = quote! {
+        impl #import_location::DeepRef for #archived_struct_name {
+            type Ref<'a> = #ref_struct_name<'a>;
+
+            fn as_deep_ref(&self) -> Self::Ref<'_> {
+                #ref_struct_name {
+                    #(#rkyv_field_conversions,)*
+                    #phantom_init
+                }
+            }
+        }
+    };
+
+    // Combine base (Ref definition + Owned impl) with the new Archived impl
+    Ok(quote! {
+        #impl_archived
+    })
+}
+
+// -------------------------------------------------------------------------
+// Helper Functions
+// -------------------------------------------------------------------------
+
+// Map Owned types to Borrowed types for the struct definition
+pub(crate) fn map_type_to_ref(ty: &Type) -> (TokenStream, bool) {
+    match ty {
+        Type::Path(TypePath { path, .. }) => {
+            let segment = path.segments.last().unwrap();
+            let ident_str = segment.ident.to_string();
+
+            match ident_str.as_str() {
+                "String" => (quote! { &'a str }, false),
+                "bool" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "f16"
+                | "f32" | "f64" => {
+                    let ident = &segment.ident;
+                    (quote! { #ident }, true)
+                }
+                "Vec" => {
+                    if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                        if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
+                            let (inner_ref, is_prim) = map_type_to_ref(inner_ty);
+                            if is_prim {
+                                return (quote! { &'a [#inner_ref] }, false);
+                            } else {
+                                // For complex types, we return Vec<Ref>
+                                return (quote! { Vec<#inner_ref> }, false);
+                            }
+                        }
+                    }
+                    (quote! { Vec<()> }, false)
+                }
+                "Option" => {
+                    if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                        if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
+                            let (inner_ref, is_prim) = map_type_to_ref(inner_ty);
+                            return (quote! { Option<#inner_ref> }, is_prim);
+                        }
+                    }
+                    (quote! { Option<()> }, false)
+                }
+                // Nested struct - assume it has a Ref variant
+                other => {
+                    let ref_name = format_ident!("{}Ref", other);
+                    (quote! { #ref_name<'a> }, false)
+                }
+            }
+        }
+        _ => (quote! { () }, true),
+    }
+}
+
+// Generate the conversion logic for as_deep_ref (Owned -> Borrowed)
+fn generate_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream {
+    match ty {
+        Type::Path(TypePath { path, .. }) => {
+            let segment = path.segments.last().unwrap();
+            let ident_str = segment.ident.to_string();
+
+            match ident_str.as_str() {
+                // Primitives: Copy
+                "bool" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "f16"
+                | "f32" | "f64" => {
+                    quote! { #field_name: self.#field_name }
+                }
+
+                // String: Borrow as &str
+                "String" => {
+                    quote! { #field_name: self.#field_name.as_str() }
+                }
+
+                // Vec
+                "Vec" => {
+                    if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                        if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
+                            if is_primitive(inner_ty) {
+                                // Primitive vec: borrow as slice
+                                quote! { #field_name: self.#field_name.as_slice() }
+                            } else {
+                                // Complex vec: map to Vec<Ref>
+                                quote! {
+                                    #field_name: self.#field_name.iter().map(|x| x.as_deep_ref()).collect()
+                                }
+                            }
+                        } else {
+                            quote! { #field_name: vec![] }
+                        }
+                    } else {
+                        quote! { #field_name: vec![] }
+                    }
+                }
+
+                // Option
+                "Option" => {
+                    if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                        if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
+                            if is_primitive(inner_ty) {
+                                quote! { #field_name: self.#field_name }
+                            } else if is_string(inner_ty) {
+                                quote! { #field_name: self.#field_name.as_deref() }
+                            } else {
+                                quote! { #field_name: self.#field_name.as_ref().map(|x| x.as_deep_ref()) }
+                            }
+                        } else {
+                            quote! { #field_name: None }
+                        }
+                    } else {
+                        quote! { #field_name: None }
+                    }
+                }
+
+                // Nested Structs
+                _ => {
+                    quote! { #field_name: self.#field_name.as_deep_ref() }
+                }
+            }
+        }
+        _ => quote! { #field_name: self.#field_name.as_deep_ref() },
+    }
+}
+
+// Generate the conversion logic for as_deep_ref (Archived -> Borrowed)
+// Handles rkyv specific types (ArchivedString, ArchivedVec, etc.)
+fn generate_rkyv_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream {
+    match ty {
+        Type::Path(TypePath { path, .. }) => {
+            let segment = path.segments.last().unwrap();
+            let ident_str = segment.ident.to_string();
+
+            match ident_str.as_str() {
+                "bool" | "i8" | "i16_le" | "i32_le" | "i64_le" | "u8_le" | "u16_le" | "u32_le" | "u64_le" | "f16_le"
+                | "f32_le" | "f64_le" => {
+                    quote! { #field_name: self.#field_name.into() }
+                }
+
+                // String: ArchivedString has .as_str()
+                "ArchivedString" => {
+                    quote! { #field_name: self.#field_name.as_str() }
+                }
+
+                // Vec
+                "ArchivedVec" => {
+                    if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                        if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
+                            if is_primitive(inner_ty) {
+                                // Primitive vec: borrow as slice
+                                // Note: This assumes Archived<T> has the same layout as T (Little Endian Context)
+                                quote! { #field_name: self.#field_name.as_slice() }
+                            } else {
+                                // Complex vec: map to Vec<Ref>
+                                quote! {
+                                    #field_name: self.#field_name.iter().map(|x| x.as_deep_ref()).collect()
+                                }
+                            }
+                        } else {
+                            quote! { #field_name: vec![] }
+                        }
+                    } else {
+                        quote! { #field_name: vec![] }
+                    }
+                }
+
+                // Option
+                "ArchivedOption" => {
+                    if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                        if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
+                            if is_primitive(inner_ty) {
+                                // ArchivedOption<ArchivedPrimitive> -> .as_ref() gives Option<&ArchivedPrimitive>
+                                // We need to convert &ArchivedPrimitive to Primitive.
+                                // We deref (copy) and convert into native.
+                                quote! { 
+                                    #field_name: self.#field_name.as_ref().map(|x| (*x).into()) 
+                                }
+                            } else if is_string(inner_ty) {
+                                quote! { #field_name: self.#field_name.as_deref() }
+                            } else {
+                                quote! { #field_name: self.#field_name.as_ref().map(|x| x.as_deep_ref()) }
+                            }
+                        } else {
+                            quote! { #field_name: None }
+                        }
+                    } else {
+                        quote! { #field_name: None }
+                    }
+                }
+
+                // Nested Structs
+                _ => {
+                    quote! { #field_name: self.#field_name.as_deep_ref() }
+                }
+            }
+        }
+        _ => quote! { #field_name: self.#field_name.as_deep_ref() },
+    }
+}
+
+// Helper to identify primitives
+fn is_primitive(ty: &Type) -> bool {
+    if let Type::Path(TypePath { path, .. }) = ty {
+        let ident = path.segments.last().unwrap().ident.to_string();
+        matches!(
+            ident.as_str(),
+            "i8" | "i16"
+                | "i32"
+                | "i64"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "u64"
+                | "f16"
+                | "f32"
+                | "f64"
+                | "bool"
+        )
+    } else {
+        false
+    }
+}
+
+fn is_string(ty: &Type) -> bool {
+    if let Type::Path(TypePath { path, .. }) = ty {
+        let ident = path.segments.last().unwrap().ident.to_string();
+        ident == "String"
+    } else {
+        false
+    }
 }

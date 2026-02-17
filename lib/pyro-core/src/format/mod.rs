@@ -36,6 +36,7 @@ pub fn magma(
 
     // 6. Generate FromRow
     let from_row = from_row::from_row(&item, import_location)?;
+    let ref_from_row = from_row::ref_from_row(&item, import_location)?;
 
     // 7. Generate ToRow
     let to_row = to_row::to_row(&item, import_location)?;
@@ -46,6 +47,7 @@ pub fn magma(
         #deep_ref
         #deep_ref_rkyv
         #from_row
+        #ref_from_row
         #to_row
     })
 }

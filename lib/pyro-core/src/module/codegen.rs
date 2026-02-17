@@ -76,7 +76,7 @@ pub fn expand(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStream> {
 
             #output_struct
 
-            let call = |input: &__InputRef| {
+            let call = |input: __InputRef| {
                 #fn_name(#(#call_args),*).map(|result| {
                     #output_mapping
                 })
@@ -87,7 +87,7 @@ pub fn expand(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStream> {
         }
 
         #(#fn_attrs)*
-        #fn_vis fn #fn_name(#(#original_fn_params),*) -> Result<#return_type, String>
+        #fn_vis fn #fn_name(#(#original_fn_params),*) -> ::pyroduct::wasm::wasm::ModuleResult<#return_type>
         #fn_block
     };
 
@@ -99,7 +99,7 @@ fn extract_result_ok_type(ret: &ReturnType) -> Result<Type> {
     match ret {
         ReturnType::Default => Err(syn::Error::new(
             Span::call_site(),
-            "Module function must return Result<T, String>",
+            "Module function must return Result<T>",
         )),
         ReturnType::Type(_, ty) => {
             if let Type::Path(type_path) = &**ty {
@@ -115,7 +115,7 @@ fn extract_result_ok_type(ret: &ReturnType) -> Result<Type> {
             }
             Err(syn::Error::new(
                 Span::call_site(),
-                "Module function must return Result<T, String>",
+                "Module function must return Result<T>",
             ))
         }
     }

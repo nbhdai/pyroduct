@@ -350,6 +350,19 @@ impl<'a, T: ToRow + 'a> From<Vec<T>> for PyroValue<'a> {
     }
 }
 
+impl<'a, T: ToRow + 'a> From<&'a Vec<T>> for PyroValue<'a> {
+    fn from(values: &'a Vec<T>) -> Self {
+        let values = values
+            .into_iter()
+            .map(|v| {
+                // Safe because T lives for at least 'a
+                unsafe { std::mem::transmute(PyroValue::Group(v.to_row())) }
+            })
+            .collect();
+        PyroValue::List(values)
+    }
+}
+
 impl<'a, T: ToRow + 'a> From<&'a [T]> for PyroValue<'a> {
     fn from(values: &'a [T]) -> Self {
         let values = values

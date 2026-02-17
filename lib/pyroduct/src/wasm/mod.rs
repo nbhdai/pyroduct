@@ -4,6 +4,7 @@ pub mod host;
 
 pub mod wasm {
     pub use super::wasm_side::{Client, wasm_row_main};
+    pub type ModuleResult<T> = anyhow::Result<T>;
 
     #[cfg(test)]
     pub use super::wasm_side::_test_reinsert_input;

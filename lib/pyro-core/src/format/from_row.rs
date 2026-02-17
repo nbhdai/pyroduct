@@ -5,6 +5,8 @@ use syn::{
     TraitBound, Type, TypeParamBound, TypePath,
 };
 
+use crate::format::deep_ref::map_type_to_ref;
+
 /// Generates `impl TryFrom<PyroRow> for Struct` and `impl TryFrom<PyroValue> for Struct`
 pub fn from_row(input: &ItemStruct, import_location: &Path) -> syn::Result<TokenStream> {
     // 1. Parse Input
@@ -196,6 +198,7 @@ pub fn ref_from_row(input: &ItemStruct, import_location: &Path) -> syn::Result<T
     // Field Extraction Logic
     // =========================================================================
     let mut ref_field_extractions = Vec::with_capacity(input.fields.len());
+    let mut lifetime_used = false;
 
     for f in &input.fields {
         let name = f
@@ -208,7 +211,11 @@ pub fn ref_from_row(input: &ItemStruct, import_location: &Path) -> syn::Result<T
 
         // IMPORTANT: The mapped type must use the lifetime 'a from the impl block,
         // not 'deep_ref_lifetime
-        let mapped_type = quote! { <#ty as #import_location::DeepRef>::Ref<#lifetime> };
+        //let mapped_type = quote! { <#ty as #import_location::DeepRef>::Ref<#lifetime> };
+        let (mapped_type, is_primitive) = map_type_to_ref(ty);
+        if !is_primitive {
+            lifetime_used = true;
+        }
 
         let missing_err = format!("Missing field: {}", name_str);
         let field_err = format!("Failed to convert field '{}'", name_str);
@@ -225,7 +232,7 @@ pub fn ref_from_row(input: &ItemStruct, import_location: &Path) -> syn::Result<T
         ref_field_extractions.push(stream);
     }
 
-    let phantom_init = if ref_field_extractions.is_empty() {
+    let phantom_init = if !lifetime_used {
         quote! { _phantom: std::marker::PhantomData }
     } else {
         quote! {}

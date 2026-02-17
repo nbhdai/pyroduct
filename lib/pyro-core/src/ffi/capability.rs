@@ -347,7 +347,7 @@ impl CapabilityImpl {
                 id: u64,
                 log_callback: ::pyroduct::ffi::LogCallback,
             ) -> ::pyroduct::ffi::ClassExport<'a> {
-                ::pyroduct::capability::init_logging(id, log_callback);
+                ::pyroduct::ffi::logger::init_logging(id, log_callback);
 
                 ::pyroduct::ffi::ClassExport {
                     name: CAPABILITY_NAME_VERSION.as_ptr(),
@@ -546,7 +546,7 @@ mod tests {
                 id: u64,
                 log_callback: ::pyroduct::ffi::LogCallback,
             ) -> ::pyroduct::ffi::ClassExport<'a> {
-                ::pyroduct::capability::init_logging(id, log_callback);
+                ::pyroduct::ffi::logger::init_logging(id, log_callback);
 
                 ::pyroduct::ffi::ClassExport {
                     name: CAPABILITY_NAME_VERSION.as_ptr(),
