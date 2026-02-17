@@ -1,273 +1,92 @@
 use std::cmp::min;
 use std::sync::Arc;
 
-use crate::PyroError;
-use crate::{PyroRow, pipeline::capability::Capabilities};
-use crate::pipeline::pipeline::PipelineDef;
-use crate::pipeline::wasm_bridge::HarnessState;
 use arrow::array::RecordBatch;
-
-use rkyv::rancor;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, error, info, instrument, warn};
-use wasmtime::{
-    Caller, Config, Engine, Extern, Instance, Linker, Memory, Module, Store, TypedFunc,
-};
+use wasmtime::Module as WasmtimeModule;
 
-pub struct Harness {
-    pub ident: ModIdentity,
-    store: Store<HarnessState>,
-    #[allow(dead_code)]
-    instance: Instance,
-    memory: Memory,
-    alloc_func: TypedFunc<i32, i32>,
-    call_func: TypedFunc<(i32, i32), (i32, i32)>,
-}
+use crate::value::PyroRow;
+use crate::value::arrow::Rowable;
+use crate::wasm::host::{PyroEngine, PyroInstance, PyroLinker, PyroModule};
 
-impl Harness {
-    pub async fn new(
-        engine: &Engine,
-        wasm_bytes: &[u8],
-        // So we can link against the capabilities we've got.
-        capabilities: &Capabilities,
-        harness_state: HarnessState,
-    ) -> Result<Self, PyroError> {
-        let ident = harness_state.module.clone();
-        let module = Module::from_binary(engine, wasm_bytes).map_err(|err| {
-            PyroError::from_module_linking(
-                &ident,
-                format!("Unable to parse the wasm binary: {err}"),
-            )
-        })?;
+use super::pipeline::PipelineDef;
+use super::{PipelineError, PipelineResult};
 
-        let mut store = Store::new(engine, harness_state);
-        let mut linker = Linker::new(engine);
-
-        let module_span = tracing::span!(tracing::Level::INFO, "MODULE", name = ident.name());
-
-        linker
-            .func_wrap(
-                "env",
-                "host_log",
-                move |mut caller: Caller<'_, HarnessState>, ptr: i32, len: i32| {
-                    let memory = match caller.get_export("memory") {
-                        Some(Extern::Memory(mem)) => mem,
-                        _ => return,
-                    };
-                    let data = match memory.data(&caller).get(ptr as usize..(ptr + len) as usize) {
-                        Some(d) => d,
-                        None => return,
-                    };
-                    let log_msg = String::from_utf8_lossy(data);
-                    let _entered = module_span.enter();
-                    tracing::debug!("{}", log_msg);
-                },
-            )
-            .map_err(|err| {
-                PyroError::from_module_linking(
-                    &ident,
-                    format!("Module does not have a sutible log function: {err}"),
-                )
-            })?;
-
-        capabilities.link(store.data().capabilities(), &mut linker)?;
-
-        let instance = linker
-            .instantiate_async(&mut store, &module)
-            .await
-            .map_err(|err| {
-                PyroError::from_module_linking(
-                    &ident,
-                    format!("Unable to instantiate the module: {err}"),
-                )
-            })?;
-        let memory = instance.get_memory(&mut store, "memory").ok_or_else(|| {
-            PyroError::from_module_linking(&ident, format!("Module does not have a memory"))
-        })?;
-        let alloc_func = instance
-            .get_typed_func::<i32, i32>(&mut store, "alloc")
-            .map_err(|err| {
-                PyroError::from_module_linking(
-                    &ident,
-                    format!("Module does not have a sutible Alloc: {err}"),
-                )
-            })?;
-        let call_func = instance
-            .get_typed_func::<(i32, i32), (i32, i32)>(&mut store, "exter_call")
-            .map_err(|err| {
-                PyroError::from_module_linking(
-                    &ident,
-                    format!("Module does not have a sutible call function: {err}"),
-                )
-            })?;
-
-        Ok(Self {
-            ident: ident.clone(),
-            store,
-            instance,
-            memory,
-            alloc_func,
-            call_func,
-        })
-    }
-
-    #[instrument(skip(self, input), fields(module = %self.ident.name()))]
-    pub async fn process(
-        &mut self,
-        input: &PyroRow<'_>,
-    ) -> Result<Result<PyroRow<'static>, String>, PyroError> {
-        debug!("Resetting capability states...");
-        self.store.data_mut().reset().await?;
-
-        debug!("Serializing PyroRow input...");
-        let data = rkyv::to_bytes::<rancor::Error>(input).map_err(|e| {
-            PyroError::from_module_serialization(
-                &self.ident,
-                format!("Failed to serialize input: {}", e),
-            )
-        })?;
-
-        debug!("Allocating {} bytes in WASM memory...", data.len());
-        let ptr = self
-            .alloc_func
-            .call_async(&mut self.store, data.len() as i32)
-            .await
-            .map_err(|e| {
-                PyroError::from_module_memory(
-                    &self.ident,
-                    format!("Failed to allocate module input: {}", e),
-                )
-            })?;
-
-        debug!("Writing input to WASM memory at ptr {:#x}", ptr);
-        self.memory
-            .write(&mut self.store, ptr as usize, data.as_slice())
-            .map_err(|e| {
-                PyroError::from_module_memory(
-                    &self.ident,
-                    format!("Failed to write module input: {}", e),
-                )
-            })?;
-
-        debug!("Invoking WASM export 'exter_call'...");
-        let (start, len) = self
-            .call_func
-            .call_async(&mut self.store, (ptr, data.len() as i32))
-            .await
-            .map_err(|error| {
-                self.store.data_mut().take_error().unwrap_or_else(|| {
-                    PyroError::from_module_unknown(
-                        &self.ident,
-                        format!("Unknown during call error: {error}"),
-                    )
-                })
-            })?;
-
-        let memory = self.memory.data(&self.store);
-        if (start + len) as usize > memory.len() {
-            let msg = format!(
-                "Result pointer out of bounds! Memory: {}, End: {}",
-                memory.len(),
-                start + len
-            );
-            error!("{}", msg);
-            return Err(PyroError::from_module_memory(&self.ident, msg));
-        }
-        let slice = &memory[start as usize..(start + len) as usize];
-
-        // Access the archived Result<PyroRow, String>
-        type ReturnType<'a> = Result<PyroRow<'a>, String>;
-        let archived = rkyv::access::<<ReturnType as rkyv::Archive>::Archived, rancor::Error>(
-            slice,
-        )
-        .map_err(|e| {
-            PyroError::from_module_validation(
-                &self.ident,
-                format!("Failed to validate call return: {}", e),
-            )
-        })?;
-
-        match archived {
-            rkyv::result::ArchivedResult::Ok(archived_row) => {
-                debug!("Result deserialized successfully (Ok).");
-                Ok(Ok(PyroRow::from(archived_row).into_owned()))
-            }
-            rkyv::result::ArchivedResult::Err(error) => {
-                debug!("Result deserialized successfully (Err).");
-                Ok(Err(error.to_string()))
-            }
-        }
-    }
-}
+// =============================================================================
+// Pipeline
+// =============================================================================
 
 pub struct Pipeline {
-    steps: Vec<Harness>,
+    steps: Vec<PyroInstance>,
 }
 
 impl Pipeline {
-    pub async fn new(def: &PipelineDef, capabilities: &Capabilities) -> PyroductResult<Self> {
-        let mut steps = Vec::new();
+    /// Build a pipeline from a fully-loaded `PipelineDef`.
+    ///
+    /// Creates one `PyroEngine` and one `PyroLinker` (with all capabilities
+    /// linked), then compiles and instantiates each wasm module in order.
+    pub async fn new(def: PipelineDef) -> PipelineResult<Self> {
+        let engine = PyroEngine::new()?;
+        let linker = PyroLinker::new(engine.engine(), def.capabilities)?;
 
-        let mut config = Config::new();
-        config.async_support(true);
+        let mut steps = Vec::with_capacity(def.pipeline.len());
 
-        let engine = Engine::new(&config).map_err(|e| {
-            PyroError::from_infrastructure(format!("Failed to create Wasmtime engine: {}", e))
-        })?;
+        for (index, module_def) in def.pipeline.iter().enumerate() {
+            debug!(index, "Compiling wasm module");
 
-        for (index, wasm_def) in def.pipeline.iter().enumerate() {
-            debug!(index, wasm = wasm_def.ident.name(), "Initializing");
-            let harness_state = capabilities
-                .init(&wasm_def.ident, &wasm_def.capabilities)
-                .await?;
+            let wasm_module = WasmtimeModule::from_binary(engine.engine(), &module_def.binary)
+                .map_err(|e| {
+                    PipelineError::Config(format!(
+                        "Failed to compile WASM for module: {}",
+                        e
+                    ))
+                })?;
 
-            let harness =
-                Harness::new(&engine, &wasm_def.binary, capabilities, harness_state).await?;
-
-            steps.push(harness);
+            let pyro_module = PyroModule::new(wasm_module)?;
+            let instance = PyroInstance::new(&engine, &pyro_module, &linker).await?;
+            steps.push(instance);
         }
 
         Ok(Self { steps })
     }
 
+    /// Run the input through every step in sequence.
+    ///
+    /// Returns `Ok(Ok(row))` on success, `Ok(Err(failure))` if a module
+    /// returned a logic error (with partial data), or `Err` on infrastructure
+    /// failure.
     #[instrument(skip(self, input))]
     pub async fn process(
         &mut self,
-        mut input: PyroRow<'_>,
-    ) -> Result<Result<PyroRow<'static>, Failure>, PyroError> {
+        input: PyroRow<'_>,
+    ) -> PipelineResult<Result<PyroRow<'static>, Failure>> {
         let pipeline_len = self.steps.len();
         info!("Pipeline Start: Executing {} steps", pipeline_len);
 
         let mut result: PyroRow<'static> = input.clone().into_owned();
+        let mut current_input = input;
 
         for (i, step) in self.steps.iter_mut().enumerate() {
-            debug!(
-                "Pipeline Step {}/{}: Processing module '{}'",
-                i + 1,
-                pipeline_len,
-                step.ident.name()
-            );
+            debug!("Pipeline Step {}/{}: Processing", i + 1, pipeline_len);
 
-            match step.process(&input).await? {
+            match step.call(&current_input).await? {
                 Ok(output) => {
-                    // Success case
                     debug!("Pipeline Step {}/{}: Success", i + 1, pipeline_len);
                     result.extend(output.clone());
-                    input = output;
+                    current_input = output;
                 }
                 Err(error) => {
-                    // Logic failure in the module (returned Err string)
                     warn!(
-                        "Pipeline Step {}/{}: Module '{}' returned error: {}",
+                        "Pipeline Step {}/{}: Module returned error: {}",
                         i + 1,
                         pipeline_len,
-                        step.ident.name(),
                         error
                     );
                     return Ok(Err(Failure {
                         row_index: 0,
-                        error,
+                        error: error.to_string(),
                         partial_data: result,
                     }));
                 }
@@ -282,15 +101,22 @@ impl Pipeline {
     }
 }
 
-/// Represents a failure where the pipeline could not complete successfully,
-/// but may have returned partial data before the error.
+// =============================================================================
+// Failure
+// =============================================================================
+
+/// A module returned a logic error. The pipeline stopped, but we keep
+/// whatever data was accumulated before the failing step.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Failure {
     pub row_index: usize,
     pub error: String,
-    /// Stores the state of the data at the moment of failure
     pub partial_data: PyroRow<'static>,
 }
+
+// =============================================================================
+// PipelinePool
+// =============================================================================
 
 pub struct PipelinePool {
     pipelines: Arc<Mutex<Vec<Pipeline>>>,
@@ -303,16 +129,14 @@ impl PipelinePool {
         }
     }
 
-    /// Processes a batch by distributing chunks of the RecordBatch to available pipelines.
-    /// Results are streamed back via a channel and collected by the main thread.
+    /// Distribute rows across available pipelines and collect results.
     ///
-    /// Returns:
-    /// - `Vec<(usize, PyroRow<'static>)>`: Unsorted results containing the row index and data.
-    /// - `Vec<Failure>`: List of rows that encountered logic errors, with their partial state.
+    /// Returns the successful rows (sorted by original index) and any
+    /// per-row failures.
     pub async fn process_batch(
         &self,
         batch: &RecordBatch,
-    ) -> Result<(Vec<PyroRow<'static>>, Vec<Failure>), PyroError> {
+    ) -> PipelineResult<(Vec<PyroRow<'static>>, Vec<Failure>)> {
         let total_rows = batch.num_rows();
         if total_rows == 0 {
             return Ok((Vec::new(), Vec::new()));
@@ -321,7 +145,7 @@ impl PipelinePool {
         let pipelines = {
             let mut guard = self.pipelines.lock().await;
             if guard.is_empty() {
-                return Err(PyroError::from_infrastructure(
+                return Err(PipelineError::Config(
                     "Pipeline pool is empty or exhausted".to_string(),
                 ));
             }
@@ -329,7 +153,6 @@ impl PipelinePool {
         };
 
         let num_pipelines = pipelines.len();
-
         let (tx, mut rx) = mpsc::channel(100);
         let chunk_size = min((total_rows + num_pipelines - 1) / num_pipelines, 1000);
         let mut handles = Vec::with_capacity(num_pipelines);
@@ -349,10 +172,7 @@ impl PipelinePool {
                 for j in 0..batch_slice.num_rows() {
                     let absolute_index = offset + j;
 
-                    // Extract row (safely handling extraction errors)
-                    let row_res = batch_slice.row(j);
-
-                    let result = match row_res {
+                    let result = match batch_slice.row(j) {
                         Ok(input_row) => match pipeline.process(input_row).await {
                             Ok(Ok(mut res)) => {
                                 res.insert(
@@ -378,7 +198,7 @@ impl PipelinePool {
                         }),
                     };
 
-                    if let Err(_) = tx_clone.send(result).await {
+                    if tx_clone.send(result).await.is_err() {
                         break;
                     }
                 }
@@ -398,21 +218,22 @@ impl PipelinePool {
             }
         }
 
-        // Reclaim pipelines and put them back in the pool
-        let mut reclaimed_pipelines = Vec::with_capacity(num_pipelines);
+        // Reclaim pipelines back into the pool
+        let mut reclaimed = Vec::with_capacity(num_pipelines);
         for handle in handles {
             match handle.await {
-                Ok(p) => reclaimed_pipelines.push(p),
+                Ok(p) => reclaimed.push(p),
                 Err(e) => {
-                    tracing::error!("Worker task panicked, pipeline lost: {}", e);
+                    error!("Worker task panicked, pipeline lost: {}", e);
                 }
             }
         }
 
         {
             let mut guard = self.pipelines.lock().await;
-            *guard = reclaimed_pipelines;
+            *guard = reclaimed;
         }
+
         success_results.sort_by_key(|row| row.get_u64("pyroduct_index").unwrap_or_default());
 
         Ok((success_results, failures))

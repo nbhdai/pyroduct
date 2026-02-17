@@ -3,7 +3,7 @@ pub mod clean;
 pub mod expand;
 pub mod init;
 pub mod package;
-// pub mod run;
+pub mod run;
 pub mod symbols;
 pub mod utils;
 

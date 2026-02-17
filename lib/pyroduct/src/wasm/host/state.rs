@@ -1,16 +1,6 @@
 use wasmtime::{ExternType, Instance, Module, Store, TypedFunc, ValType};
 
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-pub enum ModuleError {
-    #[error("Wasm module is missing required export: {0}")]
-    MissingExport(String),
-    #[error("Wasm module export '{0}' has the wrong signature")]
-    IncorrectSignature(String),
-    #[error("Wasm export '{0}' signature mismatch")]
-    SignatureMismatch(String),
-}
+use crate::wasm::host::WasmError;
 
 // ---------------------------------------------------------------------------
 // PyroModule — validated wrapper around wasmtime::Module
@@ -25,7 +15,7 @@ impl PyroModule {
     ///
     /// Checks that the module exports `new_input`, `grow_input`, `free_output`,
     /// and `memory` with the correct signatures.
-    pub fn new(module: Module) -> Result<Self, ModuleError> {
+    pub fn new(module: Module) -> Result<Self, WasmError> {
         Self::validate_export(&module, "new_input", &[ValType::I32], &[ValType::I32])?;
         Self::validate_export(
             &module,
@@ -37,7 +27,7 @@ impl PyroModule {
 
         // Ensure memory is exported
         if module.get_export("memory").is_none() {
-            return Err(ModuleError::MissingExport("memory".to_string()));
+            return Err(WasmError::MissingExport("memory".to_string()));
         }
 
         Ok(Self { module })
@@ -53,10 +43,10 @@ impl PyroModule {
         name: &str,
         params: &[ValType],
         results: &[ValType],
-    ) -> Result<(), ModuleError> {
+    ) -> Result<(), WasmError> {
         let export = module
             .get_export(name)
-            .ok_or_else(|| ModuleError::MissingExport(name.to_string()))?;
+            .ok_or_else(|| WasmError::MissingExport(name.to_string()))?;
 
         match export {
             ExternType::Func(func_type) => {
@@ -65,11 +55,11 @@ impl PyroModule {
                     || func_type.results().zip(results).any(|(f, p)| !f.matches(p))
                     || func_type.results().len() != results.len()
                 {
-                    return Err(ModuleError::SignatureMismatch(name.to_string()));
+                    return Err(WasmError::SignatureMismatch(name.to_string()));
                 }
             }
             _ => {
-                return Err(ModuleError::SignatureMismatch(name.to_string()));
+                return Err(WasmError::SignatureMismatch(name.to_string()));
             }
         }
         Ok(())
@@ -125,18 +115,18 @@ impl PyroState {
         Self { methods: None }
     }
 
-    pub fn link(store: &mut Store<Self>, instance: &Instance) -> Result<(), ModuleError> {
+    pub fn link(store: &mut Store<Self>, instance: &Instance) -> Result<(), WasmError> {
         let new_input = instance
             .get_typed_func::<i32, i32>(&mut *store, "new_input")
-            .map_err(|_| ModuleError::IncorrectSignature("new_input".to_string()))?;
+            .map_err(|_| WasmError::SignatureMismatch("new_input".to_string()))?;
 
         let grow_input = instance
             .get_typed_func::<(i32, i32), i32>(&mut *store, "grow_input")
-            .map_err(|_| ModuleError::IncorrectSignature("grow_input".to_string()))?;
+            .map_err(|_| WasmError::SignatureMismatch("grow_input".to_string()))?;
 
         let free_output = instance
             .get_typed_func::<i32, ()>(&mut *store, "free_output")
-            .map_err(|_| ModuleError::IncorrectSignature("free_output".to_string()))?;
+            .map_err(|_| WasmError::SignatureMismatch("free_output".to_string()))?;
         store.data_mut().methods = Some(PyroMethods {
             new_input,
             _grow_input: grow_input,

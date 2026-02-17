@@ -41,8 +41,8 @@ pub enum WasmError {
     #[error("Wasm module is missing required export: '{0}'")]
     MissingExport(String),
 
-    #[error("Export '{0}' has incorrect signature. Expected {1:?}, found {2:?}")]
-    SignatureMismatch(String, String, String),
+    #[error("Export '{0}' has incorrect signature.")]
+    SignatureMismatch(String),
 
     #[error("Failed to link host function '{1}' in module '{0}': {2}")]
     LinkFunctionFailed(String, String, String),
@@ -102,7 +102,7 @@ impl PyroInstance {
         engine: &PyroEngine,
         module: &PyroModule,
         linker: &PyroLinker,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, WasmError> {
         let pyro_state = PyroState::new();
         let mut store = Store::new(engine.engine(), pyro_state);
 
@@ -110,7 +110,7 @@ impl PyroInstance {
 
         let memory = instance
             .get_memory(&mut store, "memory")
-            .ok_or_else(|| anyhow::anyhow!("wasm module does not export 'memory'"))?;
+            .ok_or_else(|| WasmError::MissingExport("Missing 'memory'".to_string()))?;
 
         // Link the PyroState methods to the instance exports
         PyroState::link(&mut store, &instance)?;
