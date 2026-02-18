@@ -1,14 +1,11 @@
 mod wasm_side;
 
-pub mod host;
 
-pub mod wasm {
-    pub use super::wasm_side::{Client, wasm_row_main};
-    pub type ModuleResult<T> = anyhow::Result<T>;
+pub use wasm_side::{Client, wasm_row_main};
+pub type ModuleResult<T> = anyhow::Result<T>;
 
-    #[cfg(test)]
-    pub use super::wasm_side::_test_reinsert_input;
-}
+#[cfg(test)]
+pub use wasm_side::_test_reinsert_input;
 
 use crate::captured::CapturedError;
 

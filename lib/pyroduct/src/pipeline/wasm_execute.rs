@@ -7,9 +7,9 @@ use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, error, info, instrument, warn};
 use wasmtime::Module as WasmtimeModule;
 
+use crate::pipeline::wasm::{PyroEngine, PyroInstance, PyroLinker, PyroModule};
 use crate::value::PyroRow;
 use crate::value::arrow::Rowable;
-use crate::wasm::host::{PyroEngine, PyroInstance, PyroLinker, PyroModule};
 
 use super::pipeline::PipelineDef;
 use super::{PipelineError, PipelineResult};

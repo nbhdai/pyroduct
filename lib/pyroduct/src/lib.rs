@@ -241,6 +241,8 @@ pub mod value;
 pub mod vec_buf;
 mod view;
 pub mod wasm;
+
+#[cfg(not(target_arch = "wasm32"))]
 pub mod pipeline;
 
 #[cfg(not(target_arch = "wasm32"))]

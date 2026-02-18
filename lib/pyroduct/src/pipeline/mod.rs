@@ -1,5 +1,6 @@
 pub mod pipeline;
 pub mod wasm_execute;
+pub mod wasm;
 
 pub use pipeline::{LibraryConfig, ModuleConfig, PipelineConfig, PipelineDef};
 pub use wasm_execute::{Failure, Pipeline, PipelinePool};
@@ -8,7 +9,7 @@ use thiserror::Error;
 
 use crate::PyroError;
 use crate::ffi::host::capability::CapabilityLoading;
-use crate::wasm::host::WasmError;
+use crate::pipeline::wasm::WasmError;
 
 #[derive(Error, Debug)]
 pub enum PipelineError {

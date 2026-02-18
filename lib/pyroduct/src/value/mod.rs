@@ -80,7 +80,6 @@ pub enum ValueError {
     #[error("Arrow Error")]
     ArrowError(#[from] ::arrow::error::ArrowError),
 
-    #[cfg(not(target_arch = "wasm32"))]
     #[error("Method `{0}` is not available for type `{1}`")]
     Unimplemented(String, String),
 }

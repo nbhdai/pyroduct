@@ -5,10 +5,11 @@ use wasmtime::{Caller, Instance, Linker, Store};
 
 use super::{PyroState, WasmError};
 use crate::ffi::host::capability::Capability;
+use crate::pipeline::wasm::PyroModule;
+use crate::pipeline::wasm::call::PyroCallIo;
 use crate::{
     header::PyroData,
     view::PyroView,
-    wasm::host::{PyroModule, call::PyroCallIo},
 };
 
 /// A linker pre-configured to use `PyroState<T>` as store data.

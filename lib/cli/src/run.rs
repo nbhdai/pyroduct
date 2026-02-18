@@ -6,10 +6,9 @@ use clap::ValueEnum;
 use fs_err as fs;
 
 use pyroduct::value::arrow::PreBatch;
-use pyroduct::value::schema::infer_schema;
 use pyroduct::{
     value::PyroRow,
-    host::{Capabilities, Pipeline, PipelineConfig, PipelineDef, PipelinePool},
+    pipeline::{Pipeline, PipelineConfig, PipelineDef, PipelinePool},
 };
 
 // Use arrow-file to handle reading/writing data formats
@@ -45,9 +44,9 @@ fn load_config(config_path: &Path) -> Result<PipelineConfig> {
 
     let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
     // Resolve relative paths
-    for cap in config.capabilities.values_mut() {
-        if cap.path.is_relative() {
-            cap.path = config_dir.join(&cap.path);
+    for lib in config.libraries.values_mut() {
+        if lib.path.is_relative() {
+            lib.path = config_dir.join(&lib.path);
         }
     }
     for mod_conf in config.modules.values_mut() {
@@ -62,9 +61,8 @@ fn load_config(config_path: &Path) -> Result<PipelineConfig> {
 pub async fn run(config_path: &Path, input_json: &str) -> Result<()> {
     // 1. Setup Pipeline (Single instance, no pool needed)
     let config = load_config(config_path)?;
-    let mut capabilities = Capabilities::new();
-    let pipeline_def = PipelineDef::load(&config, &mut capabilities)?;
-    let mut pipeline = Pipeline::new(&pipeline_def, &capabilities).await?;
+    let pipeline_def = PipelineDef::load(&config).await?;
+    let mut pipeline = Pipeline::new(pipeline_def).await?;
 
     // 2. Parse Input directly to PyroRow
     tracing::debug!("Parsing input JSON directly to PyroRow");
@@ -91,10 +89,9 @@ pub async fn run_batch(
     format: OutputFormat,
 ) -> Result<()> {
     let config = load_config(config_path)?;
-    let mut capabilities = Capabilities::new();
-    let pipeline_def = PipelineDef::load(&config, &mut capabilities)?;
+    let pipeline_def = PipelineDef::load(&config).await?;
 
-    let pipeline = Pipeline::new(&pipeline_def, &capabilities).await?;
+    let pipeline = Pipeline::new(pipeline_def).await?;
     let pool = PipelinePool::new(vec![pipeline]);
 
     tracing::info!("Reading input file: {:?}", input_file);
@@ -134,7 +131,7 @@ pub async fn run_batch(
         if !output_dir.exists() {
             fs::create_dir_all(output_dir)?;
         }
-        let schema = infer_schema(&successes)?;
+        let schema = pyroduct::value::PyroSchema::trusted(&successes[0])?;
         let mut prebatch = PreBatch::new(schema);
         for row in successes {
             prebatch

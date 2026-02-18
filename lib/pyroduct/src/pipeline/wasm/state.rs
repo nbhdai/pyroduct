@@ -1,6 +1,7 @@
 use wasmtime::{ExternType, Instance, Module, Store, TypedFunc, ValType};
 
-use crate::wasm::host::WasmError;
+use crate::pipeline::wasm::WasmError;
+
 
 // ---------------------------------------------------------------------------
 // PyroModule — validated wrapper around wasmtime::Module

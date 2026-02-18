@@ -34,6 +34,16 @@
         craneLibWasm = (crane.mkLib pkgs).overrideToolchain wasmToolchain;
         craneLibNightly = (crane.mkLib pkgs).overrideToolchain nightlyToolchain;
 
+        wasmEnv = {
+          nativeBuildInputs = [
+            pkgs.llvmPackages.clang-unwrapped
+            pkgs.llvmPackages.lld
+          ];
+          CC_wasm32_unknown_unknown = "${pkgs.llvmPackages.clang-unwrapped}/bin/clang";
+          CXX_wasm32_unknown_unknown = "${pkgs.llvmPackages.clang-unwrapped}/bin/clang++";
+          LD_wasm32_unknown_unknown = "${pkgs.llvmPackages.lld}/bin/lld";
+        };
+
         # Build the harness
         pyroSrc = lib.cleanSourceWith {
           src = craneLibNative.cleanCargoSource ./lib;
@@ -71,7 +81,7 @@
           inherit pyroduct;
         };
 
-        devShells.default = craneLibNightly.devShell {
+        devShells.default = craneLibNightly.devShell (wasmEnv // {
           packages = [ 
             nightlyToolchain
             pyroduct
@@ -95,7 +105,7 @@
             echo "  pyroduct"
             echo ""
           '';
-        };
+        });
       }
     );
 }
