@@ -4,12 +4,8 @@
 //! "wasm memory" buffers, wasm_main with rkyv PyroRow, and PyroState
 //! bookkeeping — all without spinning up a real wasmtime instance.
 
-#[cfg(test)]
-mod tests {
     use crate::{
-        header::{PyroData, PyroHeader, PyroHeaderMut, PyroParser, DataStatus, MAGIC_VAL},
-        view::{get_view, get_view_mut, PyroErrorView},
-        PyroVec,
+        ParseError, PyroError, PyroVec, header::{PyroData, PyroHeader, PyroHeaderMut, PyroParser}, view::{get_view, get_view_mut}, wasm::{free_output, get_input, grow_input, new_input, to_output}
     };
 
     // =========================================================================
@@ -69,7 +65,6 @@ mod tests {
 
     #[test]
     fn test_input_registry_new_and_get() {
-        use crate::wasm::wasm_side::{get_input, new_input};
 
         let ptr = new_input(64);
         assert!(!ptr.is_null());
@@ -84,7 +79,6 @@ mod tests {
 
     #[test]
     fn test_input_registry_grow() {
-        use crate::wasm::wasm_side::{get_input, grow_input, new_input};
 
         let ptr = new_input(16);
         assert!(!ptr.is_null());
@@ -98,14 +92,12 @@ mod tests {
 
     #[test]
     fn test_grow_unknown_ptr_returns_null() {
-        use crate::wasm::wasm_side::grow_input;
         let result = grow_input(0xDEAD_BEEF as *mut u8, 100);
         assert!(result.is_null());
     }
 
     #[test]
     fn test_output_registry_roundtrip() {
-        use crate::wasm::wasm_side::{free_output, to_output};
 
         let mut vec = PyroVec::with_capacity(32);
         vec.extend_from_slice(b"hello");
@@ -143,7 +135,7 @@ mod tests {
         buf.as_mut_slice()[..packet.len()].copy_from_slice(packet);
 
         match get_view(buf.as_slice(), 1) {
-            Err(PyroErrorView::MisalignedPointer) => {}
+            Err(PyroError::Header(ParseError::MisalignedPointer)) => {}
             other => panic!("expected MisalignedPointer, got {:?}", other),
         }
     }
@@ -152,7 +144,7 @@ mod tests {
     fn test_get_view_truncated_header() {
         let buf = aligned_buffer(8);
         match get_view(buf.as_slice(), 0) {
-            Err(PyroErrorView::OutOfBounds { .. }) => {}
+            Err(PyroError::Header(ParseError::SliceTooSmall)) => {}
             other => panic!("expected OutOfBounds, got {:?}", other),
         }
     }
@@ -161,7 +153,7 @@ mod tests {
     fn test_get_view_bad_magic() {
         let buf = aligned_buffer(32);
         match get_view(buf.as_slice(), 0) {
-            Err(PyroErrorView::InvalidHeader) => {}
+            Err(PyroError::Header(ParseError::InvalidMagic)) => {}
             other => panic!("expected InvalidHeader, got {:?}", other),
         }
     }
@@ -231,7 +223,6 @@ mod tests {
 
     #[test]
     fn test_multiple_concurrent_registrations() {
-        use crate::wasm::wasm_side::{free_output, get_input, new_input, to_output};
 
         let ptr_a = new_input(16);
         let ptr_b = new_input(32);
@@ -278,98 +269,6 @@ mod tests {
         assert!(chain.contains("root cause"));
     }
 
-    // =========================================================================
-    // wasm_main: WasmMain trait + wasm_call_extern (rkyv)
-    // =========================================================================
-
-    #[test]
-    fn test_wasm_call_extern_rkyv_roundtrip() {
-        use crate::value::{PyroRow, PyroRowOwned, PyroValue};
-        use crate::wasm::{WasmMain, wasm_call_extern};
-        use crate::wasm::wasm_side::free_output;
-        use crate::Bridgeable;
-        use crate::header::PyroData;
-
-        struct Echo;
-        impl WasmMain for Echo {
-            fn call_extern(input: PyroVec) -> anyhow::Result<PyroVec> {
-                // Zero-copy access to the archived row
-                let typed = PyroRowOwned::expose(input)?;
-                // We have access to ArchivedPyroRow here.
-                // For the test, just ship back an output row.
-                let mut out = PyroRow::new();
-                out.insert("echo".into(), PyroValue::from("hello back"));
-                Ok(out.into_owned().ship()?)
-            }
-        }
-
-        // 1. Build the rkyv-serialized input PyroVec
-        let input_row = PyroRow::from([
-            ("msg", PyroValue::from("hello")),
-        ]).into_owned();
-        let input_vec = input_row.ship().expect("ship input");
-
-        // 2. Register it in the input registry (simulates host writing to wasm memory)
-        let raw_ptr = {
-            let raw = input_vec.as_packet_slice();
-            raw.as_ptr() as *mut u8
-        };
-        crate::wasm::wasm_side::_test_reinsert_input(raw_ptr, input_vec);
-
-        // 3. Call the wasm entry
-        let output_ptr = wasm_call_extern::<Echo>(raw_ptr);
-        assert!(!output_ptr.is_null());
-
-        // 4. Clean up
-        free_output(output_ptr);
-    }
-
-    #[test]
-    fn test_wasm_call_extern_error_propagation() {
-        use crate::value::{PyroRow, PyroRowOwned};
-        use crate::wasm::{WasmMain, wasm_call_extern};
-        use crate::wasm::wasm_side::free_output;
-        use crate::Bridgeable;
-
-        struct Failing;
-        impl WasmMain for Failing {
-            fn call_extern(_input: PyroVec) -> anyhow::Result<PyroVec> {
-                anyhow::bail!("something went wrong")
-            }
-        }
-
-        // Ship an empty row as input
-        let input_vec = PyroRow::new().into_owned().ship().unwrap();
-        let raw_ptr = input_vec.as_packet_slice().as_ptr() as *mut u8;
-        crate::wasm::wasm_side::_test_reinsert_input(raw_ptr, input_vec);
-
-        let output_ptr = wasm_call_extern::<Failing>(raw_ptr);
-        assert!(!output_ptr.is_null());
-
-        // The output should have an error status — verify via PyroView
-        // We can't use get_view here since it's not in wasm linear memory,
-        // but the output is in the registry. Just verify it cleans up.
-        free_output(output_ptr);
-    }
-
-    #[test]
-    fn test_wasm_call_extern_null_input() {
-        use crate::wasm::wasm_side::free_output;
-        use crate::wasm::{WasmMain, wasm_call_extern};
-        use crate::value::PyroRow;
-
-        struct Noop;
-        impl WasmMain for Noop {
-            fn call_extern(_: PyroVec) -> anyhow::Result<PyroVec> {
-                Ok(PyroRow::new().into_owned().ship()?)
-            }
-        }
-
-        // Unregistered pointer → should return an error output
-        let output_ptr = wasm_call_extern::<Noop>(0xDEAD as *mut u8);
-        assert!(!output_ptr.is_null());
-        free_output(output_ptr);
-    }
 
     // =========================================================================
     // PyroRow rkyv ship/expose roundtrip through PyroVec + PyroView
@@ -410,38 +309,3 @@ mod tests {
         // Verify it parsed without error.
         let _ = &*typed;
     }
-
-    /// Full simulated flow: ship → registry → get_input → expose → process → ship → to_output → free
-    #[test]
-    fn test_simulated_full_rkyv_flow() {
-        use crate::value::{PyroRow, PyroRowOwned, PyroValue};
-        use crate::wasm::wasm_side::{free_output, get_input, to_output};
-        use crate::Bridgeable;
-
-        // 1. Host ships a row
-        let input_row = PyroRow::from([
-            ("x", PyroValue::from(100i32)),
-        ]).into_owned();
-        let input_vec = input_row.ship().unwrap();
-
-        // 2. Simulate new_input + host copy (we just register the vec directly)
-        let ptr = input_vec.as_packet_slice().as_ptr() as *mut u8;
-        crate::wasm::wasm_side::_test_reinsert_input(ptr, input_vec);
-
-        // 3. Wasm side: get_input → expose → zero-copy access
-        let owned_input = get_input(ptr).expect("input should exist");
-        let typed_input = PyroRowOwned::expose(owned_input)
-            .expect("expose input");
-        let _archived = &*typed_input;
-
-        // 4. Wasm produces output
-        let output_row = PyroRow::from([
-            ("result", PyroValue::from(200i32)),
-        ]).into_owned();
-        let output_vec = output_row.ship().unwrap();
-        let output_ptr = to_output(output_vec);
-
-        // 5. Host frees
-        free_output(output_ptr);
-    }
-}

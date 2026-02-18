@@ -25,6 +25,8 @@ use crate::{
 mod call;
 mod linker;
 mod state;
+#[cfg(test)]
+mod tests;
 
 pub use linker::PyroLinker;
 pub use state::{PyroModule, PyroState};
