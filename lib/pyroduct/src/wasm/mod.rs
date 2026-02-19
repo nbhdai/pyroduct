@@ -5,7 +5,7 @@ use crate::bridgeable::BridgeableZeroCopy;
 use crate::format::{PyroZeroCopyFormat, Receiver};
 use crate::header::{DataStatus, PyroHeaderMut};
 use crate::value::PyroRow;
-use crate::{Bridgeable, BridgeableResult, CapturedError, DeepRef, PyroError, ToRow};
+use crate::{Bridgeable, BridgeableResult, CapturedError, PyroError, ToRow};
 use crate::{PyroVec, header::PyroData};
 
 pub type ModuleResult<T> = Result<T, CapturedError>;
@@ -153,15 +153,13 @@ pub fn _test_reinsert_input(ptr: *mut u8, vec: PyroVec) {
 ///     wasm_row_main(ptr, main_fn)
 /// }
 /// ```
-pub fn wasm_row_main<'a, 'b, I, O, F>(
+pub fn wasm_row_main<'a, O, F>(
     input_ptr: *mut u8,
     func: F,
 ) -> *const u8 
     where
-        I: DeepRef + 'static,
-        for <'c> <I as DeepRef>::Ref<'c>: TryFrom<PyroRow<'c>>,
         O: ToRow,
-        F: Fn(I::Ref<'a>) -> Result<O, CapturedError>
+        F: Fn(PyroRow<'a>) -> Result<O, CapturedError>
 
 {
     let input_vec = match get_input(input_ptr) {
@@ -184,7 +182,7 @@ pub fn wasm_row_main<'a, 'b, I, O, F>(
         Err(err) => return to_output(err.encode()),
     };
     let input_row = PyroRow::from(&*input_row);
-    let input: I::Ref<'_> = match input_row.try_into() {
+    let input = match input_row.try_into() {
         Ok(input) => input,
         Err(_) => {
             let result = Err(CapturedError::new(

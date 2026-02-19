@@ -1,6 +1,3 @@
-use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
-
 pyroduct::library!();
 
 // =============================================================================
@@ -38,14 +35,14 @@ pub struct OllamaClient {
 // =============================================================================
 
 #[pyroduct::magma]
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct ChatMessage {
-    role: String,
-    content: String,
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
 }
 
-#[derive(Serialize)]
-struct ChatRequest {
+#[derive(serde::Serialize)]
+pub struct ChatRequest {
     model: String,
     messages: Vec<ChatMessage>,
     stream: bool,
@@ -53,17 +50,17 @@ struct ChatRequest {
     options: Option<ChatOptions>,
 }
 
-#[derive(Serialize)]
+#[derive(serde::Serialize)]
 struct ChatOptions {
     temperature: f32,
 }
 
-#[derive(Deserialize)]
+#[derive(serde::Deserialize)]
 struct ChatResponse {
     message: ChatMessage,
 }
 
-#[derive(Serialize)]
+#[derive(serde::Serialize)]
 struct GenerateRequest {
     model: String,
     prompt: String,
@@ -74,7 +71,7 @@ struct GenerateRequest {
     options: Option<ChatOptions>,
 }
 
-#[derive(Deserialize)]
+#[derive(serde::Deserialize)]
 struct GenerateResponse {
     response: String,
 }
@@ -85,7 +82,7 @@ struct GenerateResponse {
 
 pub struct OllamaServer {
     base_url: String,
-    http: Mutex<reqwest::Client>,
+    http: reqwest::Client,
     permitted_models: Vec<String>,
     system_prompt: String,
 }
@@ -112,7 +109,7 @@ impl OllamaServer {
         let system_prompt = config.system_prompt.clone();
         Self {
             base_url: config.base_url,
-            http: Mutex::new(http),
+            http,
             permitted_models,
             system_prompt,
         }
@@ -149,9 +146,8 @@ impl OllamaServer {
                 temperature: client.temperature,
             }),
         };
-        let http = self.http.lock().await;
 
-        let resp: reqwest::Response = http
+        let resp: reqwest::Response = self.http
             .post(format!("{}/api/generate", self.base_url))
             .json(&body)
             .send()
@@ -204,8 +200,7 @@ impl OllamaServer {
             }),
         };
 
-        let http = self.http.lock().await;
-        let resp: reqwest::Response = http
+        let resp: reqwest::Response = self.http
             .post(format!("{}/api/chat", self.base_url))
             .json(&body)
             .send()

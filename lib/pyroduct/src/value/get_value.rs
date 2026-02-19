@@ -145,4 +145,13 @@ impl<'a> PyroRow<'a> {
             _ => false,
         }
     }
+
+    /// Returns true if the key exists and the value is explicitly Null.
+    /// Returns false if the key does not exist or the value is not Null.
+    pub fn get_value<T: TryFrom<PyroValue<'a>>>(&self, key: &str) -> Option<T> {
+        match self.get(key) {
+            Some(value) => (value.clone()).try_into().ok(),
+            _ => None,
+        }
+    }
 }

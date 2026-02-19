@@ -1,5 +1,25 @@
-error: in parameter `input`: `CallMessageRef` requires a lifetime parameter. Use `CallMessageRef<'_>` for an inferred lifetime, or define your input as `CallMessage` (owned) and let the macro handle the conversion.
-  --> tests/compile_fail/module/struct_sans_lifetime.rs:10:16
+error[E0277]: the trait bound `&[CallMessageRef<'_>]: TryFrom<PyroValue<'_>>` is not satisfied
+  --> tests/compile_fail/module/struct_sans_lifetime.rs:10:23
    |
+ 9 | #[module(output = (output, messages))]
+   | -------------------------------------- required by a bound introduced by this call
 10 | fn process<'a>(input: &[CallMessageRef]) -> Result<(String, Vec<CallMessage>), String> {
-   |                ^^^^^
+   |                       ^^^^^^^^^^^^^^^^^ the trait `From<PyroValue<'_>>` is not implemented for `&[CallMessageRef<'_>]`
+   |
+   = help: the following other types implement trait `From<T>`:
+             `&[u8]` implements `From<&winnow::stream::bstr::BStr>`
+             `&[u8]` implements `From<&winnow::stream::bytes::Bytes>`
+             `&[u8]` implements `From<regex::regex::bytes::Match<'_>>`
+             `[T; 1]` implements `From<(T,)>`
+             `[T; 1]` implements `From<generic_array::GenericArray<T, typenum::uint::UInt<typenum::uint::UTerm, typenum::bit::B1>>>`
+             `[T; 2]` implements `From<(T, T)>`
+             `[T; 2]` implements `From<generic_array::GenericArray<T, typenum::uint::UInt<typenum::uint::UInt<typenum::uint::UTerm, typenum::bit::B1>, typenum::bit::B0>>>`
+             `[u8; 2]` implements `From<zerocopy::byteorder::I16<O>>`
+           and $N others
+   = note: required for `PyroValue<'_>` to implement `Into<&[CallMessageRef<'_>]>`
+   = note: required for `&[CallMessageRef<'_>]` to implement `TryFrom<PyroValue<'_>>`
+note: required by a bound in `pyroduct::value::get_value::<impl PyroRow<'a>>::get_value`
+  --> src/value/get_value.rs
+   |
+   |     pub fn get_value<T: TryFrom<PyroValue<'a>>>(&self, key: &str) -> Option<T> {
+   |                         ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `pyroduct::value::get_value::<impl PyroRow<'a>>::get_value`

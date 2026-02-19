@@ -9,17 +9,11 @@ help: the trait `ToRow` is not implemented for `NoToRow`
   |
 3 | struct NoToRow {  // ERROR: does not implement ToRow
   | ^^^^^^^^^^^^^^
-help: the trait `ToRow` is implemented for `__Input`
- --> tests/compile_fail/module/struct_missing_to_row.rs:7:1
-  |
-7 | #[module(output = NoToRow)]
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: required by a bound in `wasm_row_main`
  --> src/wasm/mod.rs
   |
-  | pub fn wasm_row_main<'a, 'b, I, O, F>(
+  | pub fn wasm_row_main<'a, O, F>(
   |        ------------- required by a bound in this function
 ...
   |         O: ToRow,
   |            ^^^^^ required by this bound in `wasm_row_main`
-  = note: this error originates in the attribute macro `::pyroduct::magma` (in Nightly builds, run with -Z macro-backtrace for more info)

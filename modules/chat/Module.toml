@@ -1,0 +1,13 @@
+[module]
+name = "chat"
+version = "0.1.0"
+edition = "2024"
+authors = ["nbhdai"]
+
+[pyroduct]
+path = "../../lib/pyroduct"
+
+[capabilities]
+ollama.path = "../../capabilities/ollama"
+
+[dependencies]

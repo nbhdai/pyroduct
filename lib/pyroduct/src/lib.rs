@@ -552,7 +552,7 @@ pub use pyro_derive::capability;
 /// }
 ///
 /// #[module(output = (output, messages))]
-/// fn process(input: &[CallMessageRef<'_>]) -> Result<(String, Vec<CallMessage>)> {
+/// fn process(input: Vec<CallMessage>) -> Result<(String, Vec<CallMessage>)> {
 ///     let output = input.first().ok_or(anyhow::anyhow!("Empty chat history"))?;
 ///     Ok((
 ///         output.message.to_string(),
@@ -561,6 +561,26 @@ pub use pyro_derive::capability;
 ///             CallMessage { message: "How can I help?".to_string(), role: "agent".to_string() },
 ///         ],
 ///     ))
+/// }
+/// ```
+/// 
+/// 
+/// If you don't want to copy a large vector and just need to reference it, you can do that too. 
+/// ```rust
+/// use pyroduct::*;
+///
+/// #[magma]
+/// struct Embedding {
+///     message: String,
+///     embedding: Vec<f32>,
+/// }
+///
+/// #[module(output = messages)]
+/// fn process(input: Vec<EmbeddingRef<'_>>) -> Result<Vec<String>> {
+///     Ok(input.iter().map(|e| {
+///        let embedding: &[f32] = e.embedding;
+///         format!("Embedding of {} has {}", e.message, embedding.len())
+///     }).collect())
 /// }
 /// ```
 pub use pyro_derive::module;
