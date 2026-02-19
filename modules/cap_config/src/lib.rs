@@ -4,7 +4,7 @@
 use config::{TransformClient, TransformClientMethods};
 
 #[pyroduct::module(output = (original, transformed, transform_count))]
-pub fn call(input: &str) -> Result<(String, String, u64), String> {
+pub fn call(input: &str) -> Result<(String, String, u64)> {
     let client = TransformClient {
         prefix: "[TEST] ".to_string(),
     }.register()?;

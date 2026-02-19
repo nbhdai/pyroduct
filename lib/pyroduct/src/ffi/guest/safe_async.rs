@@ -19,16 +19,15 @@ pub fn sci_call_result<'a, S, C, I, O, E, F, Fut>(
     func: F,
 ) -> FuturePyroVec<'a>
 where
-    S: Send + Sync + std::panic::UnwindSafe + 'static,
-    &'a S: std::panic::UnwindSafe,
+    S: Send + Sync + 'static,
     C: Bridgeable,
     <C as Bridgeable>::Format: PyroZeroCopyFormat<C>,
     I: Bridgeable,
     <I as Bridgeable>::Format: PyroZeroCopyFormat<I>,
-    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
-    E: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
-    F: FnOnce(&'a S, C, I) -> Fut + Send + std::panic::UnwindSafe + 'a,
-    Fut: std::future::Future<Output = Result<O, E>> + Send + std::panic::UnwindSafe + 'a,
+    O: Bridgeable + Send + 'static,
+    E: Bridgeable + Send + 'static,
+    F: FnOnce(&'a S, C, I) -> Fut + Send + 'a,
+    Fut: std::future::Future<Output = Result<O, E>> + Send + 'a,
 {
     let state = match unsafe { PyroObjectRef::<'a>::from_raw(host_state_ptr) } {
         Ok(state) => state,
@@ -56,15 +55,14 @@ pub fn sci_call<'a, S, C, I, O, F, Fut>(
     func: F,
 ) -> FuturePyroVec<'a>
 where
-    S: Send + Sync + std::panic::UnwindSafe + 'static,
-    &'a S: std::panic::UnwindSafe,
+    S: Send + Sync + 'static,
     C: Bridgeable,
     <C as Bridgeable>::Format: PyroZeroCopyFormat<C>,
     I: Bridgeable,
     <I as Bridgeable>::Format: PyroZeroCopyFormat<I>,
-    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
-    F: FnOnce(&'a S, C, I) -> Fut + Send + std::panic::UnwindSafe + 'a,
-    Fut: std::future::Future<Output = O> + Send + std::panic::UnwindSafe + 'a,
+    O: Bridgeable + Send + 'static,
+    F: FnOnce(&'a S, C, I) -> Fut + Send + 'a,
+    Fut: std::future::Future<Output = O> + Send + 'a,
 {
     let state = match unsafe { PyroObjectRef::<'a>::from_raw(host_state_ptr) } {
         Ok(state) => state,
@@ -92,14 +90,13 @@ pub fn sc_call_result<'a, S, C, O, E, F, Fut>(
     func: F,
 ) -> FuturePyroVec<'a>
 where
-    S: Send + Sync + std::panic::UnwindSafe + 'static,
-    &'a S: std::panic::UnwindSafe,
+    S: Send + Sync + 'static,
     C: Bridgeable,
     <C as Bridgeable>::Format: PyroZeroCopyFormat<C>,
-    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
-    E: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
-    F: FnOnce(&'a S, C) -> Fut + Send + std::panic::UnwindSafe + 'a,
-    Fut: std::future::Future<Output = Result<O, E>> + Send + std::panic::UnwindSafe + 'a,
+    O: Bridgeable + Send + 'static,
+    E: Bridgeable + Send + 'static,
+    F: FnOnce(&'a S, C) -> Fut + Send + 'a,
+    Fut: std::future::Future<Output = Result<O, E>> + Send + 'a,
 {
     let state = match unsafe { PyroObjectRef::<'a>::from_raw(host_state_ptr) } {
         Ok(state) => state,
@@ -122,13 +119,12 @@ pub fn sc_call<'a, S, C, O, F, Fut>(
     func: F,
 ) -> FuturePyroVec<'a>
 where
-    S: Send + Sync + std::panic::UnwindSafe + 'static,
-    &'a S: std::panic::UnwindSafe,
+    S: Send + Sync + 'static,
     C: Bridgeable,
     <C as Bridgeable>::Format: PyroZeroCopyFormat<C>,
-    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
-    F: FnOnce(&'a S, C) -> Fut + Send + std::panic::UnwindSafe + 'a,
-    Fut: std::future::Future<Output = O> + Send + std::panic::UnwindSafe + 'a,
+    O: Bridgeable + Send + 'static,
+    F: FnOnce(&'a S, C) -> Fut + Send + 'a,
+    Fut: std::future::Future<Output = O> + Send + 'a,
 {
     let state = match unsafe { PyroObjectRef::<'a>::from_raw(host_state_ptr) } {
         Ok(state) => state,
@@ -153,10 +149,10 @@ pub fn i_call_result<'a, I, O, E, F, Fut>(
 where
     I: Bridgeable,
     <I as Bridgeable>::Format: PyroZeroCopyFormat<I>,
-    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
-    E: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
-    F: FnOnce(I) -> Fut + Send + std::panic::UnwindSafe + 'a,
-    Fut: std::future::Future<Output = Result<O, E>> + Send + std::panic::UnwindSafe + 'a,
+    O: Bridgeable + Send + 'static,
+    E: Bridgeable + Send + 'static,
+    F: FnOnce(I) -> Fut + Send + 'a,
+    Fut: std::future::Future<Output = Result<O, E>> + Send + 'a,
 {
     let input: I = match deserialize_input(input_ptr, Location::caller()) {
         Ok(buf) => buf,
@@ -176,9 +172,9 @@ pub fn i_call<'a, I, O, F, Fut>(
 where
     I: Bridgeable,
     <I as Bridgeable>::Format: PyroZeroCopyFormat<I>,
-    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
-    F: FnOnce(I) -> Fut + Send + std::panic::UnwindSafe + 'a,
-    Fut: std::future::Future<Output = O> + Send + std::panic::UnwindSafe + 'a,
+    O: Bridgeable + Send + 'static,
+    F: FnOnce(I) -> Fut + Send + 'a,
+    Fut: std::future::Future<Output = O> + Send + 'a,
 {
     let input: I = match deserialize_input(input_ptr, Location::caller()) {
         Ok(buf) => buf,
@@ -194,10 +190,10 @@ pub fn empty_call_result<'a, O, E, F, Fut>(
     func: F,
 ) -> FuturePyroVec<'a>
 where
-    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
-    E: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
-    F: FnOnce() -> Fut + Send + std::panic::UnwindSafe + 'a,
-    Fut: std::future::Future<Output = Result<O, E>> + Send + std::panic::UnwindSafe + 'a,
+    O: Bridgeable + Send + 'static,
+    E: Bridgeable + Send + 'static,
+    F: FnOnce() -> Fut + Send + 'a,
+    Fut: std::future::Future<Output = Result<O, E>> + Send + 'a,
 {
     execute_safe_result_async((func)())
 }
@@ -210,9 +206,9 @@ pub fn empty_call<'a, O, F, Fut>(
     func: F,
 ) -> FuturePyroVec<'a>
 where
-    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
-    F: FnOnce() -> Fut + Send + std::panic::UnwindSafe + 'a,
-    Fut: std::future::Future<Output = O> + Send + std::panic::UnwindSafe + 'a,
+    O: Bridgeable + Send + 'static,
+    F: FnOnce() -> Fut + Send + 'a,
+    Fut: std::future::Future<Output = O> + Send + 'a,
 {
     execute_safe_async((func)())
 }

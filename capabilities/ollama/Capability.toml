@@ -1,0 +1,16 @@
+[capability]
+authors = ["nbhdai"]
+name = "ollama"
+version = "0.1.0"
+
+[pyroduct]
+path = "../../lib/pyroduct"
+  
+[dependencies.host]
+reqwest = { version = "0.13.1", features = [ "json" ] }
+serde = { version = "1.0.228", features = ["derive"] }
+tokio = { version = "1.49.0", features = ["full"] }
+
+[dependencies.module]
+
+[dependencies.shared]

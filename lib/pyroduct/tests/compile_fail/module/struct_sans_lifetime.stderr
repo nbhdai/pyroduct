@@ -3,9 +3,3 @@ error: in parameter `input`: `CallMessageRef` requires a lifetime parameter. Use
    |
 10 | fn process<'a>(input: &[CallMessageRef]) -> Result<(String, Vec<CallMessage>), String> {
    |                ^^^^^
-
-error[E0425]: cannot find function `process` in this scope
-  --> tests/compile_fail/module/struct_sans_lifetime.rs:22:13
-   |
-22 |     let _ = process(
-   |             ^^^^^^^ not found in this scope

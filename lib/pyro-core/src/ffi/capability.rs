@@ -270,7 +270,7 @@ impl CapabilityImpl {
             .collect();
 
         let trait_impl = quote! {
-            impl #trait_name for ::pyroduct::wasm::wasm::Client<#client> {
+            impl #trait_name for ::pyroduct::wasm::Client<#client> {
                 #(#method_impls)*
             }
         };
@@ -343,7 +343,7 @@ impl CapabilityImpl {
 
         let capability_manifest_fn = quote! {
             #[unsafe(no_mangle)]
-            pub extern "C" fn capability_manifest<'a>(
+            pub extern "C" fn pyro_capability_manifest<'a>(
                 id: i64,
                 log_callback: ::pyroduct::ffi::LogCallback,
             ) -> ::pyroduct::ffi::ClassExport<'a> {
@@ -529,7 +529,7 @@ mod tests {
         let output = cap.generate_export_table();
 
         let expected = quote! {
-            const CAPABILITY_NAME_VERSION: &'static str = "cap_name:0.1.0";
+            const CAPABILITY_NAME_VERSION: &'static str = "cap_name";
             const p__TEST_SERVER: &'static str = "p__test_server";
             const p__TEST_SERVER__GET_VALUE: &'static str = "p__test_server__get_value__wasm";
 
@@ -542,7 +542,7 @@ mod tests {
             ];
 
             #[unsafe(no_mangle)]
-            pub extern "C" fn capability_manifest<'a>(
+            pub extern "C" fn pyro_capability_manifest<'a>(
                 id: i64,
                 log_callback: ::pyroduct::ffi::LogCallback,
             ) -> ::pyroduct::ffi::ClassExport<'a> {
@@ -590,15 +590,15 @@ mod tests {
         // Checks constructor generation (using rkyv for config) and normal method generation.
         let expected = quote! {
             impl MyClient {
-                pub fn register(self) -> ::pyroduct::wasm::wasm::Client<Self> {
-                    ::pyroduct::wasm::Client::<Self>::__register(self, |ptr| unsafe { wasm::p__my_state__register__wasm(ptr) })
+                pub fn register(self) -> ::pyroduct::wasm::Client<Self> {
+                    ::pyroduct::wasm::Client::<Self>::__register(self, |ptr| unsafe { wasm::register(ptr) })
                 }
             }
             pub trait MyClientMethods {
                 fn get_info(&self) -> u32;
                 fn get_other_info(&self, data: f32) -> u32;
             }
-            impl MyClientMethods for ::pyroduct::wasm::wasm::Client<MyClient> {
+            impl MyClientMethods for ::pyroduct::wasm::Client<MyClient> {
                 fn get_info(&self) -> u32 {
                     self.__call_from_wasm::<(), u32, _>(None,
                         |client_state_ptr: *const u8,
@@ -668,14 +668,14 @@ mod tests {
         // - process method should define an input struct and return Result<u32, MyError>.
         let expected = quote! {
             impl AdvancedClient {
-                pub fn register(self) -> Result<::pyroduct::wasm::wasm::Client<Self>, MyError> {
-                    ::pyroduct::wasm::Client::<Self>::__register_result::<MyError, _>(self, |ptr| unsafe { wasm::p__advanced_struct__register__wasm(ptr) })
+                pub fn register(self) -> Result<::pyroduct::wasm::Client<Self>, MyError> {
+                    ::pyroduct::wasm::Client::<Self>::__register_result::<MyError, _>(self, |ptr| unsafe { wasm::register(ptr) })
                 }
             }
             pub trait AdvancedClientMethods {
                 fn process(&self, val: u32, flag: bool) -> Result<u32, MyError>;
             }
-            impl AdvancedClientMethods for ::pyroduct::wasm::wasm::Client<AdvancedClient> {
+            impl AdvancedClientMethods for ::pyroduct::wasm::Client<AdvancedClient> {
                 fn process(&self, val: u32, flag: bool) -> Result<u32, MyError> {
                     #[::pyroduct::bridgeable]
                     struct p__AdvancedStruct__Process__Input {

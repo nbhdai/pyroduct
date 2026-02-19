@@ -32,7 +32,7 @@ use super::PipelineError;
 #[derive(Deserialize, Debug)]
 pub struct PipelineConfig {
     /// Named capability libraries, each containing one or more classes.
-    pub libraries: HashMap<String, LibraryConfig>,
+    pub capabilities: HashMap<String, CapabilityConfig>,
     /// Named wasm modules.
     pub modules: HashMap<String, ModuleConfig>,
     /// Ordered list of module names to execute.
@@ -41,7 +41,7 @@ pub struct PipelineConfig {
 
 /// A single shared library on disk that exposes one or more capability classes.
 #[derive(Deserialize, Debug)]
-pub struct LibraryConfig {
+pub struct CapabilityConfig {
     /// Path to the compiled shared library (.dylib / .so / .dll).
     pub path: PathBuf,
     /// Per-class configuration. Keys are class names as exported by the library.
@@ -91,10 +91,10 @@ impl PipelineDef {
     pub async fn load(config: &PipelineConfig) -> Result<Self, PipelineError> {
         // --- Phase 1: load capability libraries & instantiate classes ----------
         let mut all_capabilities: Vec<Capability> = Vec::new();
-        let mut known_classes: HashMap<String, ()> = HashMap::new();
+        let mut known_classes: Vec<String> = Vec::new();
 
-        for (lib_name, lib_conf) in &config.libraries {
-            let library = unsafe { CapabilityLibrary::load(&lib_conf.path) }.map_err(|e| {
+        for (lib_name, lib_conf) in &config.capabilities {
+            let library = CapabilityLibrary::load(&lib_conf.path).map_err(|e| {
                 PipelineError::Capability(CapabilityLoading::LibraryOpen {
                     path: lib_conf.path.display().to_string(),
                     reason: format!("library '{}': {}", lib_name, e),
@@ -106,7 +106,7 @@ impl PipelineDef {
                 .await?;
 
             for class_name in capability.keys() {
-                known_classes.insert(class_name.clone(), ());
+                known_classes.push(class_name.clone());
             }
 
             all_capabilities.push(capability);
@@ -125,7 +125,7 @@ impl PipelineDef {
 
             // Validate that every capability the module wants is actually loaded
             for cap_name in &mod_conf.capabilities {
-                if !known_classes.contains_key(cap_name) {
+                if !known_classes.contains(cap_name) {
                     return Err(PipelineError::Config(format!(
                         "Module '{}' requires capability class '{}' which was not loaded by any library",
                         module_name, cap_name

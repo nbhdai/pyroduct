@@ -192,16 +192,16 @@ impl NewClientFn {
     /// Generates the extern declaration for the WASM import.
     /// This corresponds to `generate_client_wasm` requested in the prompt.
     pub fn generate_client_wasm(&self) -> TokenStream {
-        let fn_wasm_name = self.class.wasm_name(&self.fn_name);
+        //let fn_wasm_name = self.class.wasm_name(&self.fn_name);
         quote! {
-            pub fn #fn_wasm_name(ptr: *const u8) -> *const u8;
+            pub fn register(ptr: *const u8) -> *mut u8;
         }
     }
 
     /// Generates the call expression used inside the client's register method.
     /// This corresponds to `generate_wasm_call`.
     pub fn generate_wasm_call(&self, module: Option<&Ident>) -> TokenStream {
-        let fn_wasm_name = self.class.wasm_name(&self.fn_name);
+        // let fn_wasm_name = self.class.wasm_name(&self.fn_name);
         let module_prefix = if let Some(m) = module {
             quote!(#m::)
         } else {
@@ -209,7 +209,7 @@ impl NewClientFn {
         };
 
         quote! {
-            #module_prefix #fn_wasm_name
+            #module_prefix register
         }
     }
 
@@ -220,9 +220,9 @@ impl NewClientFn {
         let wasm_call = self.generate_wasm_call(module);
 
         let return_type = if let Some(err) = &self.error_type {
-            quote!(Result<::pyroduct::wasm::wasm::Client<Self>, #err>)
+            quote!(Result<::pyroduct::wasm::Client<Self>, #err>)
         } else {
-            quote!(::pyroduct::wasm::wasm::Client<Self>)
+            quote!(::pyroduct::wasm::Client<Self>)
         };
 
         let result_handling = if let Some(error_ty) = &self.error_type {

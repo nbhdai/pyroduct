@@ -3,13 +3,13 @@ use rag::{RagClient, RagClientMethods};
 // Importing from the external 'text_splitters' crate
 use text_splitter::{ChunkConfig, TextSplitter};
 
-#[derive(pyroduct::ToRow)]
+#[pyroduct::magma]
 struct RagResponse {
     query: String,
     results: Vec<SearchResultOutput>,
 }
 
-#[derive(pyroduct::ToRow)]
+#[pyroduct::magma]
 struct SearchResultOutput {
     id: String,
     content: String,
@@ -17,8 +17,8 @@ struct SearchResultOutput {
     preview: String,
 }
 
-#[pyroduct::module(output = response)]
-fn rag_search(query: &str) -> Result<RagResponse, String> {
+#[pyroduct::module(output = RagResponse)]
+fn rag_search(query: &str) -> Result<RagResponse> {
     let rag = RagClient.register()?;
     let results = rag.search(query.to_string())?;
 

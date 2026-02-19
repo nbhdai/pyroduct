@@ -5,7 +5,7 @@
 use state::{CounterClient, CounterClientMethods};
 
 #[pyroduct::module(output = (count, incremented))]
-pub fn call(input: &str) -> Result<(u64, u64), String> {
+pub fn call(input: &str) -> Result<(u64, u64)> {
     let start: u64 = input.parse().map_err(|e| format!("Parse error: {}", e))?;
 
     let client = CounterClient { start_value: start }.register()?;

@@ -31,13 +31,13 @@ use crate::{Bridgeable, BridgeableResult, PyroError, PyroVec, PyroVecPtr, PyroVi
 #[track_caller]
 pub fn execute_safe<F, O>(func: F) -> PyroVecPtr
 where
-    O: Bridgeable + std::panic::RefUnwindSafe,
-    F: FnOnce() -> O + std::panic::UnwindSafe,
+    O: Bridgeable,
+    F: FnOnce() -> O,
 {
     register_ffi_panic_hook();
     clear_last_panic();
 
-    let result = panic::catch_unwind(func);
+    let result = panic::catch_unwind(AssertUnwindSafe(func));
 
     match result {
         Ok(output_obj) => {
@@ -55,14 +55,14 @@ where
 #[track_caller]
 pub fn execute_safe_result<F, O, E>(func: F) -> PyroVecPtr
 where
-    O: Bridgeable + std::panic::RefUnwindSafe,
-    E: Bridgeable + std::panic::RefUnwindSafe,
-    F: FnOnce() -> Result<O, E> + std::panic::UnwindSafe,
+    O: Bridgeable,
+    E: Bridgeable,
+    F: FnOnce() -> Result<O, E>,
 {
     register_ffi_panic_hook();
     clear_last_panic();
 
-    let result = panic::catch_unwind(func);
+    let result = panic::catch_unwind(AssertUnwindSafe(func));
 
     match result {
         Ok(output_obj) => {
@@ -150,8 +150,8 @@ pub fn get_runtime() -> &'static Runtime {
 #[track_caller]
 pub fn execute_safe_async<'a, Fut, O>(fut: Fut) -> FuturePyroVec<'a>
 where
-    Fut: std::future::Future<Output = O> + Send + std::panic::UnwindSafe + 'a,
-    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
+    Fut: std::future::Future<Output = O> + Send + 'a,
+    O: Bridgeable + Send + 'static,
 {
     let _guard = get_runtime().enter();
 
@@ -175,9 +175,9 @@ where
 #[track_caller]
 pub fn execute_safe_result_async<'a, Fut, O, E>(fut: Fut) -> FuturePyroVec<'a>
 where
-    Fut: std::future::Future<Output = Result<O, E>> + Send + std::panic::UnwindSafe + 'a,
-    O: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
-    E: Bridgeable + std::panic::RefUnwindSafe + Send + 'static,
+    Fut: std::future::Future<Output = Result<O, E>> + Send + 'a,
+    O: Bridgeable + Send + 'static,
+    E: Bridgeable + Send + 'static,
 {
     let _guard = get_runtime().enter();
 

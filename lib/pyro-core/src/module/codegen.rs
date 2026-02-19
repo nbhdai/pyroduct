@@ -83,11 +83,11 @@ pub fn expand(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStream> {
             };
 
 
-            ::pyroduct::wasm::wasm::wasm_row_main::<__Input, #output_name, _>(input_ptr, call)
+            ::pyroduct::wasm::wasm_row_main::<__Input, #output_name, _>(input_ptr, call)
         }
 
         #(#fn_attrs)*
-        #fn_vis fn #fn_name(#(#original_fn_params),*) -> ::pyroduct::wasm::wasm::ModuleResult<#return_type>
+        #fn_vis fn #fn_name(#(#original_fn_params),*) -> ::pyroduct::wasm::ModuleResult<#return_type>
         #fn_block
     };
 

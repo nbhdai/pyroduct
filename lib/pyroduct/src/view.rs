@@ -223,6 +223,9 @@ pub fn get_view<'a>(wasm_memory: &'a [u8], offset: usize) -> Result<PyroView<'a>
     if wasm_memory.len() < 16 {
         return Err(ParseError::SliceTooSmall.into());
     }
+    if offset % 16 != 0 {
+        return Err(ParseError::MisalignedPointer.into());
+    }
     let len_bytes: [u8; 4] = wasm_memory
         [offset + PyroParser::OFFSET_LEN..offset + PyroParser::OFFSET_LEN + 4]
         .try_into()
@@ -234,6 +237,9 @@ pub fn get_view<'a>(wasm_memory: &'a [u8], offset: usize) -> Result<PyroView<'a>
     let required_end = offset
         .checked_add(total_len)
         .ok_or(ParseError::LengthExceedsCapacity)?;
+    if required_end > wasm_memory.len() {
+        return Err(ParseError::LengthExceedsCapacity.into());
+    }
     let raw_slice = &wasm_memory[offset..required_end];
     PyroParser::check(raw_slice)?;
 
@@ -253,6 +259,12 @@ pub fn get_view_mut<'a>(
     wasm_memory: &'a mut [u8],
     offset: usize,
 ) -> Result<PyroMutView<'a>, PyroError> {
+    if wasm_memory.len() < 16 {
+        return Err(ParseError::SliceTooSmall.into());
+    }
+    if offset % 16 != 0 {
+        return Err(ParseError::MisalignedPointer.into());
+    }
     let len_bytes: [u8; 4] = wasm_memory
         [offset + PyroParser::OFFSET_LEN..offset + PyroParser::OFFSET_LEN + 4]
         .try_into()
@@ -264,6 +276,9 @@ pub fn get_view_mut<'a>(
     let required_end = offset
         .checked_add(total_len)
         .ok_or(ParseError::LengthExceedsCapacity)?;
+    if required_end > wasm_memory.len() {
+        return Err(ParseError::LengthExceedsCapacity.into());
+    }
     let raw_slice = &mut wasm_memory[offset..required_end];
     PyroParser::check(raw_slice)?;
 

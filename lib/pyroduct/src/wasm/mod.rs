@@ -8,6 +8,8 @@ use crate::value::PyroRow;
 use crate::{Bridgeable, BridgeableResult, CapturedError, DeepRef, PyroError, ToRow};
 use crate::{PyroVec, header::PyroData};
 
+pub type ModuleResult<T> = Result<T, CapturedError>;
+
 #[derive(Debug, Hash, PartialEq, Eq)]
 struct StoredPtr(*const u8);
 #[derive(Debug, Hash, PartialEq, Eq)]
@@ -159,16 +161,16 @@ pub fn wasm_row_main<'a, 'b, I, O, F>(
         I: DeepRef + 'static,
         for <'c> <I as DeepRef>::Ref<'c>: TryFrom<PyroRow<'c>>,
         O: ToRow,
-        F: Fn(I::Ref<'a>) -> Result<O, anyhow::Error>
+        F: Fn(I::Ref<'a>) -> Result<O, CapturedError>
 
 {
     let input_vec = match get_input(input_ptr) {
         Some(vec) => vec,
         None => {
-            let result = Err(anyhow::anyhow!(
+            let result = Err(CapturedError::new(format!(
                 "Unable to locate input with offset {}",
                 input_ptr as usize
-            ));
+            )));
             return to_output(encode_result(result));
         }
     };
@@ -185,7 +187,7 @@ pub fn wasm_row_main<'a, 'b, I, O, F>(
     let input: I::Ref<'_> = match input_row.try_into() {
         Ok(input) => input,
         Err(_) => {
-            let result = Err(anyhow::anyhow!(
+            let result = Err(CapturedError::new(
                 "Unable to extract input",
             ));
             return to_output(encode_result(result));
@@ -199,7 +201,7 @@ pub fn wasm_row_main<'a, 'b, I, O, F>(
     })
 }
 
-fn encode_result<'a>(result: anyhow::Result<PyroRow<'a>>) -> PyroVec {
+fn encode_result<'a>(result: Result<PyroRow<'a>, CapturedError>) -> PyroVec {
     let encoding = match result {
         Ok(success) => {
             let static_success = success.into_owned();
@@ -388,5 +390,12 @@ impl From<anyhow::Error> for CapturedError {
 impl From<anyhow::Error> for Box<CapturedError> {
     fn from(err: anyhow::Error) -> Self {
         Box::new(err.into())
+    }
+}
+
+
+impl From<String> for CapturedError {
+    fn from(err: String) -> Self {
+        CapturedError::new(err)
     }
 }

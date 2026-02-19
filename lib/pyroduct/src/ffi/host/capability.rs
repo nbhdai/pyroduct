@@ -132,7 +132,7 @@ pub struct CapabilityLibrary {
 }
 
 impl CapabilityLibrary {
-    pub unsafe fn load(path: &Path) -> Result<Self, CapabilityLoading> {
+    pub fn load(path: &Path) -> Result<Self, CapabilityLoading> {
         let path_str = path.display().to_string();
 
         // 1. Scan
@@ -200,35 +200,37 @@ impl CapabilityLibrary {
         config: &HashMap<String, serde_json::Value>,
     ) -> Result<Capability, CapabilityLoading> {
         let mut objects = HashMap::new();
-
-        for (class_name, config_val) in config {
-            // 1. Validate that the class exists in the loaded library
-            let class = self.capabilities.get(class_name).ok_or_else(|| {
+        for class_name in config.keys() {
+            self.capabilities.get(class_name).ok_or_else(|| {
                 CapabilityLoading::CapabilityNotFound {
                     name: class_name.clone(),
                 }
             })?;
+        }
 
+        for (cap_name, cap_class) in &self.capabilities {
             // 2. Serialize the config value to a PyroVec using JSON format
-            let writer = Json::<serde_json::Value>::new_writer(PyroVec::with_capacity(300));
+            let vec = if let Some(config_val) = config.get(cap_name) {
+                let writer = Json::<serde_json::Value>::new_writer(PyroVec::with_capacity(300));
 
-            let vec =
-                writer
-                    .write(config_val)
-                    .map_err(|e| CapabilityLoading::ConfigSerialization {
-                        class: class_name.clone(),
-                        reason: e.to_string(),
-                    })?;
-
+                    writer
+                        .write(config_val)
+                        .map_err(|e| CapabilityLoading::ConfigSerialization {
+                            class: cap_name.clone(),
+                            reason: e.to_string(),
+                        })?
+            } else {
+                PyroVec::ok()
+            };
             // 3. Call create_instance on the ForeignClass
-            let handle = class.create_instance(vec.view()).await.map_err(|e| {
+            let handle = cap_class.create_instance(vec.view()).await.map_err(|e| {
                 CapabilityLoading::Instantiation {
-                    class: class_name.clone(),
+                    class: cap_name.clone(),
                     reason: e.to_string(),
                 }
             })?;
 
-            objects.insert(class_name.clone(), handle);
+            objects.insert(cap_name.clone(), handle);
         }
 
         Ok(Capability { objects })

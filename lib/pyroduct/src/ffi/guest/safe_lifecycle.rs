@@ -6,6 +6,7 @@ use tracing::{debug, error, trace};
 
 use crate::ffi::{FutureInitResult, FuturePyroVec, InitResult, PyroRefObjectPtr};
 use crate::ffi::guest::panic_wrap::get_runtime;
+use crate::header::{DataStatus, PyroHeader};
 use crate::panic::{clear_last_panic, recover_panic_info, register_ffi_panic_hook};
 use crate::view::{PyroView, PyroViewPtr};
 use crate::{CapturedError, PyroError, PyroVec, PyroVecPtr};
@@ -26,7 +27,11 @@ fn deserialize_config<C: serde::de::DeserializeOwned>(
         return Ok(None);
     }
 
+
     let view = unsafe { PyroView::from_ptr(config) }?;
+    if let Ok(DataStatus::Empty) = view.status() {
+        return Ok(None);
+    }
     let slice: &[u8] = &*view;
 
     serde_json::from_slice::<Option<C>>(slice).map_err(|err| {
@@ -50,7 +55,7 @@ pub unsafe fn execute_safe_init<C, S, F>(
 where
     C: serde::de::DeserializeOwned,
     S: 'static,
-    F: FnOnce(Option<C>) -> S + panic::UnwindSafe,
+    F: FnOnce(Option<C>) -> S,
 {
     trace!("execute_safe_init: entering");
     register_ffi_panic_hook();
@@ -85,7 +90,7 @@ pub unsafe fn execute_safe_reset<S, F>(
 ) -> PyroVecPtr
 where
     S: 'static,
-    F: FnOnce(&mut S) + panic::UnwindSafe,
+    F: FnOnce(&mut S),
 {
     trace!("execute_safe_reset: entering");
     register_ffi_panic_hook();

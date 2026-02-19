@@ -34,7 +34,7 @@ impl CapabilityIdent {
 
     /// Library identifier for a method (e.g., __my_trait__my_state__method_name)
     pub fn cap_id(&self) -> String {
-        format!("{}:{}", self.pkg_name, self.pkg_version)
+        format!("{}", self.pkg_name)
     }
 
     /// Library identifier for a method (e.g., __my_trait__my_state__method_name)
