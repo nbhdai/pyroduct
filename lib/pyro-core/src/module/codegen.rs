@@ -68,7 +68,7 @@ pub fn expand(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStream> {
 
     let expanded = quote! {
         #[unsafe(no_mangle)]
-        pub extern "C" fn exter_call(input_ptr: *mut u8) -> *const u8 {
+        pub extern "C" fn call_extern(input_ptr: *mut u8) -> *const u8 {
             #[::pyroduct::magma]
             struct __Input {
                 #(#input_fields,)*

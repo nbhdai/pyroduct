@@ -54,7 +54,6 @@ tempfile = "3.24.0"
 fs-err = "2.9"
 tar = "0.4.44"
 flate2 = "1.1.8"
-
 # ClI and TUI
 clap = { version = "4.5", features = ["derive"] }
 
