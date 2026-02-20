@@ -343,10 +343,10 @@ impl CapabilityImpl {
 
         let capability_manifest_fn = quote! {
             #[unsafe(no_mangle)]
-            pub extern "C" fn pyro_capability_manifest<'a>(
+            pub extern "C" fn pyro_capability_manifest(
                 id: i64,
                 log_callback: ::pyroduct::ffi::LogCallback,
-            ) -> ::pyroduct::ffi::ClassExport<'a> {
+            ) -> ::pyroduct::ffi::ClassExport {
                 ::pyroduct::ffi::guest::logger::init_logging(id, log_callback);
 
                 ::pyroduct::ffi::ClassExport {
@@ -542,10 +542,10 @@ mod tests {
             ];
 
             #[unsafe(no_mangle)]
-            pub extern "C" fn pyro_capability_manifest<'a>(
+            pub extern "C" fn pyro_capability_manifest(
                 id: i64,
                 log_callback: ::pyroduct::ffi::LogCallback,
-            ) -> ::pyroduct::ffi::ClassExport<'a> {
+            ) -> ::pyroduct::ffi::ClassExport {
                 ::pyroduct::ffi::guest::logger::init_logging(id, log_callback);
 
                 ::pyroduct::ffi::ClassExport {

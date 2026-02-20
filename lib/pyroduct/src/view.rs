@@ -26,6 +26,9 @@ pub struct PyroViewPtr {
     pub len: usize,
 }
 
+unsafe impl Send for PyroViewPtr {}
+unsafe impl Sync for PyroViewPtr {}
+
 impl<'a> PyroData for PyroView<'a> {
     #[inline]
     fn header(&self) -> &[u8; 16] {

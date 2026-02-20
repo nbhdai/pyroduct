@@ -449,7 +449,7 @@ fn inter_parse_data_to_batch(data: Vec<u8>, filename: &str) -> Result<Vec<ArrowI
             let batches = reader.collect::<Result<Vec<_>, _>>()?;
             batches.into_iter().map(ArrowIpc::from_batch).collect()
         }
-        "json" => {
+        "json" | "jsonl" => {
             debug!("Parsing JSON...");
             let mut cursor = Cursor::new(data);
             let (schema, _) =

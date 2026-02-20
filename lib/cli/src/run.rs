@@ -39,8 +39,13 @@ impl OutputFormat {
 fn load_config(config_path: &Path) -> Result<PipelineConfig> {
     tracing::info!("Loading config from {:?}", config_path);
     let config_str = fs::read_to_string(config_path)?;
-    let mut config: PipelineConfig =
-        toml::from_str(&config_str).context("Failed to parse pipeline TOML")?;
+    let mut config: PipelineConfig = match config_path.extension().map(|s| s.as_encoded_bytes()) {
+        Some(b"toml") => toml::from_str(&config_str).context("Failed to parse pipeline TOML")?,
+        Some(b"yaml") => serde_yaml::from_str(&config_str).context("Failed to parse pipeline yaml")?,
+        Some(b"json") => serde_json::from_str(&config_str).context("Failed to parse pipeline TOML")?,
+        _ => anyhow::bail!("Unknown extension, supports toml, yaml and json")
+    };
+        
 
     let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
     // Resolve relative paths

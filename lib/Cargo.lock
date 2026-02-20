@@ -1898,6 +1898,7 @@ dependencies = [
  "pyroduct",
  "serde",
  "serde_json",
+ "serde_yaml",
  "syn",
  "tar",
  "tokio",

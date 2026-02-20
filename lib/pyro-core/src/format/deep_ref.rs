@@ -125,6 +125,7 @@ pub fn deep_ref_rkyv(input: &ItemStruct, import_location: &Path) -> syn::Result<
 
     // 3. Generate the DeepRef implementation for the Archived struct
     let impl_archived = quote! {
+        #[cfg(target_endian = "little")]
         impl #import_location::DeepRef for #archived_struct_name {
             type Ref<'a> = #ref_struct_name<'a>;
 
@@ -330,7 +331,8 @@ fn generate_rkyv_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream 
                     if let PathArguments::AngleBracketed(args) = &segment.arguments {
                         if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
                             if is_primitive(inner_ty) {
-                                quote! { #field_name: self.#field_name.as_slice() }
+
+                                quote! { #field_name: unsafe { std::mem::transmute(self.#field_name.as_slice()) }}
                             } else if is_string_like(inner_ty) {
                                 // ArchivedVec<ArchivedString>. Inner (in struct def) is String.
                                 // We iterate and get &ArchivedString. .as_str() works.

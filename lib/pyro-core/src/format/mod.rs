@@ -27,20 +27,15 @@ pub fn magma(
     // Note: This consumes 'args' and 'item', so we use clones for the others.
     let bridge_tokens = bridgeable::bridgeable(&args, item, import_location)?;
 
-    // 3. Prepare TokenStream for macros that parse their own input
-
-    // 4. Generate DeepRef
-    // Note: The current deep_ref implementation does not support 'derives_to_pass'
+    // 3. Generate DeepRef
     let deep_ref = deep_ref::deep_ref(&item, import_location, &args.derives_to_pass)?;
-
-    // 5. Generate DeepRef Rkyv
     let deep_ref_rkyv = deep_ref::deep_ref_rkyv(&item, import_location)?;
 
-    // 6. Generate FromRow
+    // 4. Generate FromRow
     let from_row = from_row::from_row(&item, import_location)?;
     let ref_from_row = from_row::ref_from_row(&item, import_location)?;
 
-    // 7. Generate ToRow
+    // 5. Generate ToRow
     let to_row = to_row::to_row(&item, import_location)?;
 
     Ok(quote! {

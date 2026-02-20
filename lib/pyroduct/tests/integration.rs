@@ -3,7 +3,8 @@ use serde_json::json;
 use std::{collections::HashMap, path::Path};
 
 /// Test that capability state is preserved across multiple calls to the same module instance.
-#[tokio::test]
+#[tracing_test::traced_test]
+#[tokio::test] 
 async fn test_capability_state_preservation() {
     // Use the counter capability from tests/cap_config
     #[cfg(target_os = "linux")]
@@ -41,6 +42,7 @@ async fn test_capability_state_preservation() {
 
 
 /// Test that capability configurations (passed via PipelineDef) are correctly respected by the server.
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_capability_configuration_respect() {
     // Use the counter capability from tests/cap_config

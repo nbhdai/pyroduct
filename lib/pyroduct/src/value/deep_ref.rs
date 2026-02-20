@@ -246,6 +246,7 @@ mod little_endian_impls {
                         // 1. We are protected by #[cfg(target_endian = "little")].
                         // 2. The _le types are #[repr(transparent)] wrappers around the native types.
                         // 3. The memory layout is identical on LE systems.
+                        #[cfg(target_endian = "little")]
                         let slice = self.as_slice();
                         unsafe {
                             std::slice::from_raw_parts(

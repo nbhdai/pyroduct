@@ -92,25 +92,35 @@ impl ResetFn {
         if self.is_async {
             quote! {
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn #reset_name<'a>(
-                    state: ::pyroduct::ffi::PyroRefObjectPtr,
-                ) -> ::pyroduct::ffi::FuturePyroVec<'a> {
-                    ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_async_reset::<#server, _, _>(
-                        state,
-                        |state| async move { state.reset().await },
-                    )
+                pub unsafe extern "C" fn #reset_name(
+                    capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
+                ) -> ::pyroduct::ffi::FuturePyroVec {
+                    ::pyroduct::ffi::guest::execute_safe_async(|| async move {
+                        let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
+                            Ok(state) => state,
+                            Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
+                        };
+                        let state = state_ptr.as_ref::<#server>();
+                        state.reset().await;
+                        ::pyroduct::PyroVec::ok()
+                    })
                 }
             }
         } else {
             quote! {
                 #[unsafe(no_mangle)]
                 pub unsafe extern "C" fn #reset_name(
-                    state: ::pyroduct::ffi::PyroRefObjectPtr,
+                    capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
                 ) -> ::pyroduct::PyroVecPtr {
-                    ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_reset::<#server, _>(
-                        state,
-                        |state| state.reset(),
-                    )
+                    ::pyroduct::ffi::guest::execute_safe(|| {
+                        let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
+                            Ok(state) => state,
+                            Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
+                        };
+                        let state = state_ptr.as_ref::<#server>();
+                        state.reset();
+                        ::pyroduct::PyroVec::ok()
+                    })
                 }
             }
         }
@@ -164,12 +174,19 @@ mod tests {
         let expected = quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn p__greeter_server__ffi_reset(
-                state: ::pyroduct::ffi::PyroRefObjectPtr,
+                capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
             ) -> ::pyroduct::PyroVecPtr {
-                ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_reset::<GreeterServer, _>(
-                    state,
-                    |state| state.reset(),
-                )
+                ::pyroduct::ffi::guest::execute_safe(|| {
+                    let state_ptr = match unsafe {
+                        ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr)
+                    } {
+                        Ok(state) => state,
+                        Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
+                    };
+                    let state = state_ptr.as_ref::<GreeterServer>();
+                    state.reset();
+                    ::pyroduct::PyroVec::ok()
+                })
             }
         };
 
@@ -189,13 +206,20 @@ mod tests {
         let result = reset_fn.generate_ffi(&server_ident);
         let expected = quote! {
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn p__greeter_server__ffi_reset<'a>(
-                state: ::pyroduct::ffi::PyroRefObjectPtr,
-            ) -> ::pyroduct::ffi::FuturePyroVec<'a> {
-                ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_async_reset::<GreeterServer, _, _>(
-                    state,
-                    |state| async move { state.reset().await },
-                )
+            pub unsafe extern "C" fn p__greeter_server__ffi_reset(
+                capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
+            ) -> ::pyroduct::ffi::FuturePyroVec {
+                ::pyroduct::ffi::guest::execute_safe_async(|| async move {
+                    let state_ptr = match unsafe {
+                        ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr)
+                    } {
+                        Ok(state) => state,
+                        Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
+                    };
+                    let state = state_ptr.as_ref::<GreeterServer>();
+                    state.reset().await;
+                    ::pyroduct::PyroVec::ok()
+                })
             }
         };
 

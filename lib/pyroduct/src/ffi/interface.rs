@@ -1,7 +1,6 @@
 use libloading::Library;
 use std::ffi::c_void;
 use std::future::Future;
-use std::marker::PhantomData;
 use std::pin::Pin;
 use std::ptr::NonNull;
 use std::slice;
@@ -19,56 +18,56 @@ pub type LogCallback = unsafe extern "C" fn(i64, *const u8, usize);
 // ============================================================================
 
 #[repr(C)]
-pub struct MethodExport<'a> {
-    pub func: Function<'a>,
+pub struct MethodExport {
+    pub func: Function,
     pub name: *const u8,
     pub name_len: usize,
 }
 
 /// We expect the return to be a future that resolves into a bridge vec.
-pub type AsyncFn<'a> = unsafe extern "C" fn(
+pub type AsyncFn = unsafe extern "C" fn(
     // itself
     PyroRefObjectPtr,
     // Client (wasm side class state)
     PyroViewPtr,
     // Input
     PyroViewPtr,
-) -> FuturePyroVec<'a>;
+) -> FuturePyroVec;
 
 /// We expect the return to be a bridge vec.
 pub type SyncFn = unsafe extern "C" fn(PyroRefObjectPtr, PyroViewPtr, PyroViewPtr) -> PyroVecPtr;
 
 #[repr(C, u8)]
 #[derive(Clone, Copy)]
-pub enum Function<'a> {
+pub enum Function {
     Sync(SyncFn),
-    Async(AsyncFn<'a>),
+    Async(AsyncFn),
 }
 
 #[repr(C)]
-pub enum FuturePyroVec<'a> {
+pub enum FuturePyroVec {
     /// The operation succeeded or failed immediately.
     Early(PyroVecPtr),
     /// The operation started successfully, and we have to await the result.
-    Future(::async_ffi::BorrowingFfiFuture<'a, PyroVecPtr>),
+    Future(::async_ffi::BorrowingFfiFuture<'static, PyroVecPtr>),
 }
 
-impl From<PyroVec> for FuturePyroVec<'_> {
-    fn from(value: PyroVec) -> Self {
-        FuturePyroVec::Early(value.into_raw())
+impl From<PyroVecPtr> for FuturePyroVec {
+    fn from(value: PyroVecPtr) -> Self {
+        FuturePyroVec::Early(value)
     }
 }
 
 #[pin_project::pin_project(project = MethodProj)]
-pub enum MethodCallFuture<'a> {
+pub enum MethodCallFuture {
     /// Wrapping an active async FFI call.
-    Async(#[pin] ::async_ffi::BorrowingFfiFuture<'a, PyroVecPtr>),
+    Async(#[pin] ::async_ffi::BorrowingFfiFuture<'static, PyroVecPtr>),
     /// A synchronous result or an early error.
     Ready(Option<Result<PyroVec, PyroError>>),
 }
 
-impl<'a> MethodCallFuture<'a> {
-    pub fn from_async(res: FuturePyroVec<'a>) -> Self {
+impl MethodCallFuture {
+    pub fn from_async(res: FuturePyroVec) -> Self {
         match res {
             FuturePyroVec::Future(fut) => Self::Async(fut),
             FuturePyroVec::Early(ptr) => {
@@ -79,7 +78,7 @@ impl<'a> MethodCallFuture<'a> {
     }
 }
 
-impl<'a> Future for MethodCallFuture<'a> {
+impl Future for MethodCallFuture {
     type Output = Result<PyroVec, PyroError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -107,12 +106,17 @@ pub struct PyroObjectPtr {
     pub dropper: ClassDropper,
 }
 
+unsafe impl Send for PyroObjectPtr {}
+
 /// The FFI-safe representation of a BORROWED instance.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PyroRefObjectPtr {
     pub state: *mut c_void,
 }
+
+unsafe impl Send for PyroRefObjectPtr {}
+unsafe impl Sync for PyroRefObjectPtr {}
 
 /// Function pointer to drop the opaque object.
 pub type ClassDropper = unsafe extern "C" fn(ptr: *mut c_void);
@@ -126,13 +130,18 @@ pub struct PyroObject {
 unsafe impl Send for PyroObject {}
 unsafe impl Sync for PyroObject {}
 
+
+
 impl PyroObject {
     /// Creates a new PyroObject from raw components.
     pub unsafe fn new(state: *mut c_void, dropper: ClassDropper) -> Result<Self, CapturedError> {
         let state = NonNull::new(state)
             .ok_or_else(|| CapturedError::new("Cannot construct PyroObject from null pointer"))?;
 
-        Ok(Self { state, dropper })
+        Ok(Self { 
+            state,
+            dropper,
+        })
     }
 
     /// Consumes the wrapper and returns the FFI-safe pointer struct.
@@ -165,10 +174,9 @@ impl PyroObject {
     }
 
     /// Creates a lifetime-bound Rust reference wrapper.
-    pub fn as_borrowed(&self) -> PyroObjectRef<'_> {
+    pub fn as_borrowed(&self) -> PyroObjectRef {
         PyroObjectRef {
             state: self.state,
-            lifetime: PhantomData,
         }
     }
 
@@ -197,12 +205,14 @@ impl Drop for PyroObject {
 }
 
 /// A borrowed wrapper around an opaque state pointer.
-pub struct PyroObjectRef<'a> {
+pub struct PyroObjectRef {
     state: NonNull<c_void>,
-    lifetime: PhantomData<&'a u8>,
 }
 
-impl<'a> PyroObjectRef<'a> {
+unsafe impl Send for PyroObjectRef {}
+unsafe impl Sync for PyroObjectRef {}
+
+impl PyroObjectRef {
     /// Safety: Needs to be a pointer to a O within the same binary.
     pub unsafe fn from_raw(raw: PyroRefObjectPtr) -> Result<Self, CapturedError> {
         let state = NonNull::new(raw.state).ok_or_else(|| {
@@ -211,7 +221,6 @@ impl<'a> PyroObjectRef<'a> {
 
         Ok(Self {
             state,
-            lifetime: PhantomData,
         })
     }
 
@@ -232,7 +241,7 @@ impl<'a> PyroObjectRef<'a> {
     // }
 
     /// Safety: Needs to be a pointer to a O within the same binary.
-    pub fn as_ref<O: 'static + Send + Sync>(&self) -> &'a mut O {
+    pub fn as_ref<O: 'static + Send + Sync>(&self) -> &'_ mut O {
         unsafe { &mut *(self.state.as_ptr() as *mut O) }
     }
 }
@@ -283,29 +292,29 @@ impl InitResult {
 }
 
 #[repr(C)]
-pub enum FutureInitResult<'a> {
+pub enum FutureInitResult {
     EarlyError(InitResult),
-    Future(::async_ffi::BorrowingFfiFuture<'a, InitResult>),
+    Future(::async_ffi::BorrowingFfiFuture<'static, InitResult>),
 }
 
 pub type SyncClassInitFn = unsafe extern "C" fn(config: PyroViewPtr) -> InitResult;
-pub type AsyncClassInitFn<'a> = unsafe extern "C" fn(config: PyroViewPtr) -> FutureInitResult<'a>;
+pub type AsyncClassInitFn = unsafe extern "C" fn(config: PyroViewPtr) -> FutureInitResult;
 
 #[repr(C, u8)]
 #[derive(Clone, Copy)]
-pub enum ClassInitFn<'a> {
+pub enum ClassInitFn {
     Sync(SyncClassInitFn),
-    Async(AsyncClassInitFn<'a>),
+    Async(AsyncClassInitFn),
 }
 
 #[pin_project::pin_project(project = InitProj)]
-pub enum ObjectInitFuture<'a> {
-    Async(#[pin] ::async_ffi::BorrowingFfiFuture<'a, InitResult>),
+pub enum ObjectInitFuture {
+    Async(#[pin] ::async_ffi::BorrowingFfiFuture<'static, InitResult>),
     Ready(Option<Result<PyroObject, PyroError>>),
 }
 
-impl<'a> ObjectInitFuture<'a> {
-    pub fn from_async(res: FutureInitResult<'a>) -> Self {
+impl ObjectInitFuture {
+    pub fn from_async(res: FutureInitResult) -> Self {
         match res {
             FutureInitResult::Future(fut) => Self::Async(fut),
             FutureInitResult::EarlyError(init_res) => {
@@ -315,7 +324,7 @@ impl<'a> ObjectInitFuture<'a> {
     }
 }
 
-impl<'a> Future for ObjectInitFuture<'a> {
+impl Future for ObjectInitFuture {
     type Output = Result<PyroObject, PyroError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -349,25 +358,25 @@ fn process_init_result(res: InitResult) -> Result<PyroObject, PyroError> {
 }
 
 // Updated to use PyroRefObjectPtr to allow borrowing state during reset
-pub type AsyncClassResetFn<'a> = unsafe extern "C" fn(PyroRefObjectPtr) -> FuturePyroVec<'a>;
+pub type AsyncClassResetFn = unsafe extern "C" fn(PyroRefObjectPtr) -> FuturePyroVec;
 pub type SyncClassResetFn = unsafe extern "C" fn(PyroRefObjectPtr) -> PyroVecPtr;
 
 #[repr(C, u8)]
 #[derive(Clone, Copy)]
-pub enum ClassResetFn<'a> {
+pub enum ClassResetFn {
     Sync(SyncClassResetFn),
-    Async(AsyncClassResetFn<'a>),
+    Async(AsyncClassResetFn),
     Null,
 }
 
 #[pin_project::pin_project(project = ResetProj)]
-pub enum ObjectResetFuture<'a> {
-    Async(#[pin] ::async_ffi::BorrowingFfiFuture<'a, PyroVecPtr>),
+pub enum ObjectResetFuture {
+    Async(#[pin] ::async_ffi::BorrowingFfiFuture<'static, PyroVecPtr>),
     Ready(Option<Result<(), PyroError>>),
 }
 
-impl<'a> ObjectResetFuture<'a> {
-    pub fn from_async(res: FuturePyroVec<'a>) -> Self {
+impl ObjectResetFuture {
+    pub fn from_async(res: FuturePyroVec) -> Self {
         match res {
             FuturePyroVec::Future(fut) => Self::Async(fut),
             FuturePyroVec::Early(ptr) => {
@@ -378,7 +387,7 @@ impl<'a> ObjectResetFuture<'a> {
     }
 }
 
-impl<'a> Future for ObjectResetFuture<'a> {
+impl Future for ObjectResetFuture {
     type Output = Result<(), PyroError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -401,26 +410,26 @@ impl<'a> Future for ObjectResetFuture<'a> {
 
 // Registration
 
-pub type AsyncClientRegisterFn<'a> =
-    unsafe extern "C" fn(PyroRefObjectPtr, PyroViewPtr) -> FuturePyroVec<'a>;
+pub type AsyncClientRegisterFn =
+    unsafe extern "C" fn(PyroRefObjectPtr, PyroViewPtr) -> FuturePyroVec;
 pub type SyncClientRegisterFn = unsafe extern "C" fn(PyroRefObjectPtr, PyroViewPtr) -> PyroVecPtr;
 
 #[repr(C, u8)]
 #[derive(Clone, Copy)]
-pub enum ClientRegisterFn<'a> {
+pub enum ClientRegisterFn {
     Sync(SyncClientRegisterFn),
-    Async(AsyncClientRegisterFn<'a>),
+    Async(AsyncClientRegisterFn),
     Null,
 }
 
 #[pin_project::pin_project(project = RegisterProj)]
-pub enum ClientRegisterFuture<'a> {
-    Async(#[pin] ::async_ffi::BorrowingFfiFuture<'a, PyroVecPtr>),
+pub enum ClientRegisterFuture {
+    Async(#[pin] ::async_ffi::BorrowingFfiFuture<'static, PyroVecPtr>),
     Ready(Option<Result<PyroVec, PyroError>>),
 }
 
-impl<'a> ClientRegisterFuture<'a> {
-    pub fn from_async(res: FuturePyroVec<'a>) -> Self {
+impl ClientRegisterFuture {
+    pub fn from_async(res: FuturePyroVec) -> Self {
         match res {
             FuturePyroVec::Future(fut) => Self::Async(fut),
             FuturePyroVec::Early(ptr) => {
@@ -431,7 +440,7 @@ impl<'a> ClientRegisterFuture<'a> {
     }
 }
 
-impl<'a> Future for ClientRegisterFuture<'a> {
+impl Future for ClientRegisterFuture {
     type Output = Result<PyroVec, PyroError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -452,18 +461,18 @@ impl<'a> Future for ClientRegisterFuture<'a> {
 }
 
 #[repr(C)]
-pub struct ClassExport<'a> {
+pub struct ClassExport {
     pub name: *const u8,
     pub name_len: usize,
-    pub ptr: *const MethodExport<'a>,
-    pub init: ClassInitFn<'a>,
-    pub reset: ClassResetFn<'a>,
-    pub register: ClientRegisterFn<'a>,
+    pub ptr: *const MethodExport,
+    pub init: ClassInitFn,
+    pub reset: ClassResetFn,
+    pub register: ClientRegisterFn,
     pub len: usize,
 }
 
-pub type CapabilityRegisterFn<'a> =
-    unsafe extern "C" fn(class_id: i64, log_callback: LogCallback) -> ClassExport<'a>;
+pub type CapabilityRegisterFn =
+    unsafe extern "C" fn(class_id: i64, log_callback: LogCallback) -> ClassExport;
 
 pub type ObjectHandle = i64;
 
@@ -471,18 +480,18 @@ pub struct ForeignClass {
     name: String,
     _library: Option<Arc<Library>>,
     methods: Vec<ForeignMethod>,
-    init: ClassInitFn<'static>,
-    reset: ClassResetFn<'static>,
-    register: ClientRegisterFn<'static>,
+    init: ClassInitFn,
+    reset: ClassResetFn,
+    register: ClientRegisterFn,
 }
 
 struct ForeignMethod {
     pub name: String,
-    pub pointer: Function<'static>,
+    pub pointer: Function,
 }
 
 impl ForeignMethod {
-    fn new(method: &MethodExport<'_>) -> Result<Self, CapturedError> {
+    fn new(method: &MethodExport) -> Result<Self, CapturedError> {
         if method.name.is_null() {
             return Err(CapturedError::new(
                 "Found a method with an empty name (null pointer)",
@@ -495,8 +504,7 @@ impl ForeignMethod {
         let func_name = std::str::from_utf8(name_bytes).map_err(|err| {
             CapturedError::new(format!("Method does not have a valid utf8 name: {err}"))
         })?;
-        let pointer =
-            unsafe { std::mem::transmute::<Function<'_>, Function<'static>>(method.func) };
+        let pointer = method.func;
         Ok(Self {
             name: func_name.to_string(),
             pointer,
@@ -515,14 +523,14 @@ impl ForeignClass {
 
     pub unsafe fn from_export(
         library: Arc<Library>,
-        export: ClassExport<'static>,
+        export: ClassExport,
     ) -> Result<Self, CapturedError> {
         unsafe { Self::from_export_inter(Some(library), export) }
     }
 
     unsafe fn from_export_inter(
         library: Option<Arc<Library>>,
-        export: ClassExport<'static>,
+        export: ClassExport,
     ) -> Result<Self, CapturedError> {
         let name = if export.name.is_null() || export.name_len == 0 {
             return Err(CapturedError::new("Empty name, unable to link"));
@@ -732,10 +740,10 @@ mod tests {
         pub state_ptr: *mut c_void,
 
         // The function pointers to use in ClassExport
-        pub init: ClassInitFn<'static>,
+        pub init: ClassInitFn,
         pub dropper: ClassDropper,
-        pub reset: ClassResetFn<'static>,
-        pub register: ClientRegisterFn<'static>,
+        pub reset: ClassResetFn,
+        pub register: ClientRegisterFn,
     }
 
     fn mocks() -> Mocks {

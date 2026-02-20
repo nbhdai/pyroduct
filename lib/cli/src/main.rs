@@ -9,7 +9,7 @@ pub mod utils;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -59,23 +59,23 @@ enum Commands {
     },
     // /// Runs the pipeline.
     // /// Automatically detects if INPUT is a file path (Batch Mode) or a JSON string (Single Mode).
-    // Run {
-    //     /// Path to the harness config TOML file
-    //     #[arg(value_name = "CONFIG")]
-    //     config: PathBuf,
+    Run {
+        /// Path to the pipeline config TOML file
+        #[arg(value_name = "CONFIG")]
+        config: PathBuf,
 
-    //     /// Input: Either a file path (for batch processing) or a raw JSON string.
-    //     #[arg(value_name = "INPUT")]
-    //     input: String,
+        /// Input: Either a file path (for batch processing) or a raw JSON string.
+        #[arg(value_name = "INPUT")]
+        input: String,
 
-    //     /// Output directory for batch processing. Defaults to current directory.
-    //     #[arg(short, long, default_value = ".")]
-    //     output_dir: PathBuf,
+        /// Output directory for batch processing. Defaults to current directory.
+        #[arg(short, long, default_value = ".")]
+        output_dir: PathBuf,
 
-    //     /// Output format (only used for batch processing).
-    //     #[arg(long, value_enum, default_value_t = run::OutputFormat::Json)]
-    //     format: run::OutputFormat,
-    // },
+        /// Output format (only used for batch processing).
+        #[arg(long, value_enum, default_value_t = run::OutputFormat::Json)]
+        format: run::OutputFormat,
+    },
 }
 
 #[tokio::main]
@@ -95,23 +95,23 @@ async fn main() -> Result<()> {
             cargo_args,
         } => package::package(&path, output.as_deref(), &cargo_args),
         Commands::Clean { path } => clean::clean(&path),
-        // Commands::Run {
-        //     config,
-        //     input,
-        //     output_dir,
-        //     format,
-        // } => {
-        //     let input_path = Path::new(&input);
+        Commands::Run {
+            config,
+            input,
+            output_dir,
+            format,
+        } => {
+            let input_path = Path::new(&input);
 
-        //     if input_path.exists() && input_path.is_file() {
-        //         println!(
-        //             "📂 Input file detected: {:?}. Running in Batch Mode...",
-        //             input_path
-        //         );
-        //         run::run_batch(&config, input_path, &output_dir, format).await
-        //     } else {
-        //         run::run(&config, &input).await
-        //     }
-        // }
+            if input_path.exists() && input_path.is_file() {
+                println!(
+                    "📂 Input file detected: {:?}. Running in Batch Mode...",
+                    input_path
+                );
+                run::run_batch(&config, input_path, &output_dir, format).await
+            } else {
+                run::run(&config, &input).await
+            }
+        }
     }
 }

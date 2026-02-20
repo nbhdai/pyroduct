@@ -153,27 +153,27 @@ impl NewClientFn {
         // Helper to deserialize the client and call the method
         let body = if let Some(_) = &self.error_type {
             quote! {
-                let client: #client_type = match ::pyroduct::ffi::guest::panic_wrap::deserialize_input(client_state_ptr, std::panic::Location::caller()) {
+                let client: #client_type = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
                     Ok(v) => v,
                     Err(e) => return e.encode().into_raw(),
                 };
 
-                ::pyroduct::ffi::guest::panic_wrap::execute_safe_result(|| {
+                ::pyroduct::ffi::guest::execute_safe(|| {
                     // Reconstruct state from raw pointer
                     let state = unsafe { &*(capability_state_ptr.state as *const #state_type) };
-                    state.new_client(&client)
+                    ::pyroduct::ffi::guest::serialize_result(state.new_client(&client))
                 })
             }
         } else {
             quote! {
-                let client: #client_type = match ::pyroduct::ffi::guest::panic_wrap::deserialize_input(client_state_ptr, std::panic::Location::caller()) {
+                let client: #client_type = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
                     Ok(v) => v,
                     Err(e) => return e.encode().into_raw(),
                 };
 
-                ::pyroduct::ffi::guest::panic_wrap::execute_safe(|| {
+                ::pyroduct::ffi::guest::execute_safe(|| {
                     let state = unsafe { &*(capability_state_ptr.state as *const #state_type) };
-                    state.new_client(&client)
+                    ::pyroduct::ffi::guest::serialize_output(state.new_client(&client))
                 })
             }
         };

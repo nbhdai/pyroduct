@@ -10,7 +10,7 @@
 use std::rc::Rc;
 
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::{Error, FnArg, Ident, ImplItemFn, Pat, Type};
 
 use super::paths::{CapabilityIdent, FnName, FnOutput};
@@ -195,138 +195,109 @@ impl ImplMethod {
     pub fn generate_server_ffi(&self) -> TokenStream {
         let fn_ffi_name = self.class.ffi_name(&self.name);
         let input_struct = self.inputs.input_struct(&self.name, Some(&self.class));
+        let state_tn = &self.class.state_tn;
+        let client_tn = &self.class.client_tn;
+        let mut call_args = Vec::new();
 
-        // Determine the helper function based on what's present (in "sci" order)
-        let helper_fn = match (!self.inputs.is_empty() , self.class.error_tn.is_some()) {
-            (true, true) => format_ident!("sci_call_result"),
-            (true, false) => format_ident!("sci_call"),
-            (false, true) => format_ident!("sc_call_result"),
-            (false, false) => format_ident!("sc_call"),
+        let state_retrieval = quote! {
+            let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
+                Ok(state) => state,
+                Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
+            };
+            let state = state_ptr.as_ref::<#state_tn>();
         };
-
-        // Determine generic parameters based on what's present
-        let generics = self.determine_generics();
-
-        // Determine closure parameters and method call
-        let (closure_params, method_call) = self.determine_closure_and_call();
+        // Client stuff
+        let client_retrieval = quote! {
+            let client: #client_tn = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
+                Ok(buf) => buf,
+                Err(err) => return err.encode(),
+            };
+        };
+        call_args.push(quote! { &client });
+        let input_retrieval = match &self.inputs {
+            InputParams::One(_, ty) => {
+                call_args.push(quote!(input));
+                quote! {
+                    let input: #ty = match ::pyroduct::ffi::guest::deserialize_input(input_ptr) {
+                        Ok(buf) => buf,
+                        Err(err) => return err.encode(),
+                    };
+                }
+            },
+            InputParams::Many(items) => {
+                let input_struct_name = self.class.input_struct(&self.name);
+                let args = items.iter().map(|(n, _)| quote!(input.#n));
+                call_args.extend(args);
+                quote! {
+                    let input: #input_struct_name = match ::pyroduct::ffi::guest::deserialize_input(input_ptr) {
+                        Ok(buf) => buf,
+                        Err(err) => return err.encode(),
+                    };
+                }
+            }
+            InputParams::None => quote! {},
+        };
+        let fn_name = &self.name.0;
+        let method_call = quote!(state.#fn_name(#(#call_args),*));
 
         // Return type and body wrapper
-        let (func_lifetime, ffi_ret, body) = if self.is_async {
-            (
-                quote!(<'a>),
-                quote!(::pyroduct::ffi::FuturePyroVec<'a>),
-                quote!(async move { #method_call.await }),
-            )
-        } else {
-            (
-                quote!(),
+        let (ffi_ret, body) = match (self.is_async, &self.class.error_tn) {
+            (true, Some(_)) => (
+                quote!(::pyroduct::ffi::FuturePyroVec),
+                quote!{
+                    ::pyroduct::ffi::guest::execute_safe_async(|| async move { 
+                        #state_retrieval
+                        #client_retrieval
+                        #input_retrieval
+                        ::pyroduct::ffi::guest::serialize_result(#method_call.await)
+                    })
+                },
+            ),
+            (false, Some(_)) => (
                 quote!(::pyroduct::PyroVecPtr),
-                quote!(#method_call),
-            )
-        };
-
-        let call_path = if self.is_async {
-            quote!(::pyroduct::ffi::guest::safe_async::#helper_fn)
-        } else {
-            quote!(::pyroduct::ffi::guest::safe_call::#helper_fn)
+                quote!{::pyroduct::ffi::guest::execute_safe(|| {
+                    #state_retrieval
+                    #client_retrieval
+                    #input_retrieval
+                    ::pyroduct::ffi::guest::serialize_result(#method_call)
+                })}
+            ),
+            (true, None) => (
+                quote!(::pyroduct::ffi::FuturePyroVec),
+                quote!{
+                    ::pyroduct::ffi::guest::execute_safe_async(|| async move { 
+                        #state_retrieval
+                        #client_retrieval
+                        #input_retrieval
+                        ::pyroduct::ffi::guest::serialize_output(#method_call.await)
+                    })
+                },
+            ),
+            (false, None) => (
+                quote!(::pyroduct::PyroVecPtr),
+                quote!{::pyroduct::ffi::guest::execute_safe(|| {
+                    #state_retrieval
+                    #client_retrieval
+                    #input_retrieval
+                    ::pyroduct::ffi::guest::serialize_output(#method_call)
+                })}
+            ),
         };
 
         quote! {
             #input_struct
 
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn #fn_ffi_name #func_lifetime(
+            pub unsafe extern "C" fn #fn_ffi_name (
                 capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
                 client_state_ptr: ::pyroduct::PyroViewPtr,
                 input_ptr: ::pyroduct::PyroViewPtr,
             ) -> #ffi_ret {
-                #call_path::<#generics>(
-                    capability_state_ptr,
-                    client_state_ptr,
-                    input_ptr,
-                    #closure_params #body
-                )
+                #body
             }
         }
     }
 
-    /// Determine generic parameters for the helper function call
-    fn determine_generics(&self) -> TokenStream {
-        let mut generics = Vec::new();
-
-        let state_tn = &self.class.state_tn;
-        let client_tn = &self.class.client_tn;
-        generics.push(quote!(#state_tn));
-        generics.push(quote!(#client_tn));
-
-        // Input type (I)
-        match &self.inputs {
-            InputParams::One(_, ty) => generics.push(quote!(#ty)),
-            InputParams::Many { .. } => {
-                let input_struct_name = self.class.input_struct(&self.name);
-                generics.push(quote!(#input_struct_name))
-            }
-            InputParams::None => {}
-        }
-
-        // Return type (O)
-        let return_type = &self.output.ty();
-        generics.push(quote!(#return_type));
-
-        if let Some(err) = self.output.err() {
-            generics.push(quote!(#err));
-        }
-
-        // Function type for the closure
-        generics.push(quote!(_));
-
-        if self.is_async {
-            // Future type returned by the async closure
-            generics.push(quote!(_));
-        }
-
-        quote!(#(#generics),*)
-    }
-
-    /// Determine closure parameters and the method call expression
-    fn determine_closure_and_call(&self) -> (TokenStream, TokenStream) {
-        let fn_name = &self.name.0;
-
-        let mut closure_params = Vec::new();
-        let mut call_args = Vec::new();
-
-        closure_params.push(quote!(state));
-        call_args.push(quote!(state));
-        closure_params.push(quote!(client));
-        call_args.push(quote!(&client));
-
-        // Input parameter
-        match &self.inputs {
-            InputParams::None => {}
-            InputParams::One(_, _) => {
-                closure_params.push(quote!(input));
-                call_args.push(quote!(input));
-            }
-            InputParams::Many(items) => {
-                closure_params.push(quote!(input));
-
-                let args = items.iter().map(|(n, _)| quote!(input.#n));
-                call_args.extend(args);
-            }
-        }
-
-        let closure_params_tokens = if closure_params.is_empty() {
-            quote!(||)
-        } else {
-            quote!(|#(#closure_params),*|)
-        };
-
-        let self_arg = closure_params.first().unwrap();
-        let method_args = &call_args[1..]; // Skip self
-        let method_call = quote!(#self_arg.#fn_name(#(#method_args),*));
-
-        (closure_params_tokens, method_call)
-    }
 
     pub fn generate_vtable_entry(&self) -> TokenStream {
         let fn_ffi_name = self.class.ffi_name(&self.name);
@@ -590,23 +561,24 @@ mod tests {
 
         let output_capability = quote! {
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn p__mock_server__test_async_client__ffi<'a>(
+            pub unsafe extern "C" fn p__mock_server__test_async_client__ffi(
                 capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
                 client_state_ptr: ::pyroduct::PyroViewPtr,
                 input_ptr: ::pyroduct::PyroViewPtr,
-            ) -> ::pyroduct::ffi::FuturePyroVec<'a> {
-                ::pyroduct::ffi::guest::safe_async::sc_call::<
-                    MockServer,
-                    MockClient,
-                    u32,
-                    _,
-                    _,
-                >(
-                    capability_state_ptr,
-                    client_state_ptr,
-                    input_ptr,
-                    |state, client| async move { state.test_async_client(&client).await },
-                )
+            ) -> ::pyroduct::ffi::FuturePyroVec {
+                ::pyroduct::ffi::guest::execute_safe_async(|| async move { 
+                    let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
+                        Ok(state) => state,
+                        Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
+                    };
+                    let state = state_ptr.as_ref::<MockServer>();
+
+                    let client: MockClient = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
+                        Ok(buf) => buf,
+                        Err(err) => return err.encode(),
+                    };
+                    ::pyroduct::ffi::guest::serialize_output(state.test_async_client(&client).await)
+                })
             }
         };
 
@@ -661,19 +633,24 @@ mod tests {
                 client_state_ptr: ::pyroduct::PyroViewPtr,
                 input_ptr: ::pyroduct::PyroViewPtr,
             ) -> ::pyroduct::PyroVecPtr {
-                ::pyroduct::ffi::guest::safe_call::sci_call_result::<
-                    MockServer,
-                    MockClient,
-                    i32,
-                    u32,
-                    MockError,
-                    _,
-                >(
-                    capability_state_ptr,
-                    client_state_ptr,
-                    input_ptr,
-                    |state, client, input| state.test_sync_client_input(&client, input),
-                )
+                ::pyroduct::ffi::guest::execute_safe(|| { 
+                    let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
+                        Ok(state) => state,
+                        Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
+                    };
+                    let state = state_ptr.as_ref::<MockServer>();
+
+                    let client: MockClient = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
+                        Ok(buf) => buf,
+                        Err(err) => return err.encode(),
+                    };
+
+                    let input: i32 = match ::pyroduct::ffi::guest::deserialize_input(input_ptr) {
+                        Ok(buf) => buf,
+                        Err(err) => return err.encode(),
+                    };
+                    ::pyroduct::ffi::guest::serialize_result(state.test_sync_client_input(&client, input))
+                })
             }
         };
 
@@ -733,26 +710,29 @@ mod tests {
             }
 
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn p__mock_server__test_sci_multi__ffi<'a>(
+            pub unsafe extern "C" fn p__mock_server__test_sci_multi__ffi(
                 capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
                 client_state_ptr: ::pyroduct::PyroViewPtr,
                 input_ptr: ::pyroduct::PyroViewPtr,
-            ) -> ::pyroduct::ffi::FuturePyroVec<'a> {
-                ::pyroduct::ffi::guest::safe_async::sci_call::<
-                    MockServer,
-                    MockClient,
-                    p__MockServer__TestSciMulti__Input,
-                    u32,
-                    _,
-                    _,
-                >(
-                    capability_state_ptr,
-                    client_state_ptr,
-                    input_ptr,
-                    |state, client, input| async move {
-                        state.test_sci_multi(&client, input.a, input.b).await
-                    },
-                )
+            ) -> ::pyroduct::ffi::FuturePyroVec {
+                ::pyroduct::ffi::guest::execute_safe_async(|| async move { 
+                    let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
+                        Ok(state) => state,
+                        Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
+                    };
+                    let state = state_ptr.as_ref::<MockServer>();
+
+                    let client: MockClient = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
+                        Ok(buf) => buf,
+                        Err(err) => return err.encode(),
+                    };
+
+                    let input: p__MockServer__TestSciMulti__Input = match ::pyroduct::ffi::guest::deserialize_input(input_ptr) {
+                        Ok(buf) => buf,
+                        Err(err) => return err.encode(),
+                    };
+                    ::pyroduct::ffi::guest::serialize_output(state.test_sci_multi(&client, input.a, input.b).await)
+                })
             }
         };
 

@@ -9,8 +9,6 @@ pyroduct::library!();
 pub struct OllamaConfig {
     /// Base URL of the Ollama server (e.g. "http://localhost:11434")
     pub base_url: String,
-    /// Default request timeout in milliseconds.
-    pub timeout_ms: u64,
     /// Optional system prompt prepended to every chat request.
     pub system_prompt: String,
     /// Permitted Models
@@ -97,12 +95,10 @@ impl OllamaServer {
     async fn new(config: Option<OllamaConfig>) -> Self {
         let config = config.unwrap_or(OllamaConfig {
             base_url: "http://localhost:11434".to_string(),
-            timeout_ms: 120_000,
             permitted_models: Vec::new(),
             system_prompt: String::new(),
         });
         let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(config.timeout_ms))
             .build()
             .expect("failed to build reqwest client");
         let permitted_models = config.permitted_models.clone();

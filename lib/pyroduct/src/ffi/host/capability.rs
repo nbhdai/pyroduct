@@ -172,7 +172,7 @@ impl CapabilityLibrary {
             let capability_id = NEXT_CAPABILITY_ID.fetch_add(1, Ordering::Relaxed);
             let _span_id = allocate_span(&sym.name);
 
-            let export: ClassExport<'static> = unsafe { register_fn(capability_id, log_callback) };
+            let export: ClassExport = unsafe { register_fn(capability_id, log_callback) };
 
             let class =
                 unsafe { ForeignClass::from_export(library.clone(), export) }.map_err(|e| {

@@ -42,6 +42,8 @@ pub struct PyroVecPtr {
     grower: PyroVecGrower,
 }
 
+unsafe impl std::marker::Send for PyroVecPtr {}
+
 // ============================================================================
 // PyroBuf — a PyroVec with the grow capability removed
 // ============================================================================
