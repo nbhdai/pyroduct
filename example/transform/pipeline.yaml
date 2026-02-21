@@ -1,0 +1,16 @@
+capabilities:
+  transform:
+    path: ../../capabilities/config/artifacts/lib.dylib
+    classes:
+      config:
+        uppercase: true
+        suffix: "!!!"
+
+modules:
+  prefix:
+    path: ../../modules/cap_config/artifacts/mod.wasm
+    capabilities:
+      - config
+
+pipeline:
+  - prefix
