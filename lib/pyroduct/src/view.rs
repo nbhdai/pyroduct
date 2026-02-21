@@ -22,8 +22,8 @@ pub struct PyroView<'a> {
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct PyroViewPtr {
-    pub ptr: *const u8,
-    pub len: usize,
+    pub(crate) ptr: *const u8,
+    pub(crate) len: usize,
 }
 
 unsafe impl Send for PyroViewPtr {}
@@ -70,6 +70,7 @@ impl PyroView<'_> {
             return Err(PyroError::HeaderFfi(error.into()));
         };
         let raw_slice = unsafe { slice::from_raw_parts(raw.ptr, raw.len) };
+
         let view = Self { raw_slice };
         if raw_slice.len() != view.header_len() as usize + 16 {
             let error = CapturedError::new(
@@ -81,6 +82,10 @@ impl PyroView<'_> {
         }
 
         Ok(view)
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.raw_slice[PyroParser::HEADER_SIZE..]
     }
 
     pub fn ptr(&self) -> PyroViewPtr {

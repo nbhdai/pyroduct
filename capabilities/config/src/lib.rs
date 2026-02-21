@@ -27,10 +27,12 @@ impl TransformServer {
 
     /// Initialize with async setup
     async fn new(config: Option<TransformConfig>) -> Self {
+        pyroduct::tracing::info!("Init");
         let config = config.unwrap_or(TransformConfig {
             uppercase: false,
             suffix: String::new(),
         });
+        pyroduct::tracing::info!(uppercase=config.uppercase, suffix=config.suffix, "Init config");
         Self {
             uppercase: config.uppercase,
             suffix: config.suffix,
@@ -47,6 +49,7 @@ impl TransformServer {
 
     /// Validate client prefix
     fn register(&self, client: &TransformClient) -> Result<(), String> {
+        pyroduct::tracing::info!("register");
         if client.prefix.len() > 100 {
             return Err("Prefix too long".to_string());
         }
@@ -55,21 +58,25 @@ impl TransformServer {
 
     /// Transform a string with prefix, optional uppercase, and suffix
     async fn transform(&self, client: &TransformClient, input: String) -> Result<String, String> {
+        pyroduct::tracing::info!(input, prefix=client.prefix, "transform prefix");
         let mut result = format!("{}{}", client.prefix, input);
         if self.uppercase {
             result = result.to_uppercase();
         }
+        pyroduct::tracing::info!(suffix=self.suffix, "transform suffix");
         result.push_str(&self.suffix);
 
         if let Ok(mut log) = self.transform_log.lock() {
             log.push(result.clone());
         }
 
+        pyroduct::tracing::info!(result, "transform RETURN");
         Ok(result)
     }
 
     /// Get the number of transforms performed
     fn get_transform_count(&self, _client: &TransformClient) -> Result<usize, String> {
+        pyroduct::tracing::info!("count");
         self.transform_log
             .lock()
             .map(|log| log.len())
@@ -82,6 +89,7 @@ impl TransformServer {
         client: &TransformClient,
         inputs: Vec<String>,
     ) -> Result<Vec<String>, String> {
+        pyroduct::tracing::info!("batch_transform");
         let mut results = Vec::with_capacity(inputs.len());
         for input in inputs {
             let mut result = format!("{}{}", client.prefix, input);

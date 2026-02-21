@@ -7,13 +7,12 @@ static LOG_CALLBACK: OnceLock<Mutex<(i64, LogCallback)>> = OnceLock::new();
 
 static INIT: Once = Once::new();
 pub fn init_logging(id: i64, callback: LogCallback) {
-    if LOG_CALLBACK.set(Mutex::new((id, callback))).is_err() {
-        tracing::error!("Double set tracing callback, plugin double imported");
-    }
+    let _ = LOG_CALLBACK.set(Mutex::new((id, callback)));
     let host_logger = HostLogger;
 
     INIT.call_once(|| {
         tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
             .with_writer(host_logger)
             .without_time()
             .with_ansi(false)

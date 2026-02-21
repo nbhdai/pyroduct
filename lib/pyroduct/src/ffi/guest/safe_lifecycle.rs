@@ -31,7 +31,7 @@ pub fn deserialize_config<C: serde::de::DeserializeOwned>(
     if let Ok(DataStatus::Empty) = view.status() {
         return Ok(None);
     }
-    let slice: &[u8] = &*view;
+    let slice: &[u8] = view.as_slice();
 
     serde_json::from_slice::<Option<C>>(slice).map_err(|err| {
         let error = CapturedError::new(format!("Json Serialization: {err}"))
@@ -60,7 +60,7 @@ where
     match result {
         Ok(state) => {
             debug!("execute_safe_init: state created successfully");
-            InitResult::init_ok(state)
+            state
         }
         Err(_) => {
             let panic_info = recover_panic_info();
@@ -124,7 +124,7 @@ where
         match result {
             Ok(state) => {
                 debug!("execute_safe_async_init: async init completed successfully");
-                InitResult::init_ok(state)
+                state
             }
             Err(_) => {
                 let panic_info = recover_panic_info();

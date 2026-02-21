@@ -66,6 +66,7 @@ impl PyroLinker {
                                 let object = object.clone();
                                 let fn_name = fn_name.clone();
                                 Box::new(async move {
+                                    tracing::debug!(class_name = object.name(), fn_name, "Calling function");
                                     let mut io = PyroCallIo::from_caller(caller)?;
 
                                     // Read input and get state — both are &self borrows.

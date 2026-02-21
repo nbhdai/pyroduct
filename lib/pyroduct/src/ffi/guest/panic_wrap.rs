@@ -57,6 +57,7 @@ pub fn deserialize_input<I: Bridgeable + BridgeableZeroCopy>(
 where
     <I as Bridgeable>::Format: PyroZeroCopyFormat<I>,
 {
+    tracing::trace!(?data, "Deserializing view");
     let guard = panic::catch_unwind(AssertUnwindSafe(|| {
         let vec = unsafe { PyroView::from_ptr(data) }?;
         let typed = I::expose_view(vec)?;
@@ -79,6 +80,7 @@ pub fn serialize_output<T>(val: T) -> PyroVec
 where
     T: Bridgeable,
 {
+    tracing::trace!("Serializing return");
     let guard = panic::catch_unwind(AssertUnwindSafe(|| val.ship()));
 
     match guard {
@@ -98,6 +100,7 @@ where
     T: Bridgeable,
     E: Bridgeable,
 {
+    tracing::trace!("Serializing return result");
     let guard = panic::catch_unwind(AssertUnwindSafe(|| result.ship()));
 
     match guard {

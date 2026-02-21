@@ -258,12 +258,12 @@ pub use value::{DeepRef, PyroRow, PyroValue, ToRow};
 pub use vec_buf::{PyroBuf, PyroBufPtr, PyroVec, PyroVecPtr};
 pub use view::{PyroMutView, PyroView, PyroViewPtr, get_view, get_view_mut};
 
-pub use serde;
-pub use serde_json;
-
 // Async is not supported for wasm
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tokio;
+pub use tracing;
+pub use serde;
+pub use serde_json;
 
 // Documented by the lib.
 pub use pyro_derive::bridgeable;

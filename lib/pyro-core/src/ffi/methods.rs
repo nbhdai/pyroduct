@@ -200,6 +200,7 @@ impl ImplMethod {
         let mut call_args = Vec::new();
 
         let state_retrieval = quote! {
+            ::pyroduct::tracing::trace!(?capability_state_ptr, "Unpacking state");
             let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                 Ok(state) => state,
                 Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
@@ -208,6 +209,7 @@ impl ImplMethod {
         };
         // Client stuff
         let client_retrieval = quote! {
+            ::pyroduct::tracing::trace!(?client_state_ptr, "Unpacking client");
             let client: #client_tn = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
                 Ok(buf) => buf,
                 Err(err) => return err.encode(),
@@ -218,6 +220,7 @@ impl ImplMethod {
             InputParams::One(_, ty) => {
                 call_args.push(quote!(input));
                 quote! {
+                    ::pyroduct::tracing::trace!(?input_ptr, "Unpacking input");
                     let input: #ty = match ::pyroduct::ffi::guest::deserialize_input(input_ptr) {
                         Ok(buf) => buf,
                         Err(err) => return err.encode(),
@@ -229,6 +232,7 @@ impl ImplMethod {
                 let args = items.iter().map(|(n, _)| quote!(input.#n));
                 call_args.extend(args);
                 quote! {
+                    ::pyroduct::tracing::trace!(?input_ptr, "Unpacking input");
                     let input: #input_struct_name = match ::pyroduct::ffi::guest::deserialize_input(input_ptr) {
                         Ok(buf) => buf,
                         Err(err) => return err.encode(),
@@ -567,12 +571,14 @@ mod tests {
                 input_ptr: ::pyroduct::PyroViewPtr,
             ) -> ::pyroduct::ffi::FuturePyroVec {
                 ::pyroduct::ffi::guest::execute_safe_async(|| async move { 
+                    ::pyroduct::tracing::trace!(?capability_state_ptr, "Unpacking state");
                     let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                         Ok(state) => state,
                         Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
                     };
                     let state = state_ptr.as_ref::<MockServer>();
 
+                    ::pyroduct::tracing::trace!(?client_state_ptr, "Unpacking client");
                     let client: MockClient = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
                         Ok(buf) => buf,
                         Err(err) => return err.encode(),
@@ -634,17 +640,20 @@ mod tests {
                 input_ptr: ::pyroduct::PyroViewPtr,
             ) -> ::pyroduct::PyroVecPtr {
                 ::pyroduct::ffi::guest::execute_safe(|| { 
+                    ::pyroduct::tracing::trace!(?capability_state_ptr, "Unpacking state");
                     let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                         Ok(state) => state,
                         Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
                     };
                     let state = state_ptr.as_ref::<MockServer>();
 
+                    ::pyroduct::tracing::trace!(?client_state_ptr, "Unpacking client");
                     let client: MockClient = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
                         Ok(buf) => buf,
                         Err(err) => return err.encode(),
                     };
 
+                    ::pyroduct::tracing::trace!(?input_ptr, "Unpacking input");
                     let input: i32 = match ::pyroduct::ffi::guest::deserialize_input(input_ptr) {
                         Ok(buf) => buf,
                         Err(err) => return err.encode(),
@@ -716,17 +725,20 @@ mod tests {
                 input_ptr: ::pyroduct::PyroViewPtr,
             ) -> ::pyroduct::ffi::FuturePyroVec {
                 ::pyroduct::ffi::guest::execute_safe_async(|| async move { 
+                    ::pyroduct::tracing::trace!(?capability_state_ptr, "Unpacking state");
                     let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                         Ok(state) => state,
                         Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
                     };
                     let state = state_ptr.as_ref::<MockServer>();
 
+                    ::pyroduct::tracing::trace!(?client_state_ptr, "Unpacking client");
                     let client: MockClient = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
                         Ok(buf) => buf,
                         Err(err) => return err.encode(),
                     };
 
+                    ::pyroduct::tracing::trace!(?input_ptr, "Unpacking input");
                     let input: p__MockServer__TestSciMulti__Input = match ::pyroduct::ffi::guest::deserialize_input(input_ptr) {
                         Ok(buf) => buf,
                         Err(err) => return err.encode(),

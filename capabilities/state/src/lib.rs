@@ -27,6 +27,7 @@ impl CounterServer {
 
     /// Initialize the counter server with optional max value config
     fn new(config: Option<CounterConfig>) -> Self {
+        pyroduct::tracing::info!("Init");
         let max_value = config.map(|c| c.max_value).unwrap_or(u64::MAX);
         Self {
             max_value,

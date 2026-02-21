@@ -1,614 +1,309 @@
-// use pyroduct::{
-//     Bridgeable, BridgeableResult, CapturedError, PyroVec, PyroViewPtr, bridgeable,
-//     ffi::{
-//         PyroObject, PyroRefObjectPtr,
-//         guest::{
-//             execute_safe,
-//         },
-//     },
-//     format::{HasReceiver, Receiver},
-//     header::{DataStatus, PyroHeader},
-//     panic::register_ffi_panic_hook,
-// };
-// use std::ptr;
-
-// // --- Test Structures ---
-
-// #[bridgeable(derive(Debug, Clone, PartialEq))]
-// #[derive(Debug, Clone, PartialEq)]
-// struct UserData {
-//     id: u32,
-//     payload: String,
-// }
-
-// #[bridgeable(derive(Debug, Clone, PartialEq))]
-// #[derive(Debug, Clone, PartialEq)]
-// struct UserError {
-//     code: u16,
-//     msg: String,
-// }
-
-// // --- Success Path Tests ---
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_execute_safe_success_path() {
-//     let result = unsafe {
-//         PyroVec::from_raw(execute_safe(|| UserData {
-//             id: 101,
-//             payload: "Success".to_string(),
-//         }.ship().unwrap_or_else(|e| e.encode())))
-//         .unwrap()
-//     };
-
-//     assert_eq!(result.status(), Ok(DataStatus::RkyvValid));
-
-//     let typed = UserData::expose(result).expect("Should parse as UserData");
-//     // Zero-copy access
-//     assert_eq!(typed.id, 101);
-//     assert_eq!(typed.payload.as_str(), "Success");
-// }
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_execute_safe_with_complex_data() {
-//     let result = unsafe {
-//         PyroVec::from_raw(execute_safe(|| UserData {
-//             id: u32::MAX,
-//             payload: "A".repeat(10000),
-//         }.ship().unwrap_or_else(|e| e.encode())))
-//         .unwrap()
-//     };
-
-//     assert_eq!(result.status(), Ok(DataStatus::RkyvValid));
-
-//     let typed = UserData::expose(result).expect("Should parse large payload");
-//     assert_eq!(typed.id, u32::MAX);
-//     assert_eq!(typed.payload.len(), 10000);
-// }
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_execute_safe_empty_string() {
-//     let result = unsafe {
-//         PyroVec::from_raw(execute_safe(|| UserData {
-//             id: 0,
-//             payload: String::new(),
-//         }.ship().unwrap_or_else(|e| e.encode())))
-//         .unwrap()
-//     };
-
-//     assert_eq!(result.status(), Ok(DataStatus::RkyvValid));
-
-//     let typed = UserData::expose(result).expect("Should parse empty payload");
-//     assert_eq!(typed.id, 0);
-//     assert!(typed.payload.is_empty());
-// }
-
-// // --- Panic Safety Tests ---
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_execute_safe_catches_panic() {
-//     register_ffi_panic_hook();
-
-//     let result = unsafe {
-//         PyroVec::from_raw(execute_safe(|| -> UserData {
-//             panic!("Intentional test panic");
-//         }.ship().unwrap_or_else(|e| e.encode())))
-//         .unwrap()
-//     };
-
-//     assert_eq!(result.status(), Ok(DataStatus::CodeError));
-
-//     // Parse as JSON to verify error structure
-//     let slice = result.as_slice();
-//     let error: CapturedError =
-//         serde_json::from_slice(slice).expect("Should deserialize as CapturedError");
-
-//     assert!(error.message.contains("Intentional test panic"));
-//     assert!(!error.file.is_empty());
-//     assert!(error.line > 0);
-// }
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_execute_safe_catches_panic_with_string_payload() {
-//     register_ffi_panic_hook();
-
-//     let result = unsafe {
-//         PyroVec::from_raw(execute_safe(|| -> UserData {
-//             panic!("Owned string panic message");
-//         }))
-//         .unwrap()
-//     };
-
-//     assert_eq!(result.status(), Ok(DataStatus::CodeError));
-
-//     let slice = result.as_slice();
-//     let error: CapturedError =
-//         serde_json::from_slice(slice).expect("Should deserialize as CapturedError");
-
-//     assert!(error.message.contains("Owned string panic message"));
-// }
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_execute_safe_catches_panic_with_format() {
-//     register_ffi_panic_hook();
-
-//     let value = 42;
-//     let result = unsafe {
-//         PyroVec::from_raw(execute_safe(|| -> UserData {
-//             panic!("Formatted panic: value={}", value);
-//         }))
-//         .unwrap()
-//     };
-
-//     assert_eq!(result.status(), Ok(DataStatus::CodeError));
-
-//     let slice = result.as_slice();
-//     let error: CapturedError =
-//         serde_json::from_slice(slice).expect("Should deserialize as CapturedError");
-
-//     assert!(error.message.contains("value=42"));
-// }
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_panic_location_captured() {
-//     register_ffi_panic_hook();
-
-//     let result = unsafe {
-//         PyroVec::from_raw(execute_safe(|| -> UserData {
-//             panic!("Location test");
-//         }))
-//         .unwrap()
-//     };
-
-//     let slice = result.as_slice();
-//     let error: CapturedError = serde_json::from_slice(slice).unwrap();
-
-//     // File should contain the test file path
-//     assert!(error.file.contains("ffi_safety.rs"));
-//     // Line should be reasonable (not 0)
-//     assert!(error.line > 0);
-//     // Column should be captured
-//     assert!(error.column > 0);
-// }
-
-// // --- Multiple Sequential Calls ---
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_multiple_successful_calls() {
-//     for i in 0..10 {
-//         let result = unsafe {
-//             PyroVec::from_raw(execute_safe(|| UserData {
-//                 id: i,
-//                 payload: format!("Call {}", i),
-//             }))
-//             .unwrap()
-//         };
-
-//         assert_eq!(result.status(), Ok(DataStatus::RkyvValid));
-//         let typed = UserData::expose(result).unwrap();
-//         assert_eq!(typed.id, i);
-//     }
-// }
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_panic_then_success() {
-//     register_ffi_panic_hook();
-
-//     // First call panics
-//     let result1 = unsafe {
-//         PyroVec::from_raw(execute_safe(|| -> UserData {
-//             panic!("First call panic");
-//         }))
-//         .unwrap()
-//     };
-
-//     assert_eq!(result1.status(), Ok(DataStatus::CodeError));
-
-//     // Second call succeeds - state should be clean
-//     let result2 = unsafe {
-//         PyroVec::from_raw(execute_safe(|| UserData {
-//             id: 999,
-//             payload: "Recovery".to_string(),
-//         }))
-//         .unwrap()
-//     };
-//     assert_eq!(result2.status(), Ok(DataStatus::RkyvValid));
-
-//     let typed = UserData::expose(result2).unwrap();
-//     assert_eq!(typed.id, 999);
-// }
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_alternating_panic_and_success() {
-//     register_ffi_panic_hook();
-
-//     for i in 0..5 {
-//         if i % 2 == 0 {
-//             let result = unsafe {
-//                 PyroVec::from_raw(execute_safe(|| -> UserData {
-//                     panic!("Panic iteration {}", i);
-//                 }))
-//                 .unwrap()
-//             };
-//             assert_eq!(result.status(), Ok(DataStatus::CodeError));
-//         } else {
-//             let result = unsafe {
-//                 PyroVec::from_raw(execute_safe(|| UserData {
-//                     id: i,
-//                     payload: "Success".to_string(),
-//                 }))
-//                 .unwrap()
-//             };
-//             assert_eq!(result.status(), Ok(DataStatus::RkyvValid));
-//         }
-//     }
-// }
-
-// // --- Edge Cases ---
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_execute_safe_with_unit_type() {
-//     // Test that unit type () works with PyroVec::from_raw(execute_safe
-//     let result = unsafe { PyroVec::from_raw(execute_safe(|| ())) }.unwrap();
-//     assert_eq!(result.status(), Ok(DataStatus::RkyvValid));
-// }
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_execute_safe_with_primitive() {
-//     let result = unsafe { PyroVec::from_raw(execute_safe(|| 42u64)) }.unwrap();
-//     assert_eq!(result.status(), Ok(DataStatus::RkyvValid));
-
-//     let typed = u64::expose(result).expect("Should parse u64");
-//     assert_eq!(*typed, 42);
-// }
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_execute_safe_with_vec() {
-//     let result = unsafe { PyroVec::from_raw(execute_safe(|| vec![1u32, 2, 3, 4, 5])) }.unwrap();
-//     assert_eq!(result.status(), Ok(DataStatus::RkyvValid));
-
-//     let typed = Vec::<u32>::expose(result).expect("Should parse Vec");
-//     let mut receiver = typed.receiver();
-//     assert_eq!(receiver.receive(&typed).unwrap(), vec![1, 2, 3, 4, 5]);
-// }
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_execute_safe_with_option_some() {
-//     let result = unsafe { PyroVec::from_raw(execute_safe(|| Some("hello".to_string()))) }.unwrap();
-//     assert_eq!(result.status(), Ok(DataStatus::RkyvValid));
-
-//     let typed = Option::<String>::expose(result).expect("Should parse Option");
-//     let mut receiver = typed.receiver();
-//     assert_eq!(receiver.receive(&typed).unwrap(), Some("hello".to_string()));
-// }
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_execute_safe_with_option_none() {
-//     let result = unsafe { PyroVec::from_raw(execute_safe(|| Option::<String>::None)) }.unwrap();
-//     assert_eq!(result.status(), Ok(DataStatus::RkyvValid));
-
-//     let typed = Option::<String>::expose(result).expect("Should parse Option");
-//     let mut receiver = typed.receiver();
-//     assert_eq!(receiver.receive(&typed).unwrap(), None);
-// }
-
-// // --- Thread Safety ---
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_panic_hook_idempotent() {
-//     // Calling register multiple times should be safe
-//     register_ffi_panic_hook();
-//     register_ffi_panic_hook();
-//     register_ffi_panic_hook();
-
-//     let result = unsafe {
-//         PyroVec::from_raw(execute_safe(|| -> UserData {
-//             panic!("After multiple registrations");
-//         }))
-//         .unwrap()
-//     };
-
-//     assert_eq!(result.status(), Ok(DataStatus::CodeError));
-// }
-
-// // --- Roundtrip Tests ---
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_user_data_roundtrip() {
-//     let original = UserData {
-//         id: 12345,
-//         payload: "roundtrip test".to_string(),
-//     };
-
-//     let result = unsafe { PyroVec::from_raw(execute_safe(|| original.clone())) }.unwrap();
-//     assert_eq!(result.status(), Ok(DataStatus::RkyvValid));
-
-//     let typed = UserData::expose(result).unwrap();
-//     let mut receiver = typed.receiver();
-//     let recovered = receiver.receive(&typed).unwrap();
-
-//     assert_eq!(original, recovered);
-// }
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_user_error_roundtrip() {
-//     let original = UserError {
-//         code: 500,
-//         msg: "Internal error".to_string(),
-//     };
-
-//     let result = unsafe { PyroVec::from_raw(execute_safe(|| original.clone())) }.unwrap();
-//     assert_eq!(result.status(), Ok(DataStatus::RkyvValid));
-
-//     let typed = UserError::expose(result).unwrap();
-//     let mut receiver = typed.receiver();
-//     let recovered = receiver.receive(&typed).unwrap();
-
-//     assert_eq!(original, recovered);
-// }
-
-// // --- Mock State and Functions for safe_call testing ---
-
-// struct MockServer {
-//     value: u32,
-// }
-
-// // Implement standard traits required for safe execution
-// unsafe impl Send for MockServer {}
-// unsafe impl Sync for MockServer {}
-
-// impl MockServer {
-//     fn test_sci(&self, _client: UserData, input: UserData) -> Result<UserData, UserError> {
-//         if input.id == 0 {
-//             Err(UserError {
-//                 code: 400,
-//                 msg: "Invalid ID".into(),
-//             })
-//         } else {
-//             Ok(UserData {
-//                 id: self.value + input.id,
-//                 payload: input.payload,
-//             })
-//         }
-//     }
-
-//     fn test_sc(&self, client: UserData) -> UserData {
-//         UserData {
-//             id: self.value,
-//             payload: client.payload,
-//         }
-//     }
-// }
-
-// fn standalone_i(input: UserData) -> UserData {
-//     UserData {
-//         id: input.id * 2,
-//         payload: "standalone".into(),
-//     }
-// }
-
-// fn standalone_empty() -> u32 {
-//     42
-// }
-
-// // --- helper to create a Mock Object ---
-// fn create_mock_state(val: u32) -> PyroObject {
-//     unsafe extern "C" fn dropper(ptr: *mut std::ffi::c_void) {
-//         drop(unsafe { Box::from_raw(ptr as *mut MockServer) });
-//     }
-//     let state = Box::into_raw(Box::new(MockServer { value: val })) as *mut std::ffi::c_void;
-//     unsafe { PyroObject::new(state, dropper).unwrap() }
-// }
-
-// // --- safe_call Tests ---
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_sci_call_success() {
-//     let state = create_mock_state(100);
-//     let client_vec = UserData {
-//         id: 1,
-//         payload: "C".into(),
-//     }
-//     .ship()
-//     .unwrap();
-//     let input_vec = UserData {
-//         id: 50,
-//         payload: "I".into(),
-//     }
-//     .ship()
-//     .unwrap();
-
-//     let res_ptr = sci_call_result::<MockServer, UserData, UserData, UserData, UserError, _>(
-//         state.ref_ptr(),
-//         client_vec.view().ptr(),
-//         input_vec.view().ptr(),
-//         |s, c, i| s.test_sci(c, i),
-//     );
-
-//     let result = unsafe { PyroVec::from_raw(res_ptr).unwrap() };
-//     assert_eq!(result.status(), Ok(DataStatus::RkyvValid));
-//     let typed = Result::<UserData, UserError>::expose(result)
-//         .unwrap()
-//         .unwrap();
-//     assert_eq!(typed.id, 150);
-// }
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_sci_call_user_error() {
-//     let state = create_mock_state(100);
-//     let client_vec = UserData {
-//         id: 1,
-//         payload: "C".into(),
-//     }
-//     .ship()
-//     .unwrap();
-//     let input_vec = UserData {
-//         id: 0,
-//         payload: "Fail".into(),
-//     }
-//     .ship()
-//     .unwrap();
-
-//     let res_ptr = sci_call_result::<MockServer, UserData, UserData, UserData, UserError, _>(
-//         state.ref_ptr(),
-//         client_vec.view().ptr(),
-//         input_vec.view().ptr(),
-//         |s, c, i| s.test_sci(c, i),
-//     );
-
-//     let result = unsafe { PyroVec::from_raw(res_ptr).unwrap() };
-//     assert_eq!(result.status(), Ok(DataStatus::RkyvError));
-//     let typed = Result::<UserData, UserError>::expose(result)
-//         .unwrap()
-//         .unwrap_err();
-//     assert_eq!(typed.code, 400);
-// }
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_sc_call_success() {
-//     let state = create_mock_state(500);
-//     let client_vec = UserData {
-//         id: 1,
-//         payload: "ClientData".into(),
-//     }
-//     .ship()
-//     .unwrap();
-
-//     let res_ptr = sc_call::<MockServer, UserData, UserData, _>(
-//         state.ref_ptr(),
-//         client_vec.view().ptr(),
-//         PyroViewPtr {
-//             ptr: ptr::null(),
-//             len: 0,
-//         },
-//         |s, c| s.test_sc(c),
-//     );
-
-//     let result = unsafe { PyroVec::from_raw(res_ptr).unwrap() };
-//     let typed = UserData::expose(result).unwrap();
-//     assert_eq!(typed.id, 500);
-//     assert_eq!(typed.payload.as_str(), "ClientData");
-// }
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_i_call_success() {
-//     let input_vec = UserData {
-//         id: 21,
-//         payload: "Input".into(),
-//     }
-//     .ship()
-//     .unwrap();
-
-//     let res_ptr = i_call::<UserData, UserData, _>(
-//         PyroRefObjectPtr {
-//             state: ptr::null_mut(),
-//         },
-//         PyroViewPtr {
-//             ptr: ptr::null(),
-//             len: 0,
-//         },
-//         input_vec.view().ptr(),
-//         standalone_i,
-//     );
-
-//     let result = unsafe { PyroVec::from_raw(res_ptr).unwrap() };
-//     let typed = Result::<UserData, UserError>::expose(result)
-//         .unwrap()
-//         .unwrap();
-//     assert_eq!(typed.id, 42);
-// }
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_empty_call_success() {
-//     let res_ptr = empty_call::<u32, _>(
-//         PyroRefObjectPtr {
-//             state: ptr::null_mut(),
-//         },
-//         PyroViewPtr {
-//             ptr: ptr::null(),
-//             len: 0,
-//         },
-//         PyroViewPtr {
-//             ptr: ptr::null(),
-//             len: 0,
-//         },
-//         standalone_empty,
-//     );
-
-//     let result = unsafe { PyroVec::from_raw(res_ptr).unwrap() };
-//     let typed = u32::expose(result).unwrap();
-//     assert_eq!(*typed, 42);
-// }
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_safe_call_invalid_state_ptr() {
-//     let bad_state = PyroRefObjectPtr {
-//         state: ptr::null_mut(),
-//     };
-//     let client_vec = UserData {
-//         id: 1,
-//         payload: "x".into(),
-//     }
-//     .ship()
-//     .unwrap();
-
-//     let res_ptr = sc_call::<MockServer, UserData, UserData, _>(
-//         bad_state,
-//         client_vec.view().ptr(),
-//         PyroViewPtr {
-//             ptr: ptr::null(),
-//             len: 0,
-//         },
-//         |s, c| s.test_sc(c),
-//     );
-
-//     let result = unsafe { PyroVec::from_raw(res_ptr).unwrap() };
-//     assert_eq!(result.status(), Ok(DataStatus::CodeError)); // Panics on null state
-// }
-
-// #[tracing_test::traced_test]
-// #[test]
-// fn test_safe_call_deserialization_failure() {
-//     let state = create_mock_state(100);
-//     // Provide an empty/garbage view where valid data is expected
-//     let bad_view = PyroViewPtr {
-//         ptr: ptr::null(),
-//         len: 0,
-//     };
-
-//     let res_ptr = sc_call::<MockServer, UserData, UserData, _>(
-//         state.ref_ptr(),
-//         bad_view,
-//         PyroViewPtr {
-//             ptr: ptr::null(),
-//             len: 0,
-//         },
-//         |s, c| s.test_sc(c),
-//     );
-
-//     let result = unsafe { PyroVec::from_raw(res_ptr).unwrap() };
-//     assert_eq!(result.status(), Ok(DataStatus::PyroFfiFail)); // Failed to parse header
-// }
+use pyroduct::{
+    Bridgeable, BridgeableResult, CapturedError, PyroVec, bridgeable,
+    ffi::guest::{
+        deserialize_input, execute_safe, serialize_output, serialize_result,
+    },
+    format::{HasReceiver, Receiver},
+    header::{DataStatus, PyroHeader},
+    panic::register_ffi_panic_hook,
+};
+
+// --- Test Structures ---
+
+#[bridgeable(derive(Debug, Clone, PartialEq))]
+#[derive(Debug, Clone, PartialEq)]
+struct UserData {
+    id: u32,
+    payload: String,
+}
+
+#[bridgeable(derive(Debug, Clone, PartialEq))]
+#[derive(Debug, Clone, PartialEq)]
+struct UserError {
+    code: u16,
+    msg: String,
+}
+
+// =============================================================================
+// execute_safe
+// =============================================================================
+
+#[test]
+fn test_execute_safe_success() {
+    let vec = unsafe {
+        PyroVec::from_raw(execute_safe(|| {
+            serialize_output(UserData {
+                id: 101,
+                payload: "Success".into(),
+            })
+        }))
+        .unwrap()
+    };
+
+    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+    let typed = UserData::expose(vec).expect("Should parse as UserData");
+    assert_eq!(typed.id, 101);
+    assert_eq!(typed.payload.as_str(), "Success");
+}
+
+#[test]
+fn test_execute_safe_large_payload() {
+    let vec = unsafe {
+        PyroVec::from_raw(execute_safe(|| {
+            serialize_output(UserData {
+                id: u32::MAX,
+                payload: "A".repeat(10_000),
+            })
+        }))
+        .unwrap()
+    };
+
+    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+    let typed = UserData::expose(vec).unwrap();
+    assert_eq!(typed.id, u32::MAX);
+    assert_eq!(typed.payload.len(), 10_000);
+}
+
+#[test]
+fn test_execute_safe_catches_panic() {
+    register_ffi_panic_hook();
+
+    let vec = unsafe {
+        PyroVec::from_raw(execute_safe(|| -> PyroVec {
+            panic!("Intentional test panic");
+        }))
+        .unwrap()
+    };
+
+    assert_eq!(vec.status(), Ok(DataStatus::CodeError));
+    let slice = vec.as_slice();
+    let error: CapturedError = serde_json::from_slice(slice).expect("Should be CapturedError");
+    assert!(error.message.contains("Intentional test panic"));
+}
+
+#[test]
+fn test_execute_safe_panic_captures_location() {
+    register_ffi_panic_hook();
+
+    let vec = unsafe {
+        PyroVec::from_raw(execute_safe(|| -> PyroVec {
+            panic!("Location test");
+        }))
+        .unwrap()
+    };
+
+    let error: CapturedError = serde_json::from_slice(vec.as_slice()).unwrap();
+    assert!(error.file.contains("ffi_safety.rs"));
+    assert!(error.line > 0);
+}
+
+#[test]
+fn test_execute_safe_panic_then_success() {
+    register_ffi_panic_hook();
+
+    // First: panic
+    let r1 = unsafe {
+        PyroVec::from_raw(execute_safe(|| -> PyroVec {
+            panic!("boom");
+        }))
+        .unwrap()
+    };
+    assert_eq!(r1.status(), Ok(DataStatus::CodeError));
+
+    // Second: success — state should be clean
+    let r2 = unsafe {
+        PyroVec::from_raw(execute_safe(|| {
+            serialize_output(UserData { id: 999, payload: "Recovery".into() })
+        }))
+        .unwrap()
+    };
+    assert_eq!(r2.status(), Ok(DataStatus::RkyvValid));
+    let typed = UserData::expose(r2).unwrap();
+    assert_eq!(typed.id, 999);
+}
+
+#[test]
+fn test_execute_safe_multiple_sequential() {
+    for i in 0..10u32 {
+        let vec = unsafe {
+            PyroVec::from_raw(execute_safe(|| {
+                serialize_output(UserData { id: i, payload: format!("Call {i}") })
+            }))
+            .unwrap()
+        };
+        assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+        let typed = UserData::expose(vec).unwrap();
+        assert_eq!(typed.id, i);
+    }
+}
+
+// =============================================================================
+// serialize_output
+// =============================================================================
+
+#[test]
+fn test_serialize_output_struct() {
+    let vec = serialize_output(UserData { id: 42, payload: "hello".into() });
+    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+
+    let typed = UserData::expose(vec).unwrap();
+    assert_eq!(typed.id, 42);
+    assert_eq!(typed.payload.as_str(), "hello");
+}
+
+#[test]
+fn test_serialize_output_empty_string() {
+    let vec = serialize_output(UserData { id: 0, payload: String::new() });
+    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+
+    let typed = UserData::expose(vec).unwrap();
+    assert_eq!(typed.id, 0);
+    assert!(typed.payload.is_empty());
+}
+
+#[test]
+fn test_serialize_output_primitive() {
+    let vec = serialize_output(42u64);
+    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+
+    let typed = u64::expose(vec).expect("Should parse u64");
+    assert_eq!(*typed, 42);
+}
+
+#[test]
+fn test_serialize_output_vec() {
+    let vec = serialize_output(vec![1u32, 2, 3, 4, 5]);
+    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+
+    let typed = Vec::<u32>::expose(vec).unwrap();
+    let mut receiver = typed.receiver();
+    assert_eq!(receiver.receive(&typed).unwrap(), vec![1, 2, 3, 4, 5]);
+}
+
+#[test]
+fn test_serialize_output_option_some() {
+    let vec = serialize_output(Some("hello".to_string()));
+    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+
+    let typed = Option::<String>::expose(vec).unwrap();
+    let mut receiver = typed.receiver();
+    assert_eq!(receiver.receive(&typed).unwrap(), Some("hello".to_string()));
+}
+
+#[test]
+fn test_serialize_output_option_none() {
+    let vec = serialize_output(Option::<String>::None);
+    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+
+    let typed = Option::<String>::expose(vec).unwrap();
+    let mut receiver = typed.receiver();
+    assert_eq!(receiver.receive(&typed).unwrap(), None);
+}
+
+// =============================================================================
+// serialize_result
+// =============================================================================
+
+#[test]
+fn test_serialize_result_ok() {
+    let vec = serialize_result::<UserData, UserError>(Ok(UserData {
+        id: 200,
+        payload: "ok".into(),
+    }));
+    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+
+    let typed = <Result<UserData, UserError>>::expose(vec).unwrap().unwrap();
+    assert_eq!(typed.id, 200);
+    assert_eq!(typed.payload.as_str(), "ok");
+}
+
+#[test]
+fn test_serialize_result_err() {
+    let vec = serialize_result::<UserData, UserError>(Err(UserError {
+        code: 404,
+        msg: "not found".into(),
+    }));
+    assert_eq!(vec.status(), Ok(DataStatus::RkyvError));
+
+    let typed = <Result<UserData, UserError>>::expose(vec).unwrap().unwrap_err();
+    assert_eq!(typed.code, 404);
+    assert_eq!(typed.msg.as_str(), "not found");
+}
+
+// =============================================================================
+// deserialize_input
+// =============================================================================
+
+#[test]
+fn test_deserialize_input_roundtrip() {
+    let original = UserData { id: 77, payload: "roundtrip".into() };
+    let shipped = original.ship().unwrap();
+    let view_ptr = shipped.view().ptr();
+
+    let recovered: UserData = deserialize_input(view_ptr).expect("Should deserialize");
+    assert_eq!(recovered, original);
+}
+
+#[test]
+fn test_deserialize_input_primitive() {
+    let shipped = 123u32.ship().unwrap();
+    let view_ptr = shipped.view().ptr();
+
+    let recovered: u32 = deserialize_input(view_ptr).expect("Should deserialize u32");
+    assert_eq!(recovered, 123);
+}
+
+// =============================================================================
+// Roundtrip: serialize_output → from_raw → expose → receive
+// =============================================================================
+
+#[test]
+fn test_full_roundtrip_user_data() {
+    let original = UserData { id: 12345, payload: "roundtrip test".into() };
+
+    let vec = unsafe {
+        PyroVec::from_raw(execute_safe(|| serialize_output(original.clone())))
+            .unwrap()
+    };
+    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+
+    let typed = UserData::expose(vec).unwrap();
+    let mut receiver = typed.receiver();
+    let recovered = receiver.receive(&typed).unwrap();
+    assert_eq!(original, recovered);
+}
+
+#[test]
+fn test_full_roundtrip_user_error() {
+    let original = UserError { code: 500, msg: "Internal error".into() };
+
+    let vec = unsafe {
+        PyroVec::from_raw(execute_safe(|| serialize_output(original.clone())))
+            .unwrap()
+    };
+    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+
+    let typed = UserError::expose(vec).unwrap();
+    let mut receiver = typed.receiver();
+    let recovered = receiver.receive(&typed).unwrap();
+    assert_eq!(original, recovered);
+}
+
+// =============================================================================
+// Panic hook idempotency
+// =============================================================================
+
+#[test]
+fn test_panic_hook_idempotent() {
+    register_ffi_panic_hook();
+    register_ffi_panic_hook();
+    register_ffi_panic_hook();
+
+    let vec = unsafe {
+        PyroVec::from_raw(execute_safe(|| -> PyroVec {
+            panic!("After multiple registrations");
+        }))
+        .unwrap()
+    };
+    assert_eq!(vec.status(), Ok(DataStatus::CodeError));
+}

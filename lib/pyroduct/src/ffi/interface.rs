@@ -101,6 +101,7 @@ impl Future for MethodCallFuture {
 
 /// The FFI-safe representation of an OWNED instance.
 #[repr(C)]
+#[derive(Debug)]
 pub struct PyroObjectPtr {
     pub state: *mut c_void,
     pub dropper: ClassDropper,
@@ -110,7 +111,7 @@ unsafe impl Send for PyroObjectPtr {}
 
 /// The FFI-safe representation of a BORROWED instance.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct PyroRefObjectPtr {
     pub state: *mut c_void,
 }
@@ -122,6 +123,7 @@ unsafe impl Sync for PyroRefObjectPtr {}
 pub type ClassDropper = unsafe extern "C" fn(ptr: *mut c_void);
 
 /// An owned, RAII wrapper around an opaque state pointer.
+#[derive(Debug)]
 pub struct PyroObject {
     state: NonNull<c_void>,
     dropper: ClassDropper,
@@ -205,6 +207,7 @@ impl Drop for PyroObject {
 }
 
 /// A borrowed wrapper around an opaque state pointer.
+#[derive(Clone, Copy, Debug)]
 pub struct PyroObjectRef {
     state: NonNull<c_void>,
 }
@@ -270,6 +273,7 @@ impl InitResult {
     /// Construct a successful `InitResult` from a state value.
     pub fn init_ok<S: 'static>(state: S) -> InitResult {
         let state_ptr = Box::into_raw(Box::new(state)) as *mut std::ffi::c_void;
+        tracing::debug!(?state_ptr, "Object allocated and forgotten");
         InitResult {
             state: PyroObjectPtr {
                 state: state_ptr,

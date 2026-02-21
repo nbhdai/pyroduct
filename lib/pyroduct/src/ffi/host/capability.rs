@@ -65,7 +65,7 @@ unsafe extern "C" fn log_callback(id: i64, msg: *const u8, msg_len: usize) {
 
     if let Some(s) = spans.get(id as usize) {
         let _enter = s.enter();
-        tracing::debug!("{}", msg);
+        tracing::debug!("Capability {}: {}", id, msg);
     }
 }
 
