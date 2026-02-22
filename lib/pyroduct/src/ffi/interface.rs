@@ -11,7 +11,7 @@ use crate::header::PyroData;
 use crate::view::{PyroView, PyroViewPtr};
 use crate::{CapturedError, PyroError, PyroVec, PyroVecPtr};
 
-pub type LogCallback = unsafe extern "C" fn(i64, *const u8, usize);
+pub type LogCallback = unsafe extern "C" fn(i64, i64, *const u8, usize);
 
 // ============================================================================
 // Function pointer types
@@ -105,6 +105,7 @@ impl Future for MethodCallFuture {
 pub struct PyroObjectPtr {
     pub state: *mut c_void,
     pub dropper: ClassDropper,
+    span_id: i64,
 }
 
 unsafe impl Send for PyroObjectPtr {}
@@ -114,6 +115,7 @@ unsafe impl Send for PyroObjectPtr {}
 #[derive(Clone, Copy, Debug)]
 pub struct PyroRefObjectPtr {
     pub state: *mut c_void,
+    span_id: i64,
 }
 
 unsafe impl Send for PyroRefObjectPtr {}
@@ -127,6 +129,7 @@ pub type ClassDropper = unsafe extern "C" fn(ptr: *mut c_void);
 pub struct PyroObject {
     state: NonNull<c_void>,
     dropper: ClassDropper,
+    span_id: i64,
 }
 
 unsafe impl Send for PyroObject {}
@@ -136,13 +139,14 @@ unsafe impl Sync for PyroObject {}
 
 impl PyroObject {
     /// Creates a new PyroObject from raw components.
-    pub unsafe fn new(state: *mut c_void, dropper: ClassDropper) -> Result<Self, CapturedError> {
+    pub unsafe fn new(state: *mut c_void, dropper: ClassDropper, span_id: i64) -> Result<Self, CapturedError> {
         let state = NonNull::new(state)
             .ok_or_else(|| CapturedError::new("Cannot construct PyroObject from null pointer"))?;
 
         Ok(Self { 
             state,
             dropper,
+            span_id,
         })
     }
 
@@ -151,6 +155,7 @@ impl PyroObject {
         let ptr = PyroObjectPtr {
             state: self.state.as_ptr(),
             dropper: self.dropper,
+            span_id: self.span_id,
         };
         std::mem::forget(self);
         ptr
@@ -165,6 +170,7 @@ impl PyroObject {
         Ok(Self {
             state,
             dropper: raw.dropper,
+            span_id: raw.span_id,
         })
     }
 
@@ -172,6 +178,7 @@ impl PyroObject {
     pub fn ref_ptr(&self) -> PyroRefObjectPtr {
         PyroRefObjectPtr {
             state: self.state.as_ptr(),
+            span_id: self.span_id,
         }
     }
 
@@ -179,6 +186,7 @@ impl PyroObject {
     pub fn as_borrowed(&self) -> PyroObjectRef {
         PyroObjectRef {
             state: self.state,
+            span_id: self.span_id,
         }
     }
 
@@ -210,6 +218,7 @@ impl Drop for PyroObject {
 #[derive(Clone, Copy, Debug)]
 pub struct PyroObjectRef {
     state: NonNull<c_void>,
+    span_id: i64,
 }
 
 unsafe impl Send for PyroObjectRef {}
@@ -224,12 +233,14 @@ impl PyroObjectRef {
 
         Ok(Self {
             state,
+            span_id: raw.span_id,
         })
     }
 
     pub fn as_raw(&self) -> PyroRefObjectPtr {
         PyroRefObjectPtr {
             state: self.state.as_ptr(),
+            span_id: self.span_id,
         }
     }
 
@@ -271,24 +282,26 @@ unsafe extern "C" fn typed_dropper<S>(ptr: *mut std::ffi::c_void) {
 
 impl InitResult {
     /// Construct a successful `InitResult` from a state value.
-    pub fn init_ok<S: 'static>(state: S) -> InitResult {
+    pub fn init_ok<S: 'static>(state: S, span_id: i64) -> InitResult {
         let state_ptr = Box::into_raw(Box::new(state)) as *mut std::ffi::c_void;
         tracing::debug!(?state_ptr, "Object allocated and forgotten");
         InitResult {
             state: PyroObjectPtr {
                 state: state_ptr,
                 dropper: typed_dropper::<S>,
+                span_id,
             },
             error: PyroVec::ok().into_raw(),
         }
     }
 
     /// Construct an error `InitResult` from a `PyroError`.
-    pub fn init_err(err: PyroError) -> InitResult {
+    pub fn init_err(err: PyroError, span_id: i64) -> InitResult {
         InitResult {
             state: PyroObjectPtr {
                 state: std::ptr::null_mut(),
                 dropper: typed_dropper::<()>,
+                span_id,
             },
             error: err.encode().into_raw(),
         }
@@ -358,6 +371,7 @@ fn process_init_result(res: InitResult) -> Result<PyroObject, PyroError> {
     Ok(PyroObject {
         state: state_ptr,
         dropper: res.state.dropper,
+        span_id: res.state.span_id,
     })
 }
 
@@ -705,6 +719,7 @@ mod tests {
             state: PyroObjectPtr {
                 state,
                 dropper: mock_dropper,
+                span_id: 0,
             },
             error: PyroVec::ok().into_raw(),
         }
@@ -795,7 +810,7 @@ mod tests {
             *s.borrow_mut() = None;
         });
 
-        let obj = unsafe { PyroObject::new(m.state_ptr, m.dropper) }.unwrap();
+        let obj = unsafe { PyroObject::new(m.state_ptr, m.dropper, 0) }.unwrap();
         drop(obj);
 
         assert!(
@@ -811,7 +826,7 @@ mod tests {
             *s.borrow_mut() = None;
         }); // Manual creation, clear TLS
 
-        let obj = unsafe { PyroObject::new(m.state_ptr, m.dropper) }.unwrap();
+        let obj = unsafe { PyroObject::new(m.state_ptr, m.dropper, 0) }.unwrap();
         let ref_ptr = obj.ref_ptr();
 
         assert_eq!(ref_ptr.state, m.state_ptr);

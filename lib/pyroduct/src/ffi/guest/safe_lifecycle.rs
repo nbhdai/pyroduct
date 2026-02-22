@@ -65,7 +65,7 @@ where
         Err(_) => {
             let panic_info = recover_panic_info();
             error!(panic = ?panic_info, "execute_safe_init: panic caught during initialization");
-            InitResult::init_err(PyroError::CodePanic(panic_info))
+            InitResult::init_err(PyroError::CodePanic(panic_info), 0)
         }
     }
 }

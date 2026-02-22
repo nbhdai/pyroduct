@@ -4,7 +4,7 @@ use std::future::Future;
 use wasmtime::{Caller, Instance, Linker, Store};
 
 use super::{PyroState, WasmError};
-use crate::ffi::host::capability::Capability;
+use crate::ffi::host::Capability;
 use crate::pipeline::wasm::PyroModule;
 use crate::pipeline::wasm::call::PyroCallIo;
 use crate::{

@@ -1,13 +1,11 @@
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::Path;
-use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use libloading::{Library, Symbol};
 use object::{Object, ObjectSymbol, SymbolKind};
 use thiserror::Error;
-use tracing::Span;
 
 use crate::PyroVec;
 use crate::ffi::{CapabilityRegisterFn, ClassExport, ForeignClass, ForeignObject};
@@ -51,34 +49,57 @@ pub enum CapabilityLoading {
 }
 
 // =============================================================================
-// Logging callback (Unchanged)
+// Logging
 // =============================================================================
 
-static LOG_CALLBACK_SPANS: RwLock<Vec<Span>> = RwLock::new(Vec::new());
-static NEXT_CAPABILITY_ID: AtomicI64 = AtomicI64::new(0);
+use dashmap::DashMap;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::LazyLock;
+use tokio::sync::mpsc;
 
-unsafe extern "C" fn log_callback(id: i64, msg: *const u8, msg_len: usize) {
+static LOG_SENDERS: LazyLock<DashMap<(i64, i64), mpsc::Sender<String>>> = LazyLock::new(DashMap::new);
+static NEXT_LIB_ID: AtomicI64 = AtomicI64::new(1);
+
+/// Create a new log channel. Returns the numeric ID (to pass to the C side)
+/// and a receiver you can poll to build up your logs.
+///
+/// `buffer` controls how many messages can queue before back-pressure kicks in.
+pub fn create_log(library_id: i64, span_id: i64, buffer: usize) -> mpsc::Receiver<String> {
+    let (tx, rx) = mpsc::channel(buffer);
+    LOG_SENDERS.insert((library_id, span_id), tx);
+    rx
+}
+
+/// Tear down a log channel. Drops the sender so the receiver will see the
+/// channel close on next poll.
+pub fn destroy_log(library_id: i64, span_id: i64) {
+    LOG_SENDERS.remove(&(library_id, span_id));
+}
+
+/// # Safety
+/// `msg` must point to `msg_len` valid bytes for the duration of this call.
+pub unsafe extern "C" fn log_callback(library_id: i64, span_id: i64, msg: *const u8, msg_len: usize) {
     let data = unsafe { std::slice::from_raw_parts(msg, msg_len) };
-    let log_msg = String::from_utf8_lossy(data);
-    let msg = log_msg.trim_end();
-    let spans = LOG_CALLBACK_SPANS.read().unwrap();
+    let log_msg = String::from_utf8_lossy(data).trim_end().to_string();
 
-    if let Some(s) = spans.get(id as usize) {
-        let _enter = s.enter();
-        tracing::debug!("Capability {}: {}", id, msg);
+    if let Some(tx) = LOG_SENDERS.get(&(library_id, span_id)) {
+        match tx.try_send(log_msg) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                eprintln!("[log] channel full for id=({library_id},{span_id}), dropping message");
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                // Receiver was dropped — clean up our side too.
+                drop(tx);
+                LOG_SENDERS.remove(&(library_id, span_id));
+            }
+        }
     }
 }
 
-fn allocate_span(name: &str) -> i64 {
-    let span = tracing::span!(tracing::Level::INFO, "CAPABILITY", name = name);
-    let mut spans = LOG_CALLBACK_SPANS.write().unwrap();
-    let id = spans.len() as i64;
-    spans.push(span);
-    id
-}
 
 // =============================================================================
-// Symbol scanning (Unchanged)
+// Symbol scanning
 // =============================================================================
 
 pub struct ScannedSymbol {
@@ -127,6 +148,7 @@ pub fn scan_pyro_symbols(path: &Path) -> Result<Vec<ScannedSymbol>, CapabilityLo
 // Library loader
 // =============================================================================
 
+
 pub struct CapabilityLibrary {
     pub capabilities: HashMap<String, Arc<ForeignClass>>,
 }
@@ -149,10 +171,10 @@ impl CapabilityLibrary {
                 reason: e.to_string(),
             }
         })?);
+        let library_id = NEXT_LIB_ID.fetch_add(1, Ordering::SeqCst);
 
         // 3. Register
         let mut capabilities = HashMap::with_capacity(pyro_symbols.len());
-
         for sym in &pyro_symbols {
             let sym_cstr = format!("{}\0", sym.name);
 
@@ -169,10 +191,7 @@ impl CapabilityLibrary {
                     }
                 };
 
-            let capability_id = NEXT_CAPABILITY_ID.fetch_add(1, Ordering::Relaxed);
-            let _span_id = allocate_span(&sym.name);
-
-            let export: ClassExport = unsafe { register_fn(capability_id, log_callback) };
+            let export: ClassExport = unsafe { register_fn(library_id, log_callback) };
 
             let class =
                 unsafe { ForeignClass::from_export(library.clone(), export) }.map_err(|e| {

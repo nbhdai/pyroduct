@@ -3,16 +3,36 @@ use std::sync::{Mutex, Once, OnceLock};
 use crate::ffi::interface::LogCallback;
 
 // Global storage for the log callback - shared across all plugins
-static LOG_CALLBACK: OnceLock<Mutex<(i64, LogCallback)>> = OnceLock::new();
+static LOG_CALLBACK: OnceLock<(i64, LogCallback)> = OnceLock::new();
+
+pub struct PyroSpanLayer;
+
+impl<S> tracing_subscriber::Layer<S> for PyroSpanLayer 
+where S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a> 
+{
+    fn on_event(&self, event: &tracing::Event<'_>, ctx: tracing_subscriber::layer::Context<'_, S>) {
+        if let Some(span) = ctx.lookup_current() {
+            let id = span.id().into_u64(); // Convert Id to FFI-safe u64
+            
+            if let Some((library_id, writer)) = LOG_CALLBACK.get() {
+                
+                    let mut msg = String::new();
+                    event.record(&mut StringVisitor(&mut msg));
+                    queue.push(msg);
+            }
+        }
+    }
+}
 
 static INIT: Once = Once::new();
 pub fn init_logging(id: i64, callback: LogCallback) {
-    let _ = LOG_CALLBACK.set(Mutex::new((id, callback)));
+    if LOG_CALLBACK.set((id, callback)).is_err() {
+        tracing::error!("Double set tracing callback, plugin double imported");
+    }
     let host_logger = HostLogger;
 
     INIT.call_once(|| {
         tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
             .with_writer(host_logger)
             .without_time()
             .with_ansi(false)

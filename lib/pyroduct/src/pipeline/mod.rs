@@ -8,7 +8,7 @@ pub use wasm_execute::{Failure, Pipeline, PipelinePool};
 use thiserror::Error;
 
 use crate::PyroError;
-use crate::ffi::host::capability::CapabilityLoading;
+use crate::ffi::host::CapabilityLoading;
 use crate::pipeline::wasm::WasmError;
 
 #[derive(Error, Debug)]

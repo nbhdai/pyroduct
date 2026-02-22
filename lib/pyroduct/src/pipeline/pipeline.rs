@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::ffi::host::capability::{Capability, CapabilityLibrary, CapabilityLoading};
+use crate::ffi::host::{Capability, CapabilityLibrary, CapabilityLoading};
 
 use super::PipelineError;
 
