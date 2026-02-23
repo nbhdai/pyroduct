@@ -19,9 +19,9 @@ use super::{PipelineError, PipelineResult};
 // =============================================================================
 
 pub struct PipelineExecution {
-    row_index: usize,
-    steps: Vec<PyroSuccess>,
-    failure: Option<PyroFailure>
+    pub row_index: usize,
+    pub steps: Vec<PyroSuccess>,
+    pub failure: Option<PyroFailure>
 }
 
 pub struct Pipeline {

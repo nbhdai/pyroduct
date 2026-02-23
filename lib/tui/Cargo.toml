@@ -1,0 +1,14 @@
+[package]
+name = "tui"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+crossterm = "0.29.0"
+ratatui = "0.30.0"
+ratatui-code-editor = "0.0.1"
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
