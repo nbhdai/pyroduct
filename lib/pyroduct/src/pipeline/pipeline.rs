@@ -36,18 +36,11 @@ use super::PipelineError;
 #[derive(Deserialize, Debug)]
 pub struct PipelineConfig {
     /// Named shared libraries on disk. Each is loaded once.
-    pub libraries: HashMap<String, LibraryConfig>,
+    pub libraries: HashMap<String, PathBuf>,
     /// Named wasm modules, each with its own capability instances.
     pub modules: HashMap<String, ModuleConfig>,
     /// Ordered list of module names to execute.
     pub pipeline: Vec<String>,
-}
-
-/// A shared library on disk that exposes one or more capability classes.
-#[derive(Deserialize, Debug)]
-pub struct LibraryConfig {
-    /// Path to the compiled shared library (.dylib / .so / .dll).
-    pub path: PathBuf,
 }
 
 /// Per-module reference to a capability class, with its own configuration.
@@ -101,10 +94,10 @@ impl PipelineDef {
         // --- Phase 1: load shared libraries ------------------------------------
         let mut libraries: HashMap<String, CapabilityLibrary> = HashMap::new();
 
-        for (lib_name, lib_conf) in &config.libraries {
-            let library = CapabilityLibrary::load(lib_name.clone(), &lib_conf.path).map_err(|e| {
+        for (lib_name, path) in &config.libraries {
+            let library = CapabilityLibrary::load(lib_name.clone(), &path).map_err(|e| {
                 PipelineError::Capability(CapabilityLoading::LibraryOpen {
-                    path: lib_conf.path.display().to_string(),
+                    path: path.display().to_string(),
                     reason: format!("library '{}': {}", lib_name, e),
                 })
             })?;

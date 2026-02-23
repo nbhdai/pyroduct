@@ -1,5 +1,5 @@
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-use pyroduct::{PyroRow, pipeline::{CapabilityConfig, ModuleConfig, Pipeline, PipelineConfig, PipelineDef}};
+use pyroduct::{PyroRow, pipeline::{ModuleConfig, Pipeline, PipelineConfig, PipelineDef}};
 use serde_json::json;
 use std::{collections::HashMap, path::Path};
 
@@ -19,23 +19,21 @@ async fn test_capability_configuration_respect() {
     let cap_path = Path::new("../../capabilities/config/artifacts/lib.so");
     #[cfg(target_os = "macos")]
     let cap_path = Path::new("../../capabilities/config/artifacts/lib.dylib");
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    panic!("Only macho and elf binaries are supported");
+    
     let config = PipelineConfig {
-        capabilities: HashMap::from([
-            ("config".to_string(), CapabilityConfig {
-                path: cap_path.to_path_buf(),
-                classes: HashMap::from([(
-                    "config".to_string(),
-                    json!({
-                        "uppercase": true,
-                        "suffix": "!!!"
-                    }),
-                )]),
-            })
-        ]),
+        libraries: HashMap::from([("config".to_string(), cap_path.to_path_buf())]),
         modules: HashMap::from([
             ("config_mod".to_string(), ModuleConfig {
                 path: Path::new("../../modules/cap_config/artifacts/mod.wasm").to_path_buf(),
-                capabilities: vec!["config".to_string()],
+                capabilities: HashMap::from([(
+                            "config".to_string(),
+                            json!({
+                                "uppercase": true,
+                                "suffix": "!!!"
+                            }),
+                        )]),
             })
         ]),
         pipeline: vec!["config_mod".to_string()],
@@ -45,7 +43,7 @@ async fn test_capability_configuration_respect() {
     let mut pipeline = Pipeline::new(pipeline_def).await.unwrap();
 
     let input = PyroRow::from([("input", "hello".into())]);
-    let result = pipeline.process(input).await.unwrap().unwrap();
+    let result = pipeline.process(&input).await.unwrap().unwrap();
     let transformed = result.get_str("transformed").unwrap();
     // Result should be (count: 0, incremented: 0) since fetch_add returns previous
     assert_eq!(transformed, "[TEST] HELLO!!!");
