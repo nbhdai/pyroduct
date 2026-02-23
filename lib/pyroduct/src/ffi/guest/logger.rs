@@ -1,67 +1,144 @@
-use std::sync::{Mutex, Once, OnceLock};
+use std::collections::HashMap;
+use std::io::{self, Write};
+use std::sync::{Once, OnceLock, RwLock};
+
+use tracing::Metadata;
+use tracing_subscriber::{
+    fmt::MakeWriter,
+    layer::SubscriberExt,
+    registry::LookupSpan,
+    util::SubscriberInitExt,
+    Registry,
+};
 
 use crate::ffi::interface::LogCallback;
 
-// Global storage for the log callback - shared across all plugins
+/// Stored in a span's extensions to mark it as belonging to a specific object.
+pub struct ObjectId(pub u64);
+
+// Global storage for the log callback
 static LOG_CALLBACK: OnceLock<(i64, LogCallback)> = OnceLock::new();
-
-pub struct PyroSpanLayer;
-
-impl<S> tracing_subscriber::Layer<S> for PyroSpanLayer 
-where S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a> 
-{
-    fn on_event(&self, event: &tracing::Event<'_>, ctx: tracing_subscriber::layer::Context<'_, S>) {
-        if let Some(span) = ctx.lookup_current() {
-            let id = span.id().into_u64(); // Convert Id to FFI-safe u64
-            
-            if let Some((library_id, writer)) = LOG_CALLBACK.get() {
-                
-                    let mut msg = String::new();
-                    event.record(&mut StringVisitor(&mut msg));
-                    queue.push(msg);
-            }
-        }
-    }
-}
+static CLIENT_SPAN: OnceLock<RwLock<HashMap<u64, tracing::Span>>> = OnceLock::new();
 
 static INIT: Once = Once::new();
-pub fn init_logging(id: i64, callback: LogCallback) {
-    if LOG_CALLBACK.set((id, callback)).is_err() {
-        tracing::error!("Double set tracing callback, plugin double imported");
-    }
-    let host_logger = HostLogger;
 
+pub fn init_logging(id: i64, callback: LogCallback) {
+    let _ = LOG_CALLBACK.set((id, callback));
+    let _ = CLIENT_SPAN.set(RwLock::new(HashMap::new()));
+    
     INIT.call_once(|| {
-        tracing_subscriber::fmt()
-            .with_writer(host_logger)
-            .without_time()
-            .with_ansi(false)
+        let factory = FfiWriterFactory;
+
+        Registry::default()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(factory)
+                    .with_target(true)
+                    .without_time()
+                    .with_ansi(false),
+            )
             .init();
     });
 }
 
-struct HostLogger;
-
-impl std::io::Write for HostLogger {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let callback = match LOG_CALLBACK.get() {
-            Some(callback) => callback,
-            None => panic!("Logging Callback isn't set"),
-        };
-        let callback_mut = callback.lock().unwrap();
-        unsafe {
-            (callback_mut.1)(callback_mut.0, buf.as_ptr(), buf.len());
+/// Create a tracing span for a specific object and attach the [`ObjectId`] to
+/// its extensions. The returned span should be entered whenever work is done on
+/// behalf of that object — all log lines emitted inside will carry the object
+/// ID across the FFI boundary.
+///
+/// ```ignore
+/// let span = pyroduct::ffi::guest::logger::object_span(42);
+/// let _guard = span.enter();
+/// tracing::info!("routed to object 42");
+/// ```
+pub fn object_span(object_id: u64) -> tracing::Span {
+    let client_spans = CLIENT_SPAN.wait();
+    {
+        let cs = client_spans.read().unwrap();
+        if let Some(span) = cs.get(&object_id) {
+            return span.clone();
         }
-        Ok(buf.len())
     }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
+    {
+        let mut cs = client_spans.write().unwrap();
+        let span = tracing::span!(tracing::Level::INFO, "object", id = object_id);
+        tracing::dispatcher::get_default(|dispatch| {
+            if let Some(id) = span.id() {
+                if let Some(reg) = dispatch.downcast_ref::<Registry>() {
+                    if let Some(span_ref) = reg.span(&id) {
+                        span_ref.extensions_mut().insert(ObjectId(object_id));
+                    }
+                }
+            }
+        });
+        cs.insert(object_id, span.clone());
+        span
+    }
+}
+// ============================================================================
+// MakeWriter
+// ============================================================================
+
+struct FfiWriterFactory;
+
+impl<'a> MakeWriter<'a> for FfiWriterFactory {
+    type Writer = FfiProxy;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        FfiProxy { object_id: None }
+    }
+
+    fn make_writer_for(&'a self, _meta: &Metadata<'_>) -> Self::Writer {
+        let mut target_id = None;
+
+        let current = tracing::Span::current();
+        if let Some(current_id) = current.id() {
+            tracing::dispatcher::get_default(|dispatch| {
+                if let Some(reg) = dispatch.downcast_ref::<Registry>() {
+                    if let Some(span_ref) = reg.span(&current_id) {
+                        for ancestor in span_ref.scope() {
+                            if let Some(oid) = ancestor.extensions().get::<ObjectId>() {
+                                target_id = Some(oid.0);
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        FfiProxy { object_id: target_id }
     }
 }
 
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for HostLogger {
-    type Writer = HostLogger;
-    fn make_writer(&'a self) -> Self::Writer {
-        HostLogger
+// ============================================================================
+// Writer proxy — performs the FFI call
+// ============================================================================
+
+struct FfiProxy {
+    object_id: Option<u64>,
+}
+
+impl Write for FfiProxy {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let (lib_id, call) = match LOG_CALLBACK.get() {
+            Some(cb) => cb,
+            None => panic!("Logging Callback isn't set"),
+        };
+
+        unsafe {
+            (call)(
+                *lib_id,
+                self.object_id.unwrap_or(u64::MAX),
+                buf.as_ptr(),
+                buf.len(),
+            );
+        }
+
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }

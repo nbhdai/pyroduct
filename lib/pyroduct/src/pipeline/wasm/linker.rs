@@ -18,6 +18,7 @@ use crate::{
 /// a clean `(&T, PyroView)` signature — all wasm memory plumbing is hidden.
 pub struct PyroLinker {
     linker: Linker<PyroState>,
+    capabilities: Vec<Capability>,
 }
 
 impl PyroLinker {
@@ -28,8 +29,10 @@ impl PyroLinker {
     ) -> Result<Self, WasmError> {
         let mut linker = Self {
             linker: Linker::new(engine),
+            capabilities,
         };
-        linker.link_capabilities(capabilities)?;
+        linker.link_logger()?;
+        linker.link_capabilities()?;
         Ok(linker)
     }
 
@@ -44,9 +47,30 @@ impl PyroLinker {
             .map_err(|e| WasmError::InstantiationFailed(e.to_string()))
     }
 
+    fn link_logger(&mut self) -> Result<(), WasmError> {
+        self.linker
+            .func_wrap(
+                "env",
+                "host_log",
+                move |caller: Caller<'_, PyroState>, ptr: i32, len: i32| {
+                    let io = PyroCallIo::from_caller(caller)?;
+                    let log = io.log(ptr, len)?;
+                    Ok(log)
+                },
+            )
+            .map_err(|e| {
+                WasmError::LinkFunctionFailed(
+                    "env".to_string(),
+                    "register".to_string(),
+                    e.to_string(),
+                )
+            })?;
+        Ok(())
+    }
+
     /// Links all capabilities from the provided libraries into the linker.
-    fn link_capabilities(&mut self, capabilities: Vec<Capability>) -> Result<(), WasmError> {
-        for lib in capabilities.iter() {
+    fn link_capabilities(&mut self) -> Result<(), WasmError> {
+        for lib in self.capabilities.iter() {
             for (class_name, object) in lib.iter() {
                 // Capture lib for the closures (Arc clone is cheap)
 

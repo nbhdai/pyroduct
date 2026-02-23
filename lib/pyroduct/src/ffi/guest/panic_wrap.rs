@@ -13,12 +13,14 @@
 
 use ::async_ffi::BorrowingFfiFuture;
 use futures::FutureExt;
+use tracing::Instrument;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::OnceLock;
 use tokio::runtime::Runtime;
 
 use crate::bridgeable::BridgeableZeroCopy;
 use crate::ffi::FuturePyroVec;
+use crate::ffi::guest::logger::object_span;
 use crate::format::{PyroZeroCopyFormat, Receiver};
 use crate::panic::{clear_last_panic, recover_panic_info, register_ffi_panic_hook};
 use crate::{Bridgeable, BridgeableResult, CapturedError, PyroError, PyroVec, PyroVecPtr, PyroView, PyroViewPtr};
@@ -29,10 +31,12 @@ use crate::{Bridgeable, BridgeableResult, CapturedError, PyroError, PyroVec, Pyr
 
 /// Safe entry point for FFI operations returning a PyroVecPtr.
 #[track_caller]
-pub fn execute_safe<F>(func: F) -> PyroVecPtr
+pub fn execute_safe<F>(func: F, object_id: u64) -> PyroVecPtr
 where
     F: FnOnce() -> PyroVec,
 {
+    let span = object_span(object_id);
+    let _guard = span.enter();
     register_ffi_panic_hook();
     clear_last_panic();
 
@@ -121,16 +125,21 @@ pub fn get_runtime() -> &'static Runtime {
 }
 
 #[track_caller]
-pub fn execute_safe_async<F, Fut>(f: F) -> FuturePyroVec
+pub fn execute_safe_async<F, Fut>(f: F, object_id: u64) -> FuturePyroVec
 where
     F: FnOnce() -> Fut + Send,
     Fut: std::future::Future<Output = PyroVec> + Send + 'static,
 {
     let fut = f();
     FuturePyroVec::Future(BorrowingFfiFuture::<'static>::new(SafeMethodHandle::new(get_runtime().spawn(async move {
-        register_ffi_panic_hook();
-        clear_last_panic();
-        let result = std::panic::AssertUnwindSafe(fut).catch_unwind().await;
+        let span = object_span(object_id);
+        {
+            let _guard = span.enter();
+            register_ffi_panic_hook();
+            clear_last_panic();
+        }
+
+        let result = std::panic::AssertUnwindSafe(fut).catch_unwind().instrument(span).await;
 
         match result {
             Ok(val) => {

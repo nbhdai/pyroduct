@@ -36,7 +36,7 @@ fn test_execute_safe_success() {
                 id: 101,
                 payload: "Success".into(),
             })
-        }))
+        }, 0))
         .unwrap()
     };
 
@@ -54,7 +54,7 @@ fn test_execute_safe_large_payload() {
                 id: u32::MAX,
                 payload: "A".repeat(10_000),
             })
-        }))
+        }, 0))
         .unwrap()
     };
 
@@ -71,7 +71,7 @@ fn test_execute_safe_catches_panic() {
     let vec = unsafe {
         PyroVec::from_raw(execute_safe(|| -> PyroVec {
             panic!("Intentional test panic");
-        }))
+        }, 0))
         .unwrap()
     };
 
@@ -88,7 +88,7 @@ fn test_execute_safe_panic_captures_location() {
     let vec = unsafe {
         PyroVec::from_raw(execute_safe(|| -> PyroVec {
             panic!("Location test");
-        }))
+        }, 0))
         .unwrap()
     };
 
@@ -105,7 +105,7 @@ fn test_execute_safe_panic_then_success() {
     let r1 = unsafe {
         PyroVec::from_raw(execute_safe(|| -> PyroVec {
             panic!("boom");
-        }))
+        }, 0))
         .unwrap()
     };
     assert_eq!(r1.status(), Ok(DataStatus::CodeError));
@@ -114,7 +114,7 @@ fn test_execute_safe_panic_then_success() {
     let r2 = unsafe {
         PyroVec::from_raw(execute_safe(|| {
             serialize_output(UserData { id: 999, payload: "Recovery".into() })
-        }))
+        }, 0))
         .unwrap()
     };
     assert_eq!(r2.status(), Ok(DataStatus::RkyvValid));
@@ -128,7 +128,7 @@ fn test_execute_safe_multiple_sequential() {
         let vec = unsafe {
             PyroVec::from_raw(execute_safe(|| {
                 serialize_output(UserData { id: i, payload: format!("Call {i}") })
-            }))
+            }, 0))
             .unwrap()
         };
         assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
@@ -262,7 +262,7 @@ fn test_full_roundtrip_user_data() {
     let original = UserData { id: 12345, payload: "roundtrip test".into() };
 
     let vec = unsafe {
-        PyroVec::from_raw(execute_safe(|| serialize_output(original.clone())))
+        PyroVec::from_raw(execute_safe(|| serialize_output(original.clone()), 0))
             .unwrap()
     };
     assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
@@ -278,7 +278,7 @@ fn test_full_roundtrip_user_error() {
     let original = UserError { code: 500, msg: "Internal error".into() };
 
     let vec = unsafe {
-        PyroVec::from_raw(execute_safe(|| serialize_output(original.clone())))
+        PyroVec::from_raw(execute_safe(|| serialize_output(original.clone()), 0))
             .unwrap()
     };
     assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
@@ -302,7 +302,7 @@ fn test_panic_hook_idempotent() {
     let vec = unsafe {
         PyroVec::from_raw(execute_safe(|| -> PyroVec {
             panic!("After multiple registrations");
-        }))
+        }, 0))
         .unwrap()
     };
     assert_eq!(vec.status(), Ok(DataStatus::CodeError));

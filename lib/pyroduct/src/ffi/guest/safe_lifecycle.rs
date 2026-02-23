@@ -46,16 +46,17 @@ pub fn deserialize_config<C: serde::de::DeserializeOwned>(
 #[tracing::instrument(skip(init_fn))]
 pub fn execute_safe_init<F>(
     init_fn: F,
+    object_id: u64,
 ) -> InitResult
 where
-    F: FnOnce() -> InitResult,
+    F: FnOnce(u64) -> InitResult,
 {
     trace!("execute_safe_init: entering");
     register_ffi_panic_hook();
     clear_last_panic();
 
     trace!("execute_safe_init: executing init_fn");
-    let result = panic::catch_unwind(AssertUnwindSafe(|| init_fn()));
+    let result = panic::catch_unwind(AssertUnwindSafe(|| init_fn(object_id)));
 
     match result {
         Ok(state) => {
@@ -65,7 +66,7 @@ where
         Err(_) => {
             let panic_info = recover_panic_info();
             error!(panic = ?panic_info, "execute_safe_init: panic caught during initialization");
-            InitResult::init_err(PyroError::CodePanic(panic_info), 0)
+            InitResult::init_err(PyroError::CodePanic(panic_info), object_id)
         }
     }
 }
@@ -97,7 +98,7 @@ impl Future for SafeInitHandle
         match Pin::new(&mut self.handle).poll(cx) {
             Poll::Ready(Ok(val)) => Poll::Ready(val),
             Poll::Ready(Err(join_error)) => {
-                Poll::Ready(InitResult::init_err(PyroError::CodePanic(CapturedError::new(join_error).into())))
+                Poll::Ready(InitResult::init_err(PyroError::CodePanic(CapturedError::new(join_error).into()), 0))
             }
             Poll::Pending => Poll::Pending,
         }
@@ -109,12 +110,13 @@ impl Future for SafeInitHandle
 /// Returns `FutureInitResult`.
 pub fn execute_safe_async_init<Fut, F>(
     init_fn: F,
+    object_id: u64,
 ) -> FutureInitResult
 where
     Fut: std::future::Future<Output = InitResult> + Send + 'static,
-    F: FnOnce() -> Fut + Send,
+    F: FnOnce(u64) -> Fut + Send,
 {
-    let fut = init_fn();
+    let fut = init_fn(object_id);
     FutureInitResult::Future(BorrowingFfiFuture::<'static>::new(SafeInitHandle::new(get_runtime().spawn(async move {
         trace!("execute_safe_async_init: future polling started");
         clear_last_panic();
@@ -129,7 +131,7 @@ where
             Err(_) => {
                 let panic_info = recover_panic_info();
                 error!(panic = ?panic_info, "execute_safe_async_init: panic caught during async init");
-                InitResult::init_err(PyroError::CodePanic(panic_info))
+                InitResult::init_err(PyroError::CodePanic(panic_info), object_id)
             }
         }
     }))))

@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use wasmtime::{ExternType, Instance, Module, Store, TypedFunc, ValType};
 
 use crate::pipeline::wasm::WasmError;
@@ -17,6 +19,7 @@ impl PyroModule {
     /// Checks that the module exports `new_input`, `grow_input`, `free_output`,
     /// and `memory` with the correct signatures.
     pub fn new(module: Module) -> Result<Self, WasmError> {
+        Self::validate_export(&module, "host_log", &[ValType::I32, ValType::I32], &[])?;
         Self::validate_export(&module, "new_input", &[ValType::I32], &[ValType::I32])?;
         Self::validate_export(
             &module,
@@ -108,12 +111,16 @@ impl PyroMethods {
 
 pub struct PyroState {
     methods: Option<PyroMethods>,
+    module_log: Mutex<Vec<u8>>,
 }
 
 impl PyroState {
     /// Create an un-linked state (methods not yet resolved).
     pub fn new() -> Self {
-        Self { methods: None }
+        Self { 
+            methods: None,
+            module_log: Mutex::new(Vec::new()),
+        }
     }
 
     pub fn link(store: &mut Store<Self>, instance: &Instance) -> Result<(), WasmError> {
@@ -158,5 +165,9 @@ impl PyroState {
     /// Take the last recorded error, if any.
     pub fn take_error(&mut self) -> Option<anyhow::Error> {
         self.methods.as_mut().and_then(|m| m.take_error())
+    }
+
+    pub fn module_log(&self, log: &[u8]) {
+        self.module_log.lock().unwrap().extend_from_slice(log);
     }
 }

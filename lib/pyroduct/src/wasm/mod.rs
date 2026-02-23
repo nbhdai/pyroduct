@@ -8,6 +8,8 @@ use crate::value::PyroRow;
 use crate::{Bridgeable, BridgeableResult, CapturedError, PyroError, ToRow};
 use crate::{PyroVec, header::PyroData};
 
+mod logger;
+
 pub type ModuleResult<T> = Result<T, CapturedError>;
 
 #[derive(Debug, Hash, PartialEq, Eq)]
@@ -160,8 +162,8 @@ pub fn wasm_row_main<'a, O, F>(
     where
         O: ToRow,
         F: Fn(PyroRow<'a>) -> Result<O, CapturedError>
-
 {
+    logger::init_logging();
     let input_vec = match get_input(input_ptr) {
         Some(vec) => vec,
         None => {
@@ -191,6 +193,7 @@ pub fn wasm_row_main<'a, O, F>(
             return to_output(encode_result(result));
         }
     };
+
     let output = (func)(input);
 
     to_output(match output {

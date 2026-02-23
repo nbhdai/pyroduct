@@ -162,7 +162,7 @@ impl NewClientFn {
                     // Reconstruct state from raw pointer
                     let state = unsafe { &*(capability_state_ptr.state as *const #state_type) };
                     ::pyroduct::ffi::guest::serialize_result(state.new_client(&client))
-                })
+                }, capability_state_ptr.object_id)
             }
         } else {
             quote! {
@@ -174,7 +174,7 @@ impl NewClientFn {
                 ::pyroduct::ffi::guest::execute_safe(|| {
                     let state = unsafe { &*(capability_state_ptr.state as *const #state_type) };
                     ::pyroduct::ffi::guest::serialize_output(state.new_client(&client))
-                })
+                }, capability_state_ptr.object_id)
             }
         };
 

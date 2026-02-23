@@ -103,7 +103,7 @@ impl ResetFn {
                         let state = state_ptr.as_ref::<#server>();
                         state.reset().await;
                         ::pyroduct::PyroVec::ok()
-                    })
+                    }, capability_state_ptr.object_id)
                 }
             }
         } else {
@@ -120,7 +120,7 @@ impl ResetFn {
                         let state = state_ptr.as_ref::<#server>();
                         state.reset();
                         ::pyroduct::PyroVec::ok()
-                    })
+                    }, capability_state_ptr.object_id)
                 }
             }
         }
@@ -186,7 +186,7 @@ mod tests {
                     let state = state_ptr.as_ref::<GreeterServer>();
                     state.reset();
                     ::pyroduct::PyroVec::ok()
-                })
+                }, capability_state_ptr.object_id)
             }
         };
 
@@ -219,7 +219,7 @@ mod tests {
                     let state = state_ptr.as_ref::<GreeterServer>();
                     state.reset().await;
                     ::pyroduct::PyroVec::ok()
-                })
+                }, capability_state_ptr.object_id)
             }
         };
 

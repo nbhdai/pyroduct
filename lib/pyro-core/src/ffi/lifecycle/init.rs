@@ -159,32 +159,32 @@ impl InitFn {
         // The safe_lifecycle functions expect Option<T> to be passed through
         let (return_ty, closure) = match (&self.config_type, self.is_async) {
             (Some(c), false) => {
-                (quote!(::pyroduct::ffi::InitResult), quote!{::pyroduct::ffi::guest::safe_lifecycle::execute_safe_init(|| {
+                (quote!(::pyroduct::ffi::InitResult), quote!{::pyroduct::ffi::guest::safe_lifecycle::execute_safe_init(|object_id| {
                     let config = match ::pyroduct::ffi::guest::safe_lifecycle::deserialize_config::<#c>(config_ptr) {
                         Ok(config) => config,
-                        Err(err) => return ::pyroduct::ffi::InitResult::init_err(err),
+                        Err(err) => return ::pyroduct::ffi::InitResult::init_err(err, object_id),
                     };
-                    ::pyroduct::ffi::InitResult::init_ok(#server::new(config))
-                })})
+                    ::pyroduct::ffi::InitResult::init_ok(#server::new(config), object_id)
+                }, object_id)})
             },
             (None, false) => {
-                (quote!(::pyroduct::ffi::InitResult), quote!{::pyroduct::ffi::guest::safe_lifecycle::execute_safe_init(|| {
-                    ::pyroduct::ffi::InitResult::init_ok(#server::new())
-                })})
+                (quote!(::pyroduct::ffi::InitResult), quote!{::pyroduct::ffi::guest::safe_lifecycle::execute_safe_init(|object_id| {
+                    ::pyroduct::ffi::InitResult::init_ok(#server::new(), object_id)
+                }, object_id)})
             },
             (Some(c), true) => {
-                (quote!(::pyroduct::ffi::FutureInitResult), quote!{ ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_async_init(|| async move { 
+                (quote!(::pyroduct::ffi::FutureInitResult), quote!{ ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_async_init(|object_id| async move { 
                     let config = match ::pyroduct::ffi::guest::safe_lifecycle::deserialize_config::<#c>(config_ptr) {
                         Ok(config) => config,
-                        Err(err) => return ::pyroduct::ffi::InitResult::init_err(err),
+                        Err(err) => return ::pyroduct::ffi::InitResult::init_err(err, object_id),
                     };
-                    ::pyroduct::ffi::InitResult::init_ok(#server::new(config).await) 
-                })})
+                    ::pyroduct::ffi::InitResult::init_ok(#server::new(config).await, object_id) 
+                }, object_id)})
             },
             (None, true) => {
-                (quote!(::pyroduct::ffi::FutureInitResult), quote!{ ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_async_init(|| async move { 
-                    ::pyroduct::ffi::InitResult::init_ok(#server::new().await) 
-                })})
+                (quote!(::pyroduct::ffi::FutureInitResult), quote!{ ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_async_init(|object_id| async move { 
+                    ::pyroduct::ffi::InitResult::init_ok(#server::new().await, object_id) 
+                }, object_id)})
             },
         };
 
@@ -192,6 +192,7 @@ impl InitFn {
             #[unsafe(no_mangle)]
             pub extern "C" fn #init_name(
                 config_ptr: ::pyroduct::PyroViewPtr,
+                object_id: u64,
             ) -> #return_ty {
                 #closure
             }
@@ -266,14 +267,15 @@ mod tests {
             #[unsafe(no_mangle)]
             pub extern "C" fn p__greeter_server__ffi_init(
                 config_ptr: ::pyroduct::PyroViewPtr,
+                object_id: u64,
             ) -> ::pyroduct::ffi::InitResult {
-                ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_init(|| {
+                ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_init(|object_id| {
                     let config = match ::pyroduct::ffi::guest::safe_lifecycle::deserialize_config::<GreeterConfig>(config_ptr) {
                         Ok(config) => config,
-                        Err(err) => return ::pyroduct::ffi::InitResult::init_err(err),
+                        Err(err) => return ::pyroduct::ffi::InitResult::init_err(err, object_id),
                     };
-                    ::pyroduct::ffi::InitResult::init_ok(GreeterServer::new(config))
-                })
+                    ::pyroduct::ffi::InitResult::init_ok(GreeterServer::new(config), object_id)
+                }, object_id)
             }
         };
 
@@ -302,14 +304,15 @@ mod tests {
             #[unsafe(no_mangle)]
             pub extern "C" fn p__greeter_server__ffi_init(
                 config_ptr: ::pyroduct::PyroViewPtr,
+                object_id: u64,
             ) -> ::pyroduct::ffi::FutureInitResult {
-                ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_async_init(|| async move {
+                ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_async_init(|object_id| async move {
                     let config = match ::pyroduct::ffi::guest::safe_lifecycle::deserialize_config::<GreeterConfig>(config_ptr) {
                         Ok(config) => config,
-                        Err(err) => return ::pyroduct::ffi::InitResult::init_err(err),
+                        Err(err) => return ::pyroduct::ffi::InitResult::init_err(err, object_id),
                     };
-                    ::pyroduct::ffi::InitResult::init_ok(GreeterServer::new(config).await)
-                })
+                    ::pyroduct::ffi::InitResult::init_ok(GreeterServer::new(config).await, object_id)
+                }, object_id)
             }
         };
 

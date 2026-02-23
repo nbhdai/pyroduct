@@ -1,17 +1,19 @@
 use libloading::Library;
+use tokio::sync::oneshot;
 use std::ffi::c_void;
 use std::future::Future;
+use std::ops::DerefMut;
 use std::pin::Pin;
 use std::ptr::NonNull;
 use std::slice;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use crate::header::PyroData;
 use crate::view::{PyroView, PyroViewPtr};
 use crate::{CapturedError, PyroError, PyroVec, PyroVecPtr};
 
-pub type LogCallback = unsafe extern "C" fn(i64, i64, *const u8, usize);
+pub type LogCallback = unsafe extern "C" fn(i64, u64, *const u8, usize);
 
 // ============================================================================
 // Function pointer types
@@ -105,7 +107,7 @@ impl Future for MethodCallFuture {
 pub struct PyroObjectPtr {
     pub state: *mut c_void,
     pub dropper: ClassDropper,
-    span_id: i64,
+    pub object_id: u64,
 }
 
 unsafe impl Send for PyroObjectPtr {}
@@ -115,7 +117,7 @@ unsafe impl Send for PyroObjectPtr {}
 #[derive(Clone, Copy, Debug)]
 pub struct PyroRefObjectPtr {
     pub state: *mut c_void,
-    span_id: i64,
+    pub object_id: u64,
 }
 
 unsafe impl Send for PyroRefObjectPtr {}
@@ -129,7 +131,7 @@ pub type ClassDropper = unsafe extern "C" fn(ptr: *mut c_void);
 pub struct PyroObject {
     state: NonNull<c_void>,
     dropper: ClassDropper,
-    span_id: i64,
+    pub object_id: u64,
 }
 
 unsafe impl Send for PyroObject {}
@@ -139,14 +141,14 @@ unsafe impl Sync for PyroObject {}
 
 impl PyroObject {
     /// Creates a new PyroObject from raw components.
-    pub unsafe fn new(state: *mut c_void, dropper: ClassDropper, span_id: i64) -> Result<Self, CapturedError> {
+    pub unsafe fn new(state: *mut c_void, dropper: ClassDropper, object_id: u64) -> Result<Self, CapturedError> {
         let state = NonNull::new(state)
             .ok_or_else(|| CapturedError::new("Cannot construct PyroObject from null pointer"))?;
 
         Ok(Self { 
             state,
             dropper,
-            span_id,
+            object_id,
         })
     }
 
@@ -155,7 +157,7 @@ impl PyroObject {
         let ptr = PyroObjectPtr {
             state: self.state.as_ptr(),
             dropper: self.dropper,
-            span_id: self.span_id,
+            object_id: self.object_id,
         };
         std::mem::forget(self);
         ptr
@@ -170,7 +172,7 @@ impl PyroObject {
         Ok(Self {
             state,
             dropper: raw.dropper,
-            span_id: raw.span_id,
+            object_id: raw.object_id,
         })
     }
 
@@ -178,7 +180,7 @@ impl PyroObject {
     pub fn ref_ptr(&self) -> PyroRefObjectPtr {
         PyroRefObjectPtr {
             state: self.state.as_ptr(),
-            span_id: self.span_id,
+            object_id: self.object_id,
         }
     }
 
@@ -186,7 +188,7 @@ impl PyroObject {
     pub fn as_borrowed(&self) -> PyroObjectRef {
         PyroObjectRef {
             state: self.state,
-            span_id: self.span_id,
+            object_id: self.object_id,
         }
     }
 
@@ -218,7 +220,7 @@ impl Drop for PyroObject {
 #[derive(Clone, Copy, Debug)]
 pub struct PyroObjectRef {
     state: NonNull<c_void>,
-    span_id: i64,
+    pub object_id: u64,
 }
 
 unsafe impl Send for PyroObjectRef {}
@@ -233,14 +235,14 @@ impl PyroObjectRef {
 
         Ok(Self {
             state,
-            span_id: raw.span_id,
+            object_id: raw.object_id,
         })
     }
 
     pub fn as_raw(&self) -> PyroRefObjectPtr {
         PyroRefObjectPtr {
             state: self.state.as_ptr(),
-            span_id: self.span_id,
+            object_id: self.object_id,
         }
     }
 
@@ -282,26 +284,26 @@ unsafe extern "C" fn typed_dropper<S>(ptr: *mut std::ffi::c_void) {
 
 impl InitResult {
     /// Construct a successful `InitResult` from a state value.
-    pub fn init_ok<S: 'static>(state: S, span_id: i64) -> InitResult {
+    pub fn init_ok<S: 'static>(state: S, object_id: u64) -> InitResult {
         let state_ptr = Box::into_raw(Box::new(state)) as *mut std::ffi::c_void;
         tracing::debug!(?state_ptr, "Object allocated and forgotten");
         InitResult {
             state: PyroObjectPtr {
                 state: state_ptr,
                 dropper: typed_dropper::<S>,
-                span_id,
+                object_id: object_id,
             },
             error: PyroVec::ok().into_raw(),
         }
     }
 
     /// Construct an error `InitResult` from a `PyroError`.
-    pub fn init_err(err: PyroError, span_id: i64) -> InitResult {
+    pub fn init_err(err: PyroError, object_id: u64) -> InitResult {
         InitResult {
             state: PyroObjectPtr {
                 state: std::ptr::null_mut(),
                 dropper: typed_dropper::<()>,
-                span_id,
+                object_id: object_id,
             },
             error: err.encode().into_raw(),
         }
@@ -314,8 +316,8 @@ pub enum FutureInitResult {
     Future(::async_ffi::BorrowingFfiFuture<'static, InitResult>),
 }
 
-pub type SyncClassInitFn = unsafe extern "C" fn(config: PyroViewPtr) -> InitResult;
-pub type AsyncClassInitFn = unsafe extern "C" fn(config: PyroViewPtr) -> FutureInitResult;
+pub type SyncClassInitFn = unsafe extern "C" fn(config: PyroViewPtr, object_id: u64) -> InitResult;
+pub type AsyncClassInitFn = unsafe extern "C" fn(config: PyroViewPtr, object_id: u64) -> FutureInitResult;
 
 #[repr(C, u8)]
 #[derive(Clone, Copy)]
@@ -371,7 +373,7 @@ fn process_init_result(res: InitResult) -> Result<PyroObject, PyroError> {
     Ok(PyroObject {
         state: state_ptr,
         dropper: res.state.dropper,
-        span_id: res.state.span_id,
+        object_id: res.state.object_id,
     })
 }
 
@@ -581,21 +583,55 @@ impl ForeignClass {
         })
     }
 
-    /// Creates an instance. Takes &self, uses internal mutability.
     pub async fn create_instance(
         self: &Arc<Self>,
         config: PyroView<'_>,
+        object_id: u64,
+        mut log_channel: tokio::sync::mpsc::Receiver<String>,
     ) -> Result<ForeignObject, PyroError> {
+
         let obj = match self.init {
-            ClassInitFn::Sync(f) => process_init_result(unsafe { (f)(config.ptr()) }),
+            ClassInitFn::Sync(f) => process_init_result(unsafe { (f)(config.ptr(), object_id) }),
             ClassInitFn::Async(f) => {
-                ObjectInitFuture::from_async(unsafe { (f)(config.ptr()) }).await
+                ObjectInitFuture::from_async(unsafe { (f)(config.ptr(), object_id) }).await
             }
         }?;
+
+        let log_buffer = Arc::new(Mutex::new(Vec::new()));
+        let task_buffer = Arc::clone(&log_buffer);
+        
+        // 1. Create the oneshot channel for the kill signal
+        let (kill_tx, mut kill_rx) = oneshot::channel::<()>();
+
+        tokio::spawn(async move {
+            loop {
+                // 2. Use select! to wait on either the mpsc receiver OR the kill receiver
+                tokio::select! {
+                    msg = log_channel.recv() => {
+                        match msg {
+                            Some(log_msg) => {
+                                if let Ok(mut buffer) = task_buffer.lock() {
+                                    buffer.extend_from_slice(log_msg.as_bytes());
+                                    buffer.push(b'\n');
+                                }
+                            }
+                            None => break, // Exit if the log channel naturally closes
+                        }
+                    }
+                    _ = &mut kill_rx => {
+                        // Exit the loop immediately if the kill signal is received
+                        // (or if the sender is dropped)
+                        break; 
+                    }
+                }
+            }
+        });
 
         Ok(ForeignObject {
             obj: Arc::new(obj),
             class: self.clone(),
+            log_buffer,
+            _log_task: Arc::new(LogTaskHandle { kill_tx: Some(kill_tx) }),
         })
     }
 
@@ -608,6 +644,10 @@ impl ForeignClass {
 pub struct ForeignObject {
     class: Arc<ForeignClass>,
     obj: Arc<PyroObject>,
+    pub log_buffer: Arc<Mutex<Vec<u8>>>,
+    // Wrapped in Option so we can take() it to send the signal, 
+    // and Arc<Mutex> so ForeignObject remains Cloneable.
+    _log_task: Arc<LogTaskHandle>,
 }
 
 impl ForeignObject {
@@ -673,11 +713,32 @@ impl ForeignObject {
             }
         }
     }
+
+    pub async fn take_logs(&self) -> Vec<u8> {
+        let mut logs = self.log_buffer.lock().unwrap();
+        let log_cap = logs.capacity();
+        let mut fresh_logs = Vec::with_capacity(log_cap);
+        std::mem::swap(logs.deref_mut(), &mut fresh_logs);
+        fresh_logs
+    }
+}
+
+struct LogTaskHandle {
+    kill_tx: Option<oneshot::Sender<()>>,
+}
+
+impl Drop for LogTaskHandle {
+    fn drop(&mut self) {
+        if let Some(tx) = self.kill_tx.take() {
+            let _ = tx.send(()); 
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ffi::host::create_log;
     use crate::header::PyroHeader;
     use std::cell::RefCell;
     use std::ptr;
@@ -707,7 +768,7 @@ mod tests {
         ctx.drop_called.store(true, Ordering::SeqCst);
     }
 
-    unsafe extern "C" fn mock_init(_: PyroViewPtr) -> InitResult {
+    unsafe extern "C" fn mock_init(_: PyroViewPtr, object_id: u64) -> InitResult {
         // Retrieve the pointer pre-allocated by the test setup
         let state = NEXT_OBJ_STATE.with(|s| {
             s.borrow_mut()
@@ -719,7 +780,7 @@ mod tests {
             state: PyroObjectPtr {
                 state,
                 dropper: mock_dropper,
-                span_id: 0,
+                object_id,
             },
             error: PyroVec::ok().into_raw(),
         }
@@ -831,9 +892,8 @@ mod tests {
 
         assert_eq!(ref_ptr.state, m.state_ptr);
 
-        let rust_ref = unsafe { PyroObjectRef::from_raw(ref_ptr) }.unwrap();
+        let _ = unsafe { PyroObjectRef::from_raw(ref_ptr) }.unwrap();
 
-        drop(rust_ref);
         assert!(!m.drop_called.load(Ordering::SeqCst));
 
         drop(obj);
@@ -855,10 +915,11 @@ mod tests {
         };
 
         let class = Arc::new(unsafe { ForeignClass::from_export_inter(None, export) }.unwrap());
+        let log_channel = create_log(0, 0, 100);
 
         // Create Instance (calls mock_init, which claims m.state_ptr from TLS)
         let config = PyroVec::ok();
-        let handle = class.create_instance(config.view()).await.unwrap();
+        let handle = class.create_instance(config.view(), 0, log_channel).await.unwrap();
 
         // Call Reset
         handle.reset().await.unwrap();
@@ -885,9 +946,10 @@ mod tests {
         };
 
         let class = Arc::new(unsafe { ForeignClass::from_export_inter(None, export) }.unwrap());
+        let log_channel = create_log(0, 0, 100);
 
         let config = PyroVec::ok();
-        let handle = class.create_instance(config.view()).await.unwrap();
+        let handle = class.create_instance(config.view(), 0, log_channel).await.unwrap();
 
         let client_data = PyroVec::ok();
         let result = handle.register(client_data.view()).await.unwrap();
@@ -909,10 +971,11 @@ mod tests {
             reset: ClassResetFn::Null,
             register: ClientRegisterFn::Null, // Explicitly testing null path
         };
+        let log_channel = create_log(0, 0, 100);
 
         let class = Arc::new(unsafe { ForeignClass::from_export_inter(None, export) }.unwrap());
         let config = PyroVec::ok();
-        let handle = class.create_instance(config.view()).await.unwrap();
+        let handle = class.create_instance(config.view(), 0, log_channel).await.unwrap();
 
         let client_data = PyroVec::ok();
         let result = handle.register(client_data.view()).await;

@@ -120,4 +120,17 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
 
         Ok(ptr)
     }
+
+    /// Allocate a new buffer in wasm memory via `new_input` and copy the
+    /// full PyroView (header + payload) into it. Returns the wasm pointer.
+    pub fn log(&self, ptr: i32, len: i32) -> Result<i32, WasmError> {
+        let wasm_memory = self.memory.data(self.ctx.as_context());
+        let start = ptr as usize;
+        let end = start + len as usize;
+        let slice = &wasm_memory[start..end];
+        let data = self.ctx.as_context().data();
+        data.module_log(slice);
+
+        Ok(len)
+    }
 }

@@ -250,17 +250,19 @@ impl ImplMethod {
                         #client_retrieval
                         #input_retrieval
                         ::pyroduct::ffi::guest::serialize_result(#method_call.await)
-                    })
+                    }, capability_state_ptr.object_id)
                 },
             ),
             (false, Some(_)) => (
                 quote!(::pyroduct::PyroVecPtr),
-                quote!{::pyroduct::ffi::guest::execute_safe(|| {
-                    #state_retrieval
-                    #client_retrieval
-                    #input_retrieval
-                    ::pyroduct::ffi::guest::serialize_result(#method_call)
-                })}
+                quote!{
+                    ::pyroduct::ffi::guest::execute_safe(|| {
+                        #state_retrieval
+                        #client_retrieval
+                        #input_retrieval
+                        ::pyroduct::ffi::guest::serialize_result(#method_call)
+                    }, capability_state_ptr.object_id)
+                }
             ),
             (true, None) => (
                 quote!(::pyroduct::ffi::FuturePyroVec),
@@ -270,17 +272,19 @@ impl ImplMethod {
                         #client_retrieval
                         #input_retrieval
                         ::pyroduct::ffi::guest::serialize_output(#method_call.await)
-                    })
+                    }, capability_state_ptr.object_id)
                 },
             ),
             (false, None) => (
                 quote!(::pyroduct::PyroVecPtr),
-                quote!{::pyroduct::ffi::guest::execute_safe(|| {
-                    #state_retrieval
-                    #client_retrieval
-                    #input_retrieval
-                    ::pyroduct::ffi::guest::serialize_output(#method_call)
-                })}
+                quote!{
+                    ::pyroduct::ffi::guest::execute_safe(|| {
+                        #state_retrieval
+                        #client_retrieval
+                        #input_retrieval
+                        ::pyroduct::ffi::guest::serialize_output(#method_call)
+                    }, capability_state_ptr.object_id)
+                }
             ),
         };
 
@@ -578,7 +582,7 @@ mod tests {
                         Err(err) => return err.encode(),
                     };
                     ::pyroduct::ffi::guest::serialize_output(state.test_async_client(&client).await)
-                })
+                }, capability_state_ptr.object_id)
             }
         };
 
@@ -650,7 +654,7 @@ mod tests {
                         Err(err) => return err.encode(),
                     };
                     ::pyroduct::ffi::guest::serialize_result(state.test_sync_client_input(&client, input))
-                })
+                }, capability_state_ptr.object_id)
             }
         };
 
@@ -732,7 +736,7 @@ mod tests {
                         Err(err) => return err.encode(),
                     };
                     ::pyroduct::ffi::guest::serialize_output(state.test_sci_multi(&client, input.a, input.b).await)
-                })
+                }, capability_state_ptr.object_id)
             }
         };
 

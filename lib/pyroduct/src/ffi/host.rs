@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::Path;
-use std::sync::Arc;
+use dashmap::DashMap;
+use std::sync::{atomic::{AtomicI64, AtomicU64, Ordering}, LazyLock, Arc};
+use tokio::sync::mpsc;
 
 use libloading::{Library, Symbol};
 use object::{Object, ObjectSymbol, SymbolKind};
@@ -52,19 +54,18 @@ pub enum CapabilityLoading {
 // Logging
 // =============================================================================
 
-use dashmap::DashMap;
-use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::LazyLock;
-use tokio::sync::mpsc;
 
-static LOG_SENDERS: LazyLock<DashMap<(i64, i64), mpsc::Sender<String>>> = LazyLock::new(DashMap::new);
+
+static CATCH_LOG_SENDER: LazyLock<DashMap<i64, mpsc::Sender<String>>> = LazyLock::new(DashMap::new);
+static LOG_SENDERS: LazyLock<DashMap<(i64, u64), mpsc::Sender<String>>> = LazyLock::new(DashMap::new);
 static NEXT_LIB_ID: AtomicI64 = AtomicI64::new(1);
+static NEXT_OBJECT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Create a new log channel. Returns the numeric ID (to pass to the C side)
 /// and a receiver you can poll to build up your logs.
 ///
 /// `buffer` controls how many messages can queue before back-pressure kicks in.
-pub fn create_log(library_id: i64, span_id: i64, buffer: usize) -> mpsc::Receiver<String> {
+pub fn create_log(library_id: i64, span_id: u64, buffer: usize) -> mpsc::Receiver<String> {
     let (tx, rx) = mpsc::channel(buffer);
     LOG_SENDERS.insert((library_id, span_id), tx);
     rx
@@ -72,29 +73,46 @@ pub fn create_log(library_id: i64, span_id: i64, buffer: usize) -> mpsc::Receive
 
 /// Tear down a log channel. Drops the sender so the receiver will see the
 /// channel close on next poll.
-pub fn destroy_log(library_id: i64, span_id: i64) {
+pub fn destroy_log(library_id: i64, span_id: u64) {
     LOG_SENDERS.remove(&(library_id, span_id));
 }
 
 /// # Safety
 /// `msg` must point to `msg_len` valid bytes for the duration of this call.
-pub unsafe extern "C" fn log_callback(library_id: i64, span_id: i64, msg: *const u8, msg_len: usize) {
+pub unsafe extern "C" fn log_callback(library_id: i64, span_id: u64, msg: *const u8, msg_len: usize) {
     let data = unsafe { std::slice::from_raw_parts(msg, msg_len) };
     let log_msg = String::from_utf8_lossy(data).trim_end().to_string();
-
-    if let Some(tx) = LOG_SENDERS.get(&(library_id, span_id)) {
-        match tx.try_send(log_msg) {
-            Ok(()) => {}
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                eprintln!("[log] channel full for id=({library_id},{span_id}), dropping message");
+    if span_id == 0 {
+        if let Some(tx) = CATCH_LOG_SENDER.get(&library_id) {
+            match tx.try_send(log_msg) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    eprintln!("[log] channel full for id=({library_id},{span_id}), dropping message");
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    // Receiver was dropped — clean up our side too.
+                    drop(tx);
+                    LOG_SENDERS.remove(&(library_id, span_id));
+                }
             }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                // Receiver was dropped — clean up our side too.
-                drop(tx);
-                LOG_SENDERS.remove(&(library_id, span_id));
+        }
+    } else {
+        if let Some(tx) = LOG_SENDERS.get(&(library_id, span_id)) {
+            match tx.try_send(log_msg) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    eprintln!("[log] channel full for id=({library_id},{span_id}), dropping message");
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    // Receiver was dropped — clean up our side too.
+                    drop(tx);
+                    LOG_SENDERS.remove(&(library_id, span_id));
+                }
             }
         }
     }
+
+    
 }
 
 
@@ -150,6 +168,7 @@ pub fn scan_pyro_symbols(path: &Path) -> Result<Vec<ScannedSymbol>, CapabilityLo
 
 
 pub struct CapabilityLibrary {
+    pub id: i64,
     pub capabilities: HashMap<String, Arc<ForeignClass>>,
 }
 
@@ -171,7 +190,7 @@ impl CapabilityLibrary {
                 reason: e.to_string(),
             }
         })?);
-        let library_id = NEXT_LIB_ID.fetch_add(1, Ordering::SeqCst);
+        let id = NEXT_LIB_ID.fetch_add(1, Ordering::SeqCst);
 
         // 3. Register
         let mut capabilities = HashMap::with_capacity(pyro_symbols.len());
@@ -191,7 +210,7 @@ impl CapabilityLibrary {
                     }
                 };
 
-            let export: ClassExport = unsafe { register_fn(library_id, log_callback) };
+            let export: ClassExport = unsafe { register_fn(id, log_callback) };
 
             let class =
                 unsafe { ForeignClass::from_export(library.clone(), export) }.map_err(|e| {
@@ -209,7 +228,7 @@ impl CapabilityLibrary {
             return Err(CapabilityLoading::NoCapabilitiesFound { path: path_str });
         }
 
-        Ok(Self { capabilities })
+        Ok(Self { id, capabilities })
     }
 
     /// Iterates through the provided configuration map, serializes the config data,
@@ -241,8 +260,10 @@ impl CapabilityLibrary {
             } else {
                 PyroVec::ok()
             };
+            let object_id = NEXT_OBJECT_ID.fetch_add(1, Ordering::SeqCst);
+            let log_channel = create_log(self.id, object_id, 100);
             // 3. Call create_instance on the ForeignClass
-            let handle = cap_class.create_instance(vec.view()).await.map_err(|e| {
+            let handle = cap_class.create_instance(vec.view(), object_id, log_channel).await.map_err(|e| {
                 CapabilityLoading::Instantiation {
                     class: cap_name.clone(),
                     reason: e.to_string(),
