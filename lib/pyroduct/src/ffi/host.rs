@@ -167,11 +167,12 @@ pub fn scan_pyro_symbols(path: &Path) -> Result<Vec<ScannedSymbol>, CapabilityLo
 
 pub struct CapabilityLibrary {
     pub id: i64,
+    pub name: String,
     pub capabilities: HashMap<String, Arc<ForeignClass>>,
 }
 
 impl CapabilityLibrary {
-    pub fn load(path: &Path) -> Result<Self, CapabilityLoading> {
+    pub fn load(name: String, path: &Path) -> Result<Self, CapabilityLoading> {
         let path_str = path.display().to_string();
 
         // 1. Scan
@@ -226,7 +227,7 @@ impl CapabilityLibrary {
             return Err(CapabilityLoading::NoCapabilitiesFound { path: path_str });
         }
 
-        Ok(Self { id, capabilities })
+        Ok(Self { id, name, capabilities })
     }
 
     /// Iterates through the provided configuration map, serializes the config data,
@@ -271,12 +272,20 @@ impl CapabilityLibrary {
             objects.insert(cap_name.clone(), handle);
         }
 
-        Ok(Capability { objects })
+        Ok(Capability { lib_name: self.name.clone(), objects })
     }
 }
 
+#[derive(Debug)]
 pub struct Capability {
+    lib_name: String,
     objects: HashMap<String, ForeignObject>,
+}
+
+impl Capability {
+    pub fn name(&self) -> &str {
+        &self.lib_name
+    }
 }
 
 impl Deref for Capability {

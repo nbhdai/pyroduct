@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 #[allow(unused_imports)]
 use std::future::Future;
 
@@ -54,14 +55,14 @@ impl PyroLinker {
                 "host_log",
                 move |caller: Caller<'_, PyroState>, ptr: i32, len: i32| {
                     let io = PyroCallIo::from_caller(caller)?;
-                    let log = io.log(ptr, len)?;
-                    Ok(log)
+                    let _ = io.log(ptr, len)?;
+                    Ok(())
                 },
             )
             .map_err(|e| {
                 WasmError::LinkFunctionFailed(
                     "env".to_string(),
-                    "register".to_string(),
+                    "host_log".to_string(),
                     e.to_string(),
                 )
             })?;
@@ -151,5 +152,18 @@ impl PyroLinker {
             }
         }
         Ok(())
+    }
+
+    pub fn logs(&self) -> HashMap<(String, String), Vec<String>> {
+        let mut logs = HashMap::new();
+        for cap in &self.capabilities {
+            let lib_name = cap.name();
+            for (name, object) in cap.iter() {
+                let object_logs = object.take_logs();
+                logs.insert((lib_name.to_string(), name.clone()), object_logs);
+            }
+        }
+
+        logs
     }
 }

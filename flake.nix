@@ -81,6 +81,32 @@
           inherit pyroduct;
         };
 
+        apps.valgrind-test = lib.optionals pkgs.stdenv.isLinux {
+          type = "app";
+          program = toString (pkgs.writeShellScript "valgrind-test" ''
+            set -e
+
+            TEST_NAME="''${1:?Usage: nix run .#valgrind-test <test-name> [-- <valgrind-args>]}"
+            shift
+
+            echo "Building test binary for: $TEST_NAME"
+            cargo test --no-run --test "$TEST_NAME" 2>&1
+
+            # Find the compiled test binary
+            BIN=$(cargo test --no-run --test "$TEST_NAME" --message-format=json 2>/dev/null \
+              | ${pkgs.jq}/bin/jq -r 'select(.executable != null) | .executable' \
+              | tail -1)
+
+            if [ -z "$BIN" ]; then
+              echo "Error: could not find test binary for '$TEST_NAME'"
+              exit 1
+            fi
+
+            echo "Running: valgrind $@ $BIN"
+            exec ${pkgs.valgrind}/bin/valgrind "$@" "$BIN"
+          '');
+        };
+
         devShells.default = craneLibNightly.devShell (wasmEnv // {
           packages = [ 
             nightlyToolchain

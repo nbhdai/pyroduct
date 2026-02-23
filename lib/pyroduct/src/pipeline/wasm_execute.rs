@@ -29,12 +29,12 @@ impl Pipeline {
     /// linked), then compiles and instantiates each wasm module in order.
     pub async fn new(def: PipelineDef) -> PipelineResult<Self> {
         let engine = PyroEngine::new()?;
-        let linker = PyroLinker::new(engine.engine(), def.capabilities)?;
 
         let mut steps = Vec::with_capacity(def.pipeline.len());
 
-        for (index, module_def) in def.pipeline.iter().enumerate() {
+        for (index, module_def) in def.pipeline.into_iter().enumerate() {
             debug!(index, "Compiling wasm module");
+            let linker = PyroLinker::new(engine.engine(), module_def.capabilities)?;
 
             let wasm_module = WasmtimeModule::from_binary(engine.engine(), &module_def.binary)
                 .map_err(|e| {
@@ -45,7 +45,7 @@ impl Pipeline {
                 })?;
 
             let pyro_module = PyroModule::new(wasm_module)?;
-            let instance = PyroInstance::new(&engine, &pyro_module, &linker).await?;
+            let instance = PyroInstance::new(&engine, &pyro_module, linker).await?;
             steps.push(instance);
         }
 

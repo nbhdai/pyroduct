@@ -11,6 +11,8 @@
 //! get zero-copy access to the archived data in wasm linear memory.
 //!
 
+use std::collections::HashMap;
+
 use wasmtime::{Engine, Instance, Memory, Store, TypedFunc};
 
 use crate::{
@@ -42,6 +44,9 @@ pub enum WasmError {
 
     #[error("Wasm module is missing required export: '{0}'")]
     MissingExport(String),
+
+    #[error("Wasm module is missing required import: '{0}'")]
+    MissingImport(String),
 
     #[error("Export '{0}' has incorrect signature.")]
     SignatureMismatch(String),
@@ -92,8 +97,14 @@ impl PyroEngine {
 // PyroInstance — owns Store + Instance, drives host↔wasm IO
 // ---------------------------------------------------------------------------
 
+pub struct PyroLogs {
+    pub module_logs: Vec<String>,
+    pub capability_logs: HashMap<(String, String), Vec<String>>,
+}
+
 pub struct PyroInstance {
     store: Store<PyroState>,
+    linker: PyroLinker,
     instance: Instance,
     memory: Memory,
     receiver: RkyvReceiver<PyroRow<'static>>,
@@ -103,7 +114,7 @@ impl PyroInstance {
     pub async fn new(
         engine: &PyroEngine,
         module: &PyroModule,
-        linker: &PyroLinker,
+        linker: PyroLinker,
     ) -> Result<Self, WasmError> {
         let pyro_state = PyroState::new();
         let mut store = Store::new(engine.engine(), pyro_state);
@@ -123,6 +134,7 @@ impl PyroInstance {
             memory,
             instance,
             receiver,
+            linker,
         })
     }
 
@@ -169,6 +181,17 @@ impl PyroInstance {
                 Err(error) => Err(PyroError::capture_json(error, &*result_view).into()),
             },
             _ => Err(PyroError::Header(ParseError::UnknownStatus(result_view.status_u8())).into()),
+        }
+    }
+
+    pub async fn unpack_logs(
+        &mut self,
+    ) -> PyroLogs {
+        let module_logs = self.store.data_mut().log();
+        let capability_logs = self.linker.logs();
+        PyroLogs {
+            module_logs,
+            capability_logs
         }
     }
 

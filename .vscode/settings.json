@@ -11,7 +11,7 @@
     // "./capabilities/rag/Cargo.toml",
     // "./capabilities/state/Cargo.toml",
     // "./capabilities/config/Cargo.toml",
-    "./capabilities/ollama/Cargo.toml"
+    // "./capabilities/ollama/Cargo.toml"
   ],
   "rust-analyzer.check.features": "all",
   "rust-analyzer.server.extraEnv": {

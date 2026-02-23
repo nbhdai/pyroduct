@@ -17,36 +17,47 @@ use super::PipelineError;
 /// [libraries.geocoder]
 /// path = "target/release/libgeocoder.dylib"
 ///
-/// [libraries.geocoder.classes.GeocoderServer]
-/// api_key = "abc123"
-///
-/// [libraries.geocoder.classes.ReverseServer]
-/// api_key = "abc123"
-///
 /// [modules.enrich]
 /// path = "target/wasm/enrich.wasm"
-/// capabilities = ["GeocoderServer"]
 ///
-/// pipeline = ["enrich"]
+/// [modules.enrich.capabilities.GeocoderServer]
+/// library = "geocoder"
+/// api_key = "abc123"
+///
+/// [modules.enrich2]
+/// path = "target/wasm/enrich2.wasm"
+///
+/// [modules.enrich2.capabilities.GeocoderServer]
+/// library = "geocoder"
+/// api_key = "different_key"
+///
+/// pipeline = ["enrich", "enrich2"]
 /// ```
 #[derive(Deserialize, Debug)]
 pub struct PipelineConfig {
-    /// Named capability libraries, each containing one or more classes.
-    pub capabilities: HashMap<String, CapabilityConfig>,
-    /// Named wasm modules.
+    /// Named shared libraries on disk. Each is loaded once.
+    pub libraries: HashMap<String, LibraryConfig>,
+    /// Named wasm modules, each with its own capability instances.
     pub modules: HashMap<String, ModuleConfig>,
     /// Ordered list of module names to execute.
     pub pipeline: Vec<String>,
 }
 
-/// A single shared library on disk that exposes one or more capability classes.
+/// A shared library on disk that exposes one or more capability classes.
 #[derive(Deserialize, Debug)]
-pub struct CapabilityConfig {
+pub struct LibraryConfig {
     /// Path to the compiled shared library (.dylib / .so / .dll).
     pub path: PathBuf,
-    /// Per-class configuration. Keys are class names as exported by the library.
-    #[serde(default)]
-    pub classes: HashMap<String, serde_json::Value>,
+}
+
+/// Per-module reference to a capability class, with its own configuration.
+#[derive(Deserialize, Debug)]
+pub struct ModuleCapabilityConfig {
+    /// Which library (key in `[libraries]`) provides this class.
+    pub library: String,
+    /// Remaining fields are the class-specific configuration.
+    #[serde(flatten)]
+    pub config: serde_json::Value,
 }
 
 /// A single wasm module in the pipeline.
@@ -54,9 +65,9 @@ pub struct CapabilityConfig {
 pub struct ModuleConfig {
     /// Path to the compiled .wasm binary.
     pub path: PathBuf,
-    /// Capability class names this module imports.
+    /// Per-class capability configuration. Keys are class names.
     #[serde(default)]
-    pub capabilities: Vec<String>,
+    pub capabilities: HashMap<String, ModuleCapabilityConfig>,
 }
 
 // =============================================================================
@@ -64,17 +75,15 @@ pub struct ModuleConfig {
 // =============================================================================
 
 /// A fully resolved module ready for instantiation.
-#[derive(Debug)]
 pub struct Module {
     pub binary: Vec<u8>,
-    pub capabilities: Vec<String>,
+    pub capabilities: Vec<Capability>,
 }
 
-/// A loaded pipeline definition: the ordered list of modules and the
-/// instantiated capabilities they need.
+/// A loaded pipeline definition: the ordered list of modules with their
+/// individually instantiated capabilities.
 pub struct PipelineDef {
     pub pipeline: Vec<Module>,
-    pub capabilities: Vec<Capability>,
 }
 
 // =============================================================================
@@ -84,35 +93,25 @@ pub struct PipelineDef {
 impl PipelineDef {
     /// Loads and resolves a full pipeline from its configuration.
     ///
-    /// 1. Loads each shared library and instantiates the requested classes.
-    /// 2. Reads each wasm binary and validates that its capability references
-    ///    resolve to a loaded class.
-    /// 3. Returns the ordered pipeline steps alongside the live capabilities.
+    /// 1. Loads each shared library once.
+    /// 2. For each module, instantiates its own capability instances from the
+    ///    referenced libraries with the module-specific configuration.
+    /// 3. Returns the ordered pipeline steps with capabilities attached.
     pub async fn load(config: &PipelineConfig) -> Result<Self, PipelineError> {
-        // --- Phase 1: load capability libraries & instantiate classes ----------
-        let mut all_capabilities: Vec<Capability> = Vec::new();
-        let mut known_classes: Vec<String> = Vec::new();
+        // --- Phase 1: load shared libraries ------------------------------------
+        let mut libraries: HashMap<String, CapabilityLibrary> = HashMap::new();
 
-        for (lib_name, lib_conf) in &config.capabilities {
-            let library = CapabilityLibrary::load(&lib_conf.path).map_err(|e| {
+        for (lib_name, lib_conf) in &config.libraries {
+            let library = CapabilityLibrary::load(lib_name.clone(), &lib_conf.path).map_err(|e| {
                 PipelineError::Capability(CapabilityLoading::LibraryOpen {
                     path: lib_conf.path.display().to_string(),
                     reason: format!("library '{}': {}", lib_name, e),
                 })
             })?;
-
-            let capability = library
-                .instantiate_from_config(&lib_conf.classes)
-                .await?;
-
-            for class_name in capability.keys() {
-                known_classes.push(class_name.clone());
-            }
-
-            all_capabilities.push(capability);
+            libraries.insert(lib_name.clone(), library);
         }
 
-        // --- Phase 2: resolve modules -----------------------------------------
+        // --- Phase 2: resolve modules & instantiate per-module capabilities ----
         let mut pipeline_steps = Vec::new();
 
         for module_name in &config.pipeline {
@@ -123,14 +122,31 @@ impl PipelineDef {
                 ))
             })?;
 
-            // Validate that every capability the module wants is actually loaded
-            for cap_name in &mod_conf.capabilities {
-                if !known_classes.contains(cap_name) {
+            // Group capability requests by library so we can call
+            // instantiate_from_config once per library per module.
+            let mut by_library: HashMap<String, HashMap<String, serde_json::Value>> =
+                HashMap::new();
+
+            for (class_name, cap_conf) in &mod_conf.capabilities {
+                if !libraries.contains_key(&cap_conf.library) {
                     return Err(PipelineError::Config(format!(
-                        "Module '{}' requires capability class '{}' which was not loaded by any library",
-                        module_name, cap_name
+                        "Module '{}' capability '{}' references library '{}' \
+                         which is not defined in [libraries]",
+                        module_name, class_name, cap_conf.library
                     )));
                 }
+                by_library
+                    .entry(cap_conf.library.clone())
+                    .or_default()
+                    .insert(class_name.clone(), cap_conf.config.clone());
+            }
+
+            // Instantiate capabilities for this module
+            let mut module_capabilities = Vec::new();
+            for (lib_name, class_configs) in &by_library {
+                let library = libraries.get(lib_name).unwrap();
+                let capability = library.instantiate_from_config(class_configs).await?;
+                module_capabilities.push(capability);
             }
 
             let binary = fs::read(&mod_conf.path).map_err(|e| {
@@ -144,13 +160,12 @@ impl PipelineDef {
 
             pipeline_steps.push(Module {
                 binary,
-                capabilities: mod_conf.capabilities.clone(),
+                capabilities: module_capabilities,
             });
         }
 
         Ok(Self {
             pipeline: pipeline_steps,
-            capabilities: all_capabilities,
         })
     }
 }

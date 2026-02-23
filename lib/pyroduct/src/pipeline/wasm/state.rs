@@ -19,7 +19,7 @@ impl PyroModule {
     /// Checks that the module exports `new_input`, `grow_input`, `free_output`,
     /// and `memory` with the correct signatures.
     pub fn new(module: Module) -> Result<Self, WasmError> {
-        Self::validate_export(&module, "host_log", &[ValType::I32, ValType::I32], &[])?;
+        Self::validate_import(&module, "env", "host_log", &[ValType::I32, ValType::I32], &[])?;
         Self::validate_export(&module, "new_input", &[ValType::I32], &[ValType::I32])?;
         Self::validate_export(
             &module,
@@ -68,6 +68,37 @@ impl PyroModule {
         }
         Ok(())
     }
+
+    fn validate_import(
+        module: &Module,
+        cap: &str,
+        name: &str,
+        params: &[ValType],
+        results: &[ValType],
+    ) -> Result<(), WasmError> {
+        let imports = module
+            .imports();
+        
+        for import in imports {
+            if !(cap == import.module() && name == import.name()) {
+                continue;
+            }
+            match import.ty() {
+                    ExternType::Func(func_type) => {
+                    if func_type.params().zip(params).all(|(f, p)| !f.matches(p))
+                        || func_type.params().len() != params.len()
+                        || func_type.results().zip(results).any(|(f, p)| !f.matches(p))
+                        || func_type.results().len() != results.len()
+                    {
+                        return Err(WasmError::SignatureMismatch(name.to_string()));
+                    }
+                }
+                _ => return Err(WasmError::SignatureMismatch(name.to_string())),
+            }
+            return Ok(());
+        }
+        Err(WasmError::MissingImport(format!("{cap}:{name}")))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -111,7 +142,7 @@ impl PyroMethods {
 
 pub struct PyroState {
     methods: Option<PyroMethods>,
-    module_log: Mutex<Vec<u8>>,
+    module_log: Mutex<Vec<String>>,
 }
 
 impl PyroState {
@@ -168,6 +199,14 @@ impl PyroState {
     }
 
     pub fn module_log(&self, log: &[u8]) {
-        self.module_log.lock().unwrap().extend_from_slice(log);
+        let log_msg = String::from_utf8_lossy(log).trim_end().to_string();
+        self.module_log.lock().unwrap().push(log_msg);
+    }
+
+    pub fn log(&self) -> Vec<String> {
+        let mut log = self.module_log.lock().unwrap();
+        let mut new_log = Vec::with_capacity(log.capacity());
+        std::mem::swap(&mut *log, &mut new_log);
+        new_log
     }
 }

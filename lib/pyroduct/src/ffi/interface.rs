@@ -5,7 +5,7 @@ use std::future::Future;
 use std::ops::DerefMut;
 use std::pin::Pin;
 use std::ptr::NonNull;
-use std::slice;
+use std::{fmt, slice};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
@@ -91,7 +91,7 @@ impl Future for MethodCallFuture {
             },
             MethodProj::Ready(res) => Poll::Ready(
                 res.take()
-                    .expect("MethodCallFuture polled after completion"),
+                    .expect("MethodCallFuture polled after completioS>n"),
             ),
         }
     }
@@ -496,6 +496,7 @@ pub type CapabilityRegisterFn =
 
 pub type ObjectHandle = i64;
 
+
 pub struct ForeignClass {
     name: String,
     _library: Option<Arc<Library>>,
@@ -503,6 +504,11 @@ pub struct ForeignClass {
     init: ClassInitFn,
     reset: ClassResetFn,
     register: ClientRegisterFn,
+}
+impl fmt::Debug for ForeignClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ForeignClass").field("name", &self.name).field("library", &self._library).field("methods", &self.methods.len()).finish()
+    }
 }
 
 struct ForeignMethod {
@@ -611,8 +617,7 @@ impl ForeignClass {
                         match msg {
                             Some(log_msg) => {
                                 if let Ok(mut buffer) = task_buffer.lock() {
-                                    buffer.extend_from_slice(log_msg.as_bytes());
-                                    buffer.push(b'\n');
+                                    buffer.push(log_msg);
                                 }
                             }
                             None => break, // Exit if the log channel naturally closes
@@ -644,10 +649,16 @@ impl ForeignClass {
 pub struct ForeignObject {
     class: Arc<ForeignClass>,
     obj: Arc<PyroObject>,
-    pub log_buffer: Arc<Mutex<Vec<u8>>>,
+    pub log_buffer: Arc<Mutex<Vec<String>>>,
     // Wrapped in Option so we can take() it to send the signal, 
     // and Arc<Mutex> so ForeignObject remains Cloneable.
     _log_task: Arc<LogTaskHandle>,
+}
+
+impl fmt::Debug for ForeignObject {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ForeignClass").field("class", &self.class).field("obj", &self.obj.object_id).finish()
+    }
 }
 
 impl ForeignObject {
@@ -714,7 +725,7 @@ impl ForeignObject {
         }
     }
 
-    pub async fn take_logs(&self) -> Vec<u8> {
+    pub fn take_logs(&self) -> Vec<String> {
         let mut logs = self.log_buffer.lock().unwrap();
         let log_cap = logs.capacity();
         let mut fresh_logs = Vec::with_capacity(log_cap);

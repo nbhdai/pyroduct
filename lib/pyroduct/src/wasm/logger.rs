@@ -11,14 +11,13 @@ use tracing_subscriber::{
 
 static INIT: Once = Once::new();
 
-#[cfg(not(test))]
-#[link(wasm_import_module = "env")]
+#[cfg(target_arch = "wasm32")]
 unsafe extern "C" {
     fn host_log(ptr: *const u8, len: usize);
 }
 
 // MOCK: If testing, provide a dummy implementation to satisfy the linker.
-#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
 unsafe extern "C" fn host_log(ptr: *const u8, len: usize) {
     let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
     if let Ok(s) = std::str::from_utf8(slice) {
