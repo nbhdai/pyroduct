@@ -102,6 +102,22 @@ pub struct PyroLogs {
     pub capability_logs: HashMap<(String, String), Vec<String>>,
 }
 
+impl PyroLogs {
+    pub fn empty() -> Self {
+        PyroLogs { module_logs: Vec::new(), capability_logs: HashMap::new() }
+    }
+}
+
+pub struct PyroSuccess {
+    pub row: PyroRow<'static>,
+    pub logs: PyroLogs,
+}
+
+pub struct PyroFailure {
+    pub result: Result<CapturedError, WasmError>,
+    pub logs: PyroLogs,
+}
+
 pub struct PyroInstance {
     store: Store<PyroState>,
     linker: PyroLinker,
@@ -141,53 +157,55 @@ impl PyroInstance {
     pub async fn call(
         &mut self,
         input: &PyroRow<'_>,
-    ) -> Result<Result<PyroRow<'static>, CapturedError>, WasmError> {
+    ) -> Result<PyroSuccess, PyroFailure> {
         // Ship the input row via rkyv into a PyroVec
         let input_row_owned = input.to_static();
-        let input_vec = input_row_owned.ship()?;
+        let input_vec = input_row_owned.ship().map_err(|err| self.pack_pyro_error(err))?;
         let input_view: PyroView<'_> = input_vec.view();
 
         // 1. Write Input using PyroCallIo
         let mut io = PyroCallIo::new(&mut self.store, self.memory);
-        let input_ptr = io.new_input(&input_view).await?;
+        let input_ptr = io.new_input(&input_view).await.map_err(|err| self.pack_pyro_error(err))?;
 
         // 2. Call the export
         let entry: TypedFunc<i32, i32> = self
             .instance
             .get_typed_func(&mut self.store, "call_extern")
-            .map_err(|e| PyroError::CodePanic(e.into()))?;
+            .map_err(|e| PyroError::CodePanic(e.into()))
+            .map_err(|err| self.pack_pyro_error(err))?;
 
         let output_ptr = entry
             .call_async(&mut self.store, input_ptr)
             .await
-            .map_err(classify_error)?;
+            .map_err(classify_error)
+            .map_err(|err| self.pack_pyro_error(err))?;
 
         // 3. Read Output using PyroCallIo
         let mut io = PyroCallIo::new(&mut self.store, self.memory);
-        let output_vec = io.get_output(output_ptr).await?;
+        let output_vec = io.get_output(output_ptr).await.map_err(|err| self.pack_pyro_error(err))?;
 
         // 4. Parse the result (Zero-copy view of the host-owned vector)
         let result_view = output_vec.view();
-        result_view.parse_as_error()?;
+        result_view.parse_as_error().map_err(|err| self.pack_pyro_error(err))?;
 
         match result_view.status() {
             Ok(DataStatus::RkyvValid) => {
-                let row = PyroRow::expose_view(result_view)?;
-                let row = self.receiver.receive(&row)?;
-                Ok(Ok(row))
+                let row = PyroRow::expose_view(result_view).map_err(|err| self.pack_pyro_error(err))?;
+                let row = self.receiver.receive(&row).map_err(|err| self.pack_pyro_error(err))?;
+                Ok(self.pack_success(row))
             }
             Ok(DataStatus::RkyvError) => match serde_json::from_slice(&result_view) {
-                Ok(error) => Ok(Err(error)),
-                Err(error) => Err(PyroError::capture_json(error, &*result_view).into()),
+                Ok(error) => Err(self.pack_user_error(error)),
+                Err(error) => Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view))),
             },
-            _ => Err(PyroError::Header(ParseError::UnknownStatus(result_view.status_u8())).into()),
+            _ => Err(self.pack_pyro_error(PyroError::Header(ParseError::UnknownStatus(result_view.status_u8())))),
         }
     }
 
-    pub async fn unpack_logs(
-        &mut self,
+    pub fn unpack_logs(
+        &self,
     ) -> PyroLogs {
-        let module_logs = self.store.data_mut().log();
+        let module_logs = self.store.data().log();
         let capability_logs = self.linker.logs();
         PyroLogs {
             module_logs,
@@ -195,7 +213,26 @@ impl PyroInstance {
         }
     }
 
-    // ---- Internal ------------------------------------------------------------
+    pub fn pack_pyro_error(&self, error: impl Into<WasmError>) -> PyroFailure {
+        PyroFailure {
+            result: Err(error.into()),
+            logs: self.unpack_logs(),
+        }
+    }
+
+    pub fn pack_user_error(&self, error: CapturedError) -> PyroFailure {
+        PyroFailure {
+            result: Ok(error),
+            logs: self.unpack_logs(),
+        }
+    }
+
+    pub fn pack_success(&self, row: PyroRow<'static>) -> PyroSuccess {
+        PyroSuccess {
+            row,
+            logs: self.unpack_logs(),
+        }
+    }
 }
 
 /// Attempts to downcast an anyhow::Error into specific pyro error types.

@@ -7,7 +7,7 @@ use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, error, info, instrument, warn};
 use wasmtime::Module as WasmtimeModule;
 
-use crate::pipeline::wasm::{PyroEngine, PyroInstance, PyroLinker, PyroModule};
+use crate::pipeline::wasm::{PyroEngine, PyroFailure, PyroInstance, PyroLinker, PyroLogs, PyroModule, PyroSuccess};
 use crate::value::PyroRow;
 use crate::value::arrow::Rowable;
 
@@ -17,6 +17,12 @@ use super::{PipelineError, PipelineResult};
 // =============================================================================
 // Pipeline
 // =============================================================================
+
+pub struct PipelineExecution {
+    row_index: usize,
+    steps: Vec<PyroSuccess>,
+    failure: Option<PyroFailure>
+}
 
 pub struct Pipeline {
     steps: Vec<PyroInstance>,
@@ -60,35 +66,44 @@ impl Pipeline {
     #[instrument(skip(self, input))]
     pub async fn process(
         &mut self,
-        input: PyroRow<'_>,
-    ) -> PipelineResult<Result<PyroRow<'static>, Failure>> {
+        input: &PyroRow<'_>,
+    ) -> PipelineExecution {
         let pipeline_len = self.steps.len();
         info!("Pipeline Start: Executing {} steps", pipeline_len);
 
         let mut result: PyroRow<'static> = input.clone().into_owned();
-        let mut current_input = input;
-
+        let mut execution =  PipelineExecution {
+            steps:Vec::new(),
+            failure:None,
+            row_index: 0,
+        };
+        execution.steps.push(PyroSuccess { row: result.clone(), logs: PyroLogs::empty() });
         for (i, step) in self.steps.iter_mut().enumerate() {
             debug!("Pipeline Step {}/{}: Processing", i + 1, pipeline_len);
 
-            match step.call(&current_input).await? {
+            match step.call(&result).await {
                 Ok(output) => {
                     debug!("Pipeline Step {}/{}: Success", i + 1, pipeline_len);
-                    result.extend(output.clone());
-                    current_input = output;
+                    result.extend(output.row.clone());
+                    execution.steps.push(output);
                 }
-                Err(error) => {
-                    warn!(
-                        "Pipeline Step {}/{}: Module returned error: {}",
-                        i + 1,
-                        pipeline_len,
-                        error
-                    );
-                    return Ok(Err(Failure {
-                        row_index: 0,
-                        error: error.to_string(),
-                        partial_data: result,
-                    }));
+                Err(failure) => {
+                    match &failure.result {
+                        Ok(error) => warn!(
+                            "Pipeline Step {}/{}: Module returned error: {}",
+                            i + 1,
+                            pipeline_len,
+                            error
+                        ),
+                        Err(error) => error!(
+                            "Pipeline Step {}/{}: Pyroduct Failed: {}",
+                            i + 1,
+                            pipeline_len,
+                            error
+                        ),
+                    }
+                    execution.failure = Some(failure);
+                    return execution;
                 }
             }
         }
@@ -97,7 +112,7 @@ impl Pipeline {
             "Pipeline Complete: Successfully finished all {} steps",
             pipeline_len
         );
-        Ok(Ok(result))
+        execution
     }
 }
 
@@ -136,7 +151,7 @@ impl PipelinePool {
     pub async fn process_batch(
         &self,
         batch: &RecordBatch,
-    ) -> PipelineResult<(Vec<PyroRow<'static>>, Vec<Failure>)> {
+    ) -> PipelineResult<(Vec<PipelineExecution>, Vec<PipelineExecution>)> {
         let total_rows = batch.num_rows();
         if total_rows == 0 {
             return Ok((Vec::new(), Vec::new()));
@@ -172,31 +187,18 @@ impl PipelinePool {
                 for j in 0..batch_slice.num_rows() {
                     let absolute_index = offset + j;
 
-                    let result = match batch_slice.row(j) {
-                        Ok(input_row) => match pipeline.process(input_row).await {
-                            Ok(Ok(mut res)) => {
-                                res.insert(
-                                    "pyroduct_index".to_string(),
-                                    (absolute_index as u64).into(),
-                                );
-                                Ok(res)
-                            }
-                            Ok(Err(mut failure)) => {
-                                failure.row_index = absolute_index;
-                                Err(failure)
-                            }
-                            Err(e) => Err(Failure {
-                                row_index: absolute_index,
-                                error: e.to_string(),
-                                partial_data: PyroRow::empty(),
-                            }),
-                        },
-                        Err(e) => Err(Failure {
+                    let mut result = match batch_slice.row(j) {
+                        Ok(input_row) => pipeline.process(&input_row).await,
+                        Err(e) => PipelineExecution {
                             row_index: absolute_index,
-                            error: e.to_string(),
-                            partial_data: PyroRow::empty(),
-                        }),
+                            failure: Some(PyroFailure {
+                                result: Ok(crate::CapturedError::new(e)),
+                                logs: PyroLogs::empty(),
+                            }),
+                            steps: Vec::new(),
+                        },
                     };
+                    result.row_index = absolute_index;
 
                     if tx_clone.send(result).await.is_err() {
                         break;
@@ -209,12 +211,12 @@ impl PipelinePool {
 
         drop(tx);
         let mut success_results = Vec::with_capacity(total_rows);
-        let mut failures = Vec::new();
+        let mut failures: Vec<PipelineExecution> = Vec::new();
 
         while let Some(row_result) = rx.recv().await {
-            match row_result {
-                Ok(row) => success_results.push(row),
-                Err(failure) => failures.push(failure),
+            match &row_result.failure {
+                None => success_results.push(row_result),
+                Some(_) => failures.push(row_result),
             }
         }
 
@@ -234,7 +236,7 @@ impl PipelinePool {
             *guard = reclaimed;
         }
 
-        success_results.sort_by_key(|row| row.get_u64("pyroduct_index").unwrap_or_default());
+        success_results.sort_by_key(|row| row.row_index);
 
         Ok((success_results, failures))
     }

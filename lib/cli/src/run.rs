@@ -49,7 +49,7 @@ fn load_config(config_path: &Path) -> Result<PipelineConfig> {
 
     let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
     // Resolve relative paths
-    for lib in config.capabilities.values_mut() {
+    for lib in config.libraries.values_mut() {
         if lib.path.is_relative() {
             lib.path = config_dir.join(&lib.path);
         }
