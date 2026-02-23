@@ -89,12 +89,10 @@ pub unsafe extern "C" fn log_callback(library_id: i64, span_id: u64, msg: *const
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     eprintln!("[log] channel full for id=({library_id},{span_id}), dropping message");
                 }
-                Err(mpsc::error::TrySendError::Closed(_)) => {
-                    // Receiver was dropped — clean up our side too.
-                    drop(tx);
-                    LOG_SENDERS.remove(&(library_id, span_id));
-                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {}
             }
+        } else {
+            tracing::debug!(log_msg, "Uncaught Capability Log");
         }
     } else {
         if let Some(tx) = LOG_SENDERS.get(&(library_id, span_id)) {
@@ -104,11 +102,11 @@ pub unsafe extern "C" fn log_callback(library_id: i64, span_id: u64, msg: *const
                     eprintln!("[log] channel full for id=({library_id},{span_id}), dropping message");
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
-                    // Receiver was dropped — clean up our side too.
-                    drop(tx);
                     LOG_SENDERS.remove(&(library_id, span_id));
                 }
             }
+        } else {
+            tracing::debug!(log_msg, "Uncaught Capability Log");
         }
     }
 

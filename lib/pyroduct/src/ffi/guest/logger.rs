@@ -23,10 +23,8 @@ static CLIENT_SPAN: OnceLock<RwLock<HashMap<u64, tracing::Span>>> = OnceLock::ne
 static INIT: Once = Once::new();
 
 pub fn init_logging(id: i64, callback: LogCallback) {
-    let _ = LOG_CALLBACK.set((id, callback));
-    let _ = CLIENT_SPAN.set(RwLock::new(HashMap::new()));
-    
     INIT.call_once(|| {
+        let _ = LOG_CALLBACK.set((id, callback));
         let factory = FfiWriterFactory;
 
         Registry::default()
@@ -52,7 +50,7 @@ pub fn init_logging(id: i64, callback: LogCallback) {
 /// tracing::info!("routed to object 42");
 /// ```
 pub fn object_span(object_id: u64) -> tracing::Span {
-    let client_spans = CLIENT_SPAN.wait();
+    let client_spans = CLIENT_SPAN.get_or_init(|| RwLock::new(HashMap::new()));
     {
         let cs = client_spans.read().unwrap();
         if let Some(span) = cs.get(&object_id) {
@@ -129,7 +127,7 @@ impl Write for FfiProxy {
         unsafe {
             (call)(
                 *lib_id,
-                self.object_id.unwrap_or(u64::MAX),
+                self.object_id.unwrap_or(0),
                 buf.as_ptr(),
                 buf.len(),
             );
