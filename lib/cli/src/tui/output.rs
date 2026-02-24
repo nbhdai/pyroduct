@@ -27,6 +27,23 @@ pub struct OutputView {
     current_row: usize,
 }
 
+
+// Add at the top of output.rs, with the other use statements:
+use super::keys::{Hotkey, HotkeyProvider};
+
+// Add at the bottom of output.rs:
+impl HotkeyProvider for OutputView {
+    fn hotkeys(&self) -> Vec<Hotkey> {
+        let mut hk = vec![Hotkey::new("Tab", "Switch pane")];
+        match self.active_pane {
+            ActivePane::Table => hk.extend(self.table.hotkeys()),
+            ActivePane::Logs => hk.extend(self.logs.hotkeys()),
+        }
+        hk
+    }
+}
+
+
 impl OutputView {
     pub fn new(executions: Vec<PipelineExecution>, step_index: usize) -> anyhow::Result<Self> {
         let batch = extract_upto_batch(&executions, step_index)?.unwrap_or_else(|| RecordBatch::new_empty(Arc::new(Schema::empty())));

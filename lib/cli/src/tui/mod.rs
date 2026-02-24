@@ -19,9 +19,6 @@ use pyroduct::pipeline::wasm_execute::PipelineExecution;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
-    text::{Line, Span},
-    widgets::Paragraph,
     Frame, Terminal,
 };
 use ratatui_code_editor::{editor::Editor, theme::vesper};
@@ -33,6 +30,9 @@ pub mod table;
 pub mod output;
 pub mod cap_config;
 pub mod module;
+pub mod keys;
+
+use keys::{Hotkey, HotkeyProvider};
 
 pub struct ModuleStep {
     pub name: String,
@@ -116,7 +116,7 @@ impl App {
                 execution: Vec::new(),
             },
             view: ViewState::Module(module::ModuleView::new(code_state, cap_state)),
-            status_msg: "i/Enter: focus │ ↑/↓: nav │ Tab: pane │ ^S: save │ ^R: run │ ^Q: quit".into(),
+            status_msg: String::new(),
             quit: false,
         })
     }
@@ -219,25 +219,39 @@ fn ui(f: &mut Frame, app: &mut App) {
     render_status(f, app, vertical_chunks[1]);
 }
 
+impl HotkeyProvider for App {
+    fn hotkeys(&self) -> Vec<Hotkey> {
+        let mut hk = vec![
+            Hotkey::new("^Q", "Quit"),
+            Hotkey::new("^S", "Save"),
+            Hotkey::new("^R", "Run"),
+        ];
+
+        let is_focused = match &self.view {
+            ViewState::Module(mv) => mv.focused,
+            ViewState::InputTable(s) => s.focused,
+            ViewState::OutputTable(s) => s.focused,
+        };
+
+        if !is_focused {
+            hk.push(Hotkey::new("↑/↓", "Navigate"));
+            hk.push(Hotkey::new("Enter", "Focus"));
+        } else {
+            hk.push(Hotkey::new("Esc", "Unfocus"));
+            match &self.view {
+                ViewState::Module(mv) => hk.extend(mv.hotkeys()),
+                ViewState::InputTable(tv) => hk.extend(tv.hotkeys()),
+                ViewState::OutputTable(ov) => hk.extend(ov.hotkeys()),
+            }
+        }
+
+        hk
+    }
+}
+
 fn render_status(f: &mut Frame, app: &App, area: Rect) {
-    let is_focused = match &app.view {
-        ViewState::Module(mv) => mv.focused,
-        ViewState::InputTable(s) => s.focused,
-        ViewState::OutputTable(s) => s.focused,
-    };
-
-    let mode = if is_focused {
-        Span::styled(" FOCUS ", Style::default().fg(Color::Black).bg(Color::Green))
-    } else {
-        Span::styled("  NAV  ", Style::default().fg(Color::Black).bg(Color::Blue))
-    };
-
-    let line = Line::from(vec![
-        mode,
-        Span::raw(" │ "),
-        Span::styled(&app.status_msg, Style::default().fg(Color::DarkGray)),
-    ]);
-    f.render_widget(Paragraph::new(line), area);
+    let hk = app.hotkeys();
+    keys::render(f, &hk, area);
 }
 
 fn handle_event(app: &mut App) -> Result<()> {
@@ -286,7 +300,7 @@ fn handle_event(app: &mut App) -> Result<()> {
                     ViewState::InputTable(s) => s.focused = true,
                     ViewState::OutputTable(s) => s.focused = true,
                 }
-                app.status_msg = "Focused ─ Esc to return │ Tab to switch pane".into();
+                app.status_msg = String::new();
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 let idx = app.current_nav_index();
@@ -309,7 +323,7 @@ fn handle_event(app: &mut App) -> Result<()> {
                 ViewState::InputTable(s) => s.focused = false,
                 ViewState::OutputTable(s) => s.focused = false,
             }
-            app.status_msg = "Navigation mode".into();
+            app.status_msg = String::new();
         } else {
             // Forward event to currently active widget
             match &mut app.view {

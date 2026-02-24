@@ -10,6 +10,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Row, Table};
 use ratatui::Frame;
 
+use super::keys::{Hotkey, HotkeyProvider};
+
 // =============================================================================
 // Configuration
 // =============================================================================
@@ -371,4 +373,14 @@ fn digit_count(n: usize) -> usize {
         return 1;
     }
     ((n as f64).log10().floor() as usize) + 1
+}
+
+impl HotkeyProvider for TableView {
+    fn hotkeys(&self) -> Vec<Hotkey> {
+        vec![
+            Hotkey::new("↑/k ↓/j", "Scroll"),
+            Hotkey::new("PgUp/Dn", "Page"),
+            Hotkey::new("Home/End", "Jump"),
+        ]
+    }
 }

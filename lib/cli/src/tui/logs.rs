@@ -8,6 +8,8 @@ use ratatui::{
     Frame,
 };
 
+use super::keys::{Hotkey, HotkeyProvider};
+
 pub struct LogsView {
     pub logs: PyroLogs,
     scroll: u16,
@@ -99,5 +101,15 @@ impl LogsView {
             .scroll((self.scroll, 0));
 
         f.render_widget(paragraph, area);
+    }
+}
+
+impl HotkeyProvider for LogsView {
+    fn hotkeys(&self) -> Vec<Hotkey> {
+        vec![
+            Hotkey::new("↑/k ↓/j", "Scroll"),
+            Hotkey::new("PgUp/Dn", "Page"),
+            Hotkey::new("Home/End", "Jump"),
+        ]
     }
 }

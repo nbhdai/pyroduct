@@ -8,6 +8,7 @@ use ratatui::{
     Frame,
 };
 use ratatui_code_editor::{editor::Editor, theme::vesper};
+use super::keys::{Hotkey, HotkeyProvider};
 
 pub struct CapConfigState {
     pub editing: bool,
@@ -121,6 +122,19 @@ impl CapConfigState {
             let add_msg = Paragraph::new("Press Enter to add a new capability config")
                 .style(Style::default().fg(Color::DarkGray));
             f.render_widget(add_msg, chunks[1]);
+        }
+    }
+}
+
+impl HotkeyProvider for CapConfigState {
+    fn hotkeys(&self) -> Vec<Hotkey> {
+        if self.editing {
+            vec![Hotkey::new("Esc", "Stop editing")]
+        } else {
+            vec![
+                Hotkey::new("←/→", "Switch tab"),
+                Hotkey::new("Enter", "Edit"),
+            ]
         }
     }
 }

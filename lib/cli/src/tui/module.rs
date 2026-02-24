@@ -4,7 +4,7 @@ use ratatui::{
     Frame,
 };
 
-use super::{cap_config::CapConfigState, wasm, PipelineState};
+use super::{cap_config::CapConfigState, keys::{Hotkey, HotkeyProvider}, wasm, PipelineState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivePane {
@@ -39,7 +39,6 @@ impl ModuleView {
             .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
             .split(area);
 
-        // Temporarily set editing based on active pane + focus
         let orig_editing = self.code.editing;
         self.code.editing = self.focused && self.active_pane == ActivePane::Code;
         wasm::render(f, pipeline, &mut self.code, chunks[0]);
@@ -51,9 +50,7 @@ impl ModuleView {
     }
 
     pub fn handle_event(&mut self, key: KeyEvent) -> anyhow::Result<()> {
-        // Toggle pane with Tab
         if key.code == KeyCode::Tab {
-            // If the active pane's editor is in editing mode, unfocus it first
             match self.active_pane {
                 ActivePane::Code => self.code.editing = false,
                 ActivePane::CapConfig => self.cap_config.editing = false,
@@ -62,7 +59,6 @@ impl ModuleView {
                 ActivePane::Code => ActivePane::CapConfig,
                 ActivePane::CapConfig => ActivePane::Code,
             };
-            // Enter editing in the new pane
             match self.active_pane {
                 ActivePane::Code => self.code.editing = true,
                 ActivePane::CapConfig => self.cap_config.editing = true,
@@ -75,5 +71,16 @@ impl ModuleView {
             ActivePane::CapConfig => self.cap_config.handle_event(key)?,
         }
         Ok(())
+    }
+}
+
+impl HotkeyProvider for ModuleView {
+    fn hotkeys(&self) -> Vec<Hotkey> {
+        let mut hk = vec![Hotkey::new("Tab", "Switch pane")];
+        match self.active_pane {
+            ActivePane::Code => hk.push(Hotkey::new("...", "Code editor")),
+            ActivePane::CapConfig => hk.extend(self.cap_config.hotkeys()),
+        }
+        hk
     }
 }
