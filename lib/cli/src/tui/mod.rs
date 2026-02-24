@@ -31,6 +31,7 @@ pub mod logs;
 pub mod wasm;
 pub mod table;
 pub mod output;
+pub mod cap_config;
 
 pub struct ModuleStep {
     pub name: String,
@@ -127,7 +128,7 @@ impl App {
     pub fn run_pipeline(&mut self) {
         self.save();
         self.status_msg = "Executing run... (Check console/logs)".into();
-        // TODO: Handle run_batch/run logic seamlessly
+
     }
 
     pub fn current_nav_index(&self) -> usize {
