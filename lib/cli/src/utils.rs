@@ -102,7 +102,7 @@ impl TarballBuilder {
 
     pub fn finish(self) -> Result<()> {
         self.tar.into_inner()?.finish()?;
-        println!("✓ Created {}", self.path.display());
+        tracing::info!("✓ Created {}", self.path.display());
         Ok(())
     }
 }
@@ -194,14 +194,14 @@ impl InterfaceGenerator {
         fs::create_dir_all(output_dir)?;
 
         fs::write(output_dir.join("Cargo.toml"), &self.cargo_toml_content)?;
-        println!("  ✓ Wrote interface/Cargo.toml");
+        tracing::info!("  ✓ Wrote interface/Cargo.toml");
         let src_dir = output_dir.join("src");
         fs::create_dir_all(&src_dir)?;
 
         let lib_path = src_dir.join("lib.rs");
         fs::write(&lib_path, &self.lib_rs_content)?;
 
-        println!("  ✓ Wrote interface/src/lib.rs");
+        tracing::info!("  ✓ Wrote interface/src/lib.rs");
         let _ = Command::new("rustfmt").arg(&lib_path).status();
         if lockfile {
             // Generate lockfile in place
@@ -212,9 +212,9 @@ impl InterfaceGenerator {
                 .context("Failed to run cargo generate-lockfile")?;
 
             if status.success() {
-                println!("  ✓ Generated interface/Cargo.lock");
+                tracing::info!("  ✓ Generated interface/Cargo.lock");
             } else {
-                eprintln!("  ! Warning: Failed to generate interface/Cargo.lock");
+                tracing::error!("  ! Warning: Failed to generate interface/Cargo.lock");
             }
         }
 
@@ -233,7 +233,7 @@ impl InterfaceGenerator {
                 }
                 Err(e) => {
                     // We warn but do not fail the entire package operation if network/cargo fails
-                    eprintln!(
+                    tracing::error!(
                         "  ! Warning: Could not generate Cargo.lock for archive: {}",
                         e
                     );

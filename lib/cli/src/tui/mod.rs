@@ -226,7 +226,7 @@ impl App {
                 self.view = ViewState::Module(module::ModuleView::new(code_state, cap_state));
             } else {
                 self.view = ViewState::OutputTable(
-                    output::OutputView::new(self.pipeline.execution.clone(), stage_idx).unwrap(),
+                    output::OutputView::new(self.pipeline.execution.clone(), stage_idx + 1).unwrap(),
                 );
             }
         }
@@ -335,10 +335,10 @@ async fn handle_event(app: &mut App) -> Result<()> {
                 match &mut app.view {
                     ViewState::Module(mv) => {
                         mv.focused = true;
-                        // Enter editing in the active pane
-                        match mv.active_pane {
-                            module::ActivePane::Code => mv.code.editing = true,
-                            module::ActivePane::CapConfig => mv.cap_config.editing = true,
+                        // Only code pane enters editing immediately.
+                        // Cap config starts in tab-navigation mode.
+                        if mv.active_pane == module::ActivePane::Code {
+                            mv.code.editing = true;
                         }
                     }
                     ViewState::InputTable(s) => s.focused = true,

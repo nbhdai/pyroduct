@@ -44,8 +44,13 @@ impl ModuleView {
         wasm::render(f, pipeline, &mut self.code, chunks[0]);
         self.code.editing = orig_editing;
 
-        let cap_editing = self.focused && self.active_pane == ActivePane::CapConfig;
-        self.cap_config.editing = cap_editing;
+        // Only mark cap_config as "active" (highlighted border) when it's the
+        // focused pane — but do NOT override its internal `editing` flag.
+        // The cap_config pane manages its own editing state: it starts in
+        // tab-navigation mode (editing=false) so the user can browse tabs and
+        // reach the "+" tab, and only enters editing mode on explicit Enter.
+        let is_active_pane = self.focused && self.active_pane == ActivePane::CapConfig;
+        self.cap_config.active = is_active_pane;
         self.cap_config.render(f, chunks[1], "Cap Config");
     }
 
@@ -69,7 +74,7 @@ impl ModuleView {
 
         match (self.active_pane, &key.code) {
             (ActivePane::Code, KeyCode::Esc) => {
-                if self.code.editing == true {
+                if self.code.editing {
                     self.code.editing = false;
                 } else {
                     self.focused = false;
@@ -77,7 +82,7 @@ impl ModuleView {
             },
             (ActivePane::Code, _) => wasm::handle_event(&mut self.code, key)?,
             (ActivePane::CapConfig, KeyCode::Esc) => {
-                if self.cap_config.editing == true {
+                if self.cap_config.editing {
                     self.cap_config.editing = false;
                 } else {
                     self.focused = false;

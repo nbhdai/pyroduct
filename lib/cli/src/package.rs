@@ -103,15 +103,15 @@ fn package_module(
     cargo_args: &[String],
     capture: bool,
 ) -> Result<()> {
-    if !capture { println!("Packaging module: {:?}", ctx.root); }
+    tracing::info!("Packaging module: {:?}", ctx.root);
 
     // 1. Generate Cargo.toml
     let cargo_toml_content = toml::to_string_pretty(&manifest.to_cargo())?;
     fs::write(ctx.root.join("Cargo.toml"), &cargo_toml_content)?;
-    if !capture { println!("✓ Wrote Cargo.toml"); }
+    tracing::info!("✓ Wrote Cargo.toml");
 
     // 2. Build WASM with pass-through args
-    if !capture { println!("Compiling WASM module..."); }
+    tracing::info!("Compiling WASM module...");
     let build_args = vec![
         "build",
         "--release",
@@ -142,7 +142,7 @@ fn package_module(
 
     let dest_wasm = ctx.output_dir.join("mod.wasm");
     fs::copy(&built_wasm, &dest_wasm)?;
-    if !capture { println!("✓ Compiled {}", dest_wasm.display()); }
+    tracing::info!("✓ Compiled {}", dest_wasm.display());
 
     // 4. Create Archive
     let mut tar = TarballBuilder::new(ctx.archive_path("module"))?;
@@ -163,15 +163,15 @@ fn package_capability(
     cargo_args: &[String],
     capture: bool,
 ) -> Result<()> {
-    if !capture { println!("Packaging capability: {:?}", ctx.root); }
+    tracing::info!("Packaging capability: {:?}", ctx.root);
 
     // 1. Generate Cargo.toml
     let cargo_toml_content = toml::to_string_pretty(&manifest.clone().to_capability_manifest())?;
     fs::write(ctx.root.join("Cargo.toml"), &cargo_toml_content)?;
-    if !capture { println!("✓ Wrote Cargo.toml"); }
+    tracing::info!("✓ Wrote Cargo.toml");
 
     // 2. Build Dynamic Library with pass-through args
-    if !capture { println!("Compiling capability binary..."); }
+    tracing::info!("Compiling capability binary...");
     let build_args = vec![
         "build",
         "--release",
@@ -200,7 +200,7 @@ fn package_capability(
 
     let dest_lib = ctx.output_dir.join(format!("lib.{}", dylib_extension()));
     fs::copy(&built_lib, &dest_lib)?;
-    if !capture { println!("✓ Compiled {}", dest_lib.display()); }
+    tracing::info!("✓ Compiled {}", dest_lib.display());
 
     // 4. Create Source Archive (.cargo)
     let mut cap_tar = TarballBuilder::new(ctx.archive_path("cargo"))?;
@@ -276,7 +276,7 @@ pub fn package(path: &Path, output: Option<&Path>, cargo_args: &[String], captur
 
     // 2. Recursive scan mode
     if !capture {
-        println!(
+        tracing::info!(
             "No manifest found in {:?}, scanning subdirectories...",
             path
         );
@@ -314,9 +314,7 @@ pub fn package(path: &Path, output: Option<&Path>, cargo_args: &[String], captur
             err_msg.push_str(&format!("  {:?}: {:#}\n", p, e));
         }
         
-        if !capture {
-            eprintln!("{}", err_msg);
-        }
+        tracing::error!("{}", err_msg);
         bail!("{} packaging(s) failed. {}", errors.len(), err_msg);
     }
 

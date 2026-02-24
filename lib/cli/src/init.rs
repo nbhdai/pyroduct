@@ -31,10 +31,10 @@ pub fn init(path: Option<PathBuf>, is_cap: bool) -> Result<()> {
 
     if is_cap {
         create_capability(&root, &src_dir, &name)?;
-        println!("Created capability '{}' at {:?}", name, root);
+        tracing::info!("Created capability '{}' at {:?}", name, root);
     } else {
         create_module(&root, &src_dir, &name)?;
-        println!("Created module '{}' at {:?}", name, root);
+        tracing::info!("Created module '{}' at {:?}", name, root);
     }
 
     Ok(())

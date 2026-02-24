@@ -1,4 +1,3 @@
-// lib/cli/src/tui/cap_config.rs
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Position, Rect},
@@ -12,8 +11,9 @@ use super::keys::{Hotkey, HotkeyProvider};
 
 pub struct CapConfigState {
     pub editing: bool,
+    pub active: bool,
     pub area: Rect,
-    pub editors: Vec<(String, Editor)>, // (Capability Class Name, Editor)
+    pub editors: Vec<(String, Editor)>,
     pub selected_tab: usize,
 }
 
@@ -23,13 +23,14 @@ impl CapConfigState {
         for (name, yaml) in configs {
             editors.push((name, Editor::new("yaml", &yaml, vesper())));
         }
-        
+
         if editors.is_empty() {
             editors.push(("DefaultCapability".to_string(), Editor::new("yaml", "", vesper())));
         }
-        
+
         Self {
             editing: false,
+            active: false,
             area: Rect::default(),
             editors,
             selected_tab: 0,
@@ -38,10 +39,8 @@ impl CapConfigState {
 
     pub fn handle_event(&mut self, key: KeyEvent) -> anyhow::Result<()> {
         if self.editing {
-            // Forward input to the active editor
             self.editors[self.selected_tab].1.input(key, &self.area)?;
         } else {
-            // Navigation mode (Tab switching & creation)
             match key.code {
                 KeyCode::Left | KeyCode::Char('h') => {
                     if self.selected_tab > 0 {
@@ -55,12 +54,10 @@ impl CapConfigState {
                 }
                 KeyCode::Enter | KeyCode::Char('i') => {
                     if self.selected_tab == self.editors.len() {
-                        // User clicked Enter on the "+" tab to add a new capability
                         let new_name = format!("NewCapability{}", self.editors.len() + 1);
                         self.editors.push((new_name, Editor::new("yaml", "", vesper())));
                         self.selected_tab = self.editors.len() - 1;
                     } else {
-                        // Focus on the current editor
                         self.editing = true;
                     }
                 }
@@ -71,7 +68,13 @@ impl CapConfigState {
     }
 
     pub fn render(&mut self, f: &mut Frame, area: Rect, title: &str) {
-        let border_color = if self.editing { Color::Green } else { Color::Cyan };
+        let border_color = if self.editing {
+            Color::Green
+        } else if self.active {
+            Color::Yellow
+        } else {
+            Color::Cyan
+        };
 
         let block = Block::default()
             .borders(Borders::ALL)
@@ -86,7 +89,6 @@ impl CapConfigState {
             .constraints([Constraint::Length(2), Constraint::Min(0)])
             .split(inner_area);
 
-        // Build the tab titles: [Cap1] [Cap2] [+]
         let mut tab_titles: Vec<Line> = self
             .editors
             .iter()
@@ -105,20 +107,17 @@ impl CapConfigState {
 
         f.render_widget(tabs, chunks[0]);
 
-        // Render Editor or "Create" placeholder
         if self.selected_tab < self.editors.len() {
             let editor_area = chunks[1];
-            self.area = editor_area; // save area for handle_event math
+            self.area = editor_area;
             f.render_widget(&self.editors[self.selected_tab].1, editor_area);
 
-            // Display cursor if actively editing
             if self.editing {
                 if let Some((x, y)) = self.editors[self.selected_tab].1.get_visible_cursor(&editor_area) {
                     f.set_cursor_position(Position::new(x, y));
                 }
             }
         } else {
-            // Selected the "+" tab but haven't pressed Enter yet
             let add_msg = Paragraph::new("Press Enter to add a new capability config")
                 .style(Style::default().fg(Color::DarkGray));
             f.render_widget(add_msg, chunks[1]);
