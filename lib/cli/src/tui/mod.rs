@@ -32,11 +32,13 @@ pub mod wasm;
 pub mod table;
 pub mod output;
 pub mod cap_config;
+pub mod module;
 
 pub struct ModuleStep {
     pub name: String,
     pub path: PathBuf,
     pub source_code: String,
+    pub cap_configs: Vec<(String, String)>,
 }
 
 pub struct PipelineState {
@@ -47,7 +49,7 @@ pub struct PipelineState {
 }
 
 pub enum ViewState {
-    Code(wasm::CodeState),
+    Module(module::ModuleView),
     InputTable(table::TableView),
     OutputTable(output::OutputView),
 }
@@ -76,15 +78,35 @@ impl App {
             let source_code = fs::read_to_string(&src_path)
                 .unwrap_or_else(|_| "// No source found\n".to_string());
 
+            // Extract capability configs as (name, yaml_string) pairs
+            let cap_configs: Vec<(String, String)> = mod_conf
+                .capabilities
+                .iter()
+                .map(|(name, value)| {
+                    let yaml = serde_yaml::to_string(value).unwrap_or_default();
+                    (name.clone(), yaml)
+                })
+                .collect();
+
             steps.push(ModuleStep {
                 name: module_name.clone(),
                 path,
                 source_code,
+                cap_configs,
             });
         }
 
         let initial_code = steps.first().map(|s| s.source_code.clone()).unwrap_or_default();
+        let initial_caps = steps.first().map(|s| s.cap_configs.clone()).unwrap_or_default();
         let empty_batch = RecordBatch::new_empty(Arc::new(Schema::empty()));
+
+        let code_state = wasm::CodeState {
+            editing: false,
+            area: Rect::default(),
+            editor: Editor::new("rust", &initial_code, vesper()),
+            selected_step: 0,
+        };
+        let cap_state = cap_config::CapConfigState::new(initial_caps);
 
         Ok(App {
             pipeline: PipelineState {
@@ -93,25 +115,20 @@ impl App {
                 input: empty_batch,
                 execution: Vec::new(),
             },
-            view: ViewState::Code(wasm::CodeState {
-                editing: false,
-                area: Rect::default(),
-                editor: Editor::new("rust", &initial_code, vesper()),
-                selected_step: 0,
-            }),
-            status_msg: "i/Enter: focus │ ↑/↓: nav │ ^S: save │ ^R: run │ ^Q: quit".into(),
+            view: ViewState::Module(module::ModuleView::new(code_state, cap_state)),
+            status_msg: "i/Enter: focus │ ↑/↓: nav │ Tab: pane │ ^S: save │ ^R: run │ ^Q: quit".into(),
             quit: false,
         })
     }
 
     pub fn save(&mut self) {
-        if let ViewState::Code(code_state) = &mut self.view {
-            let step_idx = code_state.selected_step;
-            self.pipeline.steps[step_idx].source_code = code_state.editor.get_content();
-            
+        if let ViewState::Module(mv) = &mut self.view {
+            let step_idx = mv.selected_step();
+            self.pipeline.steps[step_idx].source_code = mv.code.editor.get_content();
+
             let step = &self.pipeline.steps[step_idx];
             let path = step.path.join("src/lib.rs");
-            
+
             match fs::write(&path, &step.source_code) {
                 Ok(_) => {
                     self.status_msg = format!("Saved {}", path.display());
@@ -128,13 +145,12 @@ impl App {
     pub fn run_pipeline(&mut self) {
         self.save();
         self.status_msg = "Executing run... (Check console/logs)".into();
-
     }
 
     pub fn current_nav_index(&self) -> usize {
         match &self.view {
             ViewState::InputTable(_) => 0,
-            ViewState::Code(c) => (c.selected_step * 2) + 1,
+            ViewState::Module(mv) => (mv.selected_step() * 2) + 1,
             ViewState::OutputTable(_) => self.pipeline.steps.len() + 1,
         }
     }
@@ -144,26 +160,30 @@ impl App {
         if new_idx > max_idx { return; }
 
         // Sync old code text to domain before navigating away
-        if let ViewState::Code(c) = &self.view {
-            self.pipeline.steps[c.selected_step].source_code = c.editor.get_content();
+        if let ViewState::Module(mv) = &self.view {
+            self.pipeline.steps[mv.selected_step()].source_code = mv.code.editor.get_content();
         }
 
         // Hydrate the new view from the domain state
         if new_idx == 0 {
             self.view = ViewState::InputTable(table::TableView::new(self.pipeline.input.clone()));
         } else {
-            let stage_idx = (new_idx - 1)/2;
-            let code_idx = new_idx % 2 == 1;
-            if code_idx {
-                let code = &self.pipeline.steps[stage_idx].source_code;
-                self.view = ViewState::Code(wasm::CodeState {
+            let stage_idx = (new_idx - 1) / 2;
+            let is_code = new_idx % 2 == 1;
+            if is_code {
+                let step = &self.pipeline.steps[stage_idx];
+                let code_state = wasm::CodeState {
                     editing: false,
-                    area: ratatui::layout::Rect::default(),
-                    editor: ratatui_code_editor::editor::Editor::new("rust", code, ratatui_code_editor::theme::vesper()),
+                    area: Rect::default(),
+                    editor: Editor::new("rust", &step.source_code, vesper()),
                     selected_step: stage_idx,
-                });
+                };
+                let cap_state = cap_config::CapConfigState::new(step.cap_configs.clone());
+                self.view = ViewState::Module(module::ModuleView::new(code_state, cap_state));
             } else {
-                self.view = ViewState::OutputTable(output::OutputView::new(self.pipeline.execution.clone(), stage_idx).unwrap());
+                self.view = ViewState::OutputTable(
+                    output::OutputView::new(self.pipeline.execution.clone(), stage_idx).unwrap(),
+                );
             }
         }
     }
@@ -184,8 +204,8 @@ fn ui(f: &mut Frame, app: &mut App) {
     let nav_area = horizontal_chunks[1];
 
     match &mut app.view {
-        ViewState::Code(code_state) => {
-            wasm::render(f, &app.pipeline, code_state, main_area);
+        ViewState::Module(mv) => {
+            mv.render(f, &app.pipeline, main_area);
         }
         ViewState::InputTable(table_view) => {
             table_view.render(f, main_area, "Input Table");
@@ -201,7 +221,7 @@ fn ui(f: &mut Frame, app: &mut App) {
 
 fn render_status(f: &mut Frame, app: &App, area: Rect) {
     let is_focused = match &app.view {
-        ViewState::Code(s) => s.editing,
+        ViewState::Module(mv) => mv.focused,
         ViewState::InputTable(s) => s.focused,
         ViewState::OutputTable(s) => s.focused,
     };
@@ -246,7 +266,7 @@ fn handle_event(app: &mut App) -> Result<()> {
     }
 
     let is_focused = match &app.view {
-        ViewState::Code(s) => s.editing,
+        ViewState::Module(mv) => mv.focused,
         ViewState::InputTable(s) => s.focused,
         ViewState::OutputTable(s) => s.focused,
     };
@@ -255,11 +275,18 @@ fn handle_event(app: &mut App) -> Result<()> {
         match key.code {
             KeyCode::Enter | KeyCode::Char('i') => {
                 match &mut app.view {
-                    ViewState::Code(s) => s.editing = true,
+                    ViewState::Module(mv) => {
+                        mv.focused = true;
+                        // Enter editing in the active pane
+                        match mv.active_pane {
+                            module::ActivePane::Code => mv.code.editing = true,
+                            module::ActivePane::CapConfig => mv.cap_config.editing = true,
+                        }
+                    }
                     ViewState::InputTable(s) => s.focused = true,
                     ViewState::OutputTable(s) => s.focused = true,
                 }
-                app.status_msg = "Focused ─ Esc to return".into();
+                app.status_msg = "Focused ─ Esc to return │ Tab to switch pane".into();
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 let idx = app.current_nav_index();
@@ -274,7 +301,11 @@ fn handle_event(app: &mut App) -> Result<()> {
     } else {
         if key.code == KeyCode::Esc {
             match &mut app.view {
-                ViewState::Code(s) => s.editing = false,
+                ViewState::Module(mv) => {
+                    mv.focused = false;
+                    mv.code.editing = false;
+                    mv.cap_config.editing = false;
+                }
                 ViewState::InputTable(s) => s.focused = false,
                 ViewState::OutputTable(s) => s.focused = false,
             }
@@ -282,8 +313,8 @@ fn handle_event(app: &mut App) -> Result<()> {
         } else {
             // Forward event to currently active widget
             match &mut app.view {
-                ViewState::Code(s) => {
-                    wasm::handle_event(s, key)?;
+                ViewState::Module(mv) => {
+                    mv.handle_event(key)?;
                 }
                 ViewState::InputTable(t) => t.handle_event(key),
                 ViewState::OutputTable(t) => t.handle_event(key),
@@ -309,7 +340,7 @@ pub fn run_tui(yaml_path: &Path) -> Result<()> {
     loop {
         terminal.draw(|f| ui(f, &mut app))?;
         handle_event(&mut app)?;
-        
+
         if app.quit {
             break;
         }

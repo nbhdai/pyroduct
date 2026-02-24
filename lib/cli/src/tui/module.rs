@@ -1,0 +1,79 @@
+use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::{
+    layout::{Constraint, Direction, Layout, Rect},
+    Frame,
+};
+
+use super::{cap_config::CapConfigState, wasm, PipelineState};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivePane {
+    Code,
+    CapConfig,
+}
+
+pub struct ModuleView {
+    pub code: wasm::CodeState,
+    pub cap_config: CapConfigState,
+    pub active_pane: ActivePane,
+    pub focused: bool,
+}
+
+impl ModuleView {
+    pub fn new(code: wasm::CodeState, cap_config: CapConfigState) -> Self {
+        Self {
+            code,
+            cap_config,
+            active_pane: ActivePane::Code,
+            focused: false,
+        }
+    }
+
+    pub fn selected_step(&self) -> usize {
+        self.code.selected_step
+    }
+
+    pub fn render(&mut self, f: &mut Frame, pipeline: &PipelineState, area: Rect) {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
+            .split(area);
+
+        // Temporarily set editing based on active pane + focus
+        let orig_editing = self.code.editing;
+        self.code.editing = self.focused && self.active_pane == ActivePane::Code;
+        wasm::render(f, pipeline, &mut self.code, chunks[0]);
+        self.code.editing = orig_editing;
+
+        let cap_editing = self.focused && self.active_pane == ActivePane::CapConfig;
+        self.cap_config.editing = cap_editing;
+        self.cap_config.render(f, chunks[1], "Cap Config");
+    }
+
+    pub fn handle_event(&mut self, key: KeyEvent) -> anyhow::Result<()> {
+        // Toggle pane with Tab
+        if key.code == KeyCode::Tab {
+            // If the active pane's editor is in editing mode, unfocus it first
+            match self.active_pane {
+                ActivePane::Code => self.code.editing = false,
+                ActivePane::CapConfig => self.cap_config.editing = false,
+            }
+            self.active_pane = match self.active_pane {
+                ActivePane::Code => ActivePane::CapConfig,
+                ActivePane::CapConfig => ActivePane::Code,
+            };
+            // Enter editing in the new pane
+            match self.active_pane {
+                ActivePane::Code => self.code.editing = true,
+                ActivePane::CapConfig => self.cap_config.editing = true,
+            }
+            return Ok(());
+        }
+
+        match self.active_pane {
+            ActivePane::Code => wasm::handle_event(&mut self.code, key)?,
+            ActivePane::CapConfig => self.cap_config.handle_event(key)?,
+        }
+        Ok(())
+    }
+}
