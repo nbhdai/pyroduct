@@ -5,13 +5,23 @@ use ratatui::{
     widgets::{Block, Borders},
     Frame,
 };
+use ratatui_code_editor::{editor::Editor, theme::vesper};
 
-use super::App;
+use super::PipelineState;
 
-pub fn render(f: &mut Frame, app: &mut App, area: Rect) {
-    let step = &app.steps[app.selected_step];
-    
-    // Resolve the display name of the source file
+/// The isolated state for the Code view
+pub struct CodeState {
+    pub editing: bool,
+    pub area: Rect,
+    pub editor: Editor,
+    pub selected_step: usize,
+    pub status_msg: String,
+    pub quit: bool,
+}
+
+pub fn render(f: &mut Frame, pipeline: &PipelineState, state: &mut CodeState, area: Rect) {
+    let step = &pipeline.steps[state.selected_step];
+
     let src_path = step.path.join("src/lib.rs");
     let src_label = src_path.file_name().unwrap_or_default().to_string_lossy();
 
@@ -19,30 +29,65 @@ pub fn render(f: &mut Frame, app: &mut App, area: Rect) {
         .borders(Borders::ALL)
         .title(format!(" Code: {} ─ {} ", step.name, src_label))
         .border_style(Style::default().fg(Color::Cyan));
-    
+
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    // Save the inner area so we know where to route mouse/cursor events later
-    app.code_area = inner;
-    f.render_widget(&app.steps[app.selected_step].code, inner);
+    // Save the area and render the editor
+    state.area = inner;
+    f.render_widget(&state.editor, inner);
 
-    // Ensure the terminal cursor is physically placed where the editor cursor is
-    if app.editing {
-        if let Some((x, y)) = app.steps[app.selected_step].code.get_visible_cursor(&inner) {
+    // Ensure the terminal cursor matches the editor cursor
+    if state.editing {
+        if let Some((x, y)) = state.editor.get_visible_cursor(&inner) {
             f.set_cursor_position(Position::new(x, y));
         }
     }
 }
 
-pub fn handle_event(app: &mut App, key: KeyEvent) -> anyhow::Result<()> {
-    if key.code == KeyCode::Esc {
-        app.editing = false;
-        app.status_msg = "Navigation mode.".into();
-        return Ok(());
+pub fn handle_event(
+    pipeline: &mut PipelineState,
+    state: &mut CodeState,
+    key: KeyEvent,
+) -> anyhow::Result<()> {
+    if state.editing {
+        if key.code == KeyCode::Esc {
+            state.editing = false;
+            state.status_msg = "Navigation mode.".into();
+        } else {
+            // Forward input straight to the editor
+            state.editor.input(key, &state.area)?;
+        }
+    } else {
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('i') => {
+                state.editing = true;
+                state.status_msg = "Editing ─ Esc to return".into();
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if state.selected_step > 0 {
+                    sync_and_switch(pipeline, state, state.selected_step - 1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if state.selected_step + 1 < pipeline.steps.len() {
+                    sync_and_switch(pipeline, state, state.selected_step + 1);
+                }
+            }
+            _ => {}
+        }
     }
 
-    let area = app.code_area;
-    app.steps[app.selected_step].code.input(key, &area)?;
     Ok(())
+}
+
+/// Commits the active editor's text to the old module, changes the index,
+/// and rehydrates the editor with the new module's text.
+fn sync_and_switch(pipeline: &mut PipelineState, state: &mut CodeState, new_step_idx: usize) {
+    // Save out the old string
+    pipeline.steps[state.selected_step].source_code = state.editor.get_content();
+    // Change selection
+    state.selected_step = new_step_idx;
+    // Hydrate the editor with the new module's string
+    state.editor = Editor::new("rust", &pipeline.steps[new_step_idx].source_code, vesper());
 }

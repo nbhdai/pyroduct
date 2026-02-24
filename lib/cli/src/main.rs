@@ -85,8 +85,7 @@ enum Commands {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+pub fn start_logging() {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| "trace,cranelift_frontend=off,cranelift_codegen=off,wasmtime=off".into());
 
@@ -94,7 +93,16 @@ async fn main() -> Result<()> {
         .with(fmt::layer().with_target(true).pretty())
         .with(filter)
         .init();
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
     let args = Args::parse();
+
+    match &args.command {
+        Commands::Tui { .. } => {}
+        _ => start_logging(),
+    }
 
     match args.command {
         Commands::Init { path, cap } => init::init(path, cap),

@@ -21,22 +21,30 @@ use ratatui::{
 };
 use ratatui_code_editor::{editor::Editor, theme::vesper};
 
+pub mod nav;
 pub mod wasm;
 
 pub struct ModuleStep {
     pub name: String,
     pub path: PathBuf,
-    pub code: Editor,
+    pub source_code: String,
+}
+
+/// Global data that all views might need to access or modify
+pub struct PipelineState {
+    pub yaml_path: PathBuf,
+    pub steps: Vec<ModuleStep>,
+}
+
+/// The state machine representing the active view in the TUI.
+pub enum ViewState {
+    Code(wasm::CodeState),
+    // We will add more states here like `Logs(logs::LogsState)`, etc.
 }
 
 pub struct App {
-    pub yaml_path: PathBuf,
-    pub steps: Vec<ModuleStep>,
-    pub selected_step: usize,
-    pub editing: bool,
-    pub status_msg: String,
-    pub quit: bool,
-    pub code_area: Rect,
+    pub pipeline: PipelineState,
+    pub view: ViewState,
 }
 
 impl App {
@@ -52,68 +60,111 @@ impl App {
 
             let path = mod_conf.path.clone();
             let src_path = path.join("src/lib.rs");
-            
-            // Read the actual file contents to populate the editor
-            let source_code =
-                fs::read_to_string(&src_path).unwrap_or_else(|_| "// No source found\n".to_string());
 
-            let code = Editor::new("rust", &source_code, vesper());
+            let source_code = fs::read_to_string(&src_path)
+                .unwrap_or_else(|_| "// No source found\n".to_string());
 
             steps.push(ModuleStep {
                 name: module_name.clone(),
                 path,
-                code,
+                source_code,
             });
         }
 
+        let initial_code = steps.first().map(|s| s.source_code.clone()).unwrap_or_default();
+
         Ok(App {
-            yaml_path: yaml_path.to_path_buf(),
-            steps,
-            selected_step: 0,
-            editing: false,
-            status_msg: "i/Enter: edit │ ↑/↓: switch module │ ^S: save │ ^Q: quit".into(),
-            quit: false,
-            code_area: Rect::default(),
+            pipeline: PipelineState {
+                yaml_path: yaml_path.to_path_buf(),
+                steps,
+            },
+            view: ViewState::Code(wasm::CodeState {
+                editing: false,
+                area: Rect::default(),
+                editor: Editor::new("rust", &initial_code, vesper()),
+                selected_step: 0,
+                status_msg: "i/Enter: edit │ ↑/↓: switch module │ ^S: save │ ^Q: quit".into(),
+                quit: false,
+            }),
         })
     }
 
     pub fn save(&mut self) {
-        let step = &mut self.steps[self.selected_step];
-        let path = step.path.join("src/lib.rs");
-        let content = step.code.get_content();
-        match fs::write(&path, &content) {
-            Ok(_) => {
-                self.status_msg = format!("Saved {}", path.display());
+        // Sync the current editor content to the domain model before saving
+        // and grab the path and content to be saved.
+        let (path, content) = match &mut self.view {
+            ViewState::Code(code_state) => {
+                let step_idx = code_state.selected_step;
+                self.pipeline.steps[step_idx].source_code = code_state.editor.get_content();
+                
+                let step = &self.pipeline.steps[step_idx];
+                (step.path.join("src/lib.rs"), step.source_code.clone())
             }
-            Err(e) => {
-                self.status_msg = format!("Save failed: {}", e);
+        };
+
+        // Do the IO operation
+        let save_result = fs::write(&path, &content);
+
+        // Update the view state with the result
+        match &mut self.view {
+            ViewState::Code(code_state) => {
+                match save_result {
+                    Ok(_) => {
+                        code_state.status_msg = format!("Saved {}", path.display());
+                    }
+                    Err(e) => {
+                        code_state.status_msg = format!("Save failed: {}", e);
+                    }
+                }
             }
         }
     }
 }
 
 fn ui(f: &mut Frame, app: &mut App) {
-    let chunks = Layout::default()
+    // Split vertical chunks: Top for Main App, Bottom for Status Bar
+    let vertical_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(10), Constraint::Length(1)])
         .split(f.area());
 
-    // Delegate rendering entirely to our new code view
-    wasm::render(f, app, chunks[0]);
+    // Split horizontal chunks: Left for Code/Main View, Right for Nav
+    let horizontal_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(20), Constraint::Length(25)]) // Nav bar is fixed at 25 chars wide
+        .split(vertical_chunks[0]);
 
-    render_status(f, app, chunks[1]);
+    let main_area = horizontal_chunks[0];
+    let nav_area = horizontal_chunks[1];
+
+    // Dispatch render to the active state. 
+    match &mut app.view {
+        ViewState::Code(code_state) => {
+            wasm::render(f, &app.pipeline, code_state, main_area);
+        }
+    }
+
+    // Render the nav bar directly via the app
+    nav::render(f, app, nav_area);
+
+    render_status(f, app, vertical_chunks[1]);
 }
 
 fn render_status(f: &mut Frame, app: &App, area: Rect) {
-    let mode = if app.editing {
+    let (is_editing, status_msg) = match &app.view {
+        ViewState::Code(state) => (state.editing, &state.status_msg),
+    };
+
+    let mode = if is_editing {
         Span::styled(" EDIT ", Style::default().fg(Color::Black).bg(Color::Green))
     } else {
         Span::styled(" NAV ", Style::default().fg(Color::Black).bg(Color::Blue))
     };
+
     let line = Line::from(vec![
         mode,
         Span::raw(" │ "),
-        Span::styled(&app.status_msg, Style::default().fg(Color::DarkGray)),
+        Span::styled(status_msg, Style::default().fg(Color::DarkGray)),
     ]);
     f.render_widget(Paragraph::new(line), area);
 }
@@ -129,7 +180,9 @@ fn handle_event(app: &mut App) -> Result<()> {
     match (key.modifiers, key.code) {
         (KeyModifiers::CONTROL, KeyCode::Char('c'))
         | (KeyModifiers::CONTROL, KeyCode::Char('q')) => {
-            app.quit = true;
+            match &mut app.view {
+                ViewState::Code(state) => state.quit = true,
+            }
             return Ok(());
         }
         (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
@@ -139,29 +192,11 @@ fn handle_event(app: &mut App) -> Result<()> {
         _ => {}
     }
 
-    // Pass control to the View if we're in edit mode
-    if app.editing {
-        wasm::handle_event(app, key)?;
-        return Ok(());
-    }
-
-    // Navigation mode
-    match key.code {
-        KeyCode::Enter | KeyCode::Char('i') => {
-            app.editing = true;
-            app.status_msg = "Editing ─ Esc to return".into();
+    // Dispatch event to the active state
+    match &mut app.view {
+        ViewState::Code(code_state) => {
+            wasm::handle_event(&mut app.pipeline, code_state, key)?;
         }
-        KeyCode::Up | KeyCode::Char('k') => {
-            if app.selected_step > 0 {
-                app.selected_step -= 1;
-            }
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            if app.selected_step + 1 < app.steps.len() {
-                app.selected_step += 1;
-            }
-        }
-        _ => {}
     }
 
     Ok(())
@@ -182,7 +217,12 @@ pub fn run_tui(yaml_path: &Path) -> Result<()> {
     loop {
         terminal.draw(|f| ui(f, &mut app))?;
         handle_event(&mut app)?;
-        if app.quit {
+        
+        let should_quit = match &app.view {
+            ViewState::Code(state) => state.quit,
+        };
+        
+        if should_quit {
             break;
         }
     }
