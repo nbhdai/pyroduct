@@ -118,19 +118,16 @@ impl OutputView {
             return;
         }
 
-        match self.active_pane {
-            ActivePane::Table => match key.code {
-                KeyCode::Up | KeyCode::Char('k') => self.table.scroll_up(1),
-                KeyCode::Down | KeyCode::Char('j') => self.table.scroll_down(1),
-                KeyCode::PageUp => self.table.page_up(),
-                KeyCode::PageDown => self.table.page_down(),
-                KeyCode::Home => self.table.home(),
-                KeyCode::End => self.table.end(),
-                _ => {}
-            },
-            ActivePane::Logs => {
-                self.logs.handle_event(key);
-            }
+        match (self.active_pane, key.code) {
+            (_, KeyCode::Esc) => self.focused = false,
+            (ActivePane::Table, KeyCode::Up | KeyCode::Char('k')) => self.table.scroll_up(1),
+            (ActivePane::Table, KeyCode::Down | KeyCode::Char('j')) => self.table.scroll_up(1),
+            (ActivePane::Table, KeyCode::PageUp) => self.table.page_up(),
+            (ActivePane::Table, KeyCode::PageDown) => self.table.page_down(),
+            (ActivePane::Table, KeyCode::Home) => self.table.home(),
+            (ActivePane::Table, KeyCode::End) => self.table.end(),
+            (ActivePane::Table, _) => {},
+            (ActivePane::Logs, _) => self.logs.handle_event(key),
         }
     }
 }

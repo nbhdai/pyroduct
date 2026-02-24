@@ -59,16 +59,31 @@ impl ModuleView {
                 ActivePane::Code => ActivePane::CapConfig,
                 ActivePane::CapConfig => ActivePane::Code,
             };
-            match self.active_pane {
-                ActivePane::Code => self.code.editing = true,
-                ActivePane::CapConfig => self.cap_config.editing = true,
+            // Code pane enters editing immediately; cap_config starts in
+            // tab-navigation mode so the user can reach the "+" tab first.
+            if self.active_pane == ActivePane::Code {
+                self.code.editing = true;
             }
             return Ok(());
         }
 
-        match self.active_pane {
-            ActivePane::Code => wasm::handle_event(&mut self.code, key)?,
-            ActivePane::CapConfig => self.cap_config.handle_event(key)?,
+        match (self.active_pane, &key.code) {
+            (ActivePane::Code, KeyCode::Esc) => {
+                if self.code.editing == true {
+                    self.code.editing = false;
+                } else {
+                    self.focused = false;
+                }
+            },
+            (ActivePane::Code, _) => wasm::handle_event(&mut self.code, key)?,
+            (ActivePane::CapConfig, KeyCode::Esc) => {
+                if self.cap_config.editing == true {
+                    self.cap_config.editing = false;
+                } else {
+                    self.focused = false;
+                }
+            },
+            (ActivePane::CapConfig, _) => self.cap_config.handle_event(key)?,
         }
         Ok(())
     }

@@ -61,6 +61,7 @@ impl TableView {
 
     pub fn handle_event(&mut self, key: crossterm::event::KeyEvent) {
         match key.code {
+            KeyCode::Esc => self.focused = false,
             KeyCode::Up | KeyCode::Char('k') => self.scroll_up(1),
             KeyCode::Down | KeyCode::Char('j') => self.scroll_down(1),
             KeyCode::PageUp => self.page_up(),

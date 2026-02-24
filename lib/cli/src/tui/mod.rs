@@ -313,26 +313,13 @@ fn handle_event(app: &mut App) -> Result<()> {
             _ => {}
         }
     } else {
-        if key.code == KeyCode::Esc {
-            match &mut app.view {
-                ViewState::Module(mv) => {
-                    mv.focused = false;
-                    mv.code.editing = false;
-                    mv.cap_config.editing = false;
-                }
-                ViewState::InputTable(s) => s.focused = false,
-                ViewState::OutputTable(s) => s.focused = false,
+        // Forward event to currently active widget
+        match &mut app.view {
+            ViewState::Module(mv) => {
+                mv.handle_event(key)?;
             }
-            app.status_msg = String::new();
-        } else {
-            // Forward event to currently active widget
-            match &mut app.view {
-                ViewState::Module(mv) => {
-                    mv.handle_event(key)?;
-                }
-                ViewState::InputTable(t) => t.handle_event(key),
-                ViewState::OutputTable(t) => t.handle_event(key),
-            }
+            ViewState::InputTable(t) => t.handle_event(key),
+            ViewState::OutputTable(t) => t.handle_event(key),
         }
     }
 
