@@ -28,12 +28,12 @@ async fn test_capability_configuration_respect() {
             ("config_mod".to_string(), ModuleConfig {
                 path: Path::new("../../modules/cap_config/artifacts/mod.wasm").to_path_buf(),
                 capabilities: HashMap::from([(
-                            "config".to_string(),
-                            json!({
-                                "uppercase": true,
-                                "suffix": "!!!"
-                            }),
-                        )]),
+                    "config".to_string(),
+                    json!({
+                        "uppercase": true,
+                        "suffix": "!!!"
+                    }),
+                )]),
             })
         ]),
         pipeline: vec!["config_mod".to_string()],
@@ -43,8 +43,9 @@ async fn test_capability_configuration_respect() {
     let mut pipeline = Pipeline::new(pipeline_def).await.unwrap();
 
     let input = PyroRow::from([("input", "hello".into())]);
-    let result = pipeline.process(&input).await.unwrap().unwrap();
-    let transformed = result.get_str("transformed").unwrap();
+    let result = pipeline.process(&input).await;
+    let row = result.row().unwrap();
+    let transformed = row.get_str("transformed").unwrap();
     // Result should be (count: 0, incremented: 0) since fetch_add returns previous
     assert_eq!(transformed, "[TEST] HELLO!!!");
 }

@@ -90,22 +90,18 @@ impl MagmaDocumentation {
                 let fname = &f.name;
                 let fty = &f.ty;
 
-                // Handle Field Documentation
                 let doc_setter = match &f.doc {
-                    Some(doc_str) => quote! {
-                        field.documentation = Some(::std::borrow::Cow::Borrowed(#doc_str));
-                    },
+                    Some(doc_str) => quote! (.add_docstring(::std::borrow::Cow::Borrowed(#doc_str))),
                     None => quote! {},
                 };
 
                 quote! {
                     {
-                        let mut field = #values_path::PyroField::<'static>::new(
+                        let field = #values_path::PyroField::<'static>::new(
                             #fname,
                             <#fty as #values_path::Typeable>::pyro_type(),
                             <#fty as #values_path::Typeable>::is_nullable(),
-                        );
-                        #doc_setter
+                        )#doc_setter;
                         field
                     }
                 }
@@ -146,9 +142,7 @@ impl MagmaDocumentation {
                 let fty = &f.ty;
 
                 let doc_setter = match &f.doc {
-                    Some(doc_str) => quote! {
-                        field.documentation = Some(::std::borrow::Cow::Borrowed(#doc_str));
-                    },
+                    Some(doc_str) => quote! (.add_docstring(::std::borrow::Cow::Borrowed(#doc_str))),
                     None => quote! {},
                 };
 
@@ -158,8 +152,7 @@ impl MagmaDocumentation {
                             #fname,
                             <#fty as #values_path::Typeable>::pyro_type(),
                             <#fty as #values_path::Typeable>::is_nullable(),
-                        );
-                        #doc_setter
+                        )#doc_setter;
                         field
                     }
                 }

@@ -6,6 +6,7 @@ pub mod package;
 pub mod run;
 pub mod symbols;
 pub mod utils;
+pub mod tui;
 
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use anyhow::Result;

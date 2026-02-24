@@ -24,6 +24,17 @@ pub struct PipelineExecution {
     pub failure: Option<PyroFailure>
 }
 
+impl PipelineExecution {
+    pub fn row(&self) -> Option<PyroRow<'_>> {
+        let mut steps = self.steps.iter();
+        let mut row = steps.next().map(|r| r.row.clone())?;
+        for step in steps {
+            row.extend(step.row.clone());
+        }
+        Some(row)
+    }
+}
+
 pub struct Pipeline {
     steps: Vec<PyroInstance>,
 }

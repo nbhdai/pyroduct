@@ -202,6 +202,11 @@ impl<'a> PyroField<'a> {
             nullable: self.nullable,
         }
     }
+
+    pub fn add_docstring(mut self, doc: impl Into<Cow<'a, str>>) -> Self {
+        self.documentation = Some(doc.into());
+        self
+    }
 }
 
 impl<'a> fmt::Display for PyroField<'a> {
@@ -277,6 +282,11 @@ impl<'a> PyroSchema<'a> {
                 .map(|f| f.clone().into_owned())
                 .collect(),
         }
+    }
+
+    pub fn add_docstring(mut self, doc: impl Into<Cow<'a, str>>) -> Self {
+        self.documentation = Some(doc.into());
+        self
     }
 }
 

@@ -210,20 +210,20 @@ impl App {
     fn current_step_mut(&mut self) -> &mut ModuleStep { &mut self.steps[self.selected_step] }
 
     fn save(&mut self) {
-        let step = &self.steps[self.selected_step];
+        let step = &mut self.steps[self.selected_step];
         if let Some(path) = &step.source_path {
             let content = step.code.get_content();
             match fs::write(path, &content) {
                 Ok(_) => {
                     self.status_msg = format!("Saved {}", path.display());
-                    self.steps[self.selected_step].logs.push(LogLine {
+                    step.logs.push(LogLine {
                         text: format!("[save] {} bytes → {}", content.len(), path.display()),
                         level: LogLevel::Info,
                     });
                 }
                 Err(e) => {
                     self.status_msg = format!("Save failed: {}", e);
-                    self.steps[self.selected_step].logs.push(LogLine {
+                    step.logs.push(LogLine {
                         text: format!("[save] ERROR: {}", e),
                         level: LogLevel::Error,
                     });

@@ -43,16 +43,6 @@ pub struct PipelineConfig {
     pub pipeline: Vec<String>,
 }
 
-/// Per-module reference to a capability class, with its own configuration.
-#[derive(Deserialize, Debug)]
-pub struct ModuleCapabilityConfig {
-    /// Which library (key in `[libraries]`) provides this class.
-    pub library: String,
-    /// Remaining fields are the class-specific configuration.
-    #[serde(flatten)]
-    pub config: serde_json::Value,
-}
-
 /// A single wasm module in the pipeline.
 #[derive(Deserialize, Debug)]
 pub struct ModuleConfig {
@@ -60,7 +50,7 @@ pub struct ModuleConfig {
     pub path: PathBuf,
     /// Per-class capability configuration. Keys are class names.
     #[serde(default)]
-    pub capabilities: HashMap<String, ModuleCapabilityConfig>,
+    pub capabilities: HashMap<String, serde_json::Value>,
 }
 
 // =============================================================================
@@ -115,30 +105,16 @@ impl PipelineDef {
                 ))
             })?;
 
-            // Group capability requests by library so we can call
-            // instantiate_from_config once per library per module.
-            let mut by_library: HashMap<String, HashMap<String, serde_json::Value>> =
-                HashMap::new();
-
-            for (class_name, cap_conf) in &mod_conf.capabilities {
-                if !libraries.contains_key(&cap_conf.library) {
-                    return Err(PipelineError::Config(format!(
-                        "Module '{}' capability '{}' references library '{}' \
-                         which is not defined in [libraries]",
-                        module_name, class_name, cap_conf.library
-                    )));
-                }
-                by_library
-                    .entry(cap_conf.library.clone())
-                    .or_default()
-                    .insert(class_name.clone(), cap_conf.config.clone());
-            }
-
-            // Instantiate capabilities for this module
             let mut module_capabilities = Vec::new();
-            for (lib_name, class_configs) in &by_library {
-                let library = libraries.get(lib_name).unwrap();
-                let capability = library.instantiate_from_config(class_configs).await?;
+
+            for library in libraries.values() {
+                let mut class_configs = HashMap::new();
+                for (class_name, cap_conf) in &mod_conf.capabilities {
+                    if library.capabilities.contains_key(class_name) {
+                        class_configs.insert(class_name.clone(),  cap_conf.clone());
+                    }
+                }
+                let capability = library.instantiate_from_config(&class_configs).await?;
                 module_capabilities.push(capability);
             }
 

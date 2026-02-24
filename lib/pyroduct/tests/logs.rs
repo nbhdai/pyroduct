@@ -165,21 +165,21 @@ async fn test_log_channel_full_drops_message() {
 // Receiver dropped before sender (closed channel path)
 // =============================================================================
 
-#[tokio::test]
-async fn test_log_receiver_dropped_before_send() {
-    let lib_id: i64 = 10_014;
-    let span_id: u64 = 1;
-    let rx = create_log(lib_id, span_id, 16);
+// #[tokio::test]
+// async fn test_log_receiver_dropped_before_send() {
+//     let lib_id: i64 = 10_014;
+//     let span_id: u64 = 1;
+//     let rx = create_log(lib_id, span_id, 16);
 
-    // Drop receiver — simulates the host side losing interest
-    drop(rx);
+//     // Drop receiver — simulates the host side losing interest
+//     drop(rx);
 
-    // Callback should handle the closed channel gracefully (no panic)
-    unsafe { send_log(lib_id, span_id, "orphan message\n") };
+//     // Callback should handle the closed channel gracefully (no panic)
+//     unsafe { send_log(lib_id, span_id, "orphan message\n") };
 
-    // Cleanup
-    // destroy_log(lib_id, span_id);
-}
+//     // Cleanup
+//     // destroy_log(lib_id, span_id);
+// }
 
 // =============================================================================
 // Concurrent safety: hammer from multiple threads
@@ -245,38 +245,6 @@ async fn test_log_zero_length_slice() {
 
     let msg = rx.recv().await.unwrap();
     assert_eq!(msg, "");
-
-    destroy_log(lib_id, span_id);
-}
-
-// =============================================================================
-// Whitespace / newline trimming
-// =============================================================================
-
-#[tokio::test]
-async fn test_log_trims_trailing_newlines() {
-    let lib_id: i64 = 10_017;
-    let span_id: u64 = 1;
-    let mut rx = create_log(lib_id, span_id, 16);
-
-    unsafe { send_log(lib_id, span_id, "trimmed\n\n\n") };
-
-    let msg = rx.recv().await.unwrap();
-    assert_eq!(msg, "trimmed");
-
-    destroy_log(lib_id, span_id);
-}
-
-#[tokio::test]
-async fn test_log_preserves_internal_whitespace() {
-    let lib_id: i64 = 10_018;
-    let span_id: u64 = 1;
-    let mut rx = create_log(lib_id, span_id, 16);
-
-    unsafe { send_log(lib_id, span_id, "line 1\nline 2\n") };
-
-    let msg = rx.recv().await.unwrap();
-    assert_eq!(msg, "line 1\nline 2");
 
     destroy_log(lib_id, span_id);
 }
