@@ -62,7 +62,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn load(yaml_path: &Path) -> Result<Self> {
+    pub async fn load(yaml_path: &Path, input_path: &Path) -> Result<Self> {
         let config = crate::run::load_config(yaml_path)?;
 
         let mut steps = Vec::new();
@@ -98,7 +98,18 @@ impl App {
 
         let initial_code = steps.first().map(|s| s.source_code.clone()).unwrap_or_default();
         let initial_caps = steps.first().map(|s| s.cap_configs.clone()).unwrap_or_default();
-        let empty_batch = RecordBatch::new_empty(Arc::new(Schema::empty()));
+        
+        let mut input_batch = RecordBatch::new_empty(Arc::new(Schema::empty()));
+        if input_path.exists() {
+            let bytes = fs::read(input_path)?;
+            let filename = input_path.file_name().unwrap_or_default().to_string_lossy();
+            let batches = arrow_file::parse_data_to_batch(bytes, &filename).await?;
+            if !batches.is_empty() {
+                input_batch = batches[0].clone().to_batch();
+            }
+        } else {
+            anyhow::bail!("Input file does not exist: {}", input_path.display());
+        }
 
         let code_state = wasm::CodeState {
             editing: false,
@@ -112,7 +123,7 @@ impl App {
             pipeline: PipelineState {
                 yaml_path: yaml_path.to_path_buf(),
                 steps,
-                input: empty_batch,
+                input: input_batch,
                 execution: Vec::new(),
             },
             view: ViewState::Module(module::ModuleView::new(code_state, cap_state)),
@@ -131,7 +142,11 @@ impl App {
 
             match fs::write(&path, &step.source_code) {
                 Ok(_) => {
-                    self.status_msg = format!("Saved {}", path.display());
+                    // Package/compile the module (capturing the output to keep TUI clean)
+                    match crate::package::package(&step.path, None, &[], true) {
+                        Ok(_) => self.status_msg = format!("Saved & compiled {}", step.name),
+                        Err(e) => self.status_msg = format!("Saved, but compilation failed: {}", e),
+                    }
                 }
                 Err(e) => {
                     self.status_msg = format!("Save failed: {}", e);
@@ -142,9 +157,38 @@ impl App {
         }
     }
 
-    pub fn run_pipeline(&mut self) {
+    async fn run_pipeline_inner(&mut self) -> Result<()> {
+        let config = crate::run::load_config(&self.pipeline.yaml_path)?;
+        let def = pyroduct::pipeline::PipelineDef::load(&config).await?;
+        let pipeline = pyroduct::pipeline::Pipeline::new(def).await?;
+        let pool = pyroduct::pipeline::PipelinePool::new(vec![pipeline]);
+        
+        let (successes, failures) = pool.process_batch(&self.pipeline.input).await?;
+        
+        let mut all_executions = successes;
+        all_executions.extend(failures);
+        all_executions.sort_by_key(|e| e.row_index);
+        self.pipeline.execution = all_executions;
+
+        // If currently viewing the output table, refresh it seamlessly
+        if let ViewState::OutputTable(ov) = &mut self.view {
+            let stage_idx = ov.step_index;
+            if let Ok(new_ov) = crate::tui::output::OutputView::new(self.pipeline.execution.clone(), stage_idx) {
+                *ov = new_ov;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn run_pipeline(&mut self) {
         self.save();
-        self.status_msg = "Executing run... (Check console/logs)".into();
+        self.status_msg = "Executing run...".into();
+
+        if let Err(e) = self.run_pipeline_inner().await {
+            self.status_msg = format!("Run failed: {}", e);
+        } else {
+            self.status_msg = "Run complete!".into();
+        }
     }
 
     pub fn current_nav_index(&self) -> usize {
@@ -254,7 +298,7 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
     keys::render(f, &hk, area);
 }
 
-fn handle_event(app: &mut App) -> Result<()> {
+async fn handle_event(app: &mut App) -> Result<()> {
     if !event::poll(Duration::from_millis(50))? {
         return Ok(());
     }
@@ -273,7 +317,7 @@ fn handle_event(app: &mut App) -> Result<()> {
             return Ok(());
         }
         (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
-            app.run_pipeline();
+            app.run_pipeline().await;
             return Ok(());
         }
         _ => {}
@@ -326,12 +370,12 @@ fn handle_event(app: &mut App) -> Result<()> {
     Ok(())
 }
 
-pub fn run_tui(yaml_path: &Path) -> Result<()> {
+pub async fn run_tui(yaml_path: &Path, input_path: &Path) -> Result<()> {
     if !yaml_path.exists() {
         anyhow::bail!("File not found: {}", yaml_path.display());
     }
 
-    let mut app = App::load(yaml_path)?;
+    let mut app = App::load(yaml_path, input_path).await?;
 
     enable_raw_mode()?;
     execute!(stdout(), EnterAlternateScreen)?;
@@ -340,7 +384,7 @@ pub fn run_tui(yaml_path: &Path) -> Result<()> {
 
     loop {
         terminal.draw(|f| ui(f, &mut app))?;
-        handle_event(&mut app)?;
+        handle_event(&mut app).await?;
 
         if app.quit {
             break;

@@ -82,6 +82,10 @@ enum Commands {
         /// Path to the pipeline config YAML file
         #[arg(value_name = "CONFIG", default_value = "pipeline.yaml")]
         config: PathBuf,
+
+        /// Input: a file path for batch processing
+        #[arg(value_name = "INPUT")]
+        input: PathBuf,
     },
 }
 
@@ -135,6 +139,6 @@ async fn main() -> Result<()> {
                 run::run(&config, &input).await
             }
         }
-        Commands::Tui { config } => tui::run_tui(&config),
+        Commands::Tui { config, input } => tui::run_tui(&config, &input).await,
     }
 }
