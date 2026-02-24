@@ -1,27 +1,37 @@
 use ratatui::{
-    layout::Rect,
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, List, ListItem, ListState},
+    text::{Line, Span},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
-use super::{App, ViewState};
+use super::App;
 
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
-    // Map the pipeline steps to Ratatui ListItems
-    let items: Vec<ListItem> = app
-        .pipeline
-        .steps
-        .iter()
-        .map(|step| ListItem::new(step.name.clone()))
-        .collect();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(3),
+        ])
+        .split(area);
 
-    // Configure the List widget
+    let list_area = chunks[0];
+    let run_area = chunks[1];
+
+    // Build items: Input -> Steps -> Output
+    let mut items = vec![ListItem::new("Input Table")];
+    items.extend(
+        app.pipeline.steps.iter().map(|s| ListItem::new(format!("Step: {}", s.name)))
+    );
+    items.push(ListItem::new("Output Table"));
+
     let list = List::new(items)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Steps ")
+                .title(" Flow ")
                 .border_style(Style::default().fg(Color::Gray)),
         )
         .highlight_style(
@@ -32,15 +42,23 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         )
         .highlight_symbol(">> ");
 
-    // Determine the selected step from the active view
-    let selected_step = match &app.view {
-        ViewState::Code(state) => state.selected_step,
-    };
-
-    // Set the active selection
     let mut state = ListState::default();
-    state.select(Some(selected_step));
+    state.select(Some(app.current_nav_index()));
 
-    // Render the stateful list
-    f.render_stateful_widget(list, area, &mut state);
+    f.render_stateful_widget(list, list_area, &mut state);
+
+    let run_text = Line::from(vec![
+        Span::styled("Run ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled("(^R)", Style::default().fg(Color::DarkGray)),
+    ]);
+
+    let run_block = Paragraph::new(run_text)
+        .alignment(Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Green)),
+        );
+
+    f.render_widget(run_block, run_area);
 }

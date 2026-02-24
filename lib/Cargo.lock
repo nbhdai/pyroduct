@@ -2268,6 +2268,7 @@ name = "pyroduct-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrow",
  "arrow-file",
  "cargo_toml",
  "clap",

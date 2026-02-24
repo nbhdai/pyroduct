@@ -3,7 +3,11 @@ use std::{
     io::stdout,
     path::{Path, PathBuf},
     time::Duration,
+    sync::Arc,
 };
+
+use arrow::array::RecordBatch;
+use arrow::datatypes::Schema;
 
 use anyhow::Result;
 use crossterm::{
@@ -23,6 +27,7 @@ use ratatui_code_editor::{editor::Editor, theme::vesper};
 
 pub mod nav;
 pub mod wasm;
+pub mod table;
 
 pub struct ModuleStep {
     pub name: String,
@@ -30,21 +35,28 @@ pub struct ModuleStep {
     pub source_code: String,
 }
 
-/// Global data that all views might need to access or modify
 pub struct PipelineState {
     pub yaml_path: PathBuf,
     pub steps: Vec<ModuleStep>,
+    pub input_table: table::TableView,
+    pub output_table: table::TableView,
 }
 
-/// The state machine representing the active view in the TUI.
+pub struct TableViewState {
+    pub focused: bool,
+}
+
 pub enum ViewState {
     Code(wasm::CodeState),
-    // We will add more states here like `Logs(logs::LogsState)`, etc.
+    InputTable(TableViewState),
+    OutputTable(TableViewState),
 }
 
 pub struct App {
     pub pipeline: PipelineState,
     pub view: ViewState,
+    pub status_msg: String,
+    pub quit: bool,
 }
 
 impl App {
@@ -73,98 +85,135 @@ impl App {
 
         let initial_code = steps.first().map(|s| s.source_code.clone()).unwrap_or_default();
 
+        let empty_batch = RecordBatch::new_empty(Arc::new(Schema::empty()));
+        let input_table = table::TableView::new(empty_batch.clone());
+        let output_table = table::TableView::new(empty_batch);
+
         Ok(App {
             pipeline: PipelineState {
                 yaml_path: yaml_path.to_path_buf(),
                 steps,
+                input_table,
+                output_table,
             },
             view: ViewState::Code(wasm::CodeState {
                 editing: false,
                 area: Rect::default(),
                 editor: Editor::new("rust", &initial_code, vesper()),
                 selected_step: 0,
-                status_msg: "i/Enter: edit │ ↑/↓: switch module │ ^S: save │ ^Q: quit".into(),
-                quit: false,
             }),
+            status_msg: "i/Enter: focus │ ↑/↓: nav │ ^S: save │ ^R: run │ ^Q: quit".into(),
+            quit: false,
         })
     }
 
     pub fn save(&mut self) {
-        // Sync the current editor content to the domain model before saving
-        // and grab the path and content to be saved.
-        let (path, content) = match &mut self.view {
-            ViewState::Code(code_state) => {
-                let step_idx = code_state.selected_step;
-                self.pipeline.steps[step_idx].source_code = code_state.editor.get_content();
-                
-                let step = &self.pipeline.steps[step_idx];
-                (step.path.join("src/lib.rs"), step.source_code.clone())
-            }
-        };
-
-        // Do the IO operation
-        let save_result = fs::write(&path, &content);
-
-        // Update the view state with the result
-        match &mut self.view {
-            ViewState::Code(code_state) => {
-                match save_result {
-                    Ok(_) => {
-                        code_state.status_msg = format!("Saved {}", path.display());
-                    }
-                    Err(e) => {
-                        code_state.status_msg = format!("Save failed: {}", e);
-                    }
+        if let ViewState::Code(code_state) = &mut self.view {
+            let step_idx = code_state.selected_step;
+            self.pipeline.steps[step_idx].source_code = code_state.editor.get_content();
+            
+            let step = &self.pipeline.steps[step_idx];
+            let path = step.path.join("src/lib.rs");
+            
+            match fs::write(&path, &step.source_code) {
+                Ok(_) => {
+                    self.status_msg = format!("Saved {}", path.display());
+                }
+                Err(e) => {
+                    self.status_msg = format!("Save failed: {}", e);
                 }
             }
+        } else {
+            self.status_msg = "Nothing to save here.".into();
+        }
+    }
+
+    pub fn run_pipeline(&mut self) {
+        self.save();
+        self.status_msg = "Executing run... (Check console/logs)".into();
+        // TODO: Handle run_batch/run logic seamlessly
+    }
+
+    pub fn current_nav_index(&self) -> usize {
+        match &self.view {
+            ViewState::InputTable(_) => 0,
+            ViewState::Code(c) => c.selected_step + 1,
+            ViewState::OutputTable(_) => self.pipeline.steps.len() + 1,
+        }
+    }
+
+    pub fn nav_to(&mut self, new_idx: usize) {
+        let max_idx = self.pipeline.steps.len() + 1;
+        if new_idx > max_idx { return; }
+
+        if let ViewState::Code(c) = &self.view {
+            self.pipeline.steps[c.selected_step].source_code = c.editor.get_content();
+        }
+
+        if new_idx == 0 {
+            self.view = ViewState::InputTable(TableViewState { focused: false });
+        } else if new_idx == max_idx {
+            self.view = ViewState::OutputTable(TableViewState { focused: false });
+        } else {
+            let step_idx = new_idx - 1;
+            let code = &self.pipeline.steps[step_idx].source_code;
+            self.view = ViewState::Code(wasm::CodeState {
+                editing: false,
+                area: ratatui::layout::Rect::default(),
+                editor: ratatui_code_editor::editor::Editor::new("rust", code, ratatui_code_editor::theme::vesper()),
+                selected_step: step_idx,
+            });
         }
     }
 }
 
 fn ui(f: &mut Frame, app: &mut App) {
-    // Split vertical chunks: Top for Main App, Bottom for Status Bar
     let vertical_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(10), Constraint::Length(1)])
         .split(f.area());
 
-    // Split horizontal chunks: Left for Code/Main View, Right for Nav
     let horizontal_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(20), Constraint::Length(25)]) // Nav bar is fixed at 25 chars wide
+        .constraints([Constraint::Min(20), Constraint::Length(25)])
         .split(vertical_chunks[0]);
 
     let main_area = horizontal_chunks[0];
     let nav_area = horizontal_chunks[1];
 
-    // Dispatch render to the active state. 
     match &mut app.view {
         ViewState::Code(code_state) => {
             wasm::render(f, &app.pipeline, code_state, main_area);
         }
+        ViewState::InputTable(state) => {
+            app.pipeline.input_table.render(f, main_area, "Input Table", state.focused);
+        }
+        ViewState::OutputTable(state) => {
+            app.pipeline.output_table.render(f, main_area, "Output Table", state.focused);
+        }
     }
 
-    // Render the nav bar directly via the app
     nav::render(f, app, nav_area);
-
     render_status(f, app, vertical_chunks[1]);
 }
 
 fn render_status(f: &mut Frame, app: &App, area: Rect) {
-    let (is_editing, status_msg) = match &app.view {
-        ViewState::Code(state) => (state.editing, &state.status_msg),
+    let is_focused = match &app.view {
+        ViewState::Code(s) => s.editing,
+        ViewState::InputTable(s) => s.focused,
+        ViewState::OutputTable(s) => s.focused,
     };
 
-    let mode = if is_editing {
-        Span::styled(" EDIT ", Style::default().fg(Color::Black).bg(Color::Green))
+    let mode = if is_focused {
+        Span::styled(" FOCUS ", Style::default().fg(Color::Black).bg(Color::Green))
     } else {
-        Span::styled(" NAV ", Style::default().fg(Color::Black).bg(Color::Blue))
+        Span::styled("  NAV  ", Style::default().fg(Color::Black).bg(Color::Blue))
     };
 
     let line = Line::from(vec![
         mode,
         Span::raw(" │ "),
-        Span::styled(status_msg, Style::default().fg(Color::DarkGray)),
+        Span::styled(&app.status_msg, Style::default().fg(Color::DarkGray)),
     ]);
     f.render_widget(Paragraph::new(line), area);
 }
@@ -180,26 +229,83 @@ fn handle_event(app: &mut App) -> Result<()> {
     match (key.modifiers, key.code) {
         (KeyModifiers::CONTROL, KeyCode::Char('c'))
         | (KeyModifiers::CONTROL, KeyCode::Char('q')) => {
-            match &mut app.view {
-                ViewState::Code(state) => state.quit = true,
-            }
+            app.quit = true;
             return Ok(());
         }
         (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
             app.save();
             return Ok(());
         }
+        (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
+            app.run_pipeline();
+            return Ok(());
+        }
         _ => {}
     }
 
-    // Dispatch event to the active state
-    match &mut app.view {
-        ViewState::Code(code_state) => {
-            wasm::handle_event(&mut app.pipeline, code_state, key)?;
+    let is_focused = match &app.view {
+        ViewState::Code(s) => s.editing,
+        ViewState::InputTable(s) => s.focused,
+        ViewState::OutputTable(s) => s.focused,
+    };
+
+    if !is_focused {
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('i') => {
+                match &mut app.view {
+                    ViewState::Code(s) => s.editing = true,
+                    ViewState::InputTable(s) => s.focused = true,
+                    ViewState::OutputTable(s) => s.focused = true,
+                }
+                app.status_msg = "Focused ─ Esc to return".into();
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                let idx = app.current_nav_index();
+                if idx > 0 { app.nav_to(idx - 1); }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let idx = app.current_nav_index();
+                app.nav_to(idx + 1);
+            }
+            _ => {}
+        }
+    } else {
+        if key.code == KeyCode::Esc {
+            match &mut app.view {
+                ViewState::Code(s) => s.editing = false,
+                ViewState::InputTable(s) => s.focused = false,
+                ViewState::OutputTable(s) => s.focused = false,
+            }
+            app.status_msg = "Navigation mode".into();
+        } else {
+            // Forward event to currently active pane
+            match &mut app.view {
+                ViewState::Code(s) => {
+                    wasm::handle_event(s, key)?;
+                }
+                ViewState::InputTable(_) => {
+                    handle_table_event(&mut app.pipeline.input_table, key);
+                }
+                ViewState::OutputTable(_) => {
+                    handle_table_event(&mut app.pipeline.output_table, key);
+                }
+            }
         }
     }
 
     Ok(())
+}
+
+fn handle_table_event(table: &mut table::TableView, key: crossterm::event::KeyEvent) {
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => table.scroll_up(1),
+        KeyCode::Down | KeyCode::Char('j') => table.scroll_down(1),
+        KeyCode::PageUp => table.page_up(),
+        KeyCode::PageDown => table.page_down(),
+        KeyCode::Home => table.home(),
+        KeyCode::End => table.end(),
+        _ => {}
+    }
 }
 
 pub fn run_tui(yaml_path: &Path) -> Result<()> {
@@ -218,11 +324,7 @@ pub fn run_tui(yaml_path: &Path) -> Result<()> {
         terminal.draw(|f| ui(f, &mut app))?;
         handle_event(&mut app)?;
         
-        let should_quit = match &app.view {
-            ViewState::Code(state) => state.quit,
-        };
-        
-        if should_quit {
+        if app.quit {
             break;
         }
     }
