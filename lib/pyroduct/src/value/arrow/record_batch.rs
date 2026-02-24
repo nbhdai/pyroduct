@@ -217,6 +217,17 @@ pub struct PreBatch {
 }
 
 impl PreBatch {
+    pub fn from_iter<'a>(mut iter: impl Iterator<Item = PyroRow<'a>>) -> Option<Self> {
+        let first = iter.next()?;
+        let schema = PyroSchema::trusted(&first).ok()?;
+        let mut batch = Self::new(schema);
+        batch.push_unchecked(first);
+        for row in iter {
+            batch.push_unchecked(row);
+        }
+        Some(batch)
+    }
+
     pub fn new(schema: PyroSchema<'_>) -> Self {
         let arrow_schema = Arc::new(schema.to_arrow());
         Self {

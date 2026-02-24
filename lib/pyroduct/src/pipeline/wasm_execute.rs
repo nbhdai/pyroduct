@@ -9,7 +9,7 @@ use wasmtime::Module as WasmtimeModule;
 
 use crate::pipeline::wasm::{PyroEngine, PyroFailure, PyroInstance, PyroLinker, PyroLogs, PyroModule, PyroSuccess};
 use crate::value::PyroRow;
-use crate::value::arrow::Rowable;
+use crate::value::arrow::{PreBatch, Rowable};
 
 use super::pipeline::PipelineDef;
 use super::{PipelineError, PipelineResult};
@@ -32,6 +32,40 @@ impl PipelineExecution {
             row.extend(step.row.clone());
         }
         Some(row)
+    }
+
+    /// Row from steps [0, step_index] merged together
+    pub fn row_up_to(&self, step_index: usize) -> Option<PyroRow<'_>> {
+        if self.steps.len() < step_index {
+            return None;
+        }
+        let mut steps = self.steps[..=step_index.min(self.steps.len() - 1)].iter();
+        let mut row = steps.next().map(|r| r.row.clone())?;
+        for step in steps {
+            row.extend(step.row.clone());
+        }
+        Some(row)
+    }
+
+    /// Row from only the given step index
+    pub fn row_at(&self, step_index: usize) -> Option<PyroRow<'_>> {
+        self.steps.get(step_index).map(|s| s.row.clone())
+    }
+}
+
+pub fn extract_upto_batch(executions: &[PipelineExecution], step_index: usize) -> Result<Option<RecordBatch>, crate::value::ValueError> {
+    let batch = PreBatch::from_iter(executions.iter().filter_map(|s| s.row_up_to(step_index)));
+    match batch {
+        Some(mut b) => b.flush(),
+        None => Ok(None),
+    }
+}
+
+pub fn extract_at_batch(executions: &[PipelineExecution], step_index: usize) -> Result<Option<RecordBatch>, crate::value::ValueError> {
+    let batch = PreBatch::from_iter(executions.iter().filter_map(|s| s.row_at(step_index)));
+    match batch {
+        Some(mut b) => b.flush(),
+        None => Ok(None),
     }
 }
 

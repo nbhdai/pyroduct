@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 
 use arrow::array::RecordBatch;
+use pyroduct::pipeline::wasm::PyroLogs;
 use pyroduct::value::arrow::Rowable;
 use pyroduct::value::{PyroRow, PyroRowOwned, PyroValue};
 use ratatui::layout::{Constraint, Rect};
@@ -37,6 +38,8 @@ pub struct TableView {
     buffer: VecDeque<PyroRowOwned>,
     /// Tracks which batch range is currently buffered: (start, end exclusive).
     buffered_range: (usize, usize),
+
+    pub focused: bool,
 }
 
 impl TableView {
@@ -49,6 +52,7 @@ impl TableView {
             selected: 0,
             buffer: VecDeque::new(),
             buffered_range: (0, 0),
+            focused: false,
         }
     }
 
@@ -215,11 +219,11 @@ impl TableView {
     // Rendering
     // -------------------------------------------------------------------------
 
-    pub fn render(&mut self, f: &mut Frame, area: Rect, title: &str, is_focused: bool) {
+    pub fn render(&mut self, f: &mut Frame, area: Rect, title: &str) {
         let available_rows = area.height.saturating_sub(4) as usize;
         self.page_size = available_rows.max(1);
 
-        let border_color = if is_focused { Color::Green } else { Color::Cyan };
+        let border_color = if self.focused { Color::Green } else { Color::Cyan };
 
         let total = self.total_rows();
         if total == 0 {

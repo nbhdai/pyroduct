@@ -15,6 +15,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use pyroduct::pipeline::wasm_execute::PipelineExecution;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
@@ -38,18 +39,13 @@ pub struct ModuleStep {
 pub struct PipelineState {
     pub yaml_path: PathBuf,
     pub steps: Vec<ModuleStep>,
-    pub input_table: table::TableView,
-    pub output_table: table::TableView,
-}
-
-pub struct TableViewState {
-    pub focused: bool,
+    pub input: RecordBatch,
+    pub execution: Vec<PipelineExecution>,
 }
 
 pub enum ViewState {
     Code(wasm::CodeState),
-    InputTable(TableViewState),
-    OutputTable(TableViewState),
+    Table(table::TableView),
 }
 
 pub struct App {
@@ -84,17 +80,14 @@ impl App {
         }
 
         let initial_code = steps.first().map(|s| s.source_code.clone()).unwrap_or_default();
-
         let empty_batch = RecordBatch::new_empty(Arc::new(Schema::empty()));
-        let input_table = table::TableView::new(empty_batch.clone());
-        let output_table = table::TableView::new(empty_batch);
 
         Ok(App {
             pipeline: PipelineState {
                 yaml_path: yaml_path.to_path_buf(),
                 steps,
-                input_table,
-                output_table,
+                input: empty_batch,
+                execution: Vec::new(),
             },
             view: ViewState::Code(wasm::CodeState {
                 editing: false,
@@ -136,7 +129,7 @@ impl App {
 
     pub fn current_nav_index(&self) -> usize {
         match &self.view {
-            ViewState::InputTable(_) => 0,
+            ViewState::Table(_) => 0,
             ViewState::Code(c) => c.selected_step + 1,
             ViewState::OutputTable(_) => self.pipeline.steps.len() + 1,
         }
@@ -146,14 +139,19 @@ impl App {
         let max_idx = self.pipeline.steps.len() + 1;
         if new_idx > max_idx { return; }
 
+        // Sync old code text to domain before navigating away
         if let ViewState::Code(c) = &self.view {
             self.pipeline.steps[c.selected_step].source_code = c.editor.get_content();
         }
 
+        // Hydrate the new view from the domain state
         if new_idx == 0 {
-            self.view = ViewState::InputTable(TableViewState { focused: false });
+            self.view = ViewState::InputTable(table::TableView::new(self.pipeline.input.clone()));
         } else if new_idx == max_idx {
-            self.view = ViewState::OutputTable(TableViewState { focused: false });
+            let batch = self.pipeline.output.clone().unwrap_or_else(|| {
+                RecordBatch::new_empty(Arc::new(Schema::empty()))
+            });
+            self.view = ViewState::OutputTable(table::TableView::new(batch));
         } else {
             let step_idx = new_idx - 1;
             let code = &self.pipeline.steps[step_idx].source_code;
@@ -185,11 +183,11 @@ fn ui(f: &mut Frame, app: &mut App) {
         ViewState::Code(code_state) => {
             wasm::render(f, &app.pipeline, code_state, main_area);
         }
-        ViewState::InputTable(state) => {
-            app.pipeline.input_table.render(f, main_area, "Input Table", state.focused);
+        ViewState::InputTable(table_view) => {
+            table_view.render(f, main_area, "Input Table");
         }
-        ViewState::OutputTable(state) => {
-            app.pipeline.output_table.render(f, main_area, "Output Table", state.focused);
+        ViewState::OutputTable(table_view) => {
+            table_view.render(f, main_area, "Output Table");
         }
     }
 
@@ -278,16 +276,13 @@ fn handle_event(app: &mut App) -> Result<()> {
             }
             app.status_msg = "Navigation mode".into();
         } else {
-            // Forward event to currently active pane
+            // Forward event to currently active widget
             match &mut app.view {
                 ViewState::Code(s) => {
                     wasm::handle_event(s, key)?;
                 }
-                ViewState::InputTable(_) => {
-                    handle_table_event(&mut app.pipeline.input_table, key);
-                }
-                ViewState::OutputTable(_) => {
-                    handle_table_event(&mut app.pipeline.output_table, key);
+                ViewState::InputTable(t) | ViewState::OutputTable(t) => {
+                    handle_table_event(t, key);
                 }
             }
         }
