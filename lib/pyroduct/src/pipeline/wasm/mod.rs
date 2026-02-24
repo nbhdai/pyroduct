@@ -97,6 +97,7 @@ impl PyroEngine {
 // PyroInstance — owns Store + Instance, drives host↔wasm IO
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct PyroLogs {
     pub module_logs: Vec<String>,
     pub capability_logs: HashMap<(String, String), Vec<String>>,
@@ -108,13 +109,15 @@ impl PyroLogs {
     }
 }
 
+#[derive(Clone)]
 pub struct PyroSuccess {
     pub row: PyroRow<'static>,
     pub logs: PyroLogs,
 }
 
+#[derive(Clone)]
 pub struct PyroFailure {
-    pub result: Result<CapturedError, WasmError>,
+    pub result: Result<CapturedError, String>,
     pub logs: PyroLogs,
 }
 
@@ -213,9 +216,9 @@ impl PyroInstance {
         }
     }
 
-    pub fn pack_pyro_error(&self, error: impl Into<WasmError>) -> PyroFailure {
+    pub fn pack_pyro_error(&self, error: impl std::error::Error) -> PyroFailure {
         PyroFailure {
-            result: Err(error.into()),
+            result: Err(error.to_string()),
             logs: self.unpack_logs(),
         }
     }

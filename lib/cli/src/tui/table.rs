@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use arrow::array::RecordBatch;
-use pyroduct::pipeline::wasm::PyroLogs;
+use crossterm::event::KeyCode;
 use pyroduct::value::arrow::Rowable;
 use pyroduct::value::{PyroRow, PyroRowOwned, PyroValue};
 use ratatui::layout::{Constraint, Rect};
@@ -42,6 +42,7 @@ pub struct TableView {
     pub focused: bool,
 }
 
+
 impl TableView {
     pub fn new(batch: RecordBatch) -> Self {
         Self {
@@ -53,6 +54,18 @@ impl TableView {
             buffer: VecDeque::new(),
             buffered_range: (0, 0),
             focused: false,
+        }
+    }
+
+    pub fn handle_event(&mut self, key: crossterm::event::KeyEvent) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => self.scroll_up(1),
+            KeyCode::Down | KeyCode::Char('j') => self.scroll_down(1),
+            KeyCode::PageUp => self.page_up(),
+            KeyCode::PageDown => self.page_down(),
+            KeyCode::Home => self.home(),
+            KeyCode::End => self.end(),
+            _ => {}
         }
     }
 

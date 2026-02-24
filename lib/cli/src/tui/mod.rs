@@ -27,8 +27,10 @@ use ratatui::{
 use ratatui_code_editor::{editor::Editor, theme::vesper};
 
 pub mod nav;
+pub mod logs;
 pub mod wasm;
 pub mod table;
+pub mod output;
 
 pub struct ModuleStep {
     pub name: String,
@@ -45,7 +47,8 @@ pub struct PipelineState {
 
 pub enum ViewState {
     Code(wasm::CodeState),
-    Table(table::TableView),
+    InputTable(table::TableView),
+    OutputTable(output::OutputView),
 }
 
 pub struct App {
@@ -129,8 +132,8 @@ impl App {
 
     pub fn current_nav_index(&self) -> usize {
         match &self.view {
-            ViewState::Table(_) => 0,
-            ViewState::Code(c) => c.selected_step + 1,
+            ViewState::InputTable(_) => 0,
+            ViewState::Code(c) => (c.selected_step * 2) + 1,
             ViewState::OutputTable(_) => self.pipeline.steps.len() + 1,
         }
     }
@@ -147,20 +150,20 @@ impl App {
         // Hydrate the new view from the domain state
         if new_idx == 0 {
             self.view = ViewState::InputTable(table::TableView::new(self.pipeline.input.clone()));
-        } else if new_idx == max_idx {
-            let batch = self.pipeline.output.clone().unwrap_or_else(|| {
-                RecordBatch::new_empty(Arc::new(Schema::empty()))
-            });
-            self.view = ViewState::OutputTable(table::TableView::new(batch));
         } else {
-            let step_idx = new_idx - 1;
-            let code = &self.pipeline.steps[step_idx].source_code;
-            self.view = ViewState::Code(wasm::CodeState {
-                editing: false,
-                area: ratatui::layout::Rect::default(),
-                editor: ratatui_code_editor::editor::Editor::new("rust", code, ratatui_code_editor::theme::vesper()),
-                selected_step: step_idx,
-            });
+            let stage_idx = (new_idx - 1)/2;
+            let code_idx = new_idx % 2 == 1;
+            if code_idx {
+                let code = &self.pipeline.steps[stage_idx].source_code;
+                self.view = ViewState::Code(wasm::CodeState {
+                    editing: false,
+                    area: ratatui::layout::Rect::default(),
+                    editor: ratatui_code_editor::editor::Editor::new("rust", code, ratatui_code_editor::theme::vesper()),
+                    selected_step: stage_idx,
+                });
+            } else {
+                self.view = ViewState::OutputTable(output::OutputView::new(self.pipeline.execution.clone(), stage_idx).unwrap());
+            }
         }
     }
 }
@@ -281,26 +284,13 @@ fn handle_event(app: &mut App) -> Result<()> {
                 ViewState::Code(s) => {
                     wasm::handle_event(s, key)?;
                 }
-                ViewState::InputTable(t) | ViewState::OutputTable(t) => {
-                    handle_table_event(t, key);
-                }
+                ViewState::InputTable(t) => t.handle_event(key),
+                ViewState::OutputTable(t) => t.handle_event(key),
             }
         }
     }
 
     Ok(())
-}
-
-fn handle_table_event(table: &mut table::TableView, key: crossterm::event::KeyEvent) {
-    match key.code {
-        KeyCode::Up | KeyCode::Char('k') => table.scroll_up(1),
-        KeyCode::Down | KeyCode::Char('j') => table.scroll_down(1),
-        KeyCode::PageUp => table.page_up(),
-        KeyCode::PageDown => table.page_down(),
-        KeyCode::Home => table.home(),
-        KeyCode::End => table.end(),
-        _ => {}
-    }
 }
 
 pub fn run_tui(yaml_path: &Path) -> Result<()> {
