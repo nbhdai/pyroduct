@@ -36,7 +36,7 @@ impl OutputFormat {
 }
 
 /// Helper to load config and resolve paths
-fn load_config(config_path: &Path) -> Result<PipelineConfig> {
+pub fn load_config(config_path: &Path) -> Result<PipelineConfig> {
     tracing::info!("Loading config from {:?}", config_path);
     let config_str = fs::read_to_string(config_path)?;
     let mut config: PipelineConfig = match config_path.extension().map(|s| s.as_encoded_bytes()) {

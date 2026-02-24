@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     fs,
     io::stdout,
     path::{Path, PathBuf},
@@ -22,37 +21,16 @@ use ratatui::{
 };
 use ratatui_code_editor::editor::Editor;
 use ratatui_code_editor::theme::vesper;
-use serde::Deserialize;
 
 // =============================================================================
-// Pipeline YAML (load once to bootstrap)
+// Domain types & Events
 // =============================================================================
 
-#[derive(Deserialize, Debug, Clone)]
-struct PipelineYaml {
-    #[serde(default)]
-    capabilities: HashMap<String, CapabilityYaml>,
-    modules: HashMap<String, ModuleYaml>,
-    pipeline: Vec<String>,
+pub enum TuiEvent {
+    Log(usize, LogLine),
+    Status(usize, StepStatus),
+    RunComplete(Result<Vec<DataRow>>),
 }
-
-#[derive(Deserialize, Debug, Clone)]
-struct CapabilityYaml {
-    path: String,
-    #[serde(default)]
-    classes: HashMap<String, serde_yaml::Value>,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-struct ModuleYaml {
-    path: String,
-    #[serde(default)]
-    capabilities: Vec<String>,
-}
-
-// =============================================================================
-// Domain types
-// =============================================================================
 
 struct CapConfig {
     display_name: String,
@@ -62,14 +40,14 @@ struct CapConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StepStatus { Idle, Building, Success, Failed }
 
-struct LogLine { text: String, level: LogLevel }
+pub struct LogLine { text: String, level: LogLevel }
 
 #[derive(Clone, Copy)]
-enum LogLevel { Info, Warn, Error }
+pub enum LogLevel { Info, Warn, Error }
 
-struct DataRow { columns: Vec<(String, String)> }
+pub struct DataRow { columns: Vec<(String, String)> }
 
-struct ModuleStep {
+pub struct ModuleStep {
     name: String,
     source_path: Option<PathBuf>,
     wasm_path: PathBuf,
@@ -121,6 +99,7 @@ impl Pane {
 // =============================================================================
 
 struct App {
+    yaml_path: PathBuf,
     modules_base_dir: PathBuf,
     steps: Vec<ModuleStep>,
     selected_step: usize,
@@ -136,12 +115,15 @@ struct App {
     // Cached rects so editor.input() can use them
     code_area: Rect,
     cap_area: Rect,
+    
+    tx: std::sync::mpsc::Sender<TuiEvent>,
+    rx: std::sync::mpsc::Receiver<TuiEvent>,
 }
 
 impl App {
     fn load(yaml_path: &Path) -> Result<Self> {
-        let content = fs::read_to_string(yaml_path)?;
-        let config: PipelineYaml = serde_yaml::from_str(&content)?;
+        // Use the centralized config loader from the CLI
+        let config = crate::run::load_config(yaml_path)?;
         let yaml_dir = yaml_path.parent().unwrap_or(Path::new(".")).to_path_buf();
 
         let mut steps = Vec::new();
@@ -149,22 +131,20 @@ impl App {
             let mod_conf = config.modules.get(module_name)
                 .ok_or_else(|| anyhow::anyhow!("Module '{}' not in [modules]", module_name))?;
 
-            let wasm_path = yaml_dir.join(&mod_conf.path);
+            // `load_config` already resolves `mod_conf.path` relative to the config file location
+            let wasm_path = mod_conf.path.clone();
             let (source_code, source_path) = find_source(&wasm_path);
 
             let code = Editor::new("rust", &source_code, vesper());
 
             let mut caps = Vec::new();
-            for cap_name in &mod_conf.capabilities {
-                if let Some(cap_yaml) = config.capabilities.get(cap_name) {
-                    for (class_name, class_val) in &cap_yaml.classes {
-                        let yaml_str = serde_yaml::to_string(class_val).unwrap_or_default();
-                        caps.push(CapConfig {
-                            display_name: format!("{}/{}", cap_name, class_name),
-                            editor: Editor::new("yaml", &yaml_str, vesper()),
-                        });
-                    }
-                }
+            for (cap_name, cap_val) in &mod_conf.capabilities {
+                // Formats the config as JSON since it's stored as serde_json::Value
+                let json_str = serde_json::to_string_pretty(cap_val).unwrap_or_default();
+                caps.push(CapConfig {
+                    display_name: cap_name.clone(),
+                    editor: Editor::new("json", &json_str, vesper()),
+                });
             }
 
             steps.push(ModuleStep {
@@ -188,7 +168,10 @@ impl App {
             yaml_dir.join("..").join("modules")
         };
 
+        let (tx, rx) = std::sync::mpsc::channel();
+
         Ok(App {
+            yaml_path: yaml_path.to_path_buf(),
             modules_base_dir: fs::canonicalize(&modules_base_dir).unwrap_or(modules_base_dir),
             steps,
             selected_step: 0,
@@ -203,6 +186,8 @@ impl App {
             quit: false,
             code_area: Rect::default(),
             cap_area: Rect::default(),
+            tx,
+            rx,
         })
     }
 
@@ -245,38 +230,14 @@ impl App {
             return;
         }
 
-        let cargo_toml = format!(
-r#"[package]
-name = "{name}"
-version = "0.1.0"
-edition = "2021"
-
-[lib]
-crate-type = ["cdylib"]
-
-[dependencies]
-pyroduct = {{ path = "../../lib/pyroduct" }}
-anyhow = "1"
-"#);
-        if let Err(e) = fs::write(mod_dir.join("Cargo.toml"), &cargo_toml) {
-            self.status_msg = format!("Write Cargo.toml failed: {}", e);
+        // Delegate to scaffolding logic from init.rs
+        if let Err(e) = crate::init::create_module(&mod_dir, &src_dir, &name) {
+            self.status_msg = format!("Scaffold failed: {}", e);
             return;
         }
 
-        let lib_rs = format!(
-r#"use pyroduct::prelude::*;
-
-#[module(output = result)]
-fn {name}(input: &str) -> anyhow::Result<String> {{
-    Ok(format!("[{name}] {{}}", input))
-}}
-"#);
         let lib_path = src_dir.join("lib.rs");
-        if let Err(e) = fs::write(&lib_path, &lib_rs) {
-            self.status_msg = format!("Write lib.rs failed: {}", e);
-            return;
-        }
-
+        let lib_rs = fs::read_to_string(&lib_path).unwrap_or_default();
         let code = Editor::new("rust", &lib_rs, vesper());
 
         self.steps.push(ModuleStep {
@@ -298,7 +259,7 @@ fn {name}(input: &str) -> anyhow::Result<String> {{
     }
 
     fn run(&mut self) {
-        // Save all
+        // Save all modules first
         for step in &self.steps {
             if let Some(path) = &step.source_path {
                 let _ = fs::write(path, step.code.get_content());
@@ -308,39 +269,150 @@ fn {name}(input: &str) -> anyhow::Result<String> {{
         for step in &mut self.steps {
             step.status = StepStatus::Building;
             step.logs.push(LogLine {
-                text: format!("[build] cargo build --target wasm32-unknown-unknown -p {} ...", step.name),
+                text: format!("[build] cargo build --target wasm32-unknown-unknown --release -p {} ...", step.name),
                 level: LogLevel::Info,
             });
         }
 
-        // TODO: real impl would invoke:
-        //   cargo build --target wasm32-unknown-unknown for each module
-        //   PipelineDef::load(&config).await
-        //   Pipeline::new(def).await
-        //   for row in input_data { pipeline.process(row).await }
-        //
-        // Simulated results:
-        for step in &mut self.steps {
-            step.status = StepStatus::Success;
-            step.logs.push(LogLine {
-                text: format!("[run]   '{}' OK", step.name),
-                level: LogLevel::Info,
-            });
-        }
+        self.data_rows.clear();
+        self.status_msg = "Building and running pipeline...".into();
 
-        self.data_columns = vec!["row".into(), "input".into(), "output".into(), "status".into()];
-        self.data_rows = vec![
-            DataRow { columns: vec![
-                ("row".into(), "0".into()), ("input".into(), "hello".into()),
-                ("output".into(), "[TEST] HELLO!!!".into()), ("status".into(), "ok".into()),
-            ]},
-            DataRow { columns: vec![
-                ("row".into(), "1".into()), ("input".into(), "world".into()),
-                ("output".into(), "[TEST] WORLD!!!".into()), ("status".into(), "ok".into()),
-            ]},
-        ];
-        self.data_scroll = 0;
-        self.status_msg = format!("Pipeline complete. {} rows.", self.data_rows.len());
+        let tx = self.tx.clone();
+        let yaml_path = self.yaml_path.clone();
+        
+        let module_paths: Vec<(usize, String, PathBuf)> = self.steps.iter().enumerate()
+            .map(|(i, s)| {
+                // Determine module base dir dynamically via parents of `src/lib.rs`
+                let dir = s.source_path.as_ref()
+                    .and_then(|p| p.parent())
+                    .and_then(|p| p.parent())
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| PathBuf::from("."));
+                (i, s.name.clone(), dir)
+            })
+            .collect();
+            
+        let data_path = yaml_path.parent().unwrap_or(Path::new(".")).join("data.jsonl");
+
+        tokio::spawn(async move {
+            // 1. Build Wasm Modules via Cargo
+            for (idx, name, path) in module_paths {
+                let _ = tx.send(TuiEvent::Log(idx, LogLine { text: format!("Building {}...", name), level: LogLevel::Info }));
+                
+                let output_res = tokio::task::spawn_blocking(move || {
+                    std::process::Command::new("cargo")
+                        .args(["build", "--target", "wasm32-unknown-unknown", "--release"])
+                        .current_dir(&path)
+                        .output()
+                }).await;
+                
+                match output_res {
+                    Ok(Ok(out)) if out.status.success() => {
+                        let _ = tx.send(TuiEvent::Log(idx, LogLine { text: "Build success".into(), level: LogLevel::Info }));
+                        let _ = tx.send(TuiEvent::Status(idx, StepStatus::Success));
+                    }
+                    Ok(Ok(out)) => {
+                        let err = String::from_utf8_lossy(&out.stderr);
+                        let _ = tx.send(TuiEvent::Log(idx, LogLine { text: format!("Build failed:\n{}", err), level: LogLevel::Error }));
+                        let _ = tx.send(TuiEvent::Status(idx, StepStatus::Failed));
+                        let _ = tx.send(TuiEvent::RunComplete(Err(anyhow::anyhow!("Build failed for {}", name))));
+                        return;
+                    }
+                    Ok(Err(e)) => {
+                        let _ = tx.send(TuiEvent::Log(idx, LogLine { text: format!("Cargo error: {}", e), level: LogLevel::Error }));
+                        let _ = tx.send(TuiEvent::Status(idx, StepStatus::Failed));
+                        let _ = tx.send(TuiEvent::RunComplete(Err(anyhow::anyhow!("Cargo command error for {}", name))));
+                        return;
+                    }
+                    Err(e) => {
+                        let _ = tx.send(TuiEvent::Log(idx, LogLine { text: format!("Tokio join error: {}", e), level: LogLevel::Error }));
+                        let _ = tx.send(TuiEvent::Status(idx, StepStatus::Failed));
+                        let _ = tx.send(TuiEvent::RunComplete(Err(anyhow::anyhow!("Execution panic for {}", name))));
+                        return;
+                    }
+                }
+            }
+
+            // 2. Load Pipeline and Process Data
+            let res = async {
+                let config = crate::run::load_config(&yaml_path)?;
+                let def = pyroduct::pipeline::PipelineDef::load(&config).await?;
+                let mut pipeline = pyroduct::pipeline::Pipeline::new(def).await?;
+                
+                // Fetch input data or use a fallback mock input
+                let input_data = if data_path.exists() {
+                    fs::read_to_string(&data_path)?
+                } else {
+                    r#"{"input": "test"}"#.to_string()
+                };
+
+                let mut rows = Vec::new();
+                for (i, line) in input_data.lines().enumerate() {
+                    if line.trim().is_empty() { continue; }
+                    
+                    let input_row: pyroduct::value::PyroRow<'static> = serde_json::from_str(line)?;
+                    let exec = pipeline.process(&input_row).await;
+                    
+                    // Route module/capability logs back to specific TUI steps
+                    for (step_idx, step_exec) in exec.steps.iter().enumerate() {
+                        for module_log in &step_exec.logs.module_logs {
+                            let _ = tx.send(TuiEvent::Log(step_idx, LogLine { text: module_log.clone(), level: LogLevel::Info }));
+                        }
+                        for ((lib, cap), cap_logs) in &step_exec.logs.capability_logs {
+                            for cap_log in cap_logs {
+                                let _ = tx.send(TuiEvent::Log(step_idx, LogLine { text: format!("[{}::{}] {}", lib, cap, cap_log), level: LogLevel::Info }));
+                            }
+                        }
+                    }
+
+                    if let Some(fail) = &exec.failure {
+                        let fail_idx = exec.steps.len();
+                        for module_log in &fail.logs.module_logs {
+                            let _ = tx.send(TuiEvent::Log(fail_idx, LogLine { text: module_log.clone(), level: LogLevel::Info }));
+                        }
+                        for ((lib, cap), cap_logs) in &fail.logs.capability_logs {
+                            for cap_log in cap_logs {
+                                let _ = tx.send(TuiEvent::Log(fail_idx, LogLine { text: format!("[{}::{}] {}", lib, cap, cap_log), level: LogLevel::Info }));
+                            }
+                        }
+                        
+                        let err_msg = match &fail.result {
+                            Ok(e) => format!("{}", e),
+                            Err(e) => format!("{}", e),
+                        };
+                        let _ = tx.send(TuiEvent::Log(fail_idx, LogLine { text: err_msg.clone(), level: LogLevel::Error }));
+                        let _ = tx.send(TuiEvent::Status(fail_idx, StepStatus::Failed));
+                    }
+
+                    // Convert execution results to our tabular display format
+                    let output_str = if let Some(fail) = &exec.failure {
+                        match &fail.result {
+                            Ok(e) => format!("ERROR: {}", e),
+                            Err(e) => format!("ERROR: {}", e),
+                        }
+                    } else if let Some(last) = exec.steps.last() {
+                        last.row.to_string()
+                    } else {
+                        "No output".to_string()
+                    };
+
+                    let status_str = if exec.failure.is_some() { "error".to_string() } else { "ok".to_string() };
+
+                    rows.push(DataRow {
+                        columns: vec![
+                            ("row".into(), i.to_string()),
+                            ("input".into(), line.to_string()),
+                            ("output".into(), output_str),
+                            ("status".into(), status_str),
+                        ]
+                    });
+                }
+
+                Ok(rows)
+            }.await;
+
+            let _ = tx.send(TuiEvent::RunComplete(res));
+        });
     }
 
     fn remove_step(&mut self) {
@@ -356,9 +428,9 @@ fn {name}(input: &str) -> anyhow::Result<String> {{
 
     fn add_capability(&mut self) {
         let n = self.current_step().capabilities.len() + 1;
-        let editor = Editor::new("yaml", "library: <name>\nkey: value\n", vesper());
+        let editor = Editor::new("json", "{\n  \"key\": \"value\"\n}\n", vesper());
         self.current_step_mut().capabilities.push(CapConfig {
-            display_name: format!("cap_{}/class", n),
+            display_name: format!("cap_{}", n),
             editor,
         });
         self.selected_cap = self.current_step().capabilities.len() - 1;
@@ -591,7 +663,7 @@ fn render_data_table(f: &mut Frame, app: &App, area: Rect) {
                 .unwrap_or("");
             let style = if val == "ok" {
                 Style::default().fg(Color::Green)
-            } else if val.contains("error") || val.contains("FAIL") {
+            } else if val.contains("error") || val.contains("ERROR") {
                 Style::default().fg(Color::Red)
             } else {
                 Style::default().fg(Color::White)
@@ -731,21 +803,15 @@ fn handle_event(app: &mut App) -> Result<()> {
 }
 
 // =============================================================================
-// Main
+// Main Hook
 // =============================================================================
 
-fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    let yaml_path = args.get(1).map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("pipeline.yaml"));
-
+pub fn run_tui(yaml_path: &Path) -> Result<()> {
     if !yaml_path.exists() {
-        eprintln!("Usage: pyroduct-tui <pipeline.yaml>");
-        eprintln!("  File not found: {}", yaml_path.display());
-        std::process::exit(1);
+        anyhow::bail!("File not found: {}", yaml_path.display());
     }
 
-    let mut app = App::load(&yaml_path)?;
+    let mut app = App::load(yaml_path)?;
 
     enable_raw_mode()?;
     execute!(stdout(), EnterAlternateScreen)?;
@@ -754,6 +820,35 @@ fn main() -> Result<()> {
 
     loop {
         terminal.draw(|f| ui(f, &mut app))?;
+        
+        // Drain incoming background events
+        while let Ok(ev) = app.rx.try_recv() {
+            match ev {
+                TuiEvent::Log(step, log) => {
+                    if step < app.steps.len() {
+                        app.steps[step].logs.push(log);
+                    }
+                }
+                TuiEvent::Status(step, st) => {
+                    if step < app.steps.len() {
+                        app.steps[step].status = st;
+                    }
+                }
+                TuiEvent::RunComplete(res) => {
+                    match res {
+                        Ok(rows) => {
+                            app.data_columns = vec!["row".into(), "input".into(), "output".into(), "status".into()];
+                            app.data_rows = rows;
+                            app.status_msg = "Pipeline execution complete.".into();
+                        }
+                        Err(e) => {
+                            app.status_msg = format!("Pipeline failed: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+
         handle_event(&mut app)?;
         if app.quit { break; }
     }

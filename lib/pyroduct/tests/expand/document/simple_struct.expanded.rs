@@ -12,7 +12,7 @@ impl ::pyroduct::value::TypeableRow for SimpleStruct {
                         ::alloc::boxed::Box::new_uninit(),
                         [
                             {
-                                let mut field = ::pyroduct::value::PyroField::<
+                                let field = ::pyroduct::value::PyroField::<
                                     'static,
                                 >::new(
                                     "id",
@@ -22,7 +22,7 @@ impl ::pyroduct::value::TypeableRow for SimpleStruct {
                                 field
                             },
                             {
-                                let mut field = ::pyroduct::value::PyroField::<
+                                let field = ::pyroduct::value::PyroField::<
                                     'static,
                                 >::new(
                                     "name",

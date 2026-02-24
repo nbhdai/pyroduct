@@ -78,6 +78,11 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = run::OutputFormat::Json)]
         format: run::OutputFormat,
     },
+    Tui {
+        /// Path to the pipeline config YAML file
+        #[arg(value_name = "CONFIG", default_value = "pipeline.yaml")]
+        config: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -122,5 +127,6 @@ async fn main() -> Result<()> {
                 run::run(&config, &input).await
             }
         }
+        Commands::Tui { config } => tui::run_tui(&config),
     }
 }

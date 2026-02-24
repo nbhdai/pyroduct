@@ -12,7 +12,7 @@ impl ::pyroduct::value::TypeableRow for Inner {
                         ::alloc::boxed::Box::new_uninit(),
                         [
                             {
-                                let mut field = ::pyroduct::value::PyroField::<
+                                let field = ::pyroduct::value::PyroField::<
                                     'static,
                                 >::new(
                                     "value",
@@ -43,7 +43,7 @@ impl ::pyroduct::value::TypeableRow for Outer {
                         ::alloc::boxed::Box::new_uninit(),
                         [
                             {
-                                let mut field = ::pyroduct::value::PyroField::<
+                                let field = ::pyroduct::value::PyroField::<
                                     'static,
                                 >::new(
                                     "inner",
@@ -53,7 +53,7 @@ impl ::pyroduct::value::TypeableRow for Outer {
                                 field
                             },
                             {
-                                let mut field = ::pyroduct::value::PyroField::<
+                                let field = ::pyroduct::value::PyroField::<
                                     'static,
                                 >::new(
                                     "count",

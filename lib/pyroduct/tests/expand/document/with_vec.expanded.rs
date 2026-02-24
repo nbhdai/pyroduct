@@ -12,7 +12,7 @@ impl ::pyroduct::value::TypeableRow for DataContainer {
                         ::alloc::boxed::Box::new_uninit(),
                         [
                             {
-                                let mut field = ::pyroduct::value::PyroField::<
+                                let field = ::pyroduct::value::PyroField::<
                                     'static,
                                 >::new(
                                     "items",
@@ -22,7 +22,7 @@ impl ::pyroduct::value::TypeableRow for DataContainer {
                                 field
                             },
                             {
-                                let mut field = ::pyroduct::value::PyroField::<
+                                let field = ::pyroduct::value::PyroField::<
                                     'static,
                                 >::new(
                                     "labels",

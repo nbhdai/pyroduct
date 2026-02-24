@@ -14,7 +14,7 @@ impl ::pyroduct::value::TypeableRow for Address {
                         ::alloc::boxed::Box::new_uninit(),
                         [
                             {
-                                let mut field = ::pyroduct::value::PyroField::<
+                                let field = ::pyroduct::value::PyroField::<
                                     'static,
                                 >::new(
                                     "street",
@@ -24,7 +24,7 @@ impl ::pyroduct::value::TypeableRow for Address {
                                 field
                             },
                             {
-                                let mut field = ::pyroduct::value::PyroField::<
+                                let field = ::pyroduct::value::PyroField::<
                                     'static,
                                 >::new(
                                     "city",
@@ -34,7 +34,7 @@ impl ::pyroduct::value::TypeableRow for Address {
                                 field
                             },
                             {
-                                let mut field = ::pyroduct::value::PyroField::<
+                                let field = ::pyroduct::value::PyroField::<
                                     'static,
                                 >::new(
                                     "zip",
@@ -148,7 +148,7 @@ impl<
                         ::alloc::boxed::Box::new_uninit(),
                         [
                             {
-                                let mut field = ::pyroduct::value::PyroField::<
+                                let field = ::pyroduct::value::PyroField::<
                                     'static,
                                 >::new(
                                     "name",
@@ -158,7 +158,7 @@ impl<
                                 field
                             },
                             {
-                                let mut field = ::pyroduct::value::PyroField::<
+                                let field = ::pyroduct::value::PyroField::<
                                     'static,
                                 >::new(
                                     "age",
@@ -168,7 +168,7 @@ impl<
                                 field
                             },
                             {
-                                let mut field = ::pyroduct::value::PyroField::<
+                                let field = ::pyroduct::value::PyroField::<
                                     'static,
                                 >::new(
                                     "address",

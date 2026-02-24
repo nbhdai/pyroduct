@@ -22,12 +22,7 @@ async fn test_capability_state_preservation() {
         modules: HashMap::from([
             ("state_mod".to_string(), ModuleConfig {
                 path: Path::new("../../modules/cap_state/artifacts/mod.wasm").to_path_buf(),
-                capabilities: HashMap::from([
-                    ("state".to_string(), CapabilityConfig {
-                        path: cap_path.to_path_buf(),
-                        classes: HashMap::new(),
-                    })
-                ]),
+                capabilities: HashMap::new(),
             })
         ]),
         pipeline: vec!["state_mod".to_string()],

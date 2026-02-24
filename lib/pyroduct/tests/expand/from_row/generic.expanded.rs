@@ -14,7 +14,7 @@ impl ::pyroduct::value::TypeableRow for Address {
                         ::alloc::boxed::Box::new_uninit(),
                         [
                             {
-                                let mut field = ::pyroduct::value::PyroField::<
+                                let field = ::pyroduct::value::PyroField::<
                                     'static,
                                 >::new(
                                     "street",
@@ -24,7 +24,7 @@ impl ::pyroduct::value::TypeableRow for Address {
                                 field
                             },
                             {
-                                let mut field = ::pyroduct::value::PyroField::<
+                                let field = ::pyroduct::value::PyroField::<
                                     'static,
                                 >::new(
                                     "city",
@@ -34,7 +34,7 @@ impl ::pyroduct::value::TypeableRow for Address {
                                 field
                             },
                             {
-                                let mut field = ::pyroduct::value::PyroField::<
+                                let field = ::pyroduct::value::PyroField::<
                                     'static,
                                 >::new(
                                     "zip",
@@ -145,7 +145,7 @@ impl<T: ::pyroduct::value::Typeable> ::pyroduct::value::TypeableRow for Person<T
                         ::alloc::boxed::Box::new_uninit(),
                         [
                             {
-                                let mut field = ::pyroduct::value::PyroField::<
+                                let field = ::pyroduct::value::PyroField::<
                                     'static,
                                 >::new(
                                     "name",
@@ -155,7 +155,7 @@ impl<T: ::pyroduct::value::Typeable> ::pyroduct::value::TypeableRow for Person<T
                                 field
                             },
                             {
-                                let mut field = ::pyroduct::value::PyroField::<
+                                let field = ::pyroduct::value::PyroField::<
                                     'static,
                                 >::new(
                                     "age",
@@ -165,7 +165,7 @@ impl<T: ::pyroduct::value::Typeable> ::pyroduct::value::TypeableRow for Person<T
                                 field
                             },
                             {
-                                let mut field = ::pyroduct::value::PyroField::<
+                                let field = ::pyroduct::value::PyroField::<
                                     'static,
                                 >::new(
                                     "address",

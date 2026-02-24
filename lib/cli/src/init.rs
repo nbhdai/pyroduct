@@ -40,7 +40,7 @@ pub fn init(path: Option<PathBuf>, is_cap: bool) -> Result<()> {
     Ok(())
 }
 
-fn create_module(root: &Path, src: &Path, name: &str) -> Result<()> {
+pub fn create_module(root: &Path, src: &Path, name: &str) -> Result<()> {
     let toml_content = format!(
         r#"[module]
 name = "{name}"
@@ -62,7 +62,7 @@ path = "../../lib/pyroduct"
     let lib_rs = r#"use pyroduct::module;
 
 #[module(output = message)]
-fn call(input: &str) -> Result<String, String> {
+fn call(input: &str) -> Result<String> {
     Ok(format!("Hello from module: {}", input))
 }
 "#;
@@ -70,7 +70,7 @@ fn call(input: &str) -> Result<String, String> {
     Ok(())
 }
 
-fn create_capability(root: &Path, src: &Path, name: &str) -> Result<()> {
+pub fn create_capability(root: &Path, src: &Path, name: &str) -> Result<()> {
     let toml_content = format!(
         r#"[capability]
 name = "{name}"
