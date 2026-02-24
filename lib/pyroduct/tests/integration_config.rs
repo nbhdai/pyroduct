@@ -15,18 +15,13 @@ async fn test_capability_configuration_respect() {
         .init();
     
     // Use the counter capability from tests/cap_config
-    #[cfg(target_os = "linux")]
-    let cap_path = Path::new("../../capabilities/config/artifacts/lib.so");
-    #[cfg(target_os = "macos")]
-    let cap_path = Path::new("../../capabilities/config/artifacts/lib.dylib");
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    panic!("Only macho and elf binaries are supported");
+    let cap_path = Path::new("../../capabilities/config/");
     
     let config = PipelineConfig {
         libraries: HashMap::from([("config".to_string(), cap_path.to_path_buf())]),
         modules: HashMap::from([
             ("config_mod".to_string(), ModuleConfig {
-                path: Path::new("../../modules/cap_config/artifacts/mod.wasm").to_path_buf(),
+                path: Path::new("../../modules/cap_config/").to_path_buf(),
                 capabilities: HashMap::from([(
                     "config".to_string(),
                     json!({

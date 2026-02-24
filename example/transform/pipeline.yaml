@@ -1,6 +1,6 @@
 capabilities:
   transform:
-    path: ../../capabilities/config/artifacts/lib.dylib
+    path: ../../capabilities/config/
     classes:
       config:
         uppercase: true
@@ -8,7 +8,7 @@ capabilities:
 
 modules:
   prefix:
-    path: ../../modules/cap_config/artifacts/mod.wasm
+    path: ../../modules/cap_config/
     capabilities:
       - config
 

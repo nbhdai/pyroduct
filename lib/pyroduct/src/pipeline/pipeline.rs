@@ -46,7 +46,7 @@ pub struct PipelineConfig {
 /// A single wasm module in the pipeline.
 #[derive(Deserialize, Debug)]
 pub struct ModuleConfig {
-    /// Path to the compiled .wasm binary.
+    /// Path to the directory.
     pub path: PathBuf,
     /// Per-class capability configuration. Keys are class names.
     #[serde(default)]
@@ -84,8 +84,15 @@ impl PipelineDef {
         // --- Phase 1: load shared libraries ------------------------------------
         let mut libraries: HashMap<String, CapabilityLibrary> = HashMap::new();
 
+        #[cfg(target_os = "linux")]
+        let lib_file = "lib.so";
+        #[cfg(target_os = "macos")]
+        let lib_file = "lib.dylib";
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        return Err(PipelineError::Config("Only macho and elf binaries are supported".to_string()));
+
         for (lib_name, path) in &config.libraries {
-            let library = CapabilityLibrary::load(lib_name.clone(), &path).map_err(|e| {
+            let library = CapabilityLibrary::load(lib_name.clone(), &path.join("artifacts").join(lib_file)).map_err(|e| {
                 PipelineError::Capability(CapabilityLoading::LibraryOpen {
                     path: path.display().to_string(),
                     reason: format!("library '{}': {}", lib_name, e),
@@ -118,7 +125,7 @@ impl PipelineDef {
                 module_capabilities.push(capability);
             }
 
-            let binary = fs::read(&mod_conf.path).map_err(|e| {
+            let binary = fs::read(&mod_conf.path.join("artifacts").join("mod.wasm")).map_err(|e| {
                 PipelineError::Config(format!(
                     "Failed to read WASM binary for module '{}' at '{}': {}",
                     module_name,

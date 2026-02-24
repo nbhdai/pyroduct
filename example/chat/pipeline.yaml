@@ -1,6 +1,6 @@
 capabilities:
   ollama:
-    path: ../../capabilities/ollama/artifacts/lib.dylib
+    path: ../../capabilities/ollama/
     classes:
       ollama:
         base_url: "http://localhost:11434"
@@ -10,7 +10,7 @@ capabilities:
 
 modules:
   gemma:
-    path: ../../modules/chat/artifacts/mod.wasm
+    path: ../../modules/chat/
     capabilities:
       - ollama
 

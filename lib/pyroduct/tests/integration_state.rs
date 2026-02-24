@@ -13,15 +13,13 @@ async fn test_capability_state_preservation() {
         .with(filter)
         .init();
     // Use the counter capability from tests/cap_config
-    #[cfg(target_os = "linux")]
-    let cap_path = Path::new("../../capabilities/state/artifacts/lib.so");
-    #[cfg(target_os = "macos")]
-    let cap_path = Path::new("../../capabilities/state/artifacts/lib.dylib");
+    let cap_path = Path::new("../../capabilities/state/");
+
     let config = PipelineConfig {
         libraries: HashMap::from([("state".to_string(), cap_path.to_path_buf())]),
         modules: HashMap::from([
             ("state_mod".to_string(), ModuleConfig {
-                path: Path::new("../../modules/cap_state/artifacts/mod.wasm").to_path_buf(),
+                path: Path::new("../../modules/cap_state/").to_path_buf(),
                 capabilities: HashMap::new(),
             })
         ]),

@@ -38,7 +38,7 @@ struct CapConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StepStatus { Idle, Building, Success, Failed }
+pub enum StepStatus { Idle, Building, Success, Failed }
 
 pub struct LogLine { text: String, level: LogLevel }
 
@@ -49,8 +49,7 @@ pub struct DataRow { columns: Vec<(String, String)> }
 
 pub struct ModuleStep {
     name: String,
-    source_path: Option<PathBuf>,
-    wasm_path: PathBuf,
+    path: PathBuf,
     code: Editor,
     capabilities: Vec<CapConfig>,
     logs: Vec<LogLine>,
@@ -132,8 +131,7 @@ impl App {
                 .ok_or_else(|| anyhow::anyhow!("Module '{}' not in [modules]", module_name))?;
 
             // `load_config` already resolves `mod_conf.path` relative to the config file location
-            let wasm_path = mod_conf.path.clone();
-            let (source_code, source_path) = find_source(&wasm_path);
+            let path = mod_conf.path.clone();
 
             let code = Editor::new("rust", &source_code, vesper());
 
@@ -149,8 +147,7 @@ impl App {
 
             steps.push(ModuleStep {
                 name: module_name.clone(),
-                source_path,
-                wasm_path,
+                path,
                 code,
                 capabilities: caps,
                 logs: vec![LogLine {
@@ -222,8 +219,8 @@ impl App {
     fn new_module(&mut self) {
         let n = self.steps.len() + 1;
         let name = format!("module_{}", n);
-        let mod_dir = self.modules_base_dir.join(&name);
-        let src_dir = mod_dir.join("src");
+        let path = self.modules_base_dir.join(&name);
+        let src_dir = path.join("src");
 
         if let Err(e) = fs::create_dir_all(&src_dir) {
             self.status_msg = format!("mkdir failed: {}", e);
@@ -231,7 +228,7 @@ impl App {
         }
 
         // Delegate to scaffolding logic from init.rs
-        if let Err(e) = crate::init::create_module(&mod_dir, &src_dir, &name) {
+        if let Err(e) = crate::init::create_module(&path, &src_dir, &name) {
             self.status_msg = format!("Scaffold failed: {}", e);
             return;
         }
@@ -242,12 +239,11 @@ impl App {
 
         self.steps.push(ModuleStep {
             name: name.clone(),
-            source_path: Some(lib_path),
-            wasm_path: mod_dir.join("artifacts").join("mod.wasm"),
+            path,
             code,
             capabilities: vec![],
             logs: vec![LogLine {
-                text: format!("── Scaffolded '{}' at {} ──", name, mod_dir.display()),
+                text: format!("── Scaffolded '{}' at {} ──", name, dir.display()),
                 level: LogLevel::Info,
             }],
             status: StepStatus::Idle,
@@ -261,9 +257,8 @@ impl App {
     fn run(&mut self) {
         // Save all modules first
         for step in &self.steps {
-            if let Some(path) = &step.source_path {
-                let _ = fs::write(path, step.code.get_content());
-            }
+            let source = step.path.join("src/lib.rs");
+            let _ = fs::write(source, step.code.get_content());
         }
 
         for step in &mut self.steps {
