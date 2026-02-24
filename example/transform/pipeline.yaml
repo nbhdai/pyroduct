@@ -1,16 +1,13 @@
-capabilities:
-  transform:
-    path: ../../capabilities/config/
-    classes:
-      config:
-        uppercase: true
-        suffix: "!!!"
+libraries:
+  transform: ../../capabilities/config/
 
 modules:
   prefix:
     path: ../../modules/cap_config/
     capabilities:
-      - config
+      transform:
+        uppercase: true
+        suffix: "!!!"
 
 pipeline:
   - prefix

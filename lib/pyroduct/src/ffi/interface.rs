@@ -137,8 +137,6 @@ pub struct PyroObject {
 unsafe impl Send for PyroObject {}
 unsafe impl Sync for PyroObject {}
 
-
-
 impl PyroObject {
     /// Creates a new PyroObject from raw components.
     pub unsafe fn new(state: *mut c_void, dropper: ClassDropper, object_id: u64) -> Result<Self, CapturedError> {

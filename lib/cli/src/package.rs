@@ -37,9 +37,9 @@ fn run_cargo_command(
     tool_args: &[&str],
     user_args: &[String],
     error_ctx: &str,
+    capture: bool
 ) -> Result<()> {
     // 1. Identify flags in the tool_args to prevent user overrides
-    // We look for things like "--release" or "--target"
     let restricted_flags: std::collections::HashSet<_> = tool_args
         .iter()
         .filter(|arg| arg.starts_with('-'))
@@ -61,21 +61,35 @@ fn run_cargo_command(
     }
 
     // 3. Combine and execute
-    let status = Command::new("cargo")
-        .args(tool_args)
-        .args(user_args)
-        .current_dir(path)
-        .status()
-        .context(error_ctx.to_string())?;
+    let mut cmd = Command::new("cargo");
+    cmd.args(tool_args)
+       .args(user_args)
+       .current_dir(path);
 
-    if !status.success() {
-        bail!(
-            "Cargo command failed with status {}. Args: {:?} {:?}",
-            status,
-            tool_args,
-            user_args
-        );
+    if capture {
+        // .output() executes the command as a child process and strictly captures everything
+        let output = cmd.output().with_context(|| error_ctx.to_string())?;
+        
+        if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!(
+                "Cargo command failed with status {}.\nArgs: {:?} {:?}\n\nStdout:\n{}\nStderr:\n{}",
+                output.status, tool_args, user_args, stdout, stderr
+            );
+        }
+    } else {
+        // .status() inherits stdio, allowing `cargo build` logs to print directly to the terminal
+        let status = cmd.status().with_context(|| error_ctx.to_string())?;
+        
+        if !status.success() {
+            bail!(
+                "Cargo command failed with status {}. Args: {:?} {:?}",
+                status, tool_args, user_args
+            );
+        }
     }
+    
     Ok(())
 }
 
@@ -87,16 +101,17 @@ fn package_module(
     ctx: &ProjectContext,
     manifest: ModuleManifest,
     cargo_args: &[String],
+    capture: bool,
 ) -> Result<()> {
-    println!("Packaging module: {:?}", ctx.root);
+    if !capture { println!("Packaging module: {:?}", ctx.root); }
 
     // 1. Generate Cargo.toml
     let cargo_toml_content = toml::to_string_pretty(&manifest.to_cargo())?;
     fs::write(ctx.root.join("Cargo.toml"), &cargo_toml_content)?;
-    println!("✓ Wrote Cargo.toml");
+    if !capture { println!("✓ Wrote Cargo.toml"); }
 
     // 2. Build WASM with pass-through args
-    println!("Compiling WASM module...");
+    if !capture { println!("Compiling WASM module..."); }
     let build_args = vec![
         "build",
         "--release",
@@ -111,6 +126,7 @@ fn package_module(
         &build_args,
         cargo_args,
         "Failed to run cargo build",
+        capture,
     )?;
 
     // 3. Locate and Copy Artifact
@@ -126,7 +142,7 @@ fn package_module(
 
     let dest_wasm = ctx.output_dir.join("mod.wasm");
     fs::copy(&built_wasm, &dest_wasm)?;
-    println!("✓ Compiled {}", dest_wasm.display());
+    if !capture { println!("✓ Compiled {}", dest_wasm.display()); }
 
     // 4. Create Archive
     let mut tar = TarballBuilder::new(ctx.archive_path("module"))?;
@@ -145,16 +161,17 @@ fn package_capability(
     ctx: &ProjectContext,
     manifest: CapabilityManifest,
     cargo_args: &[String],
+    capture: bool,
 ) -> Result<()> {
-    println!("Packaging capability: {:?}", ctx.root);
+    if !capture { println!("Packaging capability: {:?}", ctx.root); }
 
     // 1. Generate Cargo.toml
     let cargo_toml_content = toml::to_string_pretty(&manifest.clone().to_capability_manifest())?;
     fs::write(ctx.root.join("Cargo.toml"), &cargo_toml_content)?;
-    println!("✓ Wrote Cargo.toml");
+    if !capture { println!("✓ Wrote Cargo.toml"); }
 
     // 2. Build Dynamic Library with pass-through args
-    println!("Compiling capability binary...");
+    if !capture { println!("Compiling capability binary..."); }
     let build_args = vec![
         "build",
         "--release",
@@ -169,6 +186,7 @@ fn package_capability(
         &build_args,
         cargo_args,
         "Failed to run cargo build",
+        capture,
     )?;
 
     // 3. Locate and Copy Artifact
@@ -182,7 +200,7 @@ fn package_capability(
 
     let dest_lib = ctx.output_dir.join(format!("lib.{}", dylib_extension()));
     fs::copy(&built_lib, &dest_lib)?;
-    println!("✓ Compiled {}", dest_lib.display());
+    if !capture { println!("✓ Compiled {}", dest_lib.display()); }
 
     // 4. Create Source Archive (.cargo)
     let mut cap_tar = TarballBuilder::new(ctx.archive_path("cargo"))?;
@@ -213,7 +231,7 @@ fn package_capability(
 // Entry Points
 // ============================================================
 
-fn package_single(path: &Path, output: Option<&Path>, cargo_args: &[String]) -> Result<()> {
+fn package_single(path: &Path, output: Option<&Path>, cargo_args: &[String], capture: bool) -> Result<()> {
     let output_dir = output
         .map(|p| p.to_path_buf())
         .unwrap_or(path.join("artifacts"));
@@ -233,7 +251,7 @@ fn package_single(path: &Path, output: Option<&Path>, cargo_args: &[String]) -> 
             .context("Package section missing in Capability.toml")?;
 
         let ctx = ProjectContext::new(path, output_dir.as_path(), &pkg.name, pkg.version());
-        package_capability(&ctx, manifest, cargo_args)
+        package_capability(&ctx, manifest, cargo_args, capture)
     } else if mod_toml.exists() {
         let manifest: ModuleManifest = toml::from_str(&fs::read_to_string(&mod_toml)?)?;
         let pkg = manifest
@@ -241,7 +259,7 @@ fn package_single(path: &Path, output: Option<&Path>, cargo_args: &[String]) -> 
             .as_ref()
             .context("Module section missing in Module.toml")?;
         let ctx = ProjectContext::new(path, output_dir.as_path(), &pkg.name, pkg.version());
-        package_module(&ctx, manifest, cargo_args)
+        package_module(&ctx, manifest, cargo_args, capture)
     } else {
         bail!(
             "Neither Capability.toml nor Module.toml found in {:?}",
@@ -250,17 +268,20 @@ fn package_single(path: &Path, output: Option<&Path>, cargo_args: &[String]) -> 
     }
 }
 
-pub fn package(path: &Path, output: Option<&Path>, cargo_args: &[String]) -> Result<()> {
+pub fn package(path: &Path, output: Option<&Path>, cargo_args: &[String], capture: bool) -> Result<()> {
     // 1. Direct package mode
     if path.join("Capability.toml").exists() || path.join("Module.toml").exists() {
-        return package_single(path, output, cargo_args);
+        return package_single(path, output, cargo_args, capture);
     }
 
     // 2. Recursive scan mode
-    println!(
-        "No manifest found in {:?}, scanning subdirectories...",
-        path
-    );
+    if !capture {
+        println!(
+            "No manifest found in {:?}, scanning subdirectories...",
+            path
+        );
+    }
+    
     let mut errors = Vec::new();
     let mut found_any = false;
 
@@ -274,7 +295,7 @@ pub fn package(path: &Path, output: Option<&Path>, cargo_args: &[String]) -> Res
 
         if subpath.join("Capability.toml").exists() || subpath.join("Module.toml").exists() {
             found_any = true;
-            if let Err(e) = package_single(&subpath, output, cargo_args) {
+            if let Err(e) = package_single(&subpath, output, cargo_args, capture) {
                 errors.push((subpath, e));
             }
         }
@@ -288,11 +309,15 @@ pub fn package(path: &Path, output: Option<&Path>, cargo_args: &[String]) -> Res
     }
 
     if !errors.is_empty() {
-        eprintln!("\nErrors encountered:");
+        let mut err_msg = String::from("\nErrors encountered:\n");
         for (p, e) in &errors {
-            eprintln!("  {:?}: {:#}", p, e);
+            err_msg.push_str(&format!("  {:?}: {:#}\n", p, e));
         }
-        bail!("{} packaging(s) failed", errors.len());
+        
+        if !capture {
+            eprintln!("{}", err_msg);
+        }
+        bail!("{} packaging(s) failed. {}", errors.len(), err_msg);
     }
 
     Ok(())

@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
             path,
             output,
             cargo_args,
-        } => package::package(&path, output.as_deref(), &cargo_args),
+        } => package::package(&path, output.as_deref(), &cargo_args, false),
         Commands::Clean { path } => clean::clean(&path),
         Commands::Run {
             config,

@@ -1,4 +1,4 @@
-use ollama::{OllamaClient, ChatMessage, ChatMessageRef, OllamaClientMethods};
+use ollama::{OllamaClient, ChatMessage, OllamaClientMethods};
 
 
 /// Takes an array of chat messages, sends them to the HF LLM capability,
@@ -10,7 +10,7 @@ fn process<'a>(
 
     // 1. Register a client with the HF LLM capability
     let llm = OllamaClient {
-        model: "gemini".to_string(),
+        model: "gemma3".to_string(),
         temperature: 0.7,
     }
     .register()?;
