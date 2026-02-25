@@ -121,7 +121,7 @@ impl OutputView {
         match (self.active_pane, key.code) {
             (_, KeyCode::Esc) => self.focused = false,
             (ActivePane::Table, KeyCode::Up | KeyCode::Char('k')) => self.table.scroll_up(1),
-            (ActivePane::Table, KeyCode::Down | KeyCode::Char('j')) => self.table.scroll_up(1),
+            (ActivePane::Table, KeyCode::Down | KeyCode::Char('j')) => self.table.scroll_down(1),
             (ActivePane::Table, KeyCode::PageUp) => self.table.page_up(),
             (ActivePane::Table, KeyCode::PageDown) => self.table.page_down(),
             (ActivePane::Table, KeyCode::Home) => self.table.home(),
