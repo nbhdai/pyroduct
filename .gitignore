@@ -7,5 +7,6 @@ capabilities/**/interface
 capabilities/**/Cargo.*
 capabilities/**/*.json
 modules/**/Cargo.*
+examples/**/logs
 
 artifacts
