@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 
 use arrow::array::RecordBatch;
+use arrow::datatypes::DataType;
 use crossterm::event::KeyCode;
 use pyroduct::value::arrow::Rowable;
 use pyroduct::value::{PyroRow, PyroRowOwned, PyroValue};
@@ -18,6 +19,26 @@ use super::keys::{Hotkey, HotkeyProvider};
 
 const MAX_CELL_WIDTH: usize = 40;
 const NULL_DISPLAY: &str = "∅";
+
+// =============================================================================
+// FlatColumn — a resolved display column with a dotted path
+// =============================================================================
+
+/// Describes a single flattened column for display.
+/// For a top-level scalar like `name`, path is `["name"]`.
+/// For a struct field like `address.city`, path is `["address", "city"]`.
+/// For a list-of-structs like `input` (List<Struct{role, content}>),
+/// path is `["input", "role"]` and `list_parent` is `Some("input")`.
+#[derive(Debug, Clone)]
+struct FlatColumn {
+    /// The dot-joined display header, e.g. "input.role"
+    header: String,
+    /// Path segments for value lookup, e.g. ["input", "role"]
+    path: Vec<String>,
+    /// If this column was expanded from a List<Struct>, the top-level field name.
+    /// All FlatColumns sharing the same `list_parent` expand together.
+    list_parent: Option<String>,
+}
 
 // =============================================================================
 // TableView
@@ -101,7 +122,7 @@ impl TableView {
         self.invalidate_buffer();
     }
 
-    /// Returns the resolved column names to display.
+    /// Returns the resolved column names to display (top-level only, for compatibility).
     fn display_columns(&self) -> Vec<String> {
         if self.columns.is_empty() {
             self.batch
@@ -117,6 +138,65 @@ impl TableView {
                 .map(|c| c.clone())
                 .collect()
         }
+    }
+
+    /// Build flattened column descriptors from the Arrow schema.
+    ///
+    /// - Scalar fields → single FlatColumn with the field name
+    /// - Struct fields → one FlatColumn per child, header = "parent.child"
+    /// - List<Struct> fields → one FlatColumn per struct child, header = "parent.child",
+    ///   with `list_parent` set so the renderer knows to expand rows
+    /// - Other list/complex fields → single FlatColumn with the field name (rendered inline)
+    fn flat_columns(&self) -> Vec<FlatColumn> {
+        let schema = self.batch.schema();
+        let top_fields: Vec<String> = self.display_columns();
+        let mut out = Vec::new();
+
+        for name in &top_fields {
+            let Some(field) = schema.field_with_name(name).ok() else {
+                continue;
+            };
+            match field.data_type() {
+                // Struct → flatten children
+                DataType::Struct(children) => {
+                    for child in children {
+                        out.push(FlatColumn {
+                            header: format!("{}.{}", name, child.name()),
+                            path: vec![name.clone(), child.name().clone()],
+                            list_parent: None,
+                        });
+                    }
+                }
+                // List<Struct> → flatten struct children, mark as list-expandable
+                DataType::List(inner) | DataType::LargeList(inner) => {
+                    if let DataType::Struct(children) = inner.data_type() {
+                        for child in children {
+                            out.push(FlatColumn {
+                                header: format!("{}.{}", name, child.name()),
+                                path: vec![name.clone(), child.name().clone()],
+                                list_parent: Some(name.clone()),
+                            });
+                        }
+                    } else {
+                        // List of primitives/strings → show inline
+                        out.push(FlatColumn {
+                            header: name.clone(),
+                            path: vec![name.clone()],
+                            list_parent: None,
+                        });
+                    }
+                }
+                // Scalar / everything else
+                _ => {
+                    out.push(FlatColumn {
+                        header: name.clone(),
+                        path: vec![name.clone()],
+                        list_parent: None,
+                    });
+                }
+            }
+        }
+        out
     }
 
     // -------------------------------------------------------------------------
@@ -260,51 +340,109 @@ impl TableView {
         let view_end = (self.offset + self.page_size).min(total);
         self.ensure_buffered(self.offset, view_end);
 
-        let cols = self.display_columns();
-        let col_count = cols.len();
+        let flat_cols = self.flat_columns();
+        let col_count = flat_cols.len();
 
-        let header_cells: Vec<Cell> = std::iter::once(Cell::from("#").style(Style::default().fg(Color::DarkGray)))
-            .chain(cols.iter().map(|name| {
-                Cell::from(name.clone()).style(
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                )
-            }))
-            .collect();
+        // Collect unique list parents to know which fields need expansion
+        let list_parents: Vec<String> = {
+            let mut seen = Vec::new();
+            for fc in &flat_cols {
+                if let Some(ref lp) = fc.list_parent {
+                    if !seen.contains(lp) {
+                        seen.push(lp.clone());
+                    }
+                }
+            }
+            seen
+        };
+        let has_list_expansion = !list_parents.is_empty();
+
+        // Build header
+        let header_cells: Vec<Cell> = std::iter::once(
+            Cell::from("#").style(Style::default().fg(Color::DarkGray)),
+        )
+        .chain(flat_cols.iter().map(|fc| {
+            Cell::from(fc.header.clone()).style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
+        }))
+        .collect();
         let header = Row::new(header_cells).height(1);
 
-        let rows: Vec<Row> = self
-            .buffer
-            .iter()
-            .enumerate()
-            .map(|(buf_idx, row)| {
-                let abs_idx = self.offset + buf_idx;
-                let is_selected = abs_idx == self.selected;
+        // Build rows — potentially multiple visual rows per data row
+        let mut rows: Vec<Row> = Vec::new();
+        for (buf_idx, row) in self.buffer.iter().enumerate() {
+            let abs_idx = self.offset + buf_idx;
+            let is_selected = abs_idx == self.selected;
 
+            let row_style = if is_selected {
+                Style::default()
+                    .bg(Color::Rgb(40, 40, 60))
+                    .add_modifier(Modifier::BOLD)
+            } else if abs_idx % 2 == 0 {
+                Style::default()
+            } else {
+                Style::default().bg(Color::Rgb(20, 20, 25))
+            };
+
+            if !has_list_expansion {
+                // Simple case: no list expansion needed
                 let idx_cell = Cell::from(format!("{}", abs_idx))
                     .style(Style::default().fg(Color::DarkGray));
-
-                let data_cells = cols.iter().map(|col_name| {
-                    let text = format_cell(row, col_name);
+                let data_cells = flat_cols.iter().map(|fc| {
+                    let text = format_cell_path(row, &fc.path);
                     Cell::from(text)
                 });
+                rows.push(
+                    Row::new(std::iter::once(idx_cell).chain(data_cells))
+                        .style(row_style)
+                        .height(1),
+                );
+            } else {
+                // Determine how many visual rows this data row needs.
+                // It's the max list length across all list_parent fields.
+                let expansion_count = list_parents
+                    .iter()
+                    .map(|lp| match row.get(lp) {
+                        Some(PyroValue::List(items)) => items.len().max(1),
+                        _ => 1,
+                    })
+                    .max()
+                    .unwrap_or(1);
 
-                let row_style = if is_selected {
-                    Style::default()
-                        .bg(Color::Rgb(40, 40, 60))
-                        .add_modifier(Modifier::BOLD)
-                } else if abs_idx % 2 == 0 {
-                    Style::default()
-                } else {
-                    Style::default().bg(Color::Rgb(20, 20, 25))
-                };
+                for sub_idx in 0..expansion_count {
+                    let idx_cell = if sub_idx == 0 {
+                        Cell::from(format!("{}", abs_idx))
+                            .style(Style::default().fg(Color::DarkGray))
+                    } else {
+                        Cell::from("".to_string())
+                            .style(Style::default().fg(Color::DarkGray))
+                    };
 
-                Row::new(std::iter::once(idx_cell).chain(data_cells))
-                    .style(row_style)
-                    .height(1)
-            })
-            .collect();
+                    let data_cells = flat_cols.iter().map(|fc| {
+                        let text = if fc.list_parent.is_some() {
+                            // This column is from a List<Struct>. Extract the sub_idx-th
+                            // element from the list, then get the child field.
+                            format_list_struct_cell(row, &fc.path, sub_idx)
+                        } else if sub_idx == 0 {
+                            // Non-list column: only show on first sub-row
+                            format_cell_path(row, &fc.path)
+                        } else {
+                            String::new()
+                        };
+                        Cell::from(text)
+                    });
+
+                    rows.push(
+                        Row::new(std::iter::once(idx_cell).chain(data_cells))
+                            .style(row_style)
+                            .height(1),
+                    );
+                }
+            }
+        }
 
         let idx_width = digit_count(total) + 1;
         let remaining = area.width.saturating_sub(idx_width as u16 + 2);
@@ -353,19 +491,65 @@ impl TableView {
 // Helpers
 // =============================================================================
 
-fn format_cell(row: &PyroRow<'_>, col: &str) -> String {
-    match row.get(col) {
+/// Format a cell by following a path of keys into the row.
+/// For a single-segment path like ["name"], this is equivalent to the old format_cell.
+/// For multi-segment like ["address", "city"], it traverses into Groups.
+fn format_cell_path(row: &PyroRow<'_>, path: &[String]) -> String {
+    if path.is_empty() {
+        return NULL_DISPLAY.to_string();
+    }
+
+    // Use get_deep which already handles nested traversal
+    let path_refs: Vec<&str> = path.iter().map(|s| s.as_str()).collect();
+    match row.get_deep(&path_refs) {
         None | Some(PyroValue::Null) => NULL_DISPLAY.to_string(),
-        Some(val) => {
-            let s = format!("{}", val);
-            if s.len() > MAX_CELL_WIDTH {
-                let mut truncated = s[..MAX_CELL_WIDTH - 1].to_string();
-                truncated.push('…');
-                truncated
+        Some(val) => truncate_display(val),
+    }
+}
+
+/// For a List<Struct> column: path is [list_field, child_field].
+/// We get the list at path[0], index into it at `list_idx`, then get path[1] from the struct.
+fn format_list_struct_cell(row: &PyroRow<'_>, path: &[String], list_idx: usize) -> String {
+    if path.len() < 2 {
+        return NULL_DISPLAY.to_string();
+    }
+
+    let list_val = row.get(&path[0]);
+    match list_val {
+        Some(PyroValue::List(items)) => {
+            if let Some(item) = items.get(list_idx) {
+                match item {
+                    PyroValue::Group(inner_row) => {
+                        match inner_row.get(&path[1]) {
+                            None | Some(PyroValue::Null) => NULL_DISPLAY.to_string(),
+                            Some(val) => truncate_display(val),
+                        }
+                    }
+                    // If the list element is not a struct, show it on the first sub-column only
+                    other => {
+                        if path[1] == path[0] {
+                            truncate_display(other)
+                        } else {
+                            NULL_DISPLAY.to_string()
+                        }
+                    }
+                }
             } else {
-                s
+                String::new() // past the end of the list
             }
         }
+        _ => NULL_DISPLAY.to_string(),
+    }
+}
+
+fn truncate_display(val: &PyroValue<'_>) -> String {
+    let s = format!("{}", val);
+    if s.len() > MAX_CELL_WIDTH {
+        let mut truncated = s[..MAX_CELL_WIDTH - 1].to_string();
+        truncated.push('…');
+        truncated
+    } else {
+        s
     }
 }
 

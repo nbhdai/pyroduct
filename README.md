@@ -1,18 +1,27 @@
 # Pyroduct
 
-A Rust framework for building sandboxed WASM modules with host capabilities. Modules run in WebAssembly isolation while accessing native functionality (HTTP, serial ports, CPU info, etc.) through a capability system.
+A Rust framework for building data pipelines from sandboxed WASM modules with host capabilities. Modules run in WebAssembly isolation while accessing native functionality (HTTP, RAG, state, etc.) through a capability system. Pipelines are defined in TOML/YAML and orchestrate multiple modules in sequence.
 
 ## Quick Start
 
 ```bash
-# Enter dev shell
-nix develop
+# Create a new module
+pyroduct init my_module
 
-# Run example modules
-nix run .#run-tests
+# Create a new capability
+pyroduct init --cap my_capability
 
-# Build everything
-nix build
+# Expand (generate Cargo.toml + FFI glue)
+pyroduct expand my_module
+
+# Package (compile to WASM / dylib)
+pyroduct package my_module
+
+# Run a pipeline
+pyroduct run pipeline.yaml data.jsonl -o output/
+
+# Interactive TUI
+pyroduct tui pipeline.yaml data.jsonl
 ```
 
 ## Architecture
@@ -21,282 +30,110 @@ nix build
 ┌────────────────────────────────────────────────────────┐
 │                        Host                            │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
-│  │  Reporter   │  │ HTTP Client │  │  CPU Info   │     │
+│  │    HTTP     │  │     RAG     │  │    State    │     │
 │  │  Capability │  │  Capability │  │  Capability │     │
 │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘     │
 │         │                │                │            │
 │  ═══════╪════════════════╪════════════════╪══════════  │
-│         │          FFI Boundary           │            │
+│         │            Boundary             │            │
 │  ═══════╪════════════════╪════════════════╪══════════  │
 │         │                │                │            │
-│  ┌──────┴────────────────┴────────────────┴──────┐     │
-│  │              WASM Module (Sandboxed)          │     │
-│  │                                               │     │
-│  │   fn call(input) -> Result<Output, String>    │     │
-│  └───────────────────────────────────────────────┘     │
+│  ┌──────┴────────────────┴────────────────┴───────┐    │
+│  │              WASM Module (Sandboxed)           │    │
+│  │                                                │    │
+│  │   fn call(input) -> Result<Output, String>     │    │
+│  └────────────────────────────────────────────────┘    │
 └────────────────────────────────────────────────────────┘
-
 ```
 
-## Writing a Module
-
-Modules are WASM binaries that process inputs and return outputs. Use the `#[pyroduct::module]` macro to generate the FFI boilerplate.
+The `libraries` section points to capability directories (which contain `artifacts/lib.dylib` or `artifacts/lib.so`). The `modules` section points to module directories (which contain `artifacts/mod.wasm`). Each module can receive per-capability configuration. The `pipeline` array defines execution order.
 
 ### Simple Module
 
 ```rust
-use pyroduct::*;
+use pyroduct::module;
 
-#[pyroduct::module(output = message)]
-fn call(input: &str) -> Result<String, String> {
+#[module(output = message)]
+fn call(input: &str) -> Result<String> {
     Ok(format!("Hello, {}", input))
 }
-
-```
-
-### Multiple Outputs
-
-```rust
-use pyroduct::*;
-
-#[pyroduct::module(output = (count, data))]
-fn process(input: &str) -> Result<(u32, Vec<u8>), String> {
-    Ok((input.len() as u32, input.as_bytes().to_vec()))
-}
-
-```
-
-### Struct Output
-
-```rust
-use pyroduct::*;
-
-#[derive(ToRow)]
-struct ProcessResult {
-    count: u32,
-    data: Vec<u8>,
-}
-
-#[pyroduct::module(output = ProcessResult)]
-fn process(input: &str) -> Result<ProcessResult, String> {
-    Ok(ProcessResult { count: 42, data: vec![] })
-}
-
 ```
 
 ### Using Capabilities
 
 ```rust
-use http_client::{HttpClient, HttpClientMethods};
+use httpc::{HttpClient, HttpClientMethods};
 
 #[pyroduct::module(output = response)]
-fn call(url: &str) -> Result<String, String> {
-    // Initialize the capability client
+fn call(url: &str) -> Result<String> {
     let client = HttpClient.register()?;
-    
-    // Call capability methods
     let response = client.get(url)?;
-    
     Ok(response)
 }
-
 ```
 
 ## Writing a Capability
 
-Capabilities expose native functionality to WASM modules using a unified macro system. You define a server struct (Host), a client struct (WASM), and an optional config struct.
+Capabilities expose native functionality to WASM modules. Define your project in `Capability.toml`:
 
-### Components
+Dependencies are split into three sections: `host` (only available on the native side, compiled as optional), `module` (available in WASM), and `shared` (available on both sides).
 
-1. **Config**: `#[pyroduct::config]` (Optional) - Configuration passed from Host to Capability on startup.
-2. **Client**: `#[pyroduct::client]` - State passed from WASM to Host during calls.
-3. **Server**: `#[pyroduct::capability]` - The implementation block defining lifecycle and logic.
-
-### Example: HTTP Client
+A capability has three components:
 
 ```rust
-use pyroduct;
-
-// 1. Configuration (Optional)
+// 1. Configuration (Optional) — passed from pipeline config at startup
 #[pyroduct::config]
-pub struct HttpConfig {
-    pub timeout_ms: u64,
-}
+pub struct TransformConfig { ... }
 
-// 2. Client State
-#[pyroduct::client]
-pub struct HttpClient;
+// 2. Client State — serialized across the FFI boundary
+#[pyroduct::magma]
+pub struct TransformClient { ... }
 
-// 3. Server Implementation
-pub struct HttpServer {
-    timeout: std::time::Duration,
-}
+// 3. Server — the impl block with lifecycle + methods
+pub struct TransformServer { ... }
 
 #[pyroduct::capability]
-impl HttpServer {
-    // Required associated types
-    type Client = HttpClient;
-    type Config = HttpConfig; 
-    type Error = String; // Optional, makes methods return Result<T, String>
-    
-    // Lifecycle: Initialize
-    fn new(config: Option<HttpConfig>) -> Self {
-        let config = config.unwrap_or(HttpConfig { timeout_ms: 30000 });
-        Self {
-            timeout: std::time::Duration::from_millis(config.timeout_ms),
-        }
-    }
-    
-    // Lifecycle: Reset state between module calls
-    fn reset(&mut self) {}
-    
-    // Lifecycle: Register a new client instance
-    fn new_client(&self, _client: &HttpClient) -> Result<(), String> {
-        Ok(())
-    }
-    
-    // Capability Method: Exposed to WASM
-    // Must take &self and client: &Client
-    async fn get(&self, _client: &HttpClient, url: String) -> Result<String, String> {
-        // Implementation...
-        Ok(format!("Fetched {}", url))
-    }
+impl TransformServer {
+    type Client = TransformClient;
+    type Config = TransformConfig;
+    type Error = String;
+
+    // Lifecycle: initialize (sync or async)
+    async fn new(config: Option<TransformConfig>) -> Self { ... }
+
+    // Lifecycle: reset state between pipeline invocations
+    async fn reset(&mut self) {}
+
+    // Lifecycle: validate a new client instance
+    fn register(&self, client: &TransformClient) -> Result<(), String> { ... }
+
+    // Methods: exposed to WASM, must take &self and &Client
+    async fn transform(&self, client: &TransformClient, input: String) -> Result<String, String> { ... }
 }
-
 ```
 
-## Adding a New Capability
-
-To add a new capability to the project:
-
-1. **Create Directory**: Create a folder in `capabilities/`, e.g., `capabilities/my_cap`.
-2. **Create Definition**: Add `capability.nix` in that folder:
-```nix
-{ myLib }:
-myLib.buildCapability {
-  name = "my_cap";
-  src = ./.;
-  # Native dependencies (e.g. tokio, reqwest)
-  hostDependencies = [
-    { name = "tokio"; version = "1.49.0"; features = ["full"]; }
-  ];
-}
+## CLI Reference
 
 ```
-
-
-3. **Implement**: Create `src/lib.rs` with the Rust implementation using the macros described above.
-4. **Register**: Add the capability to `flake.nix` in the `capabilities` set:
-```nix
-capabilities = {
-  # ... existing capabilities ...
-  my_cap = (import ./capabilities/my_cap/capability.nix { inherit myLib; });
-};
-
+pyroduct init [PATH]            Create a new module project
+pyroduct init --cap [PATH]      Create a new capability project
+pyroduct expand <DIR>           Generate Cargo.toml and FFI glue from manifests
+pyroduct expand -b <DIR>        Convert compiled artifacts to WAT / dump symbols
+pyroduct package <DIR>          Compile module (.wasm) or capability (.dylib/.so)
+pyroduct clean <DIR>            Remove generated files (Cargo.toml, artifacts/, target/)
+pyroduct run <CONFIG> <INPUT>   Run a pipeline (file input = batch mode, JSON string = single row)
+pyroduct tui <CONFIG> <INPUT>   Interactive TUI: edit code, configure capabilities, run pipeline
 ```
 
+All commands support recursive mode: point them at a parent directory and they'll discover all `Module.toml` / `Capability.toml` projects in subdirectories.
 
-5. **Generate Cargo Files**: Run the generator to create `Cargo.toml` for your new crate.
-```bash
-nix run .#generate-cargo-toml
+`run` supports multiple output formats: `--format json` (default, JSONL), `csv`, `ipc` (Arrow), `parquet`.
 
-```
+## Macro Reference
 
-
-
-## Project Structure
-
-```
-.
-├── lib/
-│   ├── pyroduct/          # Core library
-│   ├── arrow-scalars/     # Arrow serialization
-│   ├── module-derive/     # #[module] macro
-│   └── capability-derive/ # Capability macros
-├── capabilities/          # Capability implementations
-│   ├── cpu_client/
-│   ├── http_client/
-│   ├── rag/
-│   └── serial_client/
-├── modules/               # Example WASM modules
-│   ├── basic/
-│   ├── basic_capability/
-│   └── struct_io/
-└── flake.nix              # Nix build definition
-
-```
-
-## Derive Macros Reference
-
-| Macro | Attribute | Description |
-| --- | --- | --- |
-| `#[pyroduct::module]` | `output = ...` | Generates WASM entry point. Output can be a field name `val`, a tuple `(a, b)`, or a struct `MyStruct`. |
-| `#[pyroduct::capability]` |  | Applied to the `impl` block of the server struct. Generates FFI glue and Client traits. |
-| `#[pyroduct::client]` |  | Marks a struct as the Client state. Adds serialization. |
-| `#[pyroduct::config]` |  | Marks a struct as the Capability configuration. Adds serialization. |
-| `#[derive(ToRow)]` |  | Implements serialization for a struct to be returned to the host or passed to a capability. |
-| `#[derive(FromRow)]` |  | Implements deserialization for a struct coming from the host (module input). |
-| `#[derive(DeepRef)]` |  | Generates a zero-copy view struct (e.g., `MyStructRef`) for reading inputs efficiently. |
-
-## Building with Nix
-
-Capabilities and modules are defined in `.nix` files.
-
-**capability.nix**
-
-```nix
-{ myLib }:
-myLib.buildCapability {
-  name = "proto_reporter";
-  src = ./.;
-  hostDependencies = [];
-}
-
-```
-
-**module.nix**
-
-```nix
-{ myLib }:
-myLib.buildModule {
-  name = "proto_module";
-  src = ./.;
-  capabilities = [
-    { path = "../../capabilities/proto_reporter"; }
-  ];
-}
-
-```
-
-## Running Modules
-
-The harness runs modules with a JSON config:
-
-```json
-{
-  "module_name": "proto_module",
-  "module": "/path/to/module.wasm",
-  "capabilities": ["/path/to/libreporter.so"],
-  "inputs": [
-    { "input": "Hello World" }
-  ]
-}
-
-```
-
-```bash
-harness config.json
-
-```
-
-## Available Commands
-
-```bash
-nix develop                    # Enter dev shell
-nix run .#run-tests            # Run all example modules
-nix run .#generate-cargo-toml  # Generate Cargo.toml for IDE support
-nix build .#harness            # Build the harness
-nix build .#basic              # Build a specific module
-nix build .#http_client        # Build a specific capability
-
-```
+| Macro                               | Description |
+| ----------------------------------- | --------------- |
+| `#[pyroduct::module(output = ...)]` | Generates WASM entry point. Output can be a field name, a tuple `(a, b)`, or a struct type. |
+| `#[pyroduct::capability]`           | Applied to the server `impl` block. Generates host-side FFI glue. |
+| `#[pyroduct::magma]`                | Marks a struct as the capability client state. Serialized across FFI. |
+| `#[pyroduct::config]`               | Marks a struct as capability configuration. Deserialized from pipeline config. |
