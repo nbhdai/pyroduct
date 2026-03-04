@@ -30,7 +30,7 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-pub use linker::PyroLinker;
+pub use linker::PyroFactory;
 pub use state::{PyroModule, PyroState};
 // Import the IO helper
 use call::PyroCallIo;
@@ -123,7 +123,7 @@ pub struct PyroFailure {
 
 pub struct PyroInstance {
     store: Store<PyroState>,
-    linker: PyroLinker,
+    linker: PyroFactory,
     instance: Instance,
     memory: Memory,
     receiver: RkyvReceiver<PyroRow<'static>>,
@@ -132,13 +132,12 @@ pub struct PyroInstance {
 impl PyroInstance {
     pub async fn new(
         engine: &PyroEngine,
-        module: &PyroModule,
-        linker: PyroLinker,
+        linker: PyroFactory,
     ) -> Result<Self, WasmError> {
         let pyro_state = PyroState::new();
         let mut store = Store::new(engine.engine(), pyro_state);
 
-        let instance = linker.instantiate_async(&mut store, module).await?;
+        let instance = linker.instantiate_async(&mut store).await?;
 
         let memory = instance
             .get_memory(&mut store, "memory")
@@ -174,7 +173,7 @@ impl PyroInstance {
         let entry: TypedFunc<i32, i32> = self
             .instance
             .get_typed_func(&mut self.store, "call_extern")
-            .map_err(|e| PyroError::CodePanic(e.into()))
+            .map_err(|e| PyroError::CodePanic(CapturedError::new(format!("Missing main function: {}", e)).into()))
             .map_err(|err| self.pack_pyro_error(err))?;
 
         let output_ptr = entry

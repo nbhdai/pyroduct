@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::ffi::host::{Capability, CapabilityLibrary, CapabilityLoading};
+use crate::{ffi::host::{Capability, CapabilityLibrary, CapabilityLoading}, pipeline::wasm::PyroFactory};
 
 use super::PipelineError;
 
@@ -57,23 +57,17 @@ pub struct ModuleConfig {
 // Runtime structures
 // =============================================================================
 
-/// A fully resolved module ready for instantiation.
-pub struct Module {
-    pub binary: Vec<u8>,
-    pub capabilities: Vec<Capability>,
-}
-
 /// A loaded pipeline definition: the ordered list of modules with their
 /// individually instantiated capabilities.
-pub struct PipelineDef {
-    pub pipeline: Vec<Module>,
+pub struct PipelineFactory {
+    pub pipeline: Vec<PyroFactory>,
 }
 
 // =============================================================================
 // Loading
 // =============================================================================
 
-impl PipelineDef {
+impl PipelineFactory {
     /// Loads and resolves a full pipeline from its configuration.
     ///
     /// 1. Loads each shared library once.
@@ -105,6 +99,16 @@ impl PipelineDef {
         let mut pipeline_steps = Vec::new();
 
         for module_name in &config.pipeline {
+            let binary = fs::read(&mod_conf.path.join("artifacts").join("mod.wasm")).map_err(|e| {
+                PipelineError::Config(format!(
+                    "Failed to read WASM binary for module '{}' at '{}': {}",
+                    module_name,
+                    mod_conf.path.display(),
+                    e
+                ))
+            })?;
+            
+
             let mod_conf = config.modules.get(module_name).ok_or_else(|| {
                 PipelineError::Config(format!(
                     "Pipeline references module '{}' which is not defined in [modules]",
@@ -125,14 +129,7 @@ impl PipelineDef {
                 module_capabilities.push(capability);
             }
 
-            let binary = fs::read(&mod_conf.path.join("artifacts").join("mod.wasm")).map_err(|e| {
-                PipelineError::Config(format!(
-                    "Failed to read WASM binary for module '{}' at '{}': {}",
-                    module_name,
-                    mod_conf.path.display(),
-                    e
-                ))
-            })?;
+
 
             pipeline_steps.push(Module {
                 binary,

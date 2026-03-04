@@ -7,7 +7,7 @@ use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, error, info, instrument, warn};
 use wasmtime::Module as WasmtimeModule;
 
-use crate::pipeline::wasm::{PyroEngine, PyroFailure, PyroInstance, PyroLinker, PyroLogs, PyroModule, PyroSuccess};
+use crate::pipeline::wasm::{PyroEngine, PyroFailure, PyroInstance, PyroFactory, PyroLogs, PyroModule, PyroSuccess};
 use crate::value::PyroRow;
 use crate::value::arrow::{PreBatch, Rowable};
 
@@ -86,7 +86,6 @@ impl Pipeline {
 
         for (index, module_def) in def.pipeline.into_iter().enumerate() {
             debug!(index, "Compiling wasm module");
-            let linker = PyroLinker::new(engine.engine(), module_def.capabilities)?;
 
             let wasm_module = WasmtimeModule::from_binary(engine.engine(), &module_def.binary)
                 .map_err(|e| {
@@ -95,9 +94,10 @@ impl Pipeline {
                         e
                     ))
                 })?;
-
             let pyro_module = PyroModule::new(wasm_module)?;
-            let instance = PyroInstance::new(&engine, &pyro_module, linker).await?;
+            let linker = PyroFactory::new(engine.engine(), module_def.capabilities, pyro_module)?;
+
+            let instance = PyroInstance::new(&engine, linker).await?;
             steps.push(instance);
         }
 

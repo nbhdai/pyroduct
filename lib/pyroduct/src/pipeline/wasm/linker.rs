@@ -5,7 +5,7 @@ use std::future::Future;
 use wasmtime::{Caller, Instance, Linker, Store};
 
 use super::{PyroState, WasmError};
-use crate::ffi::host::Capability;
+use crate::ffi::host::{Capability, CapabilityLibrary};
 use crate::pipeline::wasm::PyroModule;
 use crate::pipeline::wasm::call::PyroCallIo;
 use crate::{
@@ -17,33 +17,47 @@ use crate::{
 ///
 /// Host functions registered through `define_async` / `define_sync` receive
 /// a clean `(&T, PyroView)` signature — all wasm memory plumbing is hidden.
-pub struct PyroLinker {
+pub struct PyroFactory {
     linker: Linker<PyroState>,
-    capabilities: Vec<Capability>,
+    configurations: HashMap<String, serde_json::Value>,
+    libraries: Vec<CapabilityLibrary>,
+    module: PyroModule,
 }
 
-impl PyroLinker {
+impl PyroFactory {
     /// Create a new linker for the given engine.
     pub fn new(
         engine: &wasmtime::Engine,
-        capabilities: Vec<Capability>,
+        libraries: Vec<CapabilityLibrary>,
+        configurations: HashMap<String, serde_json::Value>,
+        module: PyroModule,
     ) -> Result<Self, WasmError> {
         let mut linker = Self {
             linker: Linker::new(engine),
-            capabilities,
+            libraries,
+            configurations,
+            module,
         };
         linker.link_logger()?;
         linker.link_capabilities()?;
         Ok(linker)
     }
 
+    pub async fn create_capabilities(
+        &self,
+    ) -> Result<Vec<Capability>, WasmError> {
+        self.linker
+            .instantiate_async(store, self.module.module())
+            .await
+            .map_err(|e| WasmError::InstantiationFailed(e.to_string()))
+    }
+
     pub async fn instantiate_async(
         &self,
         store: &mut Store<PyroState>,
-        module: &PyroModule,
     ) -> Result<Instance, WasmError> {
         self.linker
-            .instantiate_async(store, module.module())
+            .instantiate_async(store, self.module.module())
             .await
             .map_err(|e| WasmError::InstantiationFailed(e.to_string()))
     }
@@ -74,6 +88,9 @@ impl PyroLinker {
         for lib in self.capabilities.iter() {
             for (class_name, object) in lib.iter() {
                 // Capture lib for the closures (Arc clone is cheap)
+                if !self.module.has_class(class_name) {
+                    continue;
+                }
 
                 for method_name in object.method_names() {
                     let method_name = method_name.to_string();

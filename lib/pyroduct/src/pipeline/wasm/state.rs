@@ -11,6 +11,7 @@ use crate::pipeline::wasm::WasmError;
 
 pub struct PyroModule {
     module: Module,
+    classes: Vec<String>
 }
 
 impl PyroModule {
@@ -33,8 +34,9 @@ impl PyroModule {
         if module.get_export("memory").is_none() {
             return Err(WasmError::MissingExport("memory".to_string()));
         }
+        let classes = Self::gather_classes(&module)?;
 
-        Ok(Self { module })
+        Ok(Self { module, classes })
     }
 
     /// Access the inner wasmtime `Module`.
@@ -98,6 +100,50 @@ impl PyroModule {
             return Ok(());
         }
         Err(WasmError::MissingImport(format!("{cap}:{name}")))
+    }
+
+    fn gather_classes(
+        module: &Module,
+    ) -> Result<Vec<String>, WasmError> {
+
+
+        let imports = module
+            .imports();
+        let mut pyro_classes = Vec::new();
+
+        
+        for import in imports {
+            if import.module() == "env" {
+                continue;
+            }
+            if import.name() == "register" {
+                match import.ty() {
+                    ExternType::Func(func_type) => {
+                        if func_type.params().len() != 1 {
+                            return Err(WasmError::SignatureMismatch(format!("Register function didn't have the correct number of parameters")));
+                        }
+                        if matches!(func_type.param(0), Some(ValType::I32)) {
+                            return Err(WasmError::SignatureMismatch(format!("Register function didn't take a pointer")));
+                        }
+
+                        if func_type.results().len() != 1 {
+                            return Err(WasmError::SignatureMismatch(format!("Register function didn't have the correct number of returns")));
+                        }
+                        if matches!(func_type.result(0), Some(ValType::I32)) {
+                            return Err(WasmError::SignatureMismatch(format!("Register function didn't return a pointer")));
+                        }
+
+                    }
+                    _ => return Err(WasmError::SignatureMismatch(format!("Register function didn't return a pointer"))),
+                }
+                pyro_classes.push(import.module().to_string());
+            }
+        }
+        Ok(pyro_classes)
+    }
+
+    pub fn has_class(&self, class: &str) -> bool {
+        self.classes.iter().any(|s| s.as_str() == class)
     }
 }
 

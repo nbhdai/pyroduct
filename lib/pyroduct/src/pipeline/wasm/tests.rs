@@ -249,26 +249,6 @@
         free_output(op2);
     }
 
-    // =========================================================================
-    // Error conversion
-    // =========================================================================
-
-    #[test]
-    fn test_anyhow_to_captured_error() {
-        use crate::CapturedError;
-
-        let err = anyhow::anyhow!("root cause")
-            .context("middle layer")
-            .context("top layer");
-
-        let captured: CapturedError = err.into();
-        assert!(captured.message.contains("top layer"));
-        assert!(captured.error.is_some());
-        let chain = captured.error.unwrap();
-        assert!(chain.contains("middle layer"));
-        assert!(chain.contains("root cause"));
-    }
-
 
     // =========================================================================
     // PyroRow rkyv ship/expose roundtrip through PyroVec + PyroView
