@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::{ffi::host::{Capability, CapabilityLibrary, CapabilityLoading}, pipeline::wasm::PyroFactory};
+use crate::{ffi::host::{CapabilityLibrary, CapabilityLoading}, pipeline::wasm::PyroFactory};
 
 use super::PipelineError;
 
@@ -99,6 +99,13 @@ impl PipelineFactory {
         let mut pipeline_steps = Vec::new();
 
         for module_name in &config.pipeline {
+            let mod_conf = config.modules.get(module_name).ok_or_else(|| {
+                PipelineError::Config(format!(
+                    "Pipeline references module '{}' which is not defined in [modules]",
+                    module_name
+                ))
+            })?;
+
             let binary = fs::read(&mod_conf.path.join("artifacts").join("mod.wasm")).map_err(|e| {
                 PipelineError::Config(format!(
                     "Failed to read WASM binary for module '{}' at '{}': {}",
@@ -107,16 +114,8 @@ impl PipelineFactory {
                     e
                 ))
             })?;
-            
 
-            let mod_conf = config.modules.get(module_name).ok_or_else(|| {
-                PipelineError::Config(format!(
-                    "Pipeline references module '{}' which is not defined in [modules]",
-                    module_name
-                ))
-            })?;
-
-            let mut module_capabilities = Vec::new();
+            let mut factories = Vec::new();
 
             for library in libraries.values() {
                 let mut class_configs = HashMap::new();

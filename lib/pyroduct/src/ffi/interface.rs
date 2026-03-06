@@ -497,6 +497,7 @@ pub type ObjectHandle = i64;
 
 pub struct ForeignClass {
     name: String,
+    lib_name: String,
     _library: Option<Arc<Library>>,
     methods: Vec<ForeignMethod>,
     init: ClassInitFn,
@@ -546,13 +547,15 @@ impl ForeignClass {
     }
 
     pub unsafe fn from_export(
+        lib_name: String,
         library: Arc<Library>,
         export: ClassExport,
     ) -> Result<Self, CapturedError> {
-        unsafe { Self::from_export_inter(Some(library), export) }
+        unsafe { Self::from_export_inter(lib_name, Some(library), export) }
     }
 
     unsafe fn from_export_inter(
+        lib_name: String,
         library: Option<Arc<Library>>,
         export: ClassExport,
     ) -> Result<Self, CapturedError> {
@@ -579,6 +582,7 @@ impl ForeignClass {
 
         Ok(Self {
             name,
+            lib_name,
             methods,
             _library: library,
             init: export.init,
@@ -662,6 +666,10 @@ impl fmt::Debug for ForeignObject {
 impl ForeignObject {
     pub fn name(&self) -> &str {
         &self.class.name
+    }
+
+    pub fn lib_name(&self) -> &str {
+        &self.class.lib_name
     }
 
     pub fn method_names(&self) -> impl Iterator<Item = &str> {
@@ -923,7 +931,7 @@ mod tests {
             register: ClientRegisterFn::Null,
         };
 
-        let class = Arc::new(unsafe { ForeignClass::from_export_inter(None, export) }.unwrap());
+        let class = Arc::new(unsafe { ForeignClass::from_export_inter("test".to_string(), None, export) }.unwrap());
         let log_channel = create_log(0, 0, 100);
 
         // Create Instance (calls mock_init, which claims m.state_ptr from TLS)
@@ -954,7 +962,7 @@ mod tests {
             register: m.register,
         };
 
-        let class = Arc::new(unsafe { ForeignClass::from_export_inter(None, export) }.unwrap());
+        let class = Arc::new(unsafe { ForeignClass::from_export_inter("test".to_string(), None, export) }.unwrap());
         let log_channel = create_log(0, 0, 100);
 
         let config = PyroVec::ok();
@@ -982,7 +990,7 @@ mod tests {
         };
         let log_channel = create_log(0, 0, 100);
 
-        let class = Arc::new(unsafe { ForeignClass::from_export_inter(None, export) }.unwrap());
+        let class = Arc::new(unsafe { ForeignClass::from_export_inter("test".to_string(), None, export) }.unwrap());
         let config = PyroVec::ok();
         let handle = class.create_instance(config.view(), 0, log_channel).await.unwrap();
 

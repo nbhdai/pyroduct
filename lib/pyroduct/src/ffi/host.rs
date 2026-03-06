@@ -212,7 +212,7 @@ impl CapabilityLibrary {
             let export: ClassExport = unsafe { register_fn(id, log_callback) };
 
             let class =
-                unsafe { ForeignClass::from_export(library.clone(), export) }.map_err(|e| {
+                unsafe { ForeignClass::from_export(name.clone(), library.clone(), export) }.map_err(|e| {
                     CapabilityLoading::Registration {
                         path: path_str.clone(),
                         symbol: sym.name.clone(),
@@ -273,6 +273,47 @@ impl CapabilityLibrary {
         }
 
         Ok(Capability { lib_name: self.name.clone(), objects })
+    }
+
+    /// Iterates through the provided configuration map, serializes the config data,
+    /// and instantiates the requested capabilities.
+    pub async fn instantiate_class(
+        &self,
+        class: &str,
+        config: &serde_json::Value,
+    ) -> Result<ForeignObject, CapabilityLoading> {
+        let cap_class = self.capabilities.get(class).ok_or_else(|| {
+            CapabilityLoading::CapabilityNotFound {
+                name: class.to_string(),
+            }
+        })?;
+
+        let vec = if let Some(config_val) = config.get(class) {
+            let writer = Json::<serde_json::Value>::new_writer(PyroVec::with_capacity(300));
+
+                writer
+                    .write(config_val)
+                    .map_err(|e| CapabilityLoading::ConfigSerialization {
+                        class: class.to_string(),
+                        reason: e.to_string(),
+                    })?
+        } else {
+            PyroVec::ok()
+        };
+
+        // 2. Serialize the config value to a PyroVec using JSON format
+        
+        let object_id = NEXT_OBJECT_ID.fetch_add(1, Ordering::SeqCst);
+        let log_channel = create_log(self.id, object_id, 100);
+        // 3. Call create_instance on the ForeignClass
+        let handle = cap_class.create_instance(vec.view(), object_id, log_channel).await.map_err(|e| {
+            CapabilityLoading::Instantiation {
+                class: class.to_string(),
+                reason: e.to_string(),
+            }
+        })?;
+
+        Ok(handle)
     }
 }
 

@@ -2,7 +2,7 @@ pub mod pipeline;
 pub mod wasm_execute;
 pub mod wasm;
 
-pub use pipeline::{ModuleConfig, PipelineConfig, PipelineDef};
+pub use pipeline::{ModuleConfig, PipelineConfig, PipelineFactory};
 pub use wasm_execute::{Failure, Pipeline, PipelinePool};
 
 use thiserror::Error;
