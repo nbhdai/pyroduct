@@ -11,47 +11,12 @@ use super::PipelineError;
 // Config (deserialized from TOML / JSON)
 // =============================================================================
 
-/// Top-level pipeline configuration.
-///
-/// ```toml
-/// [libraries.geocoder]
-/// path = "target/release/libgeocoder.dylib"
-///
-/// [modules.enrich]
-/// path = "target/wasm/enrich.wasm"
-///
-/// [modules.enrich.capabilities.GeocoderServer]
-/// library = "geocoder"
-/// api_key = "abc123"
-///
-/// [modules.enrich2]
-/// path = "target/wasm/enrich2.wasm"
-///
-/// [modules.enrich2.capabilities.GeocoderServer]
-/// library = "geocoder"
-/// api_key = "different_key"
-///
-/// pipeline = ["enrich", "enrich2"]
-/// ```
 #[derive(Deserialize, Debug)]
 pub struct PipelineConfig {
-    /// Named shared libraries on disk. Each is loaded once.
-    pub libraries: HashMap<String, PathBuf>,
-    /// Named wasm modules, each with its own capability instances.
-    pub modules: HashMap<String, ModuleConfig>,
-    /// Ordered list of module names to execute.
-    pub pipeline: Vec<String>,
+    pub pipeline: Vec<ModuleConfig>,
 }
 
-/// A single wasm module in the pipeline.
-#[derive(Deserialize, Debug)]
-pub struct ModuleConfig {
-    /// Path to the directory.
-    pub path: PathBuf,
-    /// Per-class capability configuration. Keys are class names.
-    #[serde(default)]
-    pub capabilities: HashMap<String, serde_json::Value>,
-}
+
 
 // =============================================================================
 // Runtime structures
