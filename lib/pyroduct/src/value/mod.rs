@@ -15,7 +15,7 @@ pub use repair::ScalarRepairError;
 pub use schema::{PrimitiveDataType, PyroField, PyroSchema, PyroType, ValueSchemaInferenceError};
 pub use typeable::{Typeable, TypeableRow};
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "host")]
 pub mod arrow;
 
 pub mod deep_ref;
@@ -76,7 +76,7 @@ pub enum ValueError {
     #[error("Can't cast {0:?} to {1}")]
     Cast(Box<InvalidValue>, PyroType<'static>),
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "host")]
     #[error("Arrow Error")]
     ArrowError(#[from] ::arrow::error::ArrowError),
 

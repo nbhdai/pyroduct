@@ -20,7 +20,7 @@ use super::{PipelineError, PipelineResult};
 pub struct PipelineExecution {
     pub row_index: usize,
     pub steps: Vec<PyroSuccess>,
-    pub failure: Option<PyroFailure>
+    pub failure: Option<PyroFailure>,
 }
 
 impl PipelineExecution {
@@ -52,7 +52,10 @@ impl PipelineExecution {
     }
 }
 
-pub fn extract_upto_batch(executions: &[PipelineExecution], step_index: usize) -> Result<Option<RecordBatch>, crate::value::ValueError> {
+pub fn extract_upto_batch(
+    executions: &[PipelineExecution],
+    step_index: usize,
+) -> Result<Option<RecordBatch>, crate::value::ValueError> {
     let batch = PreBatch::from_iter(executions.iter().filter_map(|s| s.row_up_to(step_index)));
     match batch {
         Some(mut b) => b.flush(),
@@ -60,7 +63,10 @@ pub fn extract_upto_batch(executions: &[PipelineExecution], step_index: usize) -
     }
 }
 
-pub fn extract_at_batch(executions: &[PipelineExecution], step_index: usize) -> Result<Option<RecordBatch>, crate::value::ValueError> {
+pub fn extract_at_batch(
+    executions: &[PipelineExecution],
+    step_index: usize,
+) -> Result<Option<RecordBatch>, crate::value::ValueError> {
     let batch = PreBatch::from_iter(executions.iter().filter_map(|s| s.row_at(step_index)));
     match batch {
         Some(mut b) => b.flush(),
@@ -79,20 +85,20 @@ impl Pipeline {
     /// returned a logic error (with partial data), or `Err` on infrastructure
     /// failure.
     #[instrument(skip(self, input))]
-    pub async fn process(
-        &mut self,
-        input: &PyroRow<'_>,
-    ) -> PipelineExecution {
+    pub async fn process(&mut self, input: &PyroRow<'_>) -> PipelineExecution {
         let pipeline_len = self.steps.len();
         info!("Pipeline Start: Executing {} steps", pipeline_len);
 
         let mut result: PyroRow<'static> = input.clone().into_owned();
-        let mut execution =  PipelineExecution {
-            steps:Vec::new(),
-            failure:None,
+        let mut execution = PipelineExecution {
+            steps: Vec::new(),
+            failure: None,
             row_index: 0,
         };
-        execution.steps.push(PyroSuccess { row: result.clone(), logs: PyroLogs::empty() });
+        execution.steps.push(PyroSuccess {
+            row: result.clone(),
+            logs: PyroLogs::empty(),
+        });
         for (i, step) in self.steps.iter_mut().enumerate() {
             debug!("Pipeline Step {}/{}: Processing", i + 1, pipeline_len);
 

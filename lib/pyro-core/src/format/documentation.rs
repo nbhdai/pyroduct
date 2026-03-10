@@ -91,7 +91,9 @@ impl MagmaDocumentation {
                 let fty = &f.ty;
 
                 let doc_setter = match &f.doc {
-                    Some(doc_str) => quote! (.add_docstring(::std::borrow::Cow::Borrowed(#doc_str))),
+                    Some(doc_str) => {
+                        quote! (.add_docstring(::std::borrow::Cow::Borrowed(#doc_str)))
+                    }
                     None => quote! {},
                 };
 
@@ -130,7 +132,10 @@ impl MagmaDocumentation {
 
     /// Same as `generate`, but implements `TypeableRow` for `FooRef<'_>` instead of `Foo`.
     /// The schema content (fields, types, docs) is identical — only the implementor differs.
-    pub fn generate_for_ref(&self, import_location: &Path) -> syn::Result<proc_macro2::TokenStream> {
+    pub fn generate_for_ref(
+        &self,
+        import_location: &Path,
+    ) -> syn::Result<proc_macro2::TokenStream> {
         let values_path = quote! { #import_location::value };
         let ref_name = format_ident!("{}Ref", self.ident);
 
@@ -142,7 +147,9 @@ impl MagmaDocumentation {
                 let fty = &f.ty;
 
                 let doc_setter = match &f.doc {
-                    Some(doc_str) => quote! (.add_docstring(::std::borrow::Cow::Borrowed(#doc_str))),
+                    Some(doc_str) => {
+                        quote! (.add_docstring(::std::borrow::Cow::Borrowed(#doc_str)))
+                    }
                     None => quote! {},
                 };
 
@@ -191,7 +198,6 @@ pub fn generate_documented_impl(
     // Phase 2: Generate
     documentation.generate(import_location)
 }
-
 
 /// Generates a `TypeableRow` impl for the `FooRef<'_>` struct produced by `deep_ref`.
 ///

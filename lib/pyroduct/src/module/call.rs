@@ -7,7 +7,9 @@
 use wasmtime::{AsContextMut, Caller, Extern, Memory};
 
 use crate::{
-    PyroVec, module::{PyroState, WasmError}, view::{PyroView, get_view}
+    PyroVec,
+    module::{PyroState, WasmError},
+    view::{PyroView, get_view},
 };
 
 /// IO helper for reading/writing PyroViews from/to wasm memory.

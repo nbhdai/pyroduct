@@ -1,11 +1,11 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use pyroduct::module::PyroLogs;
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
-    Frame,
 };
 
 use super::keys::{Hotkey, HotkeyProvider};

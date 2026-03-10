@@ -7,8 +7,8 @@ use fs_err as fs;
 
 use pyroduct::value::arrow::PreBatch;
 use pyroduct::{
-    value::PyroRow,
     pipeline::{PipelineConfig, PipelineFactory, PipelinePool},
+    value::PyroRow,
 };
 
 // Use arrow-file to handle reading/writing data formats
@@ -41,11 +41,14 @@ pub fn load_config(config_path: &Path) -> Result<PipelineConfig> {
     let config_str = fs::read_to_string(config_path)?;
     let mut config: PipelineConfig = match config_path.extension().map(|s| s.as_encoded_bytes()) {
         Some(b"toml") => toml::from_str(&config_str).context("Failed to parse pipeline TOML")?,
-        Some(b"yaml") => serde_yaml::from_str(&config_str).context("Failed to parse pipeline yaml")?,
-        Some(b"json") => serde_json::from_str(&config_str).context("Failed to parse pipeline TOML")?,
-        _ => anyhow::bail!("Unknown extension, supports toml, yaml and json")
+        Some(b"yaml") => {
+            serde_yaml::from_str(&config_str).context("Failed to parse pipeline yaml")?
+        }
+        Some(b"json") => {
+            serde_json::from_str(&config_str).context("Failed to parse pipeline TOML")?
+        }
+        _ => anyhow::bail!("Unknown extension, supports toml, yaml and json"),
     };
-        
 
     let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
     // Resolve relative paths
@@ -59,8 +62,7 @@ pub fn load_config(config_path: &Path) -> Result<PipelineConfig> {
             module.path = config_dir.join(&module.path);
         }
     }
-    
-    
+
     Ok(config)
 }
 
@@ -171,24 +173,33 @@ pub async fn run_batch(
 
     for exec in successes.iter().chain(failures.iter()) {
         let mut all_module_logs = Vec::new();
-        let mut all_cap_logs: std::collections::HashMap<(String, String), Vec<String>> = std::collections::HashMap::new();
+        let mut all_cap_logs: std::collections::HashMap<(String, String), Vec<String>> =
+            std::collections::HashMap::new();
 
         for step in &exec.steps {
             all_module_logs.extend(step.logs.module_logs.iter().cloned());
             for (k, v) in &step.logs.capability_logs {
-                all_cap_logs.entry(k.clone()).or_default().extend(v.iter().cloned());
+                all_cap_logs
+                    .entry(k.clone())
+                    .or_default()
+                    .extend(v.iter().cloned());
             }
         }
 
         if let Some(fail) = &exec.failure {
             all_module_logs.extend(fail.logs.module_logs.iter().cloned());
             for (k, v) in &fail.logs.capability_logs {
-                all_cap_logs.entry(k.clone()).or_default().extend(v.iter().cloned());
+                all_cap_logs
+                    .entry(k.clone())
+                    .or_default()
+                    .extend(v.iter().cloned());
             }
         }
 
         if !all_module_logs.is_empty() || !all_cap_logs.is_empty() {
-            let logs_dir = output_dir.join("logs").join(format!("row_{}", exec.row_index));
+            let logs_dir = output_dir
+                .join("logs")
+                .join(format!("row_{}", exec.row_index));
             fs::create_dir_all(&logs_dir)?;
 
             if !all_module_logs.is_empty() {
@@ -197,7 +208,10 @@ pub async fn run_batch(
 
             for ((lib, cap), logs) in all_cap_logs {
                 if !logs.is_empty() {
-                    fs::write(logs_dir.join(format!("{}_{}.log", lib, cap)), logs.join("\n"))?;
+                    fs::write(
+                        logs_dir.join(format!("{}_{}.log", lib, cap)),
+                        logs.join("\n"),
+                    )?;
                 }
             }
         }

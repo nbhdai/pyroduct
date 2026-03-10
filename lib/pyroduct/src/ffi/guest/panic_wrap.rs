@@ -13,17 +13,20 @@
 
 use ::async_ffi::BorrowingFfiFuture;
 use futures::FutureExt;
-use tracing::Instrument;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::OnceLock;
 use tokio::runtime::Runtime;
+use tracing::Instrument;
 
 use crate::bridgeable::BridgeableZeroCopy;
 use crate::ffi::FuturePyroVec;
 use crate::ffi::guest::logger::object_span;
 use crate::format::{PyroZeroCopyFormat, Receiver};
 use crate::panic::{clear_last_panic, recover_panic_info, register_ffi_panic_hook};
-use crate::{Bridgeable, BridgeableResult, CapturedError, PyroError, PyroVec, PyroVecPtr, PyroView, PyroViewPtr};
+use crate::{
+    Bridgeable, BridgeableResult, CapturedError, PyroError, PyroVec, PyroVecPtr, PyroView,
+    PyroViewPtr,
+};
 
 // ============================================================================
 // Execution & Serialization Logic
@@ -43,16 +46,13 @@ where
     let result = panic::catch_unwind(AssertUnwindSafe(func));
 
     match result {
-        Ok(output_obj) => {
-            output_obj.into_raw()
-        }
+        Ok(output_obj) => output_obj.into_raw(),
         Err(_) => {
             let panic_info = recover_panic_info();
             PyroError::CodePanic(panic_info).encode().into_raw()
         }
     }
 }
-
 
 /// Helper to deserialize input from a raw PyroVecPtr.
 pub fn deserialize_input<I: Bridgeable + BridgeableZeroCopy>(
@@ -72,8 +72,7 @@ where
     match guard {
         Ok(input) => input,
         Err(_) => {
-            let panic_info = recover_panic_info()
-                .with_source("Panic");
+            let panic_info = recover_panic_info().with_source("Panic");
             Err(PyroError::deserialization(panic_info))
         }
     }
@@ -91,8 +90,7 @@ where
         Ok(Ok(vec)) => vec,
         Ok(Err(e)) => e.encode(),
         Err(_) => {
-            let panic_info = recover_panic_info()
-                .with_source("Panic");
+            let panic_info = recover_panic_info().with_source("Panic");
             PyroError::serialization(panic_info).encode()
         }
     }
@@ -111,8 +109,7 @@ where
         Ok(Ok(vec)) => vec,
         Ok(Err(e)) => e.encode(),
         Err(_) => {
-            let panic_info = recover_panic_info()
-                .with_source("Panic");
+            let panic_info = recover_panic_info().with_source("Panic");
             PyroError::serialization(panic_info).encode()
         }
     }
@@ -131,28 +128,30 @@ where
     Fut: std::future::Future<Output = PyroVec> + Send + 'static,
 {
     let fut = f();
-    FuturePyroVec::Future(BorrowingFfiFuture::<'static>::new(SafeMethodHandle::new(get_runtime().spawn(async move {
-        let span = object_span(object_id);
-        {
-            let _guard = span.enter();
-            register_ffi_panic_hook();
-            clear_last_panic();
-        }
-
-        let result = std::panic::AssertUnwindSafe(fut).catch_unwind().instrument(span).await;
-
-        match result {
-            Ok(val) => {
-                val.into_raw()
+    FuturePyroVec::Future(BorrowingFfiFuture::<'static>::new(SafeMethodHandle::new(
+        get_runtime().spawn(async move {
+            let span = object_span(object_id);
+            {
+                let _guard = span.enter();
+                register_ffi_panic_hook();
+                clear_last_panic();
             }
-            Err(_) => {
-                let panic_info = recover_panic_info();
-                PyroError::CodePanic(panic_info).encode().into_raw()
+
+            let result = std::panic::AssertUnwindSafe(fut)
+                .catch_unwind()
+                .instrument(span)
+                .await;
+
+            match result {
+                Ok(val) => val.into_raw(),
+                Err(_) => {
+                    let panic_info = recover_panic_info();
+                    PyroError::CodePanic(panic_info).encode().into_raw()
+                }
             }
-        }
-    }))))
+        }),
+    )))
 }
-
 
 use std::future::Future;
 use std::pin::Pin;
@@ -165,23 +164,22 @@ pub struct SafeMethodHandle {
 
 impl SafeMethodHandle {
     pub fn new(handle: JoinHandle<PyroVecPtr>) -> Self {
-        Self {
-            handle,
-        }
+        Self { handle }
     }
 }
 
-impl Future for SafeMethodHandle
-{
+impl Future for SafeMethodHandle {
     type Output = PyroVecPtr;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // Poll the underlying tokio JoinHandle
         match Pin::new(&mut self.handle).poll(cx) {
             Poll::Ready(Ok(val)) => Poll::Ready(val),
-            Poll::Ready(Err(join_error)) => {
-                Poll::Ready(PyroError::CodePanic(CapturedError::new(join_error).into()).encode().into_raw())
-            }
+            Poll::Ready(Err(join_error)) => Poll::Ready(
+                PyroError::CodePanic(CapturedError::new(join_error).into())
+                    .encode()
+                    .into_raw(),
+            ),
             Poll::Pending => Poll::Pending,
         }
     }

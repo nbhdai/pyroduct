@@ -37,7 +37,7 @@ fn run_cargo_command(
     tool_args: &[&str],
     user_args: &[String],
     error_ctx: &str,
-    capture: bool
+    capture: bool,
 ) -> Result<()> {
     // 1. Identify flags in the tool_args to prevent user overrides
     let restricted_flags: std::collections::HashSet<_> = tool_args
@@ -62,34 +62,38 @@ fn run_cargo_command(
 
     // 3. Combine and execute
     let mut cmd = Command::new("cargo");
-    cmd.args(tool_args)
-       .args(user_args)
-       .current_dir(path);
+    cmd.args(tool_args).args(user_args).current_dir(path);
 
     if capture {
         // .output() executes the command as a child process and strictly captures everything
         let output = cmd.output().with_context(|| error_ctx.to_string())?;
-        
+
         if !output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             bail!(
                 "Cargo command failed with status {}.\nArgs: {:?} {:?}\n\nStdout:\n{}\nStderr:\n{}",
-                output.status, tool_args, user_args, stdout, stderr
+                output.status,
+                tool_args,
+                user_args,
+                stdout,
+                stderr
             );
         }
     } else {
         // .status() inherits stdio, allowing `cargo build` logs to print directly to the terminal
         let status = cmd.status().with_context(|| error_ctx.to_string())?;
-        
+
         if !status.success() {
             bail!(
                 "Cargo command failed with status {}. Args: {:?} {:?}",
-                status, tool_args, user_args
+                status,
+                tool_args,
+                user_args
             );
         }
     }
-    
+
     Ok(())
 }
 
@@ -231,7 +235,12 @@ fn package_capability(
 // Entry Points
 // ============================================================
 
-fn package_single(path: &Path, output: Option<&Path>, cargo_args: &[String], capture: bool) -> Result<()> {
+fn package_single(
+    path: &Path,
+    output: Option<&Path>,
+    cargo_args: &[String],
+    capture: bool,
+) -> Result<()> {
     let output_dir = output
         .map(|p| p.to_path_buf())
         .unwrap_or(path.join("artifacts"));
@@ -268,7 +277,12 @@ fn package_single(path: &Path, output: Option<&Path>, cargo_args: &[String], cap
     }
 }
 
-pub fn package(path: &Path, output: Option<&Path>, cargo_args: &[String], capture: bool) -> Result<()> {
+pub fn package(
+    path: &Path,
+    output: Option<&Path>,
+    cargo_args: &[String],
+    capture: bool,
+) -> Result<()> {
     // 1. Direct package mode
     if path.join("Capability.toml").exists() || path.join("Module.toml").exists() {
         return package_single(path, output, cargo_args, capture);
@@ -281,7 +295,7 @@ pub fn package(path: &Path, output: Option<&Path>, cargo_args: &[String], captur
             path
         );
     }
-    
+
     let mut errors = Vec::new();
     let mut found_any = false;
 
@@ -313,7 +327,7 @@ pub fn package(path: &Path, output: Option<&Path>, cargo_args: &[String], captur
         for (p, e) in &errors {
             err_msg.push_str(&format!("  {:?}: {:#}\n", p, e));
         }
-        
+
         tracing::error!("{}", err_msg);
         bail!("{} packaging(s) failed. {}", errors.len(), err_msg);
     }

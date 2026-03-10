@@ -2,7 +2,10 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::{module::{ModuleConfig, PyroFactory}, pipeline::Pipeline};
+use crate::{
+    module::{ModuleConfig, PyroFactory},
+    pipeline::Pipeline,
+};
 
 use super::PipelineError;
 
@@ -30,8 +33,6 @@ impl PipelineConfig {
         }
     }
 }
-
-
 
 // =============================================================================
 // Runtime structures
@@ -61,9 +62,7 @@ impl PipelineFactory {
             pipeline.push(module_factory);
         }
 
-        Ok(Self {
-            pipeline,
-        })
+        Ok(Self { pipeline })
     }
 
     /// Build a pipeline from a fully-loaded `PipelineDef`.

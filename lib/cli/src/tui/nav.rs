@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
-    Frame,
 };
 
 use super::App;
@@ -11,10 +11,7 @@ use super::App;
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(0),
-            Constraint::Length(3),
-        ])
+        .constraints([Constraint::Min(0), Constraint::Length(3)])
         .split(area);
 
     let list_area = chunks[0];
@@ -23,7 +20,10 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
     // Build items: Input -> Steps -> Output
     let mut items = vec![ListItem::new("Input Table")];
     items.extend(
-        app.pipeline.steps.iter().map(|s| ListItem::new(format!("Step: {}", s.name)))
+        app.pipeline
+            .steps
+            .iter()
+            .map(|s| ListItem::new(format!("Step: {}", s.name))),
     );
     items.push(ListItem::new("Output Table"));
 
@@ -52,13 +52,11 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         Span::styled("(^R)", Style::default().fg(Color::DarkGray)),
     ]);
 
-    let run_block = Paragraph::new(run_text)
-        .alignment(Alignment::Center)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Green)),
-        );
+    let run_block = Paragraph::new(run_text).alignment(Alignment::Center).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Green)),
+    );
 
     f.render_widget(run_block, run_area);
 }

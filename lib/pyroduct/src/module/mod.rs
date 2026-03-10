@@ -21,26 +21,22 @@ use std::sync::Arc;
 use serde::Deserialize;
 use wasmtime::{Caller, Engine, Instance, Linker, Memory, Store, TypedFunc};
 
+use crate::ffi::ForeignObject;
 use crate::format::Receiver;
 use crate::header::{DataStatus, PyroHeader};
-use crate::{Bridgeable, CapturedError, ParseError, PyroError, PyroRow};
-use crate::ffi::ForeignObject;
 use crate::module::call::PyroCallIo;
 use crate::rkyv_8::RkyvReceiver;
-use crate::{
-    header::PyroData,
-    view::PyroView,
-};
+use crate::{Bridgeable, CapturedError, ParseError, PyroError, PyroRow};
+use crate::{header::PyroData, view::PyroView};
 
-
-pub mod capability;
 mod call;
+pub mod capability;
 mod state;
-#[cfg(test)]
+#[cfg(all(test, feature = "module"))]
 mod tests;
 
-pub use state::{PyroState, PyroModule};
 use capability::CapabilityLibrary;
+pub use state::{PyroModule, PyroState};
 
 use thiserror::Error;
 
@@ -89,7 +85,10 @@ pub struct PyroLogs {
 
 impl PyroLogs {
     pub fn empty() -> Self {
-        PyroLogs { module_logs: Vec::new(), capability_logs: HashMap::new() }
+        PyroLogs {
+            module_logs: Vec::new(),
+            capability_logs: HashMap::new(),
+        }
     }
 }
 
@@ -104,9 +103,6 @@ pub struct PyroFailure {
     pub result: Result<CapturedError, String>,
     pub logs: PyroLogs,
 }
-
-
-
 
 /// A linker pre-configured to use `PyroState<T>` as store data.
 ///
@@ -138,9 +134,7 @@ impl PyroFactory {
         })
     }
 
-    async fn create_capabilities(
-        &self,
-    ) -> Result<HashMap<String, ForeignObject>, WasmError> {
+    async fn create_capabilities(&self) -> Result<HashMap<String, ForeignObject>, WasmError> {
         let mut objects = HashMap::new();
         for (class, config) in &self.configurations {
             for library in self.libraries.iter() {
@@ -153,9 +147,7 @@ impl PyroFactory {
         Ok(objects)
     }
 
-    pub async fn instantiate(
-        &mut self,
-    ) -> Result<PyroInstance, WasmError> {
+    pub async fn instantiate(&mut self) -> Result<PyroInstance, WasmError> {
         let pyro_state = PyroState::new();
         let mut store = Store::new(&self.engine, pyro_state);
         let objects = self.create_capabilities().await?;
@@ -204,9 +196,11 @@ impl PyroFactory {
         Ok(())
     }
 
-
     /// Links all capabilities from the provided libraries into the linker.
-    fn link_capabilities(linker: &mut Linker<PyroState>, objects: &HashMap<String, ForeignObject>) -> Result<(), WasmError> {
+    fn link_capabilities(
+        linker: &mut Linker<PyroState>,
+        objects: &HashMap<String, ForeignObject>,
+    ) -> Result<(), WasmError> {
         for (class_name, object) in objects.iter() {
             // Capture lib for the closures (Arc clone is cheap)
 
@@ -222,11 +216,15 @@ impl PyroFactory {
                         &class_name,
                         &method_name,
                         move |caller: Caller<'_, PyroState>,
-                                (client_ptr, input_ptr): (i32, i32)| {
+                              (client_ptr, input_ptr): (i32, i32)| {
                             let object = object.clone();
                             let fn_name = fn_name.clone();
                             Box::new(async move {
-                                tracing::debug!(class_name = object.name(), fn_name, "Calling function");
+                                tracing::debug!(
+                                    class_name = object.name(),
+                                    fn_name,
+                                    "Calling function"
+                                );
                                 let mut io = PyroCallIo::from_caller(caller)?;
 
                                 // Read input and get state — both are &self borrows.
@@ -278,17 +276,12 @@ impl PyroFactory {
                     },
                 )
                 .map_err(|e| {
-                    WasmError::LinkFunctionFailed(
-                        class_name,
-                        "register".to_string(),
-                        e.to_string(),
-                    )
+                    WasmError::LinkFunctionFailed(class_name, "register".to_string(), e.to_string())
                 })?;
         }
         Ok(())
     }
 }
-
 
 pub struct PyroInstance {
     store: Store<PyroState>,
@@ -299,24 +292,30 @@ pub struct PyroInstance {
 }
 
 impl PyroInstance {
-    pub async fn call(
-        &mut self,
-        input: &PyroRow<'_>,
-    ) -> Result<PyroSuccess, PyroFailure> {
+    pub async fn call(&mut self, input: &PyroRow<'_>) -> Result<PyroSuccess, PyroFailure> {
         // Ship the input row via rkyv into a PyroVec
         let input_row_owned = input.to_static();
-        let input_vec = input_row_owned.ship().map_err(|err| self.pack_pyro_error(err))?;
+        let input_vec = input_row_owned
+            .ship()
+            .map_err(|err| self.pack_pyro_error(err))?;
         let input_view: PyroView<'_> = input_vec.view();
 
         // 1. Write Input using PyroCallIo
         let mut io = PyroCallIo::new(&mut self.store, self.memory);
-        let input_ptr = io.new_input(&input_view).await.map_err(|err| self.pack_pyro_error(err))?;
+        let input_ptr = io
+            .new_input(&input_view)
+            .await
+            .map_err(|err| self.pack_pyro_error(err))?;
 
         // 2. Call the export
         let entry: TypedFunc<i32, i32> = self
             .instance
             .get_typed_func(&mut self.store, "call_extern")
-            .map_err(|e| PyroError::CodePanic(CapturedError::new(format!("Missing main function: {}", e)).into()))
+            .map_err(|e| {
+                PyroError::CodePanic(
+                    CapturedError::new(format!("Missing main function: {}", e)).into(),
+                )
+            })
             .map_err(|err| self.pack_pyro_error(err))?;
 
         let output_ptr = entry
@@ -327,34 +326,47 @@ impl PyroInstance {
 
         // 3. Read Output using PyroCallIo
         let mut io = PyroCallIo::new(&mut self.store, self.memory);
-        let output_vec = io.get_output(output_ptr).await.map_err(|err| self.pack_pyro_error(err))?;
+        let output_vec = io
+            .get_output(output_ptr)
+            .await
+            .map_err(|err| self.pack_pyro_error(err))?;
 
         // 4. Parse the result (Zero-copy view of the host-owned vector)
         let result_view = output_vec.view();
-        result_view.parse_as_error().map_err(|err| self.pack_pyro_error(err))?;
+        result_view
+            .parse_as_error()
+            .map_err(|err| self.pack_pyro_error(err))?;
 
         match result_view.status() {
             Ok(DataStatus::RkyvValid) => {
-                let row = PyroRow::expose_view(result_view).map_err(|err| self.pack_pyro_error(err))?;
-                let row = self.receiver.receive(&row).map_err(|err| self.pack_pyro_error(err))?;
+                let row =
+                    PyroRow::expose_view(result_view).map_err(|err| self.pack_pyro_error(err))?;
+                let row = self
+                    .receiver
+                    .receive(&row)
+                    .map_err(|err| self.pack_pyro_error(err))?;
                 Ok(self.pack_success(row))
             }
             Ok(DataStatus::RkyvError) => match serde_json::from_slice(&result_view) {
                 Ok(error) => Err(self.pack_user_error(error)),
-                Err(error) => Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view))),
+                Err(error) => {
+                    Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view)))
+                }
             },
-            _ => Err(self.pack_pyro_error(PyroError::Header(ParseError::UnknownStatus(result_view.status_u8())))),
+            _ => Err(
+                self.pack_pyro_error(PyroError::Header(ParseError::UnknownStatus(
+                    result_view.status_u8(),
+                ))),
+            ),
         }
     }
 
-    pub fn unpack_logs(
-        &self,
-    ) -> PyroLogs {
+    pub fn unpack_logs(&self) -> PyroLogs {
         let module_logs = self.store.data().log();
         let capability_logs = self.logs();
         PyroLogs {
             module_logs,
-            capability_logs
+            capability_logs,
         }
     }
 
@@ -383,7 +395,10 @@ impl PyroInstance {
         let mut logs = HashMap::new();
         for object in self.objects.values() {
             let object_logs = object.take_logs();
-            logs.insert((object.lib_name().to_string(), object.name().to_string()), object_logs);
+            logs.insert(
+                (object.lib_name().to_string(), object.name().to_string()),
+                object_logs,
+            );
         }
 
         logs
@@ -400,7 +415,6 @@ fn classify_error(error: anyhow::Error) -> WasmError {
     }
     WasmError::Unknown(error)
 }
-
 
 /// A single wasm module in the pipeline.
 #[derive(Deserialize, Debug)]
@@ -421,7 +435,11 @@ impl ModuleConfig {
 
         let wasm_path = self.path.join("artifacts").join("mod.wasm");
         let binary = std::fs::read(&wasm_path).map_err(|e| {
-            WasmError::InstantiationFailed(format!("Failed to read WASM at {}: {}", wasm_path.display(), e))
+            WasmError::InstantiationFailed(format!(
+                "Failed to read WASM at {}: {}",
+                wasm_path.display(),
+                e
+            ))
         })?;
 
         let wasmtime_module = wasmtime::Module::from_binary(&engine, &binary).map_err(|e| {
@@ -446,14 +464,16 @@ impl ModuleConfig {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
-            
-            let library = CapabilityLibrary::load(lib_name, &artifact_path).await.map_err(|e| {
-                WasmError::InstantiationFailed(format!(
-                    "Failed to load capability library at {}: {}",
-                    artifact_path.display(),
-                    e
-                ))
-            })?;
+
+            let library = CapabilityLibrary::load(lib_name, &artifact_path)
+                .await
+                .map_err(|e| {
+                    WasmError::InstantiationFailed(format!(
+                        "Failed to load capability library at {}: {}",
+                        artifact_path.display(),
+                        e
+                    ))
+                })?;
             libs.push(library);
         }
 

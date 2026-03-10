@@ -1,14 +1,14 @@
-use std::sync::Arc;
 use arrow::array::RecordBatch;
 use arrow::datatypes::Schema;
 use crossterm::event::{KeyCode, KeyEvent};
-use pyroduct::pipeline::wasm_execute::extract_upto_batch;
-use pyroduct::pipeline::wasm_execute::PipelineExecution;
 use pyroduct::module::PyroLogs;
+use pyroduct::pipeline::wasm_execute::PipelineExecution;
+use pyroduct::pipeline::wasm_execute::extract_upto_batch;
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
     Frame,
+    layout::{Constraint, Direction, Layout, Rect},
 };
+use std::sync::Arc;
 
 use super::{logs::LogsView, table::TableView};
 
@@ -28,7 +28,6 @@ pub struct OutputView {
     current_row: usize,
 }
 
-
 // Add at the top of output.rs, with the other use statements:
 use super::keys::{Hotkey, HotkeyProvider};
 
@@ -44,10 +43,10 @@ impl HotkeyProvider for OutputView {
     }
 }
 
-
 impl OutputView {
     pub fn new(executions: Vec<PipelineExecution>, step_index: usize) -> anyhow::Result<Self> {
-        let batch = extract_upto_batch(&executions, step_index)?.unwrap_or_else(|| RecordBatch::new_empty(Arc::new(Schema::empty())));
+        let batch = extract_upto_batch(&executions, step_index)?
+            .unwrap_or_else(|| RecordBatch::new_empty(Arc::new(Schema::empty())));
         let table = TableView::new(batch);
         let logs = LogsView::default();
 
@@ -62,10 +61,7 @@ impl OutputView {
         })
     }
 
-    fn extract_logs(
-        &self, 
-        row_index: usize,
-    ) -> PyroLogs {
+    fn extract_logs(&self, row_index: usize) -> PyroLogs {
         if let Some(exec) = self.executions.get(row_index) {
             // Fetch logs for successful steps
             if let Some(step) = exec.steps.get(self.step_index) {
@@ -73,7 +69,7 @@ impl OutputView {
                     module_logs: step.logs.module_logs.clone(),
                     capability_logs: step.logs.capability_logs.clone(),
                 };
-            } 
+            }
             // Fetch logs for failed step (if it failed exactly on this step)
             else if let Some(fail) = &exec.failure {
                 if exec.steps.len() == self.step_index {
@@ -127,7 +123,7 @@ impl OutputView {
             (ActivePane::Table, KeyCode::PageDown) => self.table.page_down(),
             (ActivePane::Table, KeyCode::Home) => self.table.home(),
             (ActivePane::Table, KeyCode::End) => self.table.end(),
-            (ActivePane::Table, _) => {},
+            (ActivePane::Table, _) => {}
             (ActivePane::Logs, _) => self.logs.handle_event(key),
         }
     }

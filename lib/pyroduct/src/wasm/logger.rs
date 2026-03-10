@@ -2,12 +2,8 @@ use std::io::Write;
 use std::sync::Once;
 
 use tracing_subscriber::{
-    fmt::MakeWriter,
-    layer::SubscriberExt,
-    util::SubscriberInitExt,
-    Registry,
+    Registry, fmt::MakeWriter, layer::SubscriberExt, util::SubscriberInitExt,
 };
-
 
 static INIT: Once = Once::new();
 
@@ -24,7 +20,6 @@ unsafe extern "C" fn host_log(ptr: *const u8, len: usize) {
         println!("[HOST LOG MOCK]: {}", s);
     }
 }
-
 
 pub fn init_logging() {
     INIT.call_once(|| {
@@ -71,4 +66,3 @@ impl Write for WasmProxy {
         Ok(())
     }
 }
-

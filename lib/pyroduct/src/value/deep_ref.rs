@@ -12,7 +12,6 @@ pub trait DeepRef {
     fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a>;
 }
 
-
 impl DeepRef for Vec<String> {
     type Ref<'a> = Vec<&'a str>;
 
@@ -31,7 +30,6 @@ impl DeepRef for Vec<&String> {
         self.iter().map(|s| s.as_str()).collect()
     }
 }
-
 
 // =========================================================================
 // 3. Primitive Vectors (Zero-Copy Optimization)
@@ -429,7 +427,6 @@ impl<'v> DeepRef for PyroRow<'v> {
         self.clone()
     }
 }
-
 
 // Also the Vec/slice variants for f16
 impl DeepRef for Vec<f16> {

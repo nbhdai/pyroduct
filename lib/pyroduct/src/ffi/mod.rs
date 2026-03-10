@@ -1,7 +1,7 @@
 mod interface;
 pub use interface::*;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "capability")]
 pub mod guest;
 
 use crate::format::UserHeaderValues;

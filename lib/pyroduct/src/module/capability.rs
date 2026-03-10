@@ -1,9 +1,12 @@
-use std::sync::Weak;
-use std::{collections::HashMap, sync::Mutex};
+use dashmap::DashMap;
 use std::ops::Deref;
 use std::path::Path;
-use dashmap::DashMap;
-use std::sync::{atomic::{AtomicI64, AtomicU64, Ordering}, LazyLock, Arc};
+use std::sync::Weak;
+use std::sync::{
+    Arc, LazyLock,
+    atomic::{AtomicI64, AtomicU64, Ordering},
+};
+use std::{collections::HashMap, sync::Mutex};
 use tokio::sync::mpsc;
 
 use libloading::{Library, Symbol};
@@ -55,10 +58,9 @@ pub enum CapabilityError {
 // Logging
 // =============================================================================
 
-
-
 static CATCH_LOG_SENDER: LazyLock<DashMap<i64, mpsc::Sender<String>>> = LazyLock::new(DashMap::new);
-static LOG_SENDERS: LazyLock<DashMap<(i64, u64), mpsc::Sender<String>>> = LazyLock::new(DashMap::new);
+static LOG_SENDERS: LazyLock<DashMap<(i64, u64), mpsc::Sender<String>>> =
+    LazyLock::new(DashMap::new);
 static NEXT_LIB_ID: AtomicI64 = AtomicI64::new(1);
 static NEXT_OBJECT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -80,7 +82,12 @@ pub fn destroy_log(library_id: i64, span_id: u64) {
 
 /// # Safety
 /// `msg` must point to `msg_len` valid bytes for the duration of this call.
-pub unsafe extern "C" fn log_callback(library_id: i64, span_id: u64, msg: *const u8, msg_len: usize) {
+pub unsafe extern "C" fn log_callback(
+    library_id: i64,
+    span_id: u64,
+    msg: *const u8,
+    msg_len: usize,
+) {
     let data = unsafe { std::slice::from_raw_parts(msg, msg_len) };
     let log_msg = String::from_utf8_lossy(data).trim_end().to_string();
     if span_id == 0 {
@@ -88,7 +95,9 @@ pub unsafe extern "C" fn log_callback(library_id: i64, span_id: u64, msg: *const
             match tx.try_send(log_msg) {
                 Ok(()) => {}
                 Err(mpsc::error::TrySendError::Full(_)) => {
-                    eprintln!("[log] channel full for id=({library_id},{span_id}), dropping message");
+                    eprintln!(
+                        "[log] channel full for id=({library_id},{span_id}), dropping message"
+                    );
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {}
             }
@@ -100,7 +109,9 @@ pub unsafe extern "C" fn log_callback(library_id: i64, span_id: u64, msg: *const
             match tx.try_send(log_msg) {
                 Ok(()) => {}
                 Err(mpsc::error::TrySendError::Full(_)) => {
-                    eprintln!("[log] channel full for id=({library_id},{span_id}), dropping message");
+                    eprintln!(
+                        "[log] channel full for id=({library_id},{span_id}), dropping message"
+                    );
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
                     LOG_SENDERS.remove(&(library_id, span_id));
@@ -110,10 +121,7 @@ pub unsafe extern "C" fn log_callback(library_id: i64, span_id: u64, msg: *const
             tracing::debug!(log_msg, "Uncaught Capability Log");
         }
     }
-
-    
 }
-
 
 // =============================================================================
 // Symbol scanning
@@ -198,13 +206,14 @@ impl CapabilityLibrary {
         }
 
         // 2. Load
-            let library = Arc::new(unsafe { Library::new(path) }.map_err(|e| {
-                CapabilityError::LibraryOpen {
+        let library =
+            Arc::new(
+                unsafe { Library::new(path) }.map_err(|e| CapabilityError::LibraryOpen {
                     path: path_str.clone(),
                     reason: e.to_string(),
-                }
-            })?);
-            let id = NEXT_LIB_ID.fetch_add(1, Ordering::SeqCst);
+                })?,
+            );
+        let id = NEXT_LIB_ID.fetch_add(1, Ordering::SeqCst);
 
         // 3. Register
         let mut capabilities = HashMap::with_capacity(pyro_symbols.len());
@@ -226,13 +235,11 @@ impl CapabilityLibrary {
 
             let export: ClassExport = unsafe { register_fn(id, log_callback) };
 
-            let class =
-                unsafe { ForeignClass::from_export(name.clone(), library.clone(), export) }.map_err(|e| {
-                    CapabilityError::Registration {
-                        path: path_str.clone(),
-                        symbol: sym.name.clone(),
-                        reason: e.to_string(),
-                    }
+            let class = unsafe { ForeignClass::from_export(name.clone(), library.clone(), export) }
+                .map_err(|e| CapabilityError::Registration {
+                    path: path_str.clone(),
+                    symbol: sym.name.clone(),
+                    reason: e.to_string(),
                 })?;
 
             capabilities.insert(class.name().to_string(), Arc::new(class));
@@ -242,7 +249,11 @@ impl CapabilityLibrary {
             return Err(CapabilityError::NoCapabilitiesFound { path: path_str });
         }
 
-        Ok(Self { id, name: name.clone(), capabilities })
+        Ok(Self {
+            id,
+            name: name.clone(),
+            capabilities,
+        })
     }
 
     /// Iterates through the provided configuration map, serializes the config data,
@@ -265,29 +276,33 @@ impl CapabilityLibrary {
             let vec = if let Some(config_val) = config.get(cap_name) {
                 let writer = Json::<serde_json::Value>::new_writer(PyroVec::with_capacity(300));
 
-                    writer
-                        .write(config_val)
-                        .map_err(|e| CapabilityError::ConfigSerialization {
-                            class: cap_name.clone(),
-                            reason: e.to_string(),
-                        })?
+                writer
+                    .write(config_val)
+                    .map_err(|e| CapabilityError::ConfigSerialization {
+                        class: cap_name.clone(),
+                        reason: e.to_string(),
+                    })?
             } else {
                 PyroVec::ok()
             };
             let object_id = NEXT_OBJECT_ID.fetch_add(1, Ordering::SeqCst);
             let log_channel = create_log(self.id, object_id, 100);
             // 3. Call create_instance on the ForeignClass
-            let handle = cap_class.create_instance(vec.view(), object_id, log_channel).await.map_err(|e| {
-                CapabilityError::Instantiation {
+            let handle = cap_class
+                .create_instance(vec.view(), object_id, log_channel)
+                .await
+                .map_err(|e| CapabilityError::Instantiation {
                     class: cap_name.clone(),
                     reason: e.to_string(),
-                }
-            })?;
+                })?;
 
             objects.insert(cap_name.clone(), handle);
         }
 
-        Ok(Capability { lib_name: self.name.clone(), objects })
+        Ok(Capability {
+            lib_name: self.name.clone(),
+            objects,
+        })
     }
 
     /// Iterates through the provided configuration map, serializes the config data,
@@ -297,36 +312,38 @@ impl CapabilityLibrary {
         class: &str,
         config: Option<&serde_json::Value>,
     ) -> Result<ForeignObject, CapabilityError> {
-        let cap_class = self.capabilities.get(class).ok_or_else(|| {
-            CapabilityError::CapabilityNotFound {
-                name: class.to_string(),
-            }
-        })?;
+        let cap_class =
+            self.capabilities
+                .get(class)
+                .ok_or_else(|| CapabilityError::CapabilityNotFound {
+                    name: class.to_string(),
+                })?;
 
         let vec = if let Some(config_val) = config {
             let writer = Json::<serde_json::Value>::new_writer(PyroVec::with_capacity(300));
 
-                writer
-                    .write(config_val)
-                    .map_err(|e| CapabilityError::ConfigSerialization {
-                        class: class.to_string(),
-                        reason: e.to_string(),
-                    })?
+            writer
+                .write(config_val)
+                .map_err(|e| CapabilityError::ConfigSerialization {
+                    class: class.to_string(),
+                    reason: e.to_string(),
+                })?
         } else {
             PyroVec::ok()
         };
 
         // 2. Serialize the config value to a PyroVec using JSON format
-        
+
         let object_id = NEXT_OBJECT_ID.fetch_add(1, Ordering::SeqCst);
         let log_channel = create_log(self.id, object_id, 100);
         // 3. Call create_instance on the ForeignClass
-        let handle = cap_class.create_instance(vec.view(), object_id, log_channel).await.map_err(|e| {
-            CapabilityError::Instantiation {
+        let handle = cap_class
+            .create_instance(vec.view(), object_id, log_channel)
+            .await
+            .map_err(|e| CapabilityError::Instantiation {
                 class: class.to_string(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
 
         Ok(handle)
     }

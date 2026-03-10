@@ -239,15 +239,18 @@ pub mod panic;
 pub mod rkyv_8;
 pub mod value;
 pub mod vec_buf;
-pub mod module;
 mod view;
-#[cfg(any(target_arch = "wasm32", test))]
+
+#[cfg(feature = "host")]
+pub mod module;
+
+#[cfg(feature = "module")]
 pub mod wasm;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "host")]
 pub mod pipeline;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(feature = "host", feature = "capability"))]
 pub mod ffi;
 
 pub use bridgeable::{Bridgeable, BridgeableResult};
@@ -261,11 +264,11 @@ pub use vec_buf::{PyroBuf, PyroBufPtr, PyroVec, PyroVecPtr};
 pub use view::{PyroMutView, PyroView, PyroViewPtr, get_view, get_view_mut};
 
 // Async is not supported for wasm
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(feature = "host", feature = "capability"))]
 pub mod tokio;
-pub use tracing;
 pub use serde;
 pub use serde_json;
+pub use tracing;
 
 // Documented by the lib.
 pub use pyro_derive::bridgeable;
@@ -377,7 +380,6 @@ pub use pyro_derive::DeepRefArchived;
 /// ```
 pub use pyro_derive::ToRow;
 
-
 /// Marks a struct as configuration for a capability.
 ///
 /// Adds serde serialization/deserialization derives so the config can be passed
@@ -390,7 +392,7 @@ pub use pyro_derive::ToRow;
 ///     pub ports: Vec<String>,
 /// }
 /// ```
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "capability")]
 pub use pyro_derive::config;
 
 /// Defines a capability implementation with lifecycle methods and callable functions.
@@ -495,7 +497,7 @@ pub use pyro_derive::config;
 ///     }
 /// }
 /// ```
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "capability")]
 pub use pyro_derive::capability;
 
 /// Module Derive Macro
@@ -555,7 +557,7 @@ pub use pyro_derive::capability;
 ///
 /// #[module(output = (output, messages))]
 /// fn process(input: Vec<CallMessage>) -> Result<(String, Vec<CallMessage>)> {
-///     let output = input.first().ok_or(anyhow::anyhow!("Empty chat history"))?;
+///     let output = input.first().ok_or(pyroduct::CapturedError::new("Empty chat history"))?;
 ///     Ok((
 ///         output.message.to_string(),
 ///         vec![
@@ -565,9 +567,9 @@ pub use pyro_derive::capability;
 ///     ))
 /// }
 /// ```
-/// 
-/// 
-/// If you don't want to copy a large vector and just need to reference it, you can do that too. 
+///
+///
+/// If you don't want to copy a large vector and just need to reference it, you can do that too.
 /// ```rust
 /// use pyroduct::*;
 ///
@@ -585,4 +587,5 @@ pub use pyro_derive::capability;
 ///     }).collect())
 /// }
 /// ```
+#[cfg(feature = "module")]
 pub use pyro_derive::module;

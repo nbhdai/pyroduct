@@ -2,8 +2,8 @@ pub mod pipeline;
 pub mod wasm_execute;
 
 pub use pipeline::{PipelineConfig, PipelineFactory};
-pub use wasm_execute::{Failure, Pipeline, PipelinePool};
 use thiserror::Error;
+pub use wasm_execute::{Failure, Pipeline, PipelinePool};
 
 use crate::PyroError;
 use crate::module::{WasmError, capability::CapabilityError};

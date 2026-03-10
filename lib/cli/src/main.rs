@@ -5,13 +5,13 @@ pub mod init;
 pub mod package;
 pub mod run;
 pub mod symbols;
-pub mod utils;
 pub mod tui;
+pub mod utils;
 
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -90,11 +90,12 @@ enum Commands {
 }
 
 pub fn start_logging() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "trace,cranelift_frontend=off,cranelift_codegen=off,wasmtime=off".into());
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        "trace,cranelift_frontend=off,cranelift_codegen=off,wasmtime=off".into()
+    });
 
     tracing_subscriber::registry()
-        .with(fmt::layer().with_target(true).pretty())
+        .with(fmt::layer().with_target(true))
         .with(filter)
         .init();
 }

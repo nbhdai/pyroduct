@@ -3,8 +3,8 @@ use std::{
     fs,
     io::stdout,
     path::{Path, PathBuf},
-    time::Duration,
     sync::Arc,
+    time::Duration,
 };
 
 use arrow::array::RecordBatch;
@@ -14,24 +14,24 @@ use anyhow::Result;
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use pyroduct::pipeline::wasm_execute::PipelineExecution;
 use ratatui::{
+    Frame, Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
-    Frame, Terminal,
 };
 use ratatui_code_editor::{editor::Editor, theme::vesper};
 
-pub mod nav;
-pub mod logs;
-pub mod wasm;
-pub mod table;
-pub mod output;
 pub mod cap_config;
-pub mod module;
 pub mod keys;
+pub mod logs;
+pub mod module;
+pub mod nav;
+pub mod output;
+pub mod table;
+pub mod wasm;
 
 use keys::{Hotkey, HotkeyProvider};
 
@@ -68,10 +68,14 @@ impl App {
 
         let mut steps = Vec::new();
         for mod_conf in &config.pipeline {
-            
-
             let path = mod_conf.path.clone();
-            let name = path.components().last().expect("Non empty path").as_os_str().display().to_string();
+            let name = path
+                .components()
+                .last()
+                .expect("Non empty path")
+                .as_os_str()
+                .display()
+                .to_string();
             let src_path = path.join("src/lib.rs");
 
             let source_code = fs::read_to_string(&src_path)
@@ -95,9 +99,15 @@ impl App {
             });
         }
 
-        let initial_code = steps.first().map(|s| s.source_code.clone()).unwrap_or_default();
-        let initial_caps = steps.first().map(|s| s.cap_configs.clone()).unwrap_or_default();
-        
+        let initial_code = steps
+            .first()
+            .map(|s| s.source_code.clone())
+            .unwrap_or_default();
+        let initial_caps = steps
+            .first()
+            .map(|s| s.cap_configs.clone())
+            .unwrap_or_default();
+
         let mut input_batch = RecordBatch::new_empty(Arc::new(Schema::empty()));
         if input_path.exists() {
             let bytes = fs::read(input_path)?;
@@ -161,9 +171,9 @@ impl App {
         let mut factory = pyroduct::pipeline::PipelineFactory::load(&config).await?;
         let pipeline = factory.build().await?;
         let pool = pyroduct::pipeline::PipelinePool::new(vec![pipeline]);
-        
+
         let (successes, failures) = pool.process_batch(&self.pipeline.input).await?;
-        
+
         let mut all_executions = successes;
         all_executions.extend(failures);
         all_executions.sort_by_key(|e| e.row_index);
@@ -172,7 +182,9 @@ impl App {
         // If currently viewing the output table, refresh it seamlessly
         if let ViewState::OutputTable(ov) = &mut self.view {
             let stage_idx = ov.step_index;
-            if let Ok(new_ov) = crate::tui::output::OutputView::new(self.pipeline.execution.clone(), stage_idx) {
+            if let Ok(new_ov) =
+                crate::tui::output::OutputView::new(self.pipeline.execution.clone(), stage_idx)
+            {
                 *ov = new_ov;
             }
         }
@@ -200,7 +212,9 @@ impl App {
 
     pub fn nav_to(&mut self, new_idx: usize) {
         let max_idx = self.pipeline.steps.len() + 1;
-        if new_idx > max_idx { return; }
+        if new_idx > max_idx {
+            return;
+        }
 
         // Sync old code text to domain before navigating away
         if let ViewState::Module(mv) = &self.view {
@@ -225,7 +239,8 @@ impl App {
                 self.view = ViewState::Module(module::ModuleView::new(code_state, cap_state));
             } else {
                 self.view = ViewState::OutputTable(
-                    output::OutputView::new(self.pipeline.execution.clone(), stage_idx + 1).unwrap(),
+                    output::OutputView::new(self.pipeline.execution.clone(), stage_idx + 1)
+                        .unwrap(),
                 );
             }
         }
@@ -347,7 +362,9 @@ async fn handle_event(app: &mut App) -> Result<()> {
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 let idx = app.current_nav_index();
-                if idx > 0 { app.nav_to(idx - 1); }
+                if idx > 0 {
+                    app.nav_to(idx - 1);
+                }
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 let idx = app.current_nav_index();

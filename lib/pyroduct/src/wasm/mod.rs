@@ -155,13 +155,10 @@ pub fn _test_reinsert_input(ptr: *mut u8, vec: PyroVec) {
 ///     wasm_row_main(ptr, main_fn)
 /// }
 /// ```
-pub fn wasm_row_main<'a, O, F>(
-    input_ptr: *mut u8,
-    func: F,
-) -> *const u8 
-    where
-        O: ToRow,
-        F: Fn(PyroRow<'a>) -> Result<O, CapturedError>
+pub fn wasm_row_main<'a, O, F>(input_ptr: *mut u8, func: F) -> *const u8
+where
+    O: ToRow,
+    F: Fn(PyroRow<'a>) -> Result<O, CapturedError>,
 {
     logger::init_logging();
     let input_vec = match get_input(input_ptr) {
@@ -187,9 +184,7 @@ pub fn wasm_row_main<'a, O, F>(
     let input = match input_row.try_into() {
         Ok(input) => input,
         Err(_) => {
-            let result = Err(CapturedError::new(
-                "Unable to extract input",
-            ));
+            let result = Err(CapturedError::new("Unable to extract input"));
             return to_output(encode_result(result));
         }
     };
@@ -366,9 +361,6 @@ impl<T> Client<T> {
         }
     }
 }
-
-
-
 
 impl From<String> for CapturedError {
     fn from(err: String) -> Self {

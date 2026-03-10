@@ -4,11 +4,7 @@ use std::sync::{Once, OnceLock, RwLock};
 
 use tracing::Metadata;
 use tracing_subscriber::{
-    fmt::MakeWriter,
-    layer::SubscriberExt,
-    registry::LookupSpan,
-    util::SubscriberInitExt,
-    Registry,
+    Registry, fmt::MakeWriter, layer::SubscriberExt, registry::LookupSpan, util::SubscriberInitExt,
 };
 
 use crate::ffi::interface::LogCallback;
@@ -105,7 +101,9 @@ impl<'a> MakeWriter<'a> for FfiWriterFactory {
             });
         }
 
-        FfiProxy { object_id: target_id }
+        FfiProxy {
+            object_id: target_id,
+        }
     }
 }
 

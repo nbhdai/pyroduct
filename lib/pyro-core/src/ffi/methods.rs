@@ -223,7 +223,7 @@ impl ImplMethod {
                         Err(err) => return err.encode(),
                     };
                 }
-            },
+            }
             InputParams::Many(items) => {
                 let input_struct_name = self.class.input_struct(&self.name);
                 let args = items.iter().map(|(n, _)| quote!(input.#n));
@@ -244,8 +244,8 @@ impl ImplMethod {
         let (ffi_ret, body) = match (self.is_async, &self.class.error_tn) {
             (true, Some(_)) => (
                 quote!(::pyroduct::ffi::FuturePyroVec),
-                quote!{
-                    ::pyroduct::ffi::guest::execute_safe_async(|| async move { 
+                quote! {
+                    ::pyroduct::ffi::guest::execute_safe_async(|| async move {
                         #state_retrieval
                         #client_retrieval
                         #input_retrieval
@@ -255,19 +255,19 @@ impl ImplMethod {
             ),
             (false, Some(_)) => (
                 quote!(::pyroduct::PyroVecPtr),
-                quote!{
+                quote! {
                     ::pyroduct::ffi::guest::execute_safe(|| {
                         #state_retrieval
                         #client_retrieval
                         #input_retrieval
                         ::pyroduct::ffi::guest::serialize_result(#method_call)
                     }, capability_state_ptr.object_id)
-                }
+                },
             ),
             (true, None) => (
                 quote!(::pyroduct::ffi::FuturePyroVec),
-                quote!{
-                    ::pyroduct::ffi::guest::execute_safe_async(|| async move { 
+                quote! {
+                    ::pyroduct::ffi::guest::execute_safe_async(|| async move {
                         #state_retrieval
                         #client_retrieval
                         #input_retrieval
@@ -277,14 +277,14 @@ impl ImplMethod {
             ),
             (false, None) => (
                 quote!(::pyroduct::PyroVecPtr),
-                quote!{
+                quote! {
                     ::pyroduct::ffi::guest::execute_safe(|| {
                         #state_retrieval
                         #client_retrieval
                         #input_retrieval
                         ::pyroduct::ffi::guest::serialize_output(#method_call)
                     }, capability_state_ptr.object_id)
-                }
+                },
             ),
         };
 
@@ -301,7 +301,6 @@ impl ImplMethod {
             }
         }
     }
-
 
     pub fn generate_vtable_entry(&self) -> TokenStream {
         let fn_ffi_name = self.class.ffi_name(&self.name);
@@ -397,7 +396,6 @@ impl ImplMethod {
                         }
                     }
                 }
-                
             }
         }
     }
@@ -521,7 +519,10 @@ mod tests {
 
     fn mock_method_base(name: &str, is_async: bool, has_err: bool) -> ImplMethod {
         let (error_tn, output) = if has_err {
-            (Some(parse_quote!(MockError)), FnOutput::Result(parse_quote!(u32), parse_quote!(MockError)))
+            (
+                Some(parse_quote!(MockError)),
+                FnOutput::Result(parse_quote!(u32), parse_quote!(MockError)),
+            )
         } else {
             (None, FnOutput::Single(parse_quote!(u32)))
         };
@@ -570,7 +571,7 @@ mod tests {
                 client_state_ptr: ::pyroduct::PyroViewPtr,
                 input_ptr: ::pyroduct::PyroViewPtr,
             ) -> ::pyroduct::ffi::FuturePyroVec {
-                ::pyroduct::ffi::guest::execute_safe_async(|| async move { 
+                ::pyroduct::ffi::guest::execute_safe_async(|| async move {
                     let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                         Ok(state) => state,
                         Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
@@ -637,7 +638,7 @@ mod tests {
                 client_state_ptr: ::pyroduct::PyroViewPtr,
                 input_ptr: ::pyroduct::PyroViewPtr,
             ) -> ::pyroduct::PyroVecPtr {
-                ::pyroduct::ffi::guest::execute_safe(|| { 
+                ::pyroduct::ffi::guest::execute_safe(|| {
                     let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                         Ok(state) => state,
                         Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
@@ -719,7 +720,7 @@ mod tests {
                 client_state_ptr: ::pyroduct::PyroViewPtr,
                 input_ptr: ::pyroduct::PyroViewPtr,
             ) -> ::pyroduct::ffi::FuturePyroVec {
-                ::pyroduct::ffi::guest::execute_safe_async(|| async move { 
+                ::pyroduct::ffi::guest::execute_safe_async(|| async move {
                     let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                         Ok(state) => state,
                         Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
