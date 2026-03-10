@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use wasmtime::{ExternType, Instance, Module, Store, TypedFunc, ValType};
 
-use crate::pipeline::wasm::WasmError;
+use crate::module::WasmError;
 
 
 // ---------------------------------------------------------------------------

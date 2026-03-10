@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::sync::Weak;
+use std::{collections::HashMap, sync::Mutex};
 use std::ops::Deref;
 use std::path::Path;
 use dashmap::DashMap;
@@ -164,6 +165,8 @@ pub fn scan_pyro_symbols(path: &Path) -> Result<Vec<ScannedSymbol>, CapabilityLo
 // Library loader
 // =============================================================================
 
+static LOADED_LIBRARIES: LazyLock<Mutex<HashMap<String, Weak<CapabilityLibrary>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub struct CapabilityLibrary {
     pub id: i64,
@@ -172,7 +175,19 @@ pub struct CapabilityLibrary {
 }
 
 impl CapabilityLibrary {
-    pub fn load(name: String, path: &Path) -> Result<Self, CapabilityLoading> {
+    pub async fn load(name: String, path: &Path) -> Result<Arc<Self>, CapabilityLoading> {
+        LOADED_LIBRARIES.clear_poison();
+        let mut libraries = LOADED_LIBRARIES.lock().unwrap();
+        if let Some(lib) = libraries.get(&name).map(|w| w.upgrade()).flatten() {
+            Ok(lib)
+        } else {
+            let lib = Arc::new(Self::load_inter(&name, path)?);
+            libraries.insert(name, Arc::downgrade(&lib));
+            Ok(lib)
+        }
+    }
+
+    fn load_inter(name: &String, path: &Path) -> Result<Self, CapabilityLoading> {
         let path_str = path.display().to_string();
 
         // 1. Scan
@@ -183,13 +198,13 @@ impl CapabilityLibrary {
         }
 
         // 2. Load
-        let library = Arc::new(unsafe { Library::new(path) }.map_err(|e| {
-            CapabilityLoading::LibraryOpen {
-                path: path_str.clone(),
-                reason: e.to_string(),
-            }
-        })?);
-        let id = NEXT_LIB_ID.fetch_add(1, Ordering::SeqCst);
+            let library = Arc::new(unsafe { Library::new(path) }.map_err(|e| {
+                CapabilityLoading::LibraryOpen {
+                    path: path_str.clone(),
+                    reason: e.to_string(),
+                }
+            })?);
+            let id = NEXT_LIB_ID.fetch_add(1, Ordering::SeqCst);
 
         // 3. Register
         let mut capabilities = HashMap::with_capacity(pyro_symbols.len());
@@ -227,7 +242,7 @@ impl CapabilityLibrary {
             return Err(CapabilityLoading::NoCapabilitiesFound { path: path_str });
         }
 
-        Ok(Self { id, name, capabilities })
+        Ok(Self { id, name: name.clone(), capabilities })
     }
 
     /// Iterates through the provided configuration map, serializes the config data,

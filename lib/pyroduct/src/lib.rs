@@ -239,6 +239,7 @@ pub mod panic;
 pub mod rkyv_8;
 pub mod value;
 pub mod vec_buf;
+pub mod module;
 mod view;
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod wasm;

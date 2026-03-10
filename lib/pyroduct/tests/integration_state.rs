@@ -1,5 +1,5 @@
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-use pyroduct::{PyroRow, pipeline::{ModuleConfig, Pipeline, PipelineConfig, PipelineDef}};
+use pyroduct::{PyroRow, module::ModuleConfig, pipeline::{Pipeline, PipelineConfig, PipelineFactory}};
 use std::{collections::HashMap, path::Path};
 
 /// Test that capability state is preserved across multiple calls to the same module instance.
@@ -16,18 +16,20 @@ async fn test_capability_state_preservation() {
     let cap_path = Path::new("../../capabilities/state/");
 
     let config = PipelineConfig {
-        libraries: HashMap::from([("state".to_string(), cap_path.to_path_buf())]),
-        modules: HashMap::from([
-            ("state_mod".to_string(), ModuleConfig {
-                path: Path::new("../../modules/cap_state/").to_path_buf(),
-                capabilities: HashMap::new(),
-            })
-        ]),
-        pipeline: vec!["state_mod".to_string()],
+        pipeline: vec![
+            ModuleConfig {
+                path: Path::new("../../modules/state/").to_path_buf(),
+                libraries: vec![cap_path.to_path_buf()],
+                configurations: HashMap::from([(
+                    "state".to_string(),
+                    None,
+                )]),
+            }
+        ],
     };
 
-    let pipeline_def = PipelineDef::load(&config).await.unwrap();
-    let mut pipeline = Pipeline::new(pipeline_def).await.unwrap();
+    let mut factory = PipelineFactory::load(&config).await.unwrap();
+    let mut pipeline = factory.build().await.unwrap();
 
     let result1 = pipeline.process(&PyroRow::from([("input", "0".into())])).await;
     let row1 = result1.row().unwrap();

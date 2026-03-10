@@ -5,13 +5,11 @@ use arrow::array::RecordBatch;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, error, info, instrument, warn};
-use wasmtime::Module as WasmtimeModule;
 
-use crate::pipeline::wasm::{PyroEngine, PyroFailure, PyroInstance, PyroFactory, PyroLogs, PyroModule, PyroSuccess};
+use crate::module::{PyroFailure, PyroInstance, PyroLogs, PyroSuccess};
 use crate::value::PyroRow;
 use crate::value::arrow::{PreBatch, Rowable};
 
-use super::pipeline::PipelineDef;
 use super::{PipelineError, PipelineResult};
 
 // =============================================================================
@@ -71,39 +69,10 @@ pub fn extract_at_batch(executions: &[PipelineExecution], step_index: usize) -> 
 }
 
 pub struct Pipeline {
-    steps: Vec<PyroInstance>,
+    pub steps: Vec<PyroInstance>,
 }
 
 impl Pipeline {
-    /// Build a pipeline from a fully-loaded `PipelineDef`.
-    ///
-    /// Creates one `PyroEngine` and one `PyroLinker` (with all capabilities
-    /// linked), then compiles and instantiates each wasm module in order.
-    pub async fn new(def: PipelineDef) -> PipelineResult<Self> {
-        let engine = PyroEngine::new()?;
-
-        let mut steps = Vec::with_capacity(def.pipeline.len());
-
-        for (index, module_def) in def.pipeline.into_iter().enumerate() {
-            debug!(index, "Compiling wasm module");
-
-            let wasm_module = WasmtimeModule::from_binary(engine.engine(), &module_def.binary)
-                .map_err(|e| {
-                    PipelineError::Config(format!(
-                        "Failed to compile WASM for module: {}",
-                        e
-                    ))
-                })?;
-            let pyro_module = PyroModule::new(wasm_module)?;
-            let linker = PyroFactory::new(engine.engine(), module_def.capabilities, pyro_module)?;
-
-            let instance = PyroInstance::new(&engine, linker).await?;
-            steps.push(instance);
-        }
-
-        Ok(Self { steps })
-    }
-
     /// Run the input through every step in sequence.
     ///
     /// Returns `Ok(Ok(row))` on success, `Ok(Err(failure))` if a module

@@ -1,5 +1,5 @@
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-use pyroduct::{PyroRow, pipeline::{ModuleConfig, Pipeline, PipelineConfig, PipelineDef}};
+use pyroduct::{PyroRow, module::ModuleConfig, pipeline::{PipelineConfig, PipelineFactory}};
 use serde_json::json;
 use std::{collections::HashMap, path::Path};
 
@@ -18,24 +18,23 @@ async fn test_capability_configuration_respect() {
     let cap_path = Path::new("../../capabilities/config/");
     
     let config = PipelineConfig {
-        libraries: HashMap::from([("config".to_string(), cap_path.to_path_buf())]),
-        modules: HashMap::from([
-            ("config_mod".to_string(), ModuleConfig {
+        pipeline: vec![
+            ModuleConfig {
                 path: Path::new("../../modules/cap_config/").to_path_buf(),
-                capabilities: HashMap::from([(
+                libraries: vec![cap_path.to_path_buf()],
+                configurations: HashMap::from([(
                     "config".to_string(),
                     json!({
                         "uppercase": true,
                         "suffix": "!!!"
                     }),
                 )]),
-            })
-        ]),
-        pipeline: vec!["config_mod".to_string()],
+            }
+        ],
     };
 
-    let pipeline_def = PipelineDef::load(&config).await.unwrap();
-    let mut pipeline = Pipeline::new(pipeline_def).await.unwrap();
+    let mut factory = PipelineFactory::load(&config).await.unwrap();
+    let mut pipeline = factory.build().await.unwrap();
 
     let input = PyroRow::from([("input", "hello".into())]);
     let result = pipeline.process(&input).await;

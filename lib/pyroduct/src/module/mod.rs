@@ -1,3 +1,4 @@
+// lib/pyroduct/src/pipeline/wasm/mod.rs
 //! Host-side harness for calling the wasm module's main/entry function.
 //!
 //! `PyroInstance` owns the `Store` and `Instance` and provides methods to:
@@ -25,7 +26,7 @@ use crate::header::{DataStatus, PyroHeader};
 use crate::{Bridgeable, CapturedError, ParseError, PyroError, PyroRow};
 use crate::ffi::ForeignObject;
 use crate::ffi::host::CapabilityLibrary;
-use crate::pipeline::wasm::call::PyroCallIo;
+use crate::module::call::PyroCallIo;
 use crate::rkyv_8::RkyvReceiver;
 use crate::{
     header::PyroData,
@@ -34,7 +35,6 @@ use crate::{
 
 
 mod call;
-mod linker;
 mod state;
 #[cfg(test)]
 mod tests;
@@ -160,6 +160,7 @@ impl PyroFactory {
         let objects = self.create_capabilities().await?;
         let mut linker = Linker::new(&self.engine);
 
+        Self::link_logger(&mut linker)?;
         Self::link_capabilities(&mut linker, &objects)?;
         let instance = linker
             .instantiate_async(&mut store, self.module.module())
@@ -181,7 +182,7 @@ impl PyroFactory {
         })
     }
 
-    fn link_logger(linker: &mut Linker<PyroState>, ) -> Result<(), WasmError> {
+    fn link_logger(linker: &mut Linker<PyroState>) -> Result<(), WasmError> {
         linker
             .func_wrap(
                 "env",
@@ -409,4 +410,57 @@ pub struct ModuleConfig {
     /// Per-class capability configuration. Keys are class names.
     #[serde(default)]
     pub configurations: HashMap<String, serde_json::Value>,
+}
+
+impl ModuleConfig {
+    pub async fn load_factory(&self) -> Result<PyroFactory, WasmError> {
+        let mut config = wasmtime::Config::new();
+        config.async_support(true);
+        let engine = Engine::new(&config).map_err(|e| WasmError::EngineError(e.to_string()))?;
+
+        let wasm_path = self.path.join("artifacts").join("mod.wasm");
+        let binary = std::fs::read(&wasm_path).map_err(|e| {
+            WasmError::InstantiationFailed(format!("Failed to read WASM at {}: {}", wasm_path.display(), e))
+        })?;
+
+        let wasmtime_module = wasmtime::Module::from_binary(&engine, &binary).map_err(|e| {
+            WasmError::InstantiationFailed(format!("Failed to compile WASM: {}", e))
+        })?;
+        let pyro_module = PyroModule::new(wasmtime_module)?;
+
+        let mut libs = Vec::new();
+        #[cfg(target_os = "linux")]
+        let lib_file = "lib.so";
+        #[cfg(target_os = "macos")]
+        let lib_file = "lib.dylib";
+        #[cfg(target_os = "windows")]
+        let lib_file = "lib.dll";
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+        let lib_file = "lib.so";
+
+        for lib_path in &self.libraries {
+            let artifact_path = lib_path.join("artifacts").join(lib_file);
+            let lib_name = lib_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            
+            let library = CapabilityLibrary::load(lib_name, &artifact_path).await.map_err(|e| {
+                WasmError::InstantiationFailed(format!(
+                    "Failed to load capability library at {}: {}",
+                    artifact_path.display(),
+                    e
+                ))
+            })?;
+            libs.push(library);
+        }
+
+        Ok(PyroFactory {
+            engine,
+            libraries: libs,
+            configurations: self.configurations.clone(),
+            module: pyro_module,
+        })
+    }
 }
