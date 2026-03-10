@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use serde::Deserialize;
 
 use crate::{module::{ModuleConfig, PyroFactory}, pipeline::Pipeline};
@@ -11,6 +13,22 @@ use super::PipelineError;
 #[derive(Deserialize, Debug)]
 pub struct PipelineConfig {
     pub pipeline: Vec<ModuleConfig>,
+}
+
+impl PipelineConfig {
+    pub fn repair_relative(&mut self, config_dir: &Path) {
+        // Resolve relative paths
+        for module in self.pipeline.iter_mut() {
+            for path in module.libraries.iter_mut() {
+                if path.is_relative() {
+                    *path = config_dir.join(&path);
+                }
+            }
+            if module.path.is_relative() {
+                module.path = config_dir.join(&module.path);
+            }
+        }
+    }
 }
 
 

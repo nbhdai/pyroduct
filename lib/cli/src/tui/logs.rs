@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent};
-use pyroduct::pipeline::wasm::PyroLogs;
+use pyroduct::module::PyroLogs;
 use ratatui::{
     layout::Rect,
     style::{Color, Style},

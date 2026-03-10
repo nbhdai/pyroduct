@@ -2,8 +2,9 @@ use std::sync::Arc;
 use arrow::array::RecordBatch;
 use arrow::datatypes::Schema;
 use crossterm::event::{KeyCode, KeyEvent};
-use pyroduct::pipeline::{wasm::PyroLogs, wasm_execute::extract_upto_batch};
+use pyroduct::pipeline::wasm_execute::extract_upto_batch;
 use pyroduct::pipeline::wasm_execute::PipelineExecution;
+use pyroduct::module::PyroLogs;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     Frame,

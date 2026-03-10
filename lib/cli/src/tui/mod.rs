@@ -1,3 +1,4 @@
+// lib/cli/src/tui/mod.rs
 use std::{
     fs,
     io::stdout,
@@ -66,13 +67,11 @@ impl App {
         let config = crate::run::load_config(yaml_path)?;
 
         let mut steps = Vec::new();
-        for module_name in &config.pipeline {
-            let mod_conf = config
-                .modules
-                .get(module_name)
-                .ok_or_else(|| anyhow::anyhow!("Module '{}' not in [modules]", module_name))?;
+        for mod_conf in &config.pipeline {
+            
 
             let path = mod_conf.path.clone();
+            let name = path.components().last().expect("Non empty path").as_os_str().display().to_string();
             let src_path = path.join("src/lib.rs");
 
             let source_code = fs::read_to_string(&src_path)
@@ -80,7 +79,7 @@ impl App {
 
             // Extract capability configs as (name, yaml_string) pairs
             let cap_configs: Vec<(String, String)> = mod_conf
-                .capabilities
+                .configurations
                 .iter()
                 .map(|(name, value)| {
                     let yaml = serde_yaml::to_string(value).unwrap_or_default();
@@ -89,7 +88,7 @@ impl App {
                 .collect();
 
             steps.push(ModuleStep {
-                name: module_name.clone(),
+                name,
                 path,
                 source_code,
                 cap_configs,
@@ -159,8 +158,8 @@ impl App {
 
     async fn run_pipeline_inner(&mut self) -> Result<()> {
         let config = crate::run::load_config(&self.pipeline.yaml_path)?;
-        let def = pyroduct::pipeline::PipelineDef::load(&config).await?;
-        let pipeline = pyroduct::pipeline::Pipeline::new(def).await?;
+        let mut factory = pyroduct::pipeline::PipelineFactory::load(&config).await?;
+        let pipeline = factory.build().await?;
         let pool = pyroduct::pipeline::PipelinePool::new(vec![pipeline]);
         
         let (successes, failures) = pool.process_batch(&self.pipeline.input).await?;

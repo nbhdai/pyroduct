@@ -1,5 +1,5 @@
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-use pyroduct::{PyroRow, module::ModuleConfig, pipeline::{Pipeline, PipelineConfig, PipelineFactory}};
+use pyroduct::{PyroRow, module::ModuleConfig, pipeline::{PipelineConfig, PipelineFactory}};
 use std::{collections::HashMap, path::Path};
 
 /// Test that capability state is preserved across multiple calls to the same module instance.

@@ -24,10 +24,10 @@ async fn test_capability_configuration_respect() {
                 libraries: vec![cap_path.to_path_buf()],
                 configurations: HashMap::from([(
                     "config".to_string(),
-                    json!({
+                    Some(json!({
                         "uppercase": true,
                         "suffix": "!!!"
-                    }),
+                    })),
                 )]),
             }
         ],

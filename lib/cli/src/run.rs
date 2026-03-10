@@ -8,7 +8,7 @@ use fs_err as fs;
 use pyroduct::value::arrow::PreBatch;
 use pyroduct::{
     value::PyroRow,
-    pipeline::{Pipeline, PipelineConfig, PipelineDef, PipelinePool},
+    pipeline::{PipelineConfig, PipelineFactory, PipelinePool},
 };
 
 // Use arrow-file to handle reading/writing data formats
@@ -49,16 +49,18 @@ pub fn load_config(config_path: &Path) -> Result<PipelineConfig> {
 
     let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
     // Resolve relative paths
-    for path in config.libraries.values_mut() {
-        if path.is_relative() {
-            *path = config_dir.join(&path);
+    for module in config.pipeline.iter_mut() {
+        for path in module.libraries.iter_mut() {
+            if path.is_relative() {
+                *path = config_dir.join(&path);
+            }
+        }
+        if module.path.is_relative() {
+            module.path = config_dir.join(&module.path);
         }
     }
-    for mod_conf in config.modules.values_mut() {
-        if mod_conf.path.is_relative() {
-            mod_conf.path = config_dir.join(&mod_conf.path);
-        }
-    }
+    
+    
     Ok(config)
 }
 
@@ -66,8 +68,8 @@ pub fn load_config(config_path: &Path) -> Result<PipelineConfig> {
 pub async fn run(config_path: &Path, input_json: &str) -> Result<()> {
     // 1. Setup Pipeline (Single instance, no pool needed)
     let config = load_config(config_path)?;
-    let pipeline_def = PipelineDef::load(&config).await?;
-    let mut pipeline = Pipeline::new(pipeline_def).await?;
+    let mut factory = PipelineFactory::load(&config).await?;
+    let mut pipeline = factory.build().await?;
 
     // 2. Parse Input directly to PyroRow
     tracing::debug!("Parsing input JSON directly to PyroRow");
@@ -109,7 +111,7 @@ pub async fn run(config_path: &Path, input_json: &str) -> Result<()> {
 
     if has_logs {
         println!("\n=== Logs ===");
-        let print_step_logs = |step_idx: usize, logs: &pyroduct::pipeline::wasm::PyroLogs| {
+        let print_step_logs = |step_idx: usize, logs: &pyroduct::module::PyroLogs| {
             if logs.module_logs.is_empty() && logs.capability_logs.is_empty() {
                 return;
             }
@@ -150,9 +152,9 @@ pub async fn run_batch(
     format: OutputFormat,
 ) -> Result<()> {
     let config = load_config(config_path)?;
-    let pipeline_def = PipelineDef::load(&config).await?;
+    let mut factory = PipelineFactory::load(&config).await?;
 
-    let pipeline = Pipeline::new(pipeline_def).await?;
+    let pipeline = factory.build().await?;
     let pool = PipelinePool::new(vec![pipeline]);
 
     tracing::info!("Reading input file: {:?}", input_file);

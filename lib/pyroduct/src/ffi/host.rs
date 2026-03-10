@@ -295,7 +295,7 @@ impl CapabilityLibrary {
     pub async fn instantiate_class(
         &self,
         class: &str,
-        config: &serde_json::Value,
+        config: Option<&serde_json::Value>,
     ) -> Result<ForeignObject, CapabilityLoading> {
         let cap_class = self.capabilities.get(class).ok_or_else(|| {
             CapabilityLoading::CapabilityNotFound {
@@ -303,7 +303,7 @@ impl CapabilityLibrary {
             }
         })?;
 
-        let vec = if let Some(config_val) = config.get(class) {
+        let vec = if let Some(config_val) = config {
             let writer = Json::<serde_json::Value>::new_writer(PyroVec::with_capacity(300));
 
                 writer

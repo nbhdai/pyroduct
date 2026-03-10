@@ -113,7 +113,7 @@ pub struct PyroFailure {
 /// a clean `(&T, PyroView)` signature — all wasm memory plumbing is hidden.
 pub struct PyroFactory {
     engine: Engine,
-    configurations: HashMap<String, serde_json::Value>,
+    configurations: HashMap<String, Option<serde_json::Value>>,
     libraries: Vec<Arc<CapabilityLibrary>>,
     module: PyroModule,
 }
@@ -122,7 +122,7 @@ impl PyroFactory {
     /// Create a new linker for the given engine.
     pub fn new(
         libraries: Vec<Arc<CapabilityLibrary>>,
-        configurations: HashMap<String, serde_json::Value>,
+        configurations: HashMap<String, Option<serde_json::Value>>,
         module: PyroModule,
     ) -> Result<Self, WasmError> {
         let mut config = wasmtime::Config::new();
@@ -143,7 +143,7 @@ impl PyroFactory {
         let mut objects = HashMap::new();
         for (class, config) in &self.configurations {
             for library in self.libraries.iter() {
-                if let Ok(object) = library.instantiate_class(class, config).await {
+                if let Ok(object) = library.instantiate_class(class, config.as_ref()).await {
                     objects.insert(class.clone(), object);
                 }
             }
@@ -409,7 +409,7 @@ pub struct ModuleConfig {
     pub libraries: Vec<PathBuf>,
     /// Per-class capability configuration. Keys are class names.
     #[serde(default)]
-    pub configurations: HashMap<String, serde_json::Value>,
+    pub configurations: HashMap<String, Option<serde_json::Value>>,
 }
 
 impl ModuleConfig {
