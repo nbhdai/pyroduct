@@ -5,7 +5,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use pyroduct::ffi::host::{create_log, destroy_log, log_callback};
+use pyroduct::module::capability::{create_log, destroy_log, log_callback};
 
 // =============================================================================
 // Helpers

@@ -20,7 +20,7 @@ use crate::json::Json;
 // =============================================================================
 
 #[derive(Error, Debug)]
-pub enum CapabilityLoading {
+pub enum CapabilityError {
     #[error("Failed to load library '{path}': {reason}")]
     LibraryOpen { path: String, reason: String },
 
@@ -124,15 +124,15 @@ pub struct ScannedSymbol {
     pub address: u64,
 }
 
-pub fn scan_pyro_symbols(path: &Path) -> Result<Vec<ScannedSymbol>, CapabilityLoading> {
+pub fn scan_pyro_symbols(path: &Path) -> Result<Vec<ScannedSymbol>, CapabilityError> {
     let path_str = path.display().to_string();
 
-    let bin_data = std::fs::read(path).map_err(|e| CapabilityLoading::FileRead {
+    let bin_data = std::fs::read(path).map_err(|e| CapabilityError::FileRead {
         path: path_str.clone(),
         reason: e.to_string(),
     })?;
 
-    let file = object::File::parse(&*bin_data).map_err(|e| CapabilityLoading::BinaryParse {
+    let file = object::File::parse(&*bin_data).map_err(|e| CapabilityError::BinaryParse {
         path: path_str.clone(),
         reason: e.to_string(),
     })?;
@@ -175,7 +175,7 @@ pub struct CapabilityLibrary {
 }
 
 impl CapabilityLibrary {
-    pub async fn load(name: String, path: &Path) -> Result<Arc<Self>, CapabilityLoading> {
+    pub async fn load(name: String, path: &Path) -> Result<Arc<Self>, CapabilityError> {
         LOADED_LIBRARIES.clear_poison();
         let mut libraries = LOADED_LIBRARIES.lock().unwrap();
         if let Some(lib) = libraries.get(&name).map(|w| w.upgrade()).flatten() {
@@ -187,19 +187,19 @@ impl CapabilityLibrary {
         }
     }
 
-    fn load_inter(name: &String, path: &Path) -> Result<Self, CapabilityLoading> {
+    fn load_inter(name: &String, path: &Path) -> Result<Self, CapabilityError> {
         let path_str = path.display().to_string();
 
         // 1. Scan
         let pyro_symbols = scan_pyro_symbols(path)?;
 
         if pyro_symbols.is_empty() {
-            return Err(CapabilityLoading::NoCapabilitiesFound { path: path_str });
+            return Err(CapabilityError::NoCapabilitiesFound { path: path_str });
         }
 
         // 2. Load
             let library = Arc::new(unsafe { Library::new(path) }.map_err(|e| {
-                CapabilityLoading::LibraryOpen {
+                CapabilityError::LibraryOpen {
                     path: path_str.clone(),
                     reason: e.to_string(),
                 }
@@ -228,7 +228,7 @@ impl CapabilityLibrary {
 
             let class =
                 unsafe { ForeignClass::from_export(name.clone(), library.clone(), export) }.map_err(|e| {
-                    CapabilityLoading::Registration {
+                    CapabilityError::Registration {
                         path: path_str.clone(),
                         symbol: sym.name.clone(),
                         reason: e.to_string(),
@@ -239,7 +239,7 @@ impl CapabilityLibrary {
         }
 
         if capabilities.is_empty() {
-            return Err(CapabilityLoading::NoCapabilitiesFound { path: path_str });
+            return Err(CapabilityError::NoCapabilitiesFound { path: path_str });
         }
 
         Ok(Self { id, name: name.clone(), capabilities })
@@ -250,11 +250,11 @@ impl CapabilityLibrary {
     pub async fn instantiate_from_config(
         &self,
         config: &HashMap<String, serde_json::Value>,
-    ) -> Result<Capability, CapabilityLoading> {
+    ) -> Result<Capability, CapabilityError> {
         let mut objects = HashMap::new();
         for class_name in config.keys() {
             self.capabilities.get(class_name).ok_or_else(|| {
-                CapabilityLoading::CapabilityNotFound {
+                CapabilityError::CapabilityNotFound {
                     name: class_name.clone(),
                 }
             })?;
@@ -267,7 +267,7 @@ impl CapabilityLibrary {
 
                     writer
                         .write(config_val)
-                        .map_err(|e| CapabilityLoading::ConfigSerialization {
+                        .map_err(|e| CapabilityError::ConfigSerialization {
                             class: cap_name.clone(),
                             reason: e.to_string(),
                         })?
@@ -278,7 +278,7 @@ impl CapabilityLibrary {
             let log_channel = create_log(self.id, object_id, 100);
             // 3. Call create_instance on the ForeignClass
             let handle = cap_class.create_instance(vec.view(), object_id, log_channel).await.map_err(|e| {
-                CapabilityLoading::Instantiation {
+                CapabilityError::Instantiation {
                     class: cap_name.clone(),
                     reason: e.to_string(),
                 }
@@ -296,9 +296,9 @@ impl CapabilityLibrary {
         &self,
         class: &str,
         config: Option<&serde_json::Value>,
-    ) -> Result<ForeignObject, CapabilityLoading> {
+    ) -> Result<ForeignObject, CapabilityError> {
         let cap_class = self.capabilities.get(class).ok_or_else(|| {
-            CapabilityLoading::CapabilityNotFound {
+            CapabilityError::CapabilityNotFound {
                 name: class.to_string(),
             }
         })?;
@@ -308,7 +308,7 @@ impl CapabilityLibrary {
 
                 writer
                     .write(config_val)
-                    .map_err(|e| CapabilityLoading::ConfigSerialization {
+                    .map_err(|e| CapabilityError::ConfigSerialization {
                         class: class.to_string(),
                         reason: e.to_string(),
                     })?
@@ -322,7 +322,7 @@ impl CapabilityLibrary {
         let log_channel = create_log(self.id, object_id, 100);
         // 3. Call create_instance on the ForeignClass
         let handle = cap_class.create_instance(vec.view(), object_id, log_channel).await.map_err(|e| {
-            CapabilityLoading::Instantiation {
+            CapabilityError::Instantiation {
                 class: class.to_string(),
                 reason: e.to_string(),
             }

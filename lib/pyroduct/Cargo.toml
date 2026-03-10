@@ -9,6 +9,7 @@ edition.workspace = true
 ffi_host = []
 module = []
 wasm_host = []
+wasm = []
 
 [dependencies]
 pyro-derive.workspace = true
@@ -25,7 +26,6 @@ serde_json.workspace = true
 half.workspace = true
 paste = "1.0.15"
 chrono = { version = "0.4.43", default-features = false, features = ["alloc"] }
-
 
 
 tracing-subscriber.workspace = true
@@ -51,3 +51,16 @@ trybuild.workspace = true
 macrotest = "1.0"
 
 tracing-test.workspace = true
+
+[[test]]
+name = "derive_tests"
+# Specify the exact features required to run the macro compile tests
+required-features = ["module", "ffi_host"] 
+
+[[test]]
+name = "integration_state"
+required-features = ["ffi_host"]
+
+[[test]]
+name = "integration_config"
+required-features = ["ffi_host"]

@@ -755,7 +755,7 @@ impl Drop for LogTaskHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ffi::host::create_log;
+    use crate::module::capability::create_log;
     use crate::header::PyroHeader;
     use std::cell::RefCell;
     use std::ptr;

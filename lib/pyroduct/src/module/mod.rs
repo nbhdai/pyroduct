@@ -25,7 +25,6 @@ use crate::format::Receiver;
 use crate::header::{DataStatus, PyroHeader};
 use crate::{Bridgeable, CapturedError, ParseError, PyroError, PyroRow};
 use crate::ffi::ForeignObject;
-use crate::ffi::host::CapabilityLibrary;
 use crate::module::call::PyroCallIo;
 use crate::rkyv_8::RkyvReceiver;
 use crate::{
@@ -34,12 +33,14 @@ use crate::{
 };
 
 
+pub mod capability;
 mod call;
 mod state;
 #[cfg(test)]
 mod tests;
 
 pub use state::{PyroState, PyroModule};
+use capability::CapabilityLibrary;
 
 use thiserror::Error;
 
