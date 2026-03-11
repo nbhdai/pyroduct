@@ -78,10 +78,6 @@ pub struct CapturedError {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 
-    /// Additional context or causal chain
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context: Option<String>,
-
     /// Full stack trace, captured on demand
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stack_trace: Option<String>,
@@ -100,7 +96,6 @@ impl CapturedError {
             line: 0,
             column: 0,
             error: None,
-            context: None,
             stack_trace: None,
             library: APP_IDENTITY.get().map(|l| l.0.clone()),
         }
@@ -141,11 +136,6 @@ impl CapturedError {
         self
     }
 
-    pub fn with_context<E: fmt::Display>(mut self, context: E) -> Self {
-        self.context = Some(context.to_string());
-        self
-    }
-
     pub fn encode(&self) -> PyroVec {
         let mut vec = PyroVec::with_capacity(predict_captured_error_size(&self));
         serde_json::to_writer(&mut vec, self)
@@ -177,11 +167,6 @@ fn predict_captured_error_size(err: &CapturedError) -> usize {
         None => {}                      // null
     }
 
-    match &err.context {
-        Some(s) => size += s.len() + 2,
-        None => {}
-    }
-
     if let Some(lib) = &err.library {
         // Keys overhead: {"meta":"","name":"","version":"","authors":"","filename":""}
         // Approx 60 chars for keys/quotes/commas
@@ -192,4 +177,151 @@ fn predict_captured_error_size(err: &CapturedError) -> usize {
     }
 
     size
+}
+
+/// Bails out with a `CapturedError`, automatically capturing the location and backtrace.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// bail!("Something went wrong: {}", id);
+/// bail!(io_err, "Failed to read file");
+/// ```
+#[macro_export]
+macro_rules! capture {
+    ($msg:literal $(,)?) => {
+        $crate::CapturedError::new($msg)
+            .with_location(::std::panic::Location::caller())
+            .with_backtrace(::std::backtrace::Backtrace::capture())
+    };
+    ($err:expr, $msg:literal $(,)?) => {
+        $crate::CapturedError::new($msg)
+            .with_source($err)
+            .with_location(::std::panic::Location::caller())
+            .with_backtrace(::std::backtrace::Backtrace::capture())
+    };
+    ($err:expr, $fmt:expr, $($arg:tt)*) => {
+        $crate::CapturedError::new(format!($fmt, $($arg)*))
+            .with_source($err)
+            .with_location(::std::panic::Location::caller())
+            .with_backtrace(::std::backtrace::Backtrace::capture())
+    };
+    ($fmt:expr, $($arg:tt)*) => {
+        $crate::CapturedError::new(format!($fmt, $($arg)*))
+            .with_location(::std::panic::Location::caller())
+            .with_backtrace(::std::backtrace::Backtrace::capture())
+    };
+}
+
+/// Bails out with a `CapturedError`, automatically capturing the location and backtrace.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// bail!("Something went wrong: {}", id);
+/// bail!(io_err, "Failed to read file");
+/// ```
+#[macro_export]
+macro_rules! bail {
+    ($msg:literal $(,)?) => {
+        return Err($crate::CapturedError::new($msg)
+            .with_location(::std::panic::Location::caller())
+            .with_backtrace(::std::backtrace::Backtrace::capture()))
+    };
+    ($err:expr, $msg:literal $(,)?) => {
+        return Err($crate::CapturedError::new($msg)
+            .with_source($err)
+            .with_location(::std::panic::Location::caller())
+            .with_backtrace(::std::backtrace::Backtrace::capture()))
+    };
+    ($err:expr, $fmt:expr, $($arg:tt)*) => {
+        return Err($crate::CapturedError::new(format!($fmt, $($arg)*))
+            .with_source($err)
+            .with_location(::std::panic::Location::caller())
+            .with_backtrace(::std::backtrace::Backtrace::capture()))
+    };
+    ($fmt:expr, $($arg:tt)*) => {
+        return Err($crate::CapturedError::new(format!($fmt, $($arg)*))
+            .with_location(::std::panic::Location::caller())
+            .with_backtrace(::std::backtrace::Backtrace::capture()))
+    };
+}
+
+/// Extension trait to convert `Result<T, E>` and `Option<T>` into `Result<T, CapturedError>` with context.
+pub trait Capture<T> {
+    /// Adds context to the error, converting it into a `CapturedError`.
+    #[track_caller]
+    fn context<C>(self, context: C) -> Result<T, CapturedError>
+    where
+        C: Display;
+
+    /// Adds lazily-evaluated context to the error, converting it into a `CapturedError`.
+    #[track_caller]
+    fn with_context<C, F>(self, f: F) -> Result<T, CapturedError>
+    where
+        C: Display,
+        F: FnOnce() -> C;
+}
+
+impl<T, E> Capture<T> for Result<T, E>
+where
+    E: std::error::Error,
+{
+    #[track_caller]
+    fn context<C>(self, context: C) -> Result<T, CapturedError>
+    where
+        C: Display,
+    {
+        match self {
+            Ok(t) => Ok(t),
+            Err(e) => Err(CapturedError::new(context)
+                .with_source(e)
+                .with_location(std::panic::Location::caller())
+                .with_backtrace(std::backtrace::Backtrace::capture())),
+        }
+    }
+
+    #[track_caller]
+    fn with_context<C, F>(self, f: F) -> Result<T, CapturedError>
+    where
+        C: Display,
+        F: FnOnce() -> C,
+    {
+        match self {
+            Ok(t) => Ok(t),
+            Err(e) => Err(CapturedError::new(f())
+                .with_source(e)
+                .with_location(std::panic::Location::caller())
+                .with_backtrace(std::backtrace::Backtrace::capture())),
+        }
+    }
+}
+
+impl<T> Capture<T> for Option<T> {
+    #[track_caller]
+    fn context<C>(self, context: C) -> Result<T, CapturedError>
+    where
+        C: Display,
+    {
+        match self {
+            Some(t) => Ok(t),
+            None => Err(CapturedError::new(context)
+                .with_location(std::panic::Location::caller())
+                .with_backtrace(std::backtrace::Backtrace::capture())),
+        }
+    }
+
+    #[track_caller]
+    fn with_context<C, F>(self, f: F) -> Result<T, CapturedError>
+    where
+        C: Display,
+        F: FnOnce() -> C,
+    {
+        match self {
+            Some(t) => Ok(t),
+            None => Err(CapturedError::new(f())
+                .with_location(std::panic::Location::caller())
+                .with_backtrace(std::backtrace::Backtrace::capture())),
+        }
+    }
 }

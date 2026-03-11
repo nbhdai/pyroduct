@@ -254,7 +254,7 @@ pub mod pipeline;
 pub mod ffi;
 
 pub use bridgeable::{Bridgeable, BridgeableResult};
-pub use captured::CapturedError;
+pub use captured::{Capture, CapturedError};
 pub use error::PyroError;
 pub use header::{MAGIC_VAL, ParseError};
 pub use rkyv::rancor::Error as RancorError;

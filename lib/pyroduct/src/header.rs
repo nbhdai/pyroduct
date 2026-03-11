@@ -319,7 +319,6 @@ pub trait PyroData: private::Sealed + Deref<Target = [u8]> + Sized {
                 line: 0,
                 column: 0,
                 error: Some("Failed to deserialize error details".into()),
-                context: None,
                 stack_trace: None,
                 library: None,
             })
