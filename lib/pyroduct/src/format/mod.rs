@@ -247,6 +247,9 @@ pub use view::{PyroMutView, PyroView, PyroViewPtr, get_view, get_view_mut};
 #[cfg(any(feature = "host", feature = "capability"))]
 pub mod tokio;
 
+pub use serde;
+pub use serde_json;
+
 /// Derives a "Ref" struct (a view struct) and implements the `FromRow` trait.
 ///
 /// Example:
@@ -309,3 +312,27 @@ pub use pyro_derive::DeepRefArchived;
 /// // }
 /// ```
 pub use pyro_derive::ToRow;
+
+/// Derives the `TypeableRow` trait for a struct, generating a `PyroSchema` that
+/// describes its fields, their types, nullability, and any doc-comments.
+///
+/// Each field must implement `Typeable`. Struct-level and field-level `///` doc-comments
+/// are captured and embedded in the schema at compile time.
+///
+/// # Example
+/// ```rust
+/// use pyroduct::Document;
+///
+/// #[derive(Document)]
+/// /// A sensor reading.
+/// struct Reading {
+///     /// Unique sensor ID.
+///     id: u32,
+///     value: f64,
+/// }
+/// // Generates:
+/// // impl TypeableRow for Reading {
+/// //     fn schema() -> PyroSchema<'static> { ... }
+/// // }
+/// ```
+pub use pyro_derive::Document;

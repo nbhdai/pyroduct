@@ -55,7 +55,7 @@ pub fn expand(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStream> {
 
             #output_struct
 
-            let call = |input: ::pyroduct::value::PyroRow<'_>| {
+            let call = |input: ::pyroduct::PyroRow<'_>| {
                 #fn_name(#(#call_args),*).map(|result| {
                     #output_mapping
                 })
@@ -109,7 +109,7 @@ fn generate_output(
         // Pattern 1: Single named field
         OutputSpec::SingleField(field_name) => {
             let struct_def = quote! {
-                #[::pyroduct::magma]
+                #[derive(::pyroduct::format::ToRow, ::pyroduct::format::Document)]
                 struct __Output {
                     #field_name: #return_type,
                 }
@@ -156,7 +156,7 @@ fn generate_output(
                 .collect();
 
             let struct_def = quote! {
-                #[derive(::pyroduct::ToRow)]
+                #[derive(::pyroduct::format::ToRow, ::pyroduct::format::Document)]
                 struct __Output {
                     #(#field_defs,)*
                 }

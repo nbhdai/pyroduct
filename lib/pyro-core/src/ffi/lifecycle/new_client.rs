@@ -182,8 +182,8 @@ impl NewClientFn {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn #fn_ffi_name(
                 capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
-                client_state_ptr: ::pyroduct::PyroViewPtr,
-            ) -> ::pyroduct::PyroVecPtr {
+                client_state_ptr: ::pyroduct::format::PyroViewPtr,
+            ) -> ::pyroduct::format::PyroVecPtr {
                 #body
             }
         }

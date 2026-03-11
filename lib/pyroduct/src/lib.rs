@@ -22,9 +22,6 @@ pub use captured::{Capture, CapturedError};
 pub use error::PyroError;
 pub use format::{PyroRow, PyroValue};
 pub use rkyv::rancor::Error as RancorError;
-
-pub use serde;
-pub use serde_json;
 pub use tracing;
 
 // Documented by the lib.
@@ -32,8 +29,6 @@ pub use pyro_derive::bridgeable;
 
 // Documented by the lib.
 pub use pyro_derive::magma;
-
-pub use pyro_derive::Document;
 
 /// Registers the library identity and metadata for the pyro system.
 ///

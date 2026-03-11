@@ -30,12 +30,12 @@ impl CapConfig {
         // );
 
         let serde_crate: Attribute = parse_quote!(
-            #[serde(crate = "::pyroduct::serde")]
+            #[serde(crate = "::pyroduct::format::serde")]
         );
 
         // 4. Decorate with Serde attributes
         let serde_derive: Attribute = parse_quote!(
-            #[derive(::pyroduct::serde::Serialize, ::pyroduct::serde::Deserialize)]
+            #[derive(::pyroduct::format::serde::Serialize, ::pyroduct::format::serde::Deserialize)]
         );
 
         // Insert in reverse order of appearance
@@ -116,8 +116,8 @@ mod tests {
         let output = expand_config(code, DocRec::NoReq);
 
         let expected = quote! {
-            #[derive(::pyroduct::serde::Serialize, ::pyroduct::serde::Deserialize)]
-            #[serde(crate = "::pyroduct::serde")]
+            #[derive(::pyroduct:;format::serde::Serialize, ::pyroduct:;format::serde::Deserialize)]
+            #[serde(crate = "::pyroduct:;format::serde")]
             pub struct MyConfig {
                 pub host: String,
                 pub port: u16,
@@ -192,8 +192,8 @@ mod tests {
         // 3. Define Expected Output
         // Derives added, generics preserved, debug preserved.
         let expected = quote! {
-            #[derive(::pyroduct::serde::Serialize, ::pyroduct::serde::Deserialize)]
-            #[serde(crate = "::pyroduct::serde")]
+            #[derive(::pyroduct:;format::serde::Serialize, ::pyroduct:;format::serde::Deserialize)]
+            #[serde(crate = "::pyroduct:;format::serde")]
             #[derive(Clone, Debug)]
             pub struct GenericConfig<T> {
                 pub options: T,
@@ -215,8 +215,8 @@ mod tests {
 
         // 3. Define Expected Output
         let expected = quote! {
-            #[derive(::pyroduct::serde::Serialize, ::pyroduct::serde::Deserialize)]
-            #[serde(crate = "::pyroduct::serde")]
+            #[derive(::pyroduct:;format::serde::Serialize, ::pyroduct:;format::serde::Deserialize)]
+            #[serde(crate = "::pyroduct:;format::serde")]
             pub struct TupleConfig(String, u32);
         };
 
