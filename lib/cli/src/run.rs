@@ -5,10 +5,10 @@ use anyhow::{Context, Result, anyhow};
 use clap::ValueEnum;
 use fs_err as fs;
 
-use pyroduct::value::arrow::PreBatch;
 use pyroduct::{
+    PyroRow,
+    format::value::arrow::PreBatch,
     pipeline::{PipelineConfig, PipelineFactory, PipelinePool},
-    value::PyroRow,
 };
 
 // Use arrow-file to handle reading/writing data formats
@@ -249,7 +249,8 @@ pub async fn run_batch(
         if !output_dir.exists() {
             fs::create_dir_all(output_dir)?;
         }
-        let schema = pyroduct::value::PyroSchema::trusted(&successes[0].steps.last().unwrap().row)?;
+        let schema =
+            pyroduct::format::value::PyroSchema::trusted(&successes[0].steps.last().unwrap().row)?;
         let mut prebatch = PreBatch::new(schema);
         for row in successes {
             prebatch

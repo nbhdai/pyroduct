@@ -9,9 +9,8 @@ use std::task::{Context, Poll};
 use std::{fmt, slice};
 use tokio::sync::oneshot;
 
-use crate::header::PyroData;
-use crate::view::{PyroView, PyroViewPtr};
-use crate::{CapturedError, PyroError, PyroVec, PyroVecPtr};
+use crate::format::{PyroVec, PyroVecPtr, PyroView, PyroViewPtr, header::PyroData};
+use crate::{CapturedError, PyroError};
 
 pub type LogCallback = unsafe extern "C" fn(i64, u64, *const u8, usize);
 
@@ -767,7 +766,7 @@ impl Drop for LogTaskHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::header::PyroHeader;
+    use crate::format::header::PyroHeader;
     use crate::module::capability::create_log;
     use std::cell::RefCell;
     use std::ptr;

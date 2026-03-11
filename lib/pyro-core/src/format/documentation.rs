@@ -70,7 +70,7 @@ impl MagmaDocumentation {
 
     /// Phase 2: Generate the TokenStream from the intermediate representation.
     pub fn generate(&self, import_location: &Path) -> syn::Result<proc_macro2::TokenStream> {
-        let values_path = quote! { #import_location::value };
+        let values_path = quote! { #import_location::format::value };
         let name = &self.ident;
 
         // Add `Typeable` bound to all generics: impl<T: Typeable> Typeable for MyStruct<T>
@@ -136,7 +136,7 @@ impl MagmaDocumentation {
         &self,
         import_location: &Path,
     ) -> syn::Result<proc_macro2::TokenStream> {
-        let values_path = quote! { #import_location::value };
+        let values_path = quote! { #import_location::format::value };
         let ref_name = format_ident!("{}Ref", self.ident);
 
         let field_entries: Vec<proc_macro2::TokenStream> = self

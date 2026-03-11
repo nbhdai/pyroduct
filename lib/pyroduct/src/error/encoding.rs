@@ -1,9 +1,12 @@
 use std::panic::Location;
 
 use crate::{
-    CapturedError, PyroError, PyroVec,
+    CapturedError, PyroError,
     error::ErrorKind,
-    header::{DataStatus, PyroHeaderMut},
+    format::{
+        PyroVec,
+        header::{DataStatus, PyroHeaderMut},
+    },
 };
 
 impl PyroError {

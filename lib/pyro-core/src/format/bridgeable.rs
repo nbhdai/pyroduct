@@ -136,7 +136,7 @@ pub fn bridgeable(
     } = args;
 
     let mut rkyv_pass = Vec::with_capacity(5);
-    rkyv_pass.push(quote!(crate = #import_location::rkyv_8::rkyv));
+    rkyv_pass.push(quote!(crate = #import_location::format::rkyv_8::rkyv));
     if !derives_to_pass.is_empty() {
         rkyv_pass.push(quote! { attr(derive(#(#derives_to_pass),*)) });
     };
@@ -145,7 +145,7 @@ pub fn bridgeable(
         rkyv_pass.push(quote! { compare(#(#compares_to_add),*) });
     };
 
-    item.attrs.push(parse_quote!(#[derive(#import_location::rkyv_8::rkyv::Archive, #import_location::rkyv_8::rkyv::Serialize, #import_location::rkyv_8::rkyv::Deserialize)]));
+    item.attrs.push(parse_quote!(#[derive(#import_location::format::rkyv_8::rkyv::Archive, #import_location::format::rkyv_8::rkyv::Serialize, #import_location::format::rkyv_8::rkyv::Deserialize)]));
     item.attrs.push(parse_quote!(#[rkyv(#(#rkyv_pass),*)]));
 
     let (name, impl_generics, ty_generics, where_clause) = (
@@ -157,12 +157,12 @@ pub fn bridgeable(
 
     // 3. Generate UserHeaderValues + Bridgeable impls (matching common.rs)
     let bridgeable_block = quote! {
-        impl #impl_generics #import_location::format::UserHeaderValues for #name #ty_generics #where_clause {
+        impl #impl_generics #import_location::format::format::UserHeaderValues for #name #ty_generics #where_clause {
             const VERSION: u8 = 0;
         }
 
-        impl #impl_generics #import_location::Bridgeable for #name #ty_generics #where_clause {
-            type Format = #import_location::rkyv_8::Rkyv<#name #ty_generics>;
+        impl #impl_generics #import_location::format::Bridgeable for #name #ty_generics #where_clause {
+            type Format = #import_location::format::rkyv_8::Rkyv<#name #ty_generics>;
         }
     };
 

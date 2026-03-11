@@ -69,7 +69,7 @@ pub fn deep_ref(
     };
 
     let impl_owned = quote! {
-        impl #import_location::DeepRef for #struct_name {
+        impl #import_location::format::DeepRef for #struct_name {
             type Ref<'a> = #ref_struct_name<'a>;
 
             fn as_deep_ref(&self) -> Self::Ref<'_> {
@@ -124,7 +124,7 @@ pub fn deep_ref_rkyv(input: &ItemStruct, import_location: &Path) -> syn::Result<
     // 3. Generate the DeepRef implementation for the Archived struct
     let impl_archived = quote! {
         #[cfg(target_endian = "little")]
-        impl #import_location::DeepRef for #archived_struct_name {
+        impl #import_location::format::DeepRef for #archived_struct_name {
             type Ref<'a> = #ref_struct_name<'a>;
 
             fn as_deep_ref(&self) -> Self::Ref<'_> {

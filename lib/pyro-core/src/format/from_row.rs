@@ -181,7 +181,7 @@ pub fn ref_from_row(input: &ItemStruct, import_location: &Path) -> syn::Result<T
             GenericParam::Type(t) => {
                 let ident = &t.ident;
                 ref_struct_args
-                    .push(quote! { <#ident as #import_location::DeepRef>::Ref<#lifetime> });
+                    .push(quote! { <#ident as #import_location::format::DeepRef>::Ref<#lifetime> });
             }
             GenericParam::Const(c) => {
                 let ident = &c.ident;

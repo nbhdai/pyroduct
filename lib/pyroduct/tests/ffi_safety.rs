@@ -1,8 +1,10 @@
 use pyroduct::{
-    Bridgeable, BridgeableResult, CapturedError, PyroVec, bridgeable,
+    CapturedError, bridgeable,
     ffi::guest::{deserialize_input, execute_safe, serialize_output, serialize_result},
-    format::{HasReceiver, Receiver},
-    header::{DataStatus, PyroHeader},
+    format::{
+        Bridgeable, BridgeableResult, HasReceiver, PyroVec, Receiver,
+        header::{DataStatus, PyroHeader},
+    },
     panic::register_ffi_panic_hook,
 };
 

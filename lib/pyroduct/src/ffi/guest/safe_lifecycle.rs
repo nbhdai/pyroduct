@@ -6,9 +6,11 @@ use tracing::{debug, error, trace};
 
 use crate::ffi::guest::panic_wrap::get_runtime;
 use crate::ffi::{FutureInitResult, InitResult};
-use crate::header::{DataStatus, PyroHeader};
+use crate::format::{
+    PyroView, PyroViewPtr,
+    header::{DataStatus, PyroHeader},
+};
 use crate::panic::{clear_last_panic, recover_panic_info, register_ffi_panic_hook};
-use crate::view::{PyroView, PyroViewPtr};
 use crate::{CapturedError, PyroError};
 
 /// For `new` that doesn't have a config.

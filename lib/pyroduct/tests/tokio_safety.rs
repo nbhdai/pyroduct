@@ -1,4 +1,4 @@
-use pyroduct::{
+use pyroduct::format::{
     PyroVec,
     header::{DataStatus, PyroHeader, PyroHeaderMut},
     tokio::{read_from_stream, write_to_stream},
