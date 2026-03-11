@@ -10,3 +10,4 @@ capabilities/**/artifacts
 modules/**/Cargo.*
 modules/**/artifacts
 examples/**/logs
+.antigravity

@@ -4,9 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::cargo::{CapabilityManifest, ModuleManifest};
-use crate::artifacts::utils::{
-    InterfaceGenerator, ProjectContext, TarballBuilder, pyroduct_compile_dir,
-};
+use crate::artifacts::utils::{InterfaceGenerator, ProjectContext, TarballBuilder};
 
 fn get_target_dir(path: &Path) -> Result<PathBuf> {
     let output = Command::new("cargo")
@@ -105,121 +103,16 @@ fn run_cargo_command(
 
 fn package_module(
     ctx: &ProjectContext,
-    mut manifest: ModuleManifest,
+    manifest: ModuleManifest,
     cargo_args: &[String],
     capture: bool,
 ) -> Result<()> {
     tracing::info!("Packaging module: {:?}", ctx.root);
 
-    let compile_dir = pyroduct_compile_dir();
-    let module_dir = compile_dir.join("module");
-    fs::create_dir_all(&module_dir)?;
-
-    let interfaces_dir = compile_dir.join("interfaces");
-    fs::create_dir_all(&interfaces_dir)?;
-
-    let cargo_config_dir = compile_dir.join(".cargo");
-    fs::create_dir_all(&cargo_config_dir)?;
-    let target_dir = compile_dir.join("target");
-    let config_toml_content = format!("[build]\ntarget-dir = \"{}\"\n", target_dir.display());
-    fs::write(cargo_config_dir.join("config.toml"), config_toml_content)?;
-
-    // Make all path dependencies absolute so they don't break when moved to module_dir
-    let make_absolute = |dep: &mut cargo_toml::Dependency| {
-        if let cargo_toml::Dependency::Detailed(detail) = dep {
-            if let Some(rel_path) = &detail.path {
-                let abs_path = ctx
-                    .root
-                    .join(rel_path)
-                    .canonicalize()
-                    .unwrap_or_else(|_| ctx.root.join(rel_path));
-                detail.path = Some(abs_path.to_string_lossy().to_string());
-            }
-        }
-    };
-
-    if let cargo_toml::Dependency::Detailed(detail) = &mut manifest.pyroduct {
-        if let Some(rel_path) = &detail.path {
-            let abs_path = ctx
-                .root
-                .join(rel_path)
-                .canonicalize()
-                .unwrap_or_else(|_| ctx.root.join(rel_path));
-            detail.path = Some(abs_path.to_string_lossy().to_string());
-        }
-    }
-
-    for dep in manifest.dependencies.values_mut() {
-        make_absolute(dep);
-    }
-    for dep in manifest.build_dependencies.values_mut() {
-        make_absolute(dep);
-    }
-    for dep in manifest.dev_dependencies.values_mut() {
-        make_absolute(dep);
-    }
-
-    // For capabilities, generate interface and update path
-    for dep in manifest.capabilities.values_mut() {
-        if let cargo_toml::Dependency::Detailed(detail) = dep {
-            if let Some(rel_path) = &detail.path {
-                let cap_path = ctx.root.join(rel_path);
-                let cap_toml_path = cap_path.join("Capability.toml");
-                if cap_toml_path.exists() {
-                    if let Ok(cap_manifest_str) = fs::read_to_string(&cap_toml_path) {
-                        if let Ok(cap_manifest) = toml::from_str::<
-                            crate::artifacts::cargo::CapabilityManifest,
-                        >(&cap_manifest_str)
-                        {
-                            if let Ok((cap_name, cap_version)) = cap_manifest.name_version() {
-                                let interface_name_version =
-                                    format!("{}_{}", cap_name, cap_version);
-                                let interface_path = interfaces_dir
-                                    .join(&interface_name_version)
-                                    .join("interface");
-
-                                if let Ok(generator) =
-                                    InterfaceGenerator::new(&cap_path, &cap_manifest)
-                                {
-                                    let _ = generator.write_to_disk(&interface_path, false);
-                                }
-
-                                let new_rel_path =
-                                    format!("../interfaces/{}", interface_name_version);
-                                detail.path = Some(new_rel_path);
-                            }
-                        }
-                    }
-                } else {
-                    let abs_path = cap_path.canonicalize().unwrap_or(cap_path);
-                    detail.path = Some(abs_path.to_string_lossy().to_string());
-                }
-            }
-        }
-    }
-
-    // Write Module.toml to module_dir
-    let module_toml_content = toml::to_string_pretty(&manifest)?;
-    fs::write(module_dir.join("Module.toml"), module_toml_content)?;
-
     // 1. Generate Cargo.toml
     let cargo_toml_content = toml::to_string_pretty(&manifest.to_cargo())?;
-    fs::write(module_dir.join("Cargo.toml"), &cargo_toml_content)?;
+    fs::write(ctx.root.join("Cargo.toml"), &cargo_toml_content)?;
     tracing::info!("✓ Wrote Cargo.toml");
-
-    // Copy src directory
-    let src_dir = ctx.root.join("src");
-    if src_dir.exists() {
-        let dest_src = module_dir.join("src");
-        fs::create_dir_all(&dest_src)?;
-        for entry in fs::read_dir(src_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() {
-                fs::copy(&path, dest_src.join(entry.file_name()))?;
-            }
-        }
-    }
 
     // 2. Build WASM with pass-through args
     tracing::info!("Compiling WASM module...");
@@ -233,7 +126,7 @@ fn package_module(
     ];
 
     run_cargo_command(
-        &module_dir,
+        ctx.root,
         &build_args,
         cargo_args,
         "Failed to run cargo build",
@@ -241,6 +134,7 @@ fn package_module(
     )?;
 
     // 3. Locate and Copy Artifact
+    let target_dir = get_target_dir(ctx.root)?;
     let wasm_filename = format!("{}.wasm", ctx.normalized_name());
     let built_wasm = target_dir
         .join("wasm32-unknown-unknown/release")
@@ -257,7 +151,7 @@ fn package_module(
     // 4. Create Archive
     let mut tar = TarballBuilder::new(ctx.archive_path("module"))?;
     tar.add_bytes("Cargo.toml", cargo_toml_content.as_bytes())?;
-    tar.add_dir(&module_dir.join("src"), "src")?;
+    tar.add_dir(&ctx.root.join("src"), "src")?;
     tar.finish()?;
 
     Ok(())
