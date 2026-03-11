@@ -152,7 +152,7 @@ impl App {
             match fs::write(&path, &step.source_code) {
                 Ok(_) => {
                     // Package/compile the module (capturing the output to keep TUI clean)
-                    match crate::package::package(&step.path, None, &[], true) {
+                    match crate::artifacts::package::package(&step.path, None, &[], true) {
                         Ok(_) => self.status_msg = format!("Saved & compiled {}", step.name),
                         Err(e) => self.status_msg = format!("Saved, but compilation failed: {}", e),
                     }

@@ -1,12 +1,7 @@
-pub mod cargo;
-pub mod clean;
-pub mod expand;
+pub mod artifacts;
 pub mod init;
-pub mod package;
 pub mod run;
-pub mod symbols;
 pub mod tui;
-pub mod utils;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -115,13 +110,13 @@ async fn main() -> Result<()> {
             path,
             bin,
             lockfile,
-        } => expand::expand(&path, bin, lockfile),
+        } => artifacts::expand::expand(&path, bin, lockfile),
         Commands::Package {
             path,
             output,
             cargo_args,
-        } => package::package(&path, output.as_deref(), &cargo_args, false),
-        Commands::Clean { path } => clean::clean(&path),
+        } => artifacts::package::package(&path, output.as_deref(), &cargo_args, false),
+        Commands::Clean { path } => artifacts::clean::clean(&path),
         Commands::Run {
             config,
             input,

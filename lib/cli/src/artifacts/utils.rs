@@ -6,7 +6,19 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tar::Builder;
 
-use crate::cargo::CapabilityManifest;
+pub fn pyroduct_compile_dir() -> PathBuf {
+    std::env::var("PYRODUCT_COMPILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME")
+                .or_else(|_| std::env::var("USERPROFILE"))
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("."));
+            home.join(".pyroduct")
+        })
+}
+
+use crate::artifacts::cargo::CapabilityManifest;
 
 /// Central context to reduce argument passing
 pub struct ProjectContext<'a> {

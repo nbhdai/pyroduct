@@ -6,7 +6,7 @@ result
 capabilities/**/interface
 capabilities/**/Cargo.*
 capabilities/**/*.json
+capabilities/**/artifacts
 modules/**/Cargo.*
+modules/**/artifacts
 examples/**/logs
-
-artifacts

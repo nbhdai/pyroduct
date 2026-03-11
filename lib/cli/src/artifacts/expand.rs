@@ -3,9 +3,11 @@ use std::path::Path;
 
 use fs_err as fs;
 
-use crate::cargo::{CapabilityManifest, ModuleManifest};
-use crate::symbols;
-use crate::utils::{InterfaceGenerator, format_syn_error};
+use crate::artifacts::{
+    cargo::{CapabilityManifest, ModuleManifest},
+    symbols,
+    utils::{InterfaceGenerator, format_syn_error},
+};
 
 use pyro_core::{ffi::generate_capability, module::generate_module};
 
