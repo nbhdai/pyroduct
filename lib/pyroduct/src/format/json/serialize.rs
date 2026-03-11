@@ -3,8 +3,12 @@ use std::marker::PhantomData;
 use serde::Serialize;
 use tracing::trace;
 
-use crate::format::{MutWrapper, UserHeaderValues, Wrapper, Writer};
-use crate::{CapturedError, PyroError, PyroResult, PyroVec};
+use crate::format::{
+    PyroVec,
+    format::{MutWrapper, UserHeaderValues, Wrapper, Writer},
+    header::MutPyroData,
+};
+use crate::{CapturedError, PyroError, PyroResult};
 
 // ─── Writer ──────────────────────────────────────────────────────────────────
 
@@ -13,7 +17,7 @@ pub struct JsonWriter<BD, T> {
     pub(super) phantom: PhantomData<T>,
 }
 
-impl<BD: crate::header::MutPyroData, T> Wrapper for JsonWriter<BD, T> {
+impl<BD: MutPyroData, T> Wrapper for JsonWriter<BD, T> {
     type Wrapping = BD;
     fn data(&self) -> &Self::Wrapping {
         &self.data
@@ -23,7 +27,7 @@ impl<BD: crate::header::MutPyroData, T> Wrapper for JsonWriter<BD, T> {
     }
 }
 
-impl<BD: crate::header::MutPyroData, T> MutWrapper for JsonWriter<BD, T> {
+impl<BD: MutPyroData, T> MutWrapper for JsonWriter<BD, T> {
     fn data_mut(&mut self) -> &mut Self::Wrapping {
         &mut self.data
     }

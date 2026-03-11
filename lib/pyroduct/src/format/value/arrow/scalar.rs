@@ -1,10 +1,11 @@
-use crate::value::time::Time;
 use arrow::array::*;
 use arrow::datatypes::*;
 use std::borrow::Cow;
 use std::ops::Deref;
 
-use crate::value::{PrimitiveValueList, PyroRow, PyroValue, ValueError, ValueResult};
+use crate::format::value::{
+    PrimitiveValueList, PyroRow, PyroValue, ValueError, ValueResult, time::Time,
+};
 
 pub trait ScalarValuable {
     /// Gets a reference to the value at the given index.

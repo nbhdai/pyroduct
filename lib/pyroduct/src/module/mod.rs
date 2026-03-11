@@ -22,12 +22,13 @@ use serde::Deserialize;
 use wasmtime::{Caller, Engine, Instance, Linker, Memory, Store, TypedFunc};
 
 use crate::ffi::ForeignObject;
-use crate::format::Receiver;
-use crate::header::{DataStatus, PyroHeader};
+use crate::format::{
+    Bridgeable, ParseError, PyroRow, PyroView, Receiver,
+    header::{DataStatus, PyroData, PyroHeader},
+    rkyv_8::RkyvReceiver,
+};
 use crate::module::call::PyroCallIo;
-use crate::rkyv_8::RkyvReceiver;
-use crate::{Bridgeable, CapturedError, ParseError, PyroError, PyroRow};
-use crate::{header::PyroData, view::PyroView};
+use crate::{CapturedError, PyroError};
 
 mod call;
 pub mod capability;

@@ -10,8 +10,12 @@ use std::cell::RefCell;
 use std::marker::PhantomData;
 use tracing::trace;
 
-use crate::format::{MutWrapper, UserHeaderValues, Wrapper, Writer};
-use crate::{CapturedError, PyroError, PyroResult, PyroVec};
+use crate::format::{
+    PyroVec,
+    format::{MutWrapper, UserHeaderValues, Wrapper, Writer},
+    header::MutPyroData,
+};
+use crate::{CapturedError, PyroError, PyroResult};
 
 // --- Thread Local Scratch Space ---
 thread_local! {
@@ -50,7 +54,7 @@ pub struct RkyvWriter<BD, T> {
     pub(super) phantom: PhantomData<T>,
 }
 
-impl<BD: crate::header::MutPyroData, T> Wrapper for RkyvWriter<BD, T> {
+impl<BD: MutPyroData, T> Wrapper for RkyvWriter<BD, T> {
     type Wrapping = BD;
     fn data(&self) -> &Self::Wrapping {
         &self.data
@@ -60,7 +64,7 @@ impl<BD: crate::header::MutPyroData, T> Wrapper for RkyvWriter<BD, T> {
     }
 }
 
-impl<BD: crate::header::MutPyroData, T> MutWrapper for RkyvWriter<BD, T> {
+impl<BD: MutPyroData, T> MutWrapper for RkyvWriter<BD, T> {
     fn data_mut(&mut self) -> &mut Self::Wrapping {
         &mut self.data
     }

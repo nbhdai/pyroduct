@@ -3,11 +3,14 @@ use std::ops::Deref;
 use tracing::trace;
 
 use crate::error::ErrorKind;
-use crate::header::{
-    DataStatus, MAGIC_VAL, MutPyroData, PROTOCOL_VERSION, PyroData, PyroHeader, PyroHeaderMut,
+use crate::format::{
+    PyroVec,
+    header::{
+        DataStatus, MAGIC_VAL, MutPyroData, PROTOCOL_VERSION, PyroData, PyroHeader, PyroHeaderMut,
+    },
+    view::PyroView,
 };
-use crate::view::PyroView;
-use crate::{PyroError, PyroResult, PyroVec};
+use crate::{PyroError, PyroResult};
 
 // =============================================================================
 // Foundational wrapper / typed-wrapper traits (unchanged)

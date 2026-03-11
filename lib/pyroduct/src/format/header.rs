@@ -85,7 +85,7 @@ pub enum ParseError {
 mod private {
     use rkyv::Archive;
 
-    use crate::{
+    use crate::format::{
         PyroBuf, PyroVec, TypedBuf, TypedPyroView,
         view::{PyroMutView, PyroView},
     };

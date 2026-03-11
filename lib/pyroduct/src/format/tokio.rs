@@ -6,8 +6,10 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::PyroVec;
-use crate::header::{PyroHeader, PyroHeaderMut};
+use crate::format::{
+    PyroVec,
+    header::{PyroHeader, PyroHeaderMut},
+};
 
 // --- Constants ---
 
@@ -104,7 +106,7 @@ where
     // 0x0F: Status
     let status = header_buf[15];
 
-    if magic != crate::MAGIC_VAL {
+    if magic != crate::format::MAGIC_VAL {
         return Err(Error::new(
             ErrorKind::InvalidData,
             "Invalid PyroVec magic header",
@@ -158,7 +160,7 @@ where
         None => &DEFAULT_STREAM_SETTINGS,
     };
     // 0x00: Magic
-    dest.write_u32_le(crate::MAGIC_VAL).await?;
+    dest.write_u32_le(crate::format::MAGIC_VAL).await?;
 
     if vec.len() > config.max_msg_size {
         return Err(Error::new(
@@ -193,7 +195,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
+    use crate::format::{
         PyroVec,
         header::{PyroHeader, PyroHeaderMut},
     };
@@ -209,7 +211,7 @@ mod tests {
         original.set_wire_format(0xAA);
         original.set_version(0xBB);
         original.set_error_version(0xCC);
-        original.set_status(crate::header::DataStatus::LocalIo);
+        original.set_status(crate::format::header::DataStatus::LocalIo);
 
         let mut stream = Vec::new();
 
@@ -224,7 +226,7 @@ mod tests {
         let magic_val = u32::from_ne_bytes(magic_bytes.try_into().unwrap());
         assert_eq!(
             magic_val,
-            crate::MAGIC_VAL,
+            crate::format::MAGIC_VAL,
             "Magic value byte order mismatch in stream"
         );
 
@@ -239,13 +241,16 @@ mod tests {
         assert_eq!(recovered.wire_format(), 0xAA);
         assert_eq!(recovered.version(), 0xBB);
         assert_eq!(recovered.error_version(), 0xCC);
-        assert_eq!(recovered.status(), Ok(crate::header::DataStatus::LocalIo));
+        assert_eq!(
+            recovered.status(),
+            Ok(crate::format::header::DataStatus::LocalIo)
+        );
     }
 
     #[tokio::test]
     async fn test_read_empty_payload() {
         let mut original = PyroVec::with_capacity(0);
-        original.set_status(crate::header::DataStatus::Empty);
+        original.set_status(crate::format::header::DataStatus::Empty);
         original.set_error_version(5);
 
         let mut stream = Vec::new();
@@ -255,7 +260,10 @@ mod tests {
         let recovered = read_from_stream(&mut reader, None).await.unwrap();
 
         assert_eq!(recovered.len(), 0);
-        assert_eq!(recovered.status(), Ok(crate::header::DataStatus::Empty));
+        assert_eq!(
+            recovered.status(),
+            Ok(crate::format::header::DataStatus::Empty)
+        );
         assert_eq!(recovered.error_version(), 5);
     }
 

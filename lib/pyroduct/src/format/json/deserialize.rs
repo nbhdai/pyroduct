@@ -3,10 +3,15 @@ use std::marker::PhantomData;
 use serde::de::DeserializeOwned;
 use tracing::trace;
 
-use crate::format::{Parser, UserHeaderValues, Wrapper};
-use crate::json::buffers::JsonBuf;
-use crate::view::PyroView;
-use crate::{CapturedError, PyroError, PyroResult, PyroVec};
+use crate::{CapturedError, PyroError, PyroResult};
+
+use crate::format::{
+    PyroVec,
+    format::{Parser, UserHeaderValues, Wrapper},
+    header::PyroData,
+    json::buffers::JsonBuf,
+    view::PyroView,
+};
 
 // ─── Parser ──────────────────────────────────────────────────────────────────
 
@@ -15,7 +20,7 @@ pub struct JsonParser<BD, T> {
     pub(super) phantom: PhantomData<T>,
 }
 
-impl<BD: crate::header::PyroData, T> Wrapper for JsonParser<BD, T> {
+impl<BD: PyroData, T> Wrapper for JsonParser<BD, T> {
     type Wrapping = BD;
     fn data(&self) -> &Self::Wrapping {
         &self.data

@@ -8,17 +8,19 @@ use rkyv::{
     validation::{Validator, archive::ArchiveValidator, shared::SharedValidator},
 };
 
-use crate::format::{Parser, UserHeaderValues, Wrapper};
-use crate::rkyv_8::TypedBuf;
-use crate::view::PyroView;
-use crate::{CapturedError, PyroError, PyroResult, PyroVec, TypedPyroView};
-
+use crate::format::{
+    PyroVec, PyroView, TypedPyroView,
+    format::{Parser, UserHeaderValues, Wrapper},
+    header::PyroData,
+    rkyv_8::TypedBuf,
+};
+use crate::{CapturedError, PyroError, PyroResult};
 pub struct RkyvParser<BD, T> {
     pub(super) data: BD,
     pub(super) phantom: PhantomData<T>,
 }
 
-impl<BD: crate::header::PyroData, T> Wrapper for RkyvParser<BD, T> {
+impl<BD: PyroData, T> Wrapper for RkyvParser<BD, T> {
     type Wrapping = BD;
     fn data(&self) -> &Self::Wrapping {
         &self.data

@@ -21,9 +21,7 @@
 //! let vec = row.ship().unwrap();
 //! ```
 
-use crate::Bridgeable;
-use crate::format::UserHeaderValues;
-use crate::rkyv_8::Rkyv;
+use crate::format::{Bridgeable, format::UserHeaderValues, rkyv_8::Rkyv};
 
 use super::{PyroRow, PyroValue};
 
@@ -54,8 +52,7 @@ impl Bridgeable for PyroValue<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::format::{HasReceiver, Receiver};
-    use crate::value::PyroRowOwned;
+    use crate::format::{HasReceiver, Receiver, value::PyroRowOwned};
 
     #[test]
     fn test_pyro_row_owned_ship_roundtrip() {
@@ -100,7 +97,7 @@ mod tests {
         ];
 
         let vec = rows.ship().expect("ship failed");
-        let typed: crate::TypedBuf<Vec<PyroRow<'static>>> =
+        let typed: crate::format::TypedBuf<Vec<PyroRow<'static>>> =
             Vec::<PyroRowOwned>::expose(vec).expect("expose failed");
         let mut receiver = typed.receiver();
         let recovered = receiver.receive(&typed).expect("receive failed");

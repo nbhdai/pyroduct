@@ -5,8 +5,7 @@ use arrow::buffer::{NullBuffer, OffsetBuffer, ScalarBuffer};
 use arrow::datatypes::*;
 use arrow::record_batch::RecordBatch;
 
-use crate::value::PyroSchema;
-use crate::value::arrow::ScalarValuable;
+use crate::format::value::{PyroSchema, arrow::ScalarValuable};
 
 use super::super::{
     PrimitiveValueList, PyroRow, PyroRowOwned, PyroValue, ScalarRepairError, ValueError,

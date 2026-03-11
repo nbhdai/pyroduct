@@ -1,7 +1,7 @@
 use std::fmt;
 use std::ops::Deref;
 
-use crate::format::{TypedWrapper, Wrapper};
+use crate::format::format::{TypedWrapper, Wrapper};
 
 // ─── Owned buffer ────────────────────────────────────────────────────────────
 

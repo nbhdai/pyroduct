@@ -1,4 +1,4 @@
-use crate::format::PyroHeaderValues;
+use crate::format::{format::PyroHeaderValues, header::DataStatus};
 
 mod bridge;
 mod buffers;
@@ -17,6 +17,6 @@ pub use buffers::{TypedBuf, TypedPyroView};
 pub struct RkyvHeader;
 
 impl PyroHeaderValues for RkyvHeader {
-    const OK_CODE: crate::header::DataStatus = crate::header::DataStatus::RkyvValid;
-    const ERR_CODE: crate::header::DataStatus = crate::header::DataStatus::RkyvError;
+    const OK_CODE: DataStatus = DataStatus::RkyvValid;
+    const ERR_CODE: DataStatus = DataStatus::RkyvError;
 }

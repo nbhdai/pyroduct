@@ -1,6 +1,9 @@
 use crate::{
-    CapturedError, ParseError, PyroError, PyroVec,
-    header::{self, MutPyroData, PyroData, PyroHeader, PyroParser},
+    CapturedError, PyroError,
+    format::{
+        ParseError, PyroVec,
+        header::{self, MutPyroData, PyroData, PyroHeader, PyroParser},
+    },
 };
 use std::{
     fmt,
@@ -297,7 +300,7 @@ pub fn get_view_mut<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::header::DataStatus;
+    use crate::format::header::DataStatus;
 
     #[test]
     fn test_view_valid_buffer() {

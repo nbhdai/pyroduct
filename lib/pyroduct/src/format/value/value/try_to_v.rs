@@ -6,8 +6,8 @@ use std::mem::ManuallyDrop;
 use chrono::{DateTime, Utc};
 use half::f16;
 
-use crate::value::schema::PrimitiveDataType;
-use crate::value::{Time, Typeable};
+use crate::format::value::schema::PrimitiveDataType;
+use crate::format::value::{Time, Typeable};
 
 use super::{PrimitiveValueList, PyroRow, PyroValue};
 

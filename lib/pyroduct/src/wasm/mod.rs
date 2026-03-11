@@ -1,12 +1,16 @@
 use std::sync::Mutex;
 use std::{collections::HashMap, ops::Deref};
 
-use crate::bridgeable::BridgeableZeroCopy;
-use crate::format::{PyroZeroCopyFormat, Receiver};
-use crate::header::{DataStatus, PyroHeaderMut};
-use crate::value::PyroRow;
-use crate::{Bridgeable, BridgeableResult, CapturedError, PyroError, ToRow};
-use crate::{PyroVec, header::PyroData};
+use crate::format::{
+    Bridgeable, BridgeableResult, PyroVec, ToRow,
+    bridgeable::BridgeableZeroCopy,
+    format::{PyroZeroCopyFormat, Receiver},
+    header::PyroData,
+    header::{DataStatus, PyroHeaderMut},
+    value::PyroRow,
+};
+
+use crate::{CapturedError, PyroError};
 
 mod logger;
 

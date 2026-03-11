@@ -2,11 +2,13 @@
 
 use tracing::{debug, trace, warn};
 
-use crate::format::{Parser, PyroFormat, PyroHeaderValues, PyroZeroCopyFormat, UserHeaderValues};
-use crate::header::{PyroData, PyroHeader, PyroHeaderMut};
-use crate::view::PyroView;
-use crate::{ParseError, PyroError, PyroVec};
-
+use crate::PyroError;
+use crate::format::format::{
+    Parser, PyroFormat, PyroHeaderValues, PyroZeroCopyFormat, UserHeaderValues,
+};
+use crate::format::header::{PyroData, PyroHeader, PyroHeaderMut};
+use crate::format::view::PyroView;
+use crate::format::{ParseError, PyroVec};
 // =============================================================================
 // Bridgeable — default-format convenience (every format)
 // =============================================================================

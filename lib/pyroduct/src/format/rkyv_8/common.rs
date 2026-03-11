@@ -7,9 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 
-use crate::Bridgeable;
-use crate::format::UserHeaderValues;
-use crate::rkyv_8::Rkyv;
+use crate::format::{Bridgeable, format::UserHeaderValues, rkyv_8::Rkyv};
 // --- Macro to reduce boilerplate ---
 
 /// Internal macro for implementing Bridgeable on types that satisfy rkyv bounds.
@@ -44,7 +42,7 @@ macro_rules! impl_bridgeable_generic1 {
             for<'a> $T: rkyv::Serialize<
                 rkyv::rancor::Strategy<
                     rkyv::ser::Serializer<
-                        &'a mut crate::PyroVec,
+                        &'a mut crate::format::PyroVec,
                         rkyv::ser::allocator::ArenaHandle<'a>,
                         rkyv::ser::sharing::Share,
                     >,
@@ -93,7 +91,7 @@ macro_rules! impl_bridgeable_generic2 {
             for<'a> $K: rkyv::Serialize<
                 rkyv::rancor::Strategy<
                     rkyv::ser::Serializer<
-                        &'a mut crate::PyroVec,
+                        &'a mut crate::format::PyroVec,
                         rkyv::ser::allocator::ArenaHandle<'a>,
                         rkyv::ser::sharing::Share,
                     >,
@@ -103,7 +101,7 @@ macro_rules! impl_bridgeable_generic2 {
             for<'a> $V: rkyv::Serialize<
                 rkyv::rancor::Strategy<
                     rkyv::ser::Serializer<
-                        &'a mut crate::PyroVec,
+                        &'a mut crate::format::PyroVec,
                         rkyv::ser::allocator::ArenaHandle<'a>,
                         rkyv::ser::sharing::Share,
                     >,
@@ -189,7 +187,7 @@ where
     for<'a> T: rkyv::Serialize<
             rkyv::rancor::Strategy<
                 rkyv::ser::Serializer<
-                    &'a mut crate::PyroVec,
+                    &'a mut crate::format::PyroVec,
                     rkyv::ser::allocator::ArenaHandle<'a>,
                     rkyv::ser::sharing::Share,
                 >,
@@ -239,7 +237,7 @@ where
     for<'a> T: rkyv::Serialize<
             rkyv::rancor::Strategy<
                 rkyv::ser::Serializer<
-                    &'a mut crate::PyroVec,
+                    &'a mut crate::format::PyroVec,
                     rkyv::ser::allocator::ArenaHandle<'a>,
                     rkyv::ser::sharing::Share,
                 >,
@@ -286,7 +284,7 @@ where
     for<'a> T: rkyv::Serialize<
             rkyv::rancor::Strategy<
                 rkyv::ser::Serializer<
-                    &'a mut crate::PyroVec,
+                    &'a mut crate::format::PyroVec,
                     rkyv::ser::allocator::ArenaHandle<'a>,
                     rkyv::ser::sharing::Share,
                 >,
@@ -328,7 +326,7 @@ macro_rules! impl_bridgeable_tuple {
                 for<'a> $T: rkyv::Serialize<
                     rkyv::rancor::Strategy<
                         rkyv::ser::Serializer<
-                            &'a mut crate::PyroVec,
+                            &'a mut crate::format::PyroVec,
                             rkyv::ser::allocator::ArenaHandle<'a>,
                             rkyv::ser::sharing::Share,
                         >,
@@ -383,7 +381,7 @@ where
     for<'a> T: rkyv::Serialize<
             rkyv::rancor::Strategy<
                 rkyv::ser::Serializer<
-                    &'a mut crate::PyroVec,
+                    &'a mut crate::format::PyroVec,
                     rkyv::ser::allocator::ArenaHandle<'a>,
                     rkyv::ser::sharing::Share,
                 >,
@@ -407,9 +405,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::format::HasReceiver;
-    use crate::format::Receiver;
-    use crate::header::PyroHeader;
+    use crate::format::{HasReceiver, Receiver, header::PyroHeader};
 
     use super::*;
 

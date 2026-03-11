@@ -2,9 +2,11 @@ use std::marker::PhantomData;
 
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::PyroVec;
-use crate::format::{PyroFormat, UserHeaderValues};
-use crate::view::PyroView;
+use crate::format::{
+    PyroVec,
+    format::{PyroFormat, UserHeaderValues},
+    view::PyroView,
+};
 
 use super::{JsonHeader, JsonParser, JsonWriter};
 

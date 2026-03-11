@@ -11,10 +11,12 @@ use rkyv::validation::Validator;
 use rkyv::validation::archive::ArchiveValidator;
 use rkyv::validation::shared::SharedValidator;
 
-use crate::PyroVec;
-use crate::format::{PyroFormat, PyroZeroCopyFormat, UserHeaderValues};
-use crate::header::PROTOCOL_VERSION;
-use crate::view::PyroView;
+use crate::format::{
+    PyroVec,
+    format::{PyroFormat, PyroZeroCopyFormat, UserHeaderValues},
+    header::PROTOCOL_VERSION,
+    view::PyroView,
+};
 
 /// Acts as the factory and configuration source for Rkyv-based PyroVecs.
 pub struct Rkyv<T> {

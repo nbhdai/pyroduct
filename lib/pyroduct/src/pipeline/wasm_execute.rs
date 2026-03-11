@@ -6,9 +6,11 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, error, info, instrument, warn};
 
+use crate::format::value::{
+    PyroRow, ValueError,
+    arrow::{PreBatch, Rowable},
+};
 use crate::module::{PyroFailure, PyroInstance, PyroLogs, PyroSuccess};
-use crate::value::PyroRow;
-use crate::value::arrow::{PreBatch, Rowable};
 
 use super::{PipelineError, PipelineResult};
 
@@ -55,7 +57,7 @@ impl PipelineExecution {
 pub fn extract_upto_batch(
     executions: &[PipelineExecution],
     step_index: usize,
-) -> Result<Option<RecordBatch>, crate::value::ValueError> {
+) -> Result<Option<RecordBatch>, ValueError> {
     let batch = PreBatch::from_iter(executions.iter().filter_map(|s| s.row_up_to(step_index)));
     match batch {
         Some(mut b) => b.flush(),
@@ -66,7 +68,7 @@ pub fn extract_upto_batch(
 pub fn extract_at_batch(
     executions: &[PipelineExecution],
     step_index: usize,
-) -> Result<Option<RecordBatch>, crate::value::ValueError> {
+) -> Result<Option<RecordBatch>, ValueError> {
     let batch = PreBatch::from_iter(executions.iter().filter_map(|s| s.row_at(step_index)));
     match batch {
         Some(mut b) => b.flush(),

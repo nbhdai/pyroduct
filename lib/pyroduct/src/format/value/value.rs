@@ -1,8 +1,10 @@
 use std::borrow::Cow;
 use std::fmt;
 
-use crate::value::schema::{PyroField, PyroType};
-use crate::value::time::Time;
+use crate::format::value::{
+    schema::{PyroField, PyroType},
+    time::Time,
+};
 
 use super::{ValueError, ValueResult};
 use half::f16;

@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::value::{PrimitiveValueList, PyroValue};
+use crate::format::value::{PrimitiveValueList, PyroValue};
 
 // -----------------------------------------------------------------------------
 // Display Configuration

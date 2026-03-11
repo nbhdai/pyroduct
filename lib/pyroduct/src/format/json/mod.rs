@@ -28,8 +28,7 @@
 //! }
 //! ```
 
-use crate::format::PyroHeaderValues;
-use crate::header::DataStatus;
+use crate::format::{format::PyroHeaderValues, header::DataStatus};
 
 mod bridge;
 mod buffers;

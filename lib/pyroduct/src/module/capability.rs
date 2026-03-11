@@ -13,10 +13,12 @@ use libloading::{Library, Symbol};
 use object::{Object, ObjectSymbol, SymbolKind};
 use thiserror::Error;
 
-use crate::PyroVec;
 use crate::ffi::{CapabilityRegisterFn, ClassExport, ForeignClass, ForeignObject};
-use crate::format::{PyroFormat, Writer};
-use crate::json::Json;
+use crate::format::{
+    PyroVec,
+    format::{PyroFormat, Writer},
+    json::Json,
+};
 
 // =============================================================================
 // Error

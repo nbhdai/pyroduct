@@ -1,8 +1,7 @@
 use std::borrow::Cow;
 use std::iter::FromIterator;
 
-use crate::ToRow;
-use crate::value::Time;
+use crate::format::{ToRow, value::Time};
 
 use super::RowItem;
 use super::{PrimitiveValueList, PyroRow, PyroRowOwned, PyroValue, PyroValueOwned};

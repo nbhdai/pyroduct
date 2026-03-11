@@ -4,7 +4,7 @@ use std::convert::TryInto;
 use thiserror::Error;
 
 use super::{PrimitiveValueList, PyroRow, PyroValue, RowItem};
-use crate::value::schema::{PrimitiveDataType, PyroField, PyroType};
+use crate::format::value::schema::{PrimitiveDataType, PyroField, PyroType};
 
 #[derive(Error, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ScalarRepairError<'a> {

@@ -6,7 +6,7 @@ use std::{backtrace::Backtrace, borrow::Cow};
 
 use thiserror::Error;
 
-use crate::PyroVec;
+use crate::format::PyroVec;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LibraryInfo<'a> {

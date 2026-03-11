@@ -1,4 +1,4 @@
-use crate::value::time::Time;
+use crate::format::value::time::Time;
 
 use super::{PrimitiveValueList, PyroRow, PyroValue};
 use half::f16;

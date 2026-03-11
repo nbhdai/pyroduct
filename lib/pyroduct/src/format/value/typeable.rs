@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use chrono::{DateTime, Utc};
 use half::f16;
 
-use crate::value::PyroSchema;
+use crate::format::value::PyroSchema;
 
 use super::schema::{PrimitiveDataType, PyroType};
 

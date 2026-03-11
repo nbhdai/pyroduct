@@ -638,7 +638,7 @@ impl<T: ToRow> CoerceToSchema for T {
 
 #[cfg(test)]
 mod tests {
-    use crate::value::PyroField;
+    use crate::format::value::PyroField;
 
     use super::*;
 

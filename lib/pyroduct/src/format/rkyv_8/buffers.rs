@@ -1,10 +1,9 @@
 use std::{fmt::Debug, ops::Deref};
 
-use crate::{
-    PyroVec,
+use crate::format::{
+    PyroVec, PyroView,
     format::{HasReceiver, TypedWrapper, Wrapper},
     rkyv_8::RkyvReceiver,
-    view::PyroView,
 };
 
 /// A type-safe wrapper around a PyroVec containing an archived rkyv type.

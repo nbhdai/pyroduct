@@ -4,7 +4,7 @@ use std::ops::{Deref, DerefMut};
 use std::ptr::{self, NonNull};
 use std::{fmt, io, slice};
 
-use crate::header::{
+use crate::format::header::{
     OwnedPyroData, PyroData, PyroHeader, PyroHeaderMut, PyroParser, UNIT_BYTES, UNIT_HEADER,
 };
 use crate::{CapturedError, PyroError, PyroResult};
@@ -585,7 +585,7 @@ impl io::Write for PyroVec {
 #[cfg(test)]
 mod unit_tests {
     use super::*;
-    use crate::header::{DataStatus, PyroData};
+    use crate::format::header::{DataStatus, PyroData};
 
     #[test]
     fn test_pyro_vec_ok() {

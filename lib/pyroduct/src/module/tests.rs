@@ -4,13 +4,12 @@
 //! "wasm memory" buffers, wasm_main with rkyv PyroRow, and PyroState
 //! bookkeeping — all without spinning up a real wasmtime instance.
 
-use crate::{
-    ParseError, PyroError, PyroVec,
+use crate::PyroError;
+use crate::format::{
+    ParseError, PyroVec, get_view, get_view_mut,
     header::{PyroData, PyroHeader, PyroHeaderMut, PyroParser},
-    view::{get_view, get_view_mut},
-    wasm::{free_output, get_input, grow_input, new_input, to_output},
 };
-
+use crate::wasm::{free_output, get_input, grow_input, new_input, to_output};
 // =========================================================================
 // Helpers
 // =========================================================================
@@ -180,7 +179,7 @@ fn test_get_view_mut_write_through() {
 
 #[test]
 fn test_view_from_vec_roundtrip() {
-    use crate::view::PyroView;
+    use crate::format::PyroView;
 
     let mut original = PyroVec::with_capacity(64);
     original.extend_from_slice(b"roundtrip data");
@@ -258,8 +257,10 @@ fn test_multiple_concurrent_registrations() {
 
 #[test]
 fn test_pyro_row_rkyv_view_roundtrip() {
-    use crate::Bridgeable;
-    use crate::value::{PyroRow, PyroRowOwned, PyroValue};
+    use crate::format::{
+        Bridgeable,
+        value::{PyroRow, PyroRowOwned, PyroValue},
+    };
 
     let row = PyroRow::from([
         ("id", PyroValue::from(42i32)),
