@@ -1,3 +1,5 @@
+use pyroduct::Capture;
+
 #[pyroduct::magma]
 struct CallMessage {
     message: String,
@@ -6,9 +8,7 @@ struct CallMessage {
 
 #[pyroduct::module(output = (output, messages))]
 fn process<'a>(input: Vec<CallMessageRef<'_>>) -> anyhow::Result<(String, Vec<CallMessage>)> {
-    let output = input
-        .first()
-        .ok_or(pyroduct::capture!("Empty chat history"))?;
+    let output = input.first().capture("Empty chat history")?;
     Ok((
         output.message.to_string(),
         vec![

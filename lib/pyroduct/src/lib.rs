@@ -228,18 +228,11 @@
 
 // Re-export rkyv for users
 
-pub mod bridgeable;
 pub mod captured;
 pub mod error;
 
 pub mod format;
-pub mod header;
-pub mod json;
 pub mod panic;
-pub mod rkyv_8;
-pub mod value;
-pub mod vec_buf;
-mod view;
 
 #[cfg(feature = "host")]
 pub mod module;
@@ -253,19 +246,10 @@ pub mod pipeline;
 #[cfg(any(feature = "host", feature = "capability"))]
 pub mod ffi;
 
-pub use bridgeable::{Bridgeable, BridgeableResult};
 pub use captured::{Capture, CapturedError};
 pub use error::PyroError;
-pub use header::{MAGIC_VAL, ParseError};
 pub use rkyv::rancor::Error as RancorError;
-pub use rkyv_8::{Rkyv, RkyvParser, RkyvWriter, TypedBuf, TypedPyroView};
-pub use value::{DeepRef, PyroRow, PyroValue, ToRow};
-pub use vec_buf::{PyroBuf, PyroBufPtr, PyroVec, PyroVecPtr};
-pub use view::{PyroMutView, PyroView, PyroViewPtr, get_view, get_view_mut};
 
-// Async is not supported for wasm
-#[cfg(any(feature = "host", feature = "capability"))]
-pub mod tokio;
 pub use serde;
 pub use serde_json;
 pub use tracing;
@@ -557,7 +541,7 @@ pub use pyro_derive::capability;
 ///
 /// #[module(output = (output, messages))]
 /// fn process(input: Vec<CallMessage>) -> Result<(String, Vec<CallMessage>)> {
-///     let output = input.first().ok_or(pyroduct::CapturedError::new("Empty chat history"))?;
+///     let output = input.first().ok_or(pyroduct::capture!("Empty chat history"))?;
 ///     Ok((
 ///         output.message.to_string(),
 ///         vec![
