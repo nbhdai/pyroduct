@@ -45,7 +45,29 @@ fn ship_capability(path: &Path, manifest: CapabilityManifest) -> Result<()> {
         dest_dir.join(interface_tar.file_name().unwrap()),
     )?;
 
-    // Ideally, extract the interface to the global interfaces dir if needed for local usage
+    // Copy interface.json and config.json into the capability cache directory
+    let interface_json = artifacts_dir.join("interface.json");
+    if interface_json.exists() {
+        fs::copy(&interface_json, dest_dir.join("interface.json"))?;
+    }
+    let config_json = artifacts_dir.join("config.json");
+    if config_json.exists() {
+        fs::copy(&config_json, dest_dir.join("config.json"))?;
+    }
+
+    // Extract the interface crate into capabilities/<author>/<name>/<version>/interface
+    let interface_dir = cache.capability_interface_dir(author, name, version);
+    if interface_dir.exists() {
+        fs::remove_dir_all(&interface_dir)?;
+    }
+    fs::create_dir_all(&interface_dir)?;
+
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(fs::File::open(
+        &interface_tar,
+    )?));
+    archive.unpack(&interface_dir)?;
+
+    // Also extract to the global interfaces dir for backwards compatibility
     let interface_name_version = format!("{}_{}", name, version);
     let global_interface_dir = cache.interfaces_dir().join(&interface_name_version);
     fs::create_dir_all(&global_interface_dir)?;

@@ -71,11 +71,22 @@ fn run_cargo_command(
     Ok(())
 }
 
+/// A resolved capability for anon module compilation.
+pub struct ResolvedCapability {
+    pub author: String,
+    pub package: String,
+    pub version: String,
+}
+
 /// Compiles a module inside the cache directory, avoiding modifying the user's workspace.
-/// Returns the path to the compiled `.wasm` file in the cache target directory.
+/// Returns the compiled `.wasm` bytes.
+///
+/// Each capability is resolved from the cache at
+/// `capabilities/<author>/<package>/<version>/interface` and referenced via a
+/// relative path dependency in the generated Cargo.toml.
 pub fn compile_module(
     dependencies: Vec<(String, Dependency)>,
-    capabilities: Vec<(String, Dependency)>,
+    capabilities: Vec<ResolvedCapability>,
     code: &str,
 ) -> Result<Vec<u8>> {
     let cache = CacheManager::new()?;
@@ -123,18 +134,36 @@ version = "*"
     for (dep_name, dep) in dependencies {
         manifest.dependencies.insert(dep_name, dep);
     }
-    for (cap_name, cap) in capabilities {
-        manifest.capabilities.insert(cap_name, cap);
+
+    // Resolve each capability as a path dependency pointing at the cached interface crate.
+    // The interface lives at: <cache_root>/capabilities/<author>/<package>/<version>/interface
+    // We compute the relative path from the build_dir to that interface directory.
+    for cap in &capabilities {
+        let interface_dir = cache.capability_interface_dir(&cap.author, &cap.package, &cap.version);
+        if !interface_dir.exists() {
+            bail!(
+                "Capability interface not found in cache: {}/{}/{} (expected at {}). Run `pyroduct ship` first.",
+                cap.author,
+                cap.package,
+                cap.version,
+                interface_dir.display()
+            );
+        }
+
+        // Point at the capability version dir, not the interface subdir directly,
+        // because ModuleManifest::augment_deps appends "/interface" to path deps.
+        let cap_dir = cache.capabilities_dir(&cap.author, &cap.package, &cap.version);
+        let rel_path = Path::new("..").join(&cap_dir);
+
+        let dep = Dependency::Detailed(Box::new(cargo_toml::DependencyDetail {
+            path: Some(rel_path.to_string_lossy().into_owned()),
+            ..Default::default()
+        }));
+        manifest.capabilities.insert(cap.package.clone(), dep);
     }
 
     let cargo_toml_content = toml::to_string_pretty(&manifest.to_cargo())?;
     fs::write(build_dir.join("Cargo.toml"), &cargo_toml_content)?;
-
-    let cargo_config_dir = build_dir.join(".cargo");
-    fs::create_dir_all(&cargo_config_dir)?;
-    let target_dir = build_dir.join("target");
-    let config_toml_content = format!("[build]\ntarget-dir = \"{}\"\n", target_dir.display());
-    fs::write(cargo_config_dir.join("config.toml"), config_toml_content)?;
 
     tracing::info!("Compiling WASM module...");
     let build_args = vec!["build", "--release", "--target", "wasm32-unknown-unknown"];
@@ -148,7 +177,9 @@ version = "*"
     )?;
 
     // Return the path to the artifact
-    let built_wasm = target_dir.join("wasm32-unknown-unknown/release/mod.wasm");
+    let built_wasm = cache
+        .target_dir()
+        .join("wasm32-unknown-unknown/release/mod.wasm");
 
     if !built_wasm.exists() {
         bail!("Could not find compiled WASM: {}", built_wasm.display());
