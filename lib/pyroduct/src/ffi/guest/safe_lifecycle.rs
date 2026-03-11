@@ -4,17 +4,18 @@ use async_ffi::BorrowingFfiFuture;
 use futures::FutureExt;
 use tracing::{debug, error, trace};
 
-use crate::ffi::{FutureInitResult, InitResult};
 use crate::ffi::guest::panic_wrap::get_runtime;
-use crate::header::{DataStatus, PyroHeader};
+use crate::ffi::{FutureInitResult, InitResult};
+use crate::format::{
+    PyroView, PyroViewPtr,
+    header::{DataStatus, PyroHeader},
+};
 use crate::panic::{clear_last_panic, recover_panic_info, register_ffi_panic_hook};
-use crate::view::{PyroView, PyroViewPtr};
 use crate::{CapturedError, PyroError};
 
 /// For `new` that doesn't have a config.
 #[derive(serde::Deserialize)]
 pub struct EmptyConfig {}
-
 
 /// Deserialize config from a `PyroViewPtr` as `Option<C>`.
 ///
@@ -25,7 +26,6 @@ pub fn deserialize_config<C: serde::de::DeserializeOwned>(
     if config.ptr.is_null() || config.len == 0 {
         return Ok(None);
     }
-
 
     let view = unsafe { PyroView::from_ptr(config) }?;
     if let Ok(DataStatus::Empty) = view.status() {
@@ -44,10 +44,7 @@ pub fn deserialize_config<C: serde::de::DeserializeOwned>(
 /// Safe wrapper for Sync Init functions.
 #[track_caller]
 #[tracing::instrument(skip(init_fn))]
-pub fn execute_safe_init<F>(
-    init_fn: F,
-    object_id: u64,
-) -> InitResult
+pub fn execute_safe_init<F>(init_fn: F, object_id: u64) -> InitResult
 where
     F: FnOnce(u64) -> InitResult,
 {
@@ -83,35 +80,29 @@ pub struct SafeInitHandle {
 
 impl SafeInitHandle {
     pub fn new(handle: JoinHandle<InitResult>) -> Self {
-        Self {
-            handle,
-        }
+        Self { handle }
     }
 }
 
-impl Future for SafeInitHandle
-{
+impl Future for SafeInitHandle {
     type Output = InitResult;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // Poll the underlying tokio JoinHandle
         match Pin::new(&mut self.handle).poll(cx) {
             Poll::Ready(Ok(val)) => Poll::Ready(val),
-            Poll::Ready(Err(join_error)) => {
-                Poll::Ready(InitResult::init_err(PyroError::CodePanic(CapturedError::new(join_error).into()), 0))
-            }
+            Poll::Ready(Err(join_error)) => Poll::Ready(InitResult::init_err(
+                PyroError::CodePanic(CapturedError::new(join_error).into()),
+                0,
+            )),
             Poll::Pending => Poll::Pending,
         }
     }
 }
 
-
 /// Safe wrapper for Async Init functions.
 /// Returns `FutureInitResult`.
-pub fn execute_safe_async_init<Fut, F>(
-    init_fn: F,
-    object_id: u64,
-) -> FutureInitResult
+pub fn execute_safe_async_init<Fut, F>(init_fn: F, object_id: u64) -> FutureInitResult
 where
     Fut: std::future::Future<Output = InitResult> + Send + 'static,
     F: FnOnce(u64) -> Fut + Send,

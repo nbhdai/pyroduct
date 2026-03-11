@@ -16,7 +16,7 @@ pub fn to_row(input: &ItemStruct, import_location: &Path) -> syn::Result<TokenSt
     // 4. Handle Empty Structs
     if input.fields.is_empty() {
         let expanded = quote! {
-            impl #import_location::ToRow for #struct_name {
+            impl #import_location::format::ToRow for #struct_name {
                 fn to_row(&self) -> #import_location::PyroRow<'_> {
                     #import_location::PyroRow::new()
                 }
@@ -42,7 +42,7 @@ pub fn to_row(input: &ItemStruct, import_location: &Path) -> syn::Result<TokenSt
     }
 
     let expanded = quote! {
-        impl #import_location::ToRow for #struct_name {
+        impl #import_location::format::ToRow for #struct_name {
             fn to_row(&self) -> #import_location::PyroRow<'_> {
                 #import_location::PyroRow::from([
                     #(#field_conversions),*

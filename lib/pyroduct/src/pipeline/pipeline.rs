@@ -1,9 +1,11 @@
-use serde::Deserialize;
-use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 
-use crate::ffi::host::{Capability, CapabilityLibrary, CapabilityLoading};
+use serde::Deserialize;
+
+use crate::{
+    module::{ModuleConfig, PyroFactory},
+    pipeline::Pipeline,
+};
 
 use super::PipelineError;
 
@@ -11,69 +13,42 @@ use super::PipelineError;
 // Config (deserialized from TOML / JSON)
 // =============================================================================
 
-/// Top-level pipeline configuration.
-///
-/// ```toml
-/// [libraries.geocoder]
-/// path = "target/release/libgeocoder.dylib"
-///
-/// [modules.enrich]
-/// path = "target/wasm/enrich.wasm"
-///
-/// [modules.enrich.capabilities.GeocoderServer]
-/// library = "geocoder"
-/// api_key = "abc123"
-///
-/// [modules.enrich2]
-/// path = "target/wasm/enrich2.wasm"
-///
-/// [modules.enrich2.capabilities.GeocoderServer]
-/// library = "geocoder"
-/// api_key = "different_key"
-///
-/// pipeline = ["enrich", "enrich2"]
-/// ```
 #[derive(Deserialize, Debug)]
 pub struct PipelineConfig {
-    /// Named shared libraries on disk. Each is loaded once.
-    pub libraries: HashMap<String, PathBuf>,
-    /// Named wasm modules, each with its own capability instances.
-    pub modules: HashMap<String, ModuleConfig>,
-    /// Ordered list of module names to execute.
-    pub pipeline: Vec<String>,
+    pub pipeline: Vec<ModuleConfig>,
 }
 
-/// A single wasm module in the pipeline.
-#[derive(Deserialize, Debug)]
-pub struct ModuleConfig {
-    /// Path to the directory.
-    pub path: PathBuf,
-    /// Per-class capability configuration. Keys are class names.
-    #[serde(default)]
-    pub capabilities: HashMap<String, serde_json::Value>,
+impl PipelineConfig {
+    pub fn repair_relative(&mut self, config_dir: &Path) {
+        // Resolve relative paths
+        for module in self.pipeline.iter_mut() {
+            for path in module.libraries.iter_mut() {
+                if path.is_relative() {
+                    *path = config_dir.join(&path);
+                }
+            }
+            if module.path.is_relative() {
+                module.path = config_dir.join(&module.path);
+            }
+        }
+    }
 }
 
 // =============================================================================
 // Runtime structures
 // =============================================================================
 
-/// A fully resolved module ready for instantiation.
-pub struct Module {
-    pub binary: Vec<u8>,
-    pub capabilities: Vec<Capability>,
-}
-
 /// A loaded pipeline definition: the ordered list of modules with their
 /// individually instantiated capabilities.
-pub struct PipelineDef {
-    pub pipeline: Vec<Module>,
+pub struct PipelineFactory {
+    pub pipeline: Vec<PyroFactory>,
 }
 
 // =============================================================================
 // Loading
 // =============================================================================
 
-impl PipelineDef {
+impl PipelineFactory {
     /// Loads and resolves a full pipeline from its configuration.
     ///
     /// 1. Loads each shared library once.
@@ -81,67 +56,28 @@ impl PipelineDef {
     ///    referenced libraries with the module-specific configuration.
     /// 3. Returns the ordered pipeline steps with capabilities attached.
     pub async fn load(config: &PipelineConfig) -> Result<Self, PipelineError> {
-        // --- Phase 1: load shared libraries ------------------------------------
-        let mut libraries: HashMap<String, CapabilityLibrary> = HashMap::new();
-
-        #[cfg(target_os = "linux")]
-        let lib_file = "lib.so";
-        #[cfg(target_os = "macos")]
-        let lib_file = "lib.dylib";
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-        return Err(PipelineError::Config("Only macho and elf binaries are supported".to_string()));
-
-        for (lib_name, path) in &config.libraries {
-            let library = CapabilityLibrary::load(lib_name.clone(), &path.join("artifacts").join(lib_file)).map_err(|e| {
-                PipelineError::Capability(CapabilityLoading::LibraryOpen {
-                    path: path.display().to_string(),
-                    reason: format!("library '{}': {}", lib_name, e),
-                })
-            })?;
-            libraries.insert(lib_name.clone(), library);
+        let mut pipeline = Vec::new();
+        for module in &config.pipeline {
+            let module_factory = module.load_factory().await?;
+            pipeline.push(module_factory);
         }
 
-        // --- Phase 2: resolve modules & instantiate per-module capabilities ----
-        let mut pipeline_steps = Vec::new();
+        Ok(Self { pipeline })
+    }
 
-        for module_name in &config.pipeline {
-            let mod_conf = config.modules.get(module_name).ok_or_else(|| {
-                PipelineError::Config(format!(
-                    "Pipeline references module '{}' which is not defined in [modules]",
-                    module_name
-                ))
-            })?;
+    /// Build a pipeline from a fully-loaded `PipelineDef`.
+    ///
+    /// Creates one `PyroEngine` and one `PyroLinker` (with all capabilities
+    /// linked), then compiles and instantiates each wasm module in order.
+    pub async fn build(&mut self) -> Result<Pipeline, PipelineError> {
+        let mut steps = Vec::with_capacity(self.pipeline.len());
 
-            let mut module_capabilities = Vec::new();
-
-            for library in libraries.values() {
-                let mut class_configs = HashMap::new();
-                for (class_name, cap_conf) in &mod_conf.capabilities {
-                    if library.capabilities.contains_key(class_name) {
-                        class_configs.insert(class_name.clone(),  cap_conf.clone());
-                    }
-                }
-                let capability = library.instantiate_from_config(&class_configs).await?;
-                module_capabilities.push(capability);
-            }
-
-            let binary = fs::read(&mod_conf.path.join("artifacts").join("mod.wasm")).map_err(|e| {
-                PipelineError::Config(format!(
-                    "Failed to read WASM binary for module '{}' at '{}': {}",
-                    module_name,
-                    mod_conf.path.display(),
-                    e
-                ))
-            })?;
-
-            pipeline_steps.push(Module {
-                binary,
-                capabilities: module_capabilities,
-            });
+        for (index, mod_factory) in self.pipeline.iter_mut().enumerate() {
+            tracing::debug!(index, "Building wasm module");
+            let instance = mod_factory.instantiate().await?;
+            steps.push(instance);
         }
 
-        Ok(Self {
-            pipeline: pipeline_steps,
-        })
+        Ok(Pipeline { steps })
     }
 }

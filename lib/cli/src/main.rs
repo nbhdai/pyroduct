@@ -1,17 +1,13 @@
-pub mod cargo;
-pub mod clean;
-pub mod expand;
+pub mod artifacts;
+pub mod cache;
 pub mod init;
-pub mod package;
 pub mod run;
-pub mod symbols;
-pub mod utils;
 pub mod tui;
 
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -54,6 +50,11 @@ enum Commands {
         #[arg(last = true)]
         cargo_args: Vec<String>,
     },
+    /// Places package artifacts into the local cache repository
+    Ship {
+        #[arg(value_name = "DIRECTORY")]
+        path: PathBuf,
+    },
     /// Cleans generated artifacts (Cargo.toml, artifacts/, interface/, target/)
     Clean {
         #[arg(value_name = "DIRECTORY", default_value = ".")]
@@ -90,11 +91,12 @@ enum Commands {
 }
 
 pub fn start_logging() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "trace,cranelift_frontend=off,cranelift_codegen=off,wasmtime=off".into());
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        "trace,cranelift_frontend=off,cranelift_codegen=off,wasmtime=off".into()
+    });
 
     tracing_subscriber::registry()
-        .with(fmt::layer().with_target(true).pretty())
+        .with(fmt::layer().with_target(true))
         .with(filter)
         .init();
 }
@@ -114,13 +116,14 @@ async fn main() -> Result<()> {
             path,
             bin,
             lockfile,
-        } => expand::expand(&path, bin, lockfile),
+        } => artifacts::expand::expand(&path, bin, lockfile),
         Commands::Package {
             path,
             output,
             cargo_args,
-        } => package::package(&path, output.as_deref(), &cargo_args, false),
-        Commands::Clean { path } => clean::clean(&path),
+        } => artifacts::package::package(&path, output.as_deref(), &cargo_args, false),
+        Commands::Ship { path } => cache::ship::ship(&path),
+        Commands::Clean { path } => artifacts::clean::clean(&path),
         Commands::Run {
             config,
             input,

@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use pyro_core::format::bridgeable::DocRec;
-use syn::{ItemFn, ItemStruct, parse_macro_input, parse_quote, parse2};
 use quote::quote;
+use syn::{ItemFn, ItemStruct, parse_macro_input, parse_quote, parse2};
 
 #[proc_macro_attribute]
 pub fn bridgeable(args: TokenStream, input: TokenStream) -> TokenStream {
@@ -92,10 +92,11 @@ pub fn derive_from_row(input: TokenStream) -> TokenStream {
         Ok(v) => v,
         Err(error) => return error.to_compile_error().into(),
     };
-    quote!{
+    quote! {
         #doc
         #from
-    }.into()
+    }
+    .into()
 }
 
 #[proc_macro_derive(RefFromRow)]
@@ -113,10 +114,11 @@ pub fn derive_ref_from_row(input: TokenStream) -> TokenStream {
         Ok(v) => v,
         Err(error) => return error.to_compile_error().into(),
     };
-    quote!{
+    quote! {
         #doc
         #from
-    }.into()
+    }
+    .into()
 }
 
 #[proc_macro_derive(ToRow)]
@@ -127,7 +129,6 @@ pub fn derive_to_row(input: TokenStream) -> TokenStream {
         Err(error) => error.to_compile_error().into(),
     }
 }
-
 
 #[proc_macro_attribute]
 pub fn capability(_args: TokenStream, input: TokenStream) -> TokenStream {

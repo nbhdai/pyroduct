@@ -3,9 +3,9 @@ use std::fmt;
 use thiserror::Error;
 
 use crate::{
-    CapturedError, ParseError,
+    CapturedError,
     captured::{LibraryInfo, library},
-    header::DataStatus,
+    format::{ParseError, header::DataStatus},
 };
 
 mod encoding;

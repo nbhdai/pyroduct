@@ -154,38 +154,41 @@ impl InitFn {
         let server_snake = AsSnakeCase(server.to_string()).to_string();
         let init_name = format_ident!("p__{}__ffi_init", server_snake);
 
-
         // Determine config type and closure body
         // The safe_lifecycle functions expect Option<T> to be passed through
         let (return_ty, closure) = match (&self.config_type, self.is_async) {
-            (Some(c), false) => {
-                (quote!(::pyroduct::ffi::InitResult), quote!{::pyroduct::ffi::guest::safe_lifecycle::execute_safe_init(|object_id| {
+            (Some(c), false) => (
+                quote!(::pyroduct::ffi::InitResult),
+                quote! {::pyroduct::ffi::guest::safe_lifecycle::execute_safe_init(|object_id| {
                     let config = match ::pyroduct::ffi::guest::safe_lifecycle::deserialize_config::<#c>(config_ptr) {
                         Ok(config) => config,
                         Err(err) => return ::pyroduct::ffi::InitResult::init_err(err, object_id),
                     };
                     ::pyroduct::ffi::InitResult::init_ok(#server::new(config), object_id)
-                }, object_id)})
-            },
-            (None, false) => {
-                (quote!(::pyroduct::ffi::InitResult), quote!{::pyroduct::ffi::guest::safe_lifecycle::execute_safe_init(|object_id| {
+                }, object_id)},
+            ),
+            (None, false) => (
+                quote!(::pyroduct::ffi::InitResult),
+                quote! {::pyroduct::ffi::guest::safe_lifecycle::execute_safe_init(|object_id| {
                     ::pyroduct::ffi::InitResult::init_ok(#server::new(), object_id)
-                }, object_id)})
-            },
-            (Some(c), true) => {
-                (quote!(::pyroduct::ffi::FutureInitResult), quote!{ ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_async_init(|object_id| async move { 
+                }, object_id)},
+            ),
+            (Some(c), true) => (
+                quote!(::pyroduct::ffi::FutureInitResult),
+                quote! { ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_async_init(|object_id| async move {
                     let config = match ::pyroduct::ffi::guest::safe_lifecycle::deserialize_config::<#c>(config_ptr) {
                         Ok(config) => config,
                         Err(err) => return ::pyroduct::ffi::InitResult::init_err(err, object_id),
                     };
-                    ::pyroduct::ffi::InitResult::init_ok(#server::new(config).await, object_id) 
-                }, object_id)})
-            },
-            (None, true) => {
-                (quote!(::pyroduct::ffi::FutureInitResult), quote!{ ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_async_init(|object_id| async move { 
-                    ::pyroduct::ffi::InitResult::init_ok(#server::new().await, object_id) 
-                }, object_id)})
-            },
+                    ::pyroduct::ffi::InitResult::init_ok(#server::new(config).await, object_id)
+                }, object_id)},
+            ),
+            (None, true) => (
+                quote!(::pyroduct::ffi::FutureInitResult),
+                quote! { ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_async_init(|object_id| async move {
+                    ::pyroduct::ffi::InitResult::init_ok(#server::new().await, object_id)
+                }, object_id)},
+            ),
         };
 
         quote! {

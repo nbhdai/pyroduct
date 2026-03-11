@@ -1,12 +1,16 @@
 use std::sync::Mutex;
 use std::{collections::HashMap, ops::Deref};
 
-use crate::bridgeable::BridgeableZeroCopy;
-use crate::format::{PyroZeroCopyFormat, Receiver};
-use crate::header::{DataStatus, PyroHeaderMut};
-use crate::value::PyroRow;
-use crate::{Bridgeable, BridgeableResult, CapturedError, PyroError, ToRow};
-use crate::{PyroVec, header::PyroData};
+use crate::format::{
+    Bridgeable, BridgeableResult, PyroVec, ToRow,
+    bridgeable::BridgeableZeroCopy,
+    format::{PyroZeroCopyFormat, Receiver},
+    header::PyroData,
+    header::{DataStatus, PyroHeaderMut},
+    value::PyroRow,
+};
+
+use crate::{CapturedError, PyroError};
 
 mod logger;
 
@@ -155,13 +159,10 @@ pub fn _test_reinsert_input(ptr: *mut u8, vec: PyroVec) {
 ///     wasm_row_main(ptr, main_fn)
 /// }
 /// ```
-pub fn wasm_row_main<'a, O, F>(
-    input_ptr: *mut u8,
-    func: F,
-) -> *const u8 
-    where
-        O: ToRow,
-        F: Fn(PyroRow<'a>) -> Result<O, CapturedError>
+pub fn wasm_row_main<'a, O, F>(input_ptr: *mut u8, func: F) -> *const u8
+where
+    O: ToRow,
+    F: Fn(PyroRow<'a>) -> Result<O, CapturedError>,
 {
     logger::init_logging();
     let input_vec = match get_input(input_ptr) {
@@ -187,9 +188,7 @@ pub fn wasm_row_main<'a, O, F>(
     let input = match input_row.try_into() {
         Ok(input) => input,
         Err(_) => {
-            let result = Err(CapturedError::new(
-                "Unable to extract input",
-            ));
+            let result = Err(CapturedError::new("Unable to extract input"));
             return to_output(encode_result(result));
         }
     };
@@ -366,34 +365,6 @@ impl<T> Client<T> {
         }
     }
 }
-
-
-impl From<anyhow::Error> for CapturedError {
-    fn from(err: anyhow::Error) -> Self {
-        let mut captured = CapturedError::new(err.to_string());
-
-        let sources: Vec<String> = err.chain().skip(1).map(|e| e.to_string()).collect();
-
-        if !sources.is_empty() {
-            captured.error = Some(sources.join(": "));
-        }
-        let backtrace = err.backtrace();
-        let bt_str = backtrace.to_string();
-
-        if !bt_str.is_empty() && bt_str != "Disabled Backtrace" {
-            captured.stack_trace = Some(bt_str);
-        }
-
-        captured
-    }
-}
-
-impl From<anyhow::Error> for Box<CapturedError> {
-    fn from(err: anyhow::Error) -> Self {
-        Box::new(err.into())
-    }
-}
-
 
 impl From<String> for CapturedError {
     fn from(err: String) -> Self {

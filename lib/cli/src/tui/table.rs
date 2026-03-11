@@ -3,13 +3,12 @@ use std::collections::VecDeque;
 use arrow::array::RecordBatch;
 use arrow::datatypes::DataType;
 use crossterm::event::KeyCode;
-use pyroduct::value::arrow::Rowable;
-use pyroduct::value::{PyroRow, PyroRowOwned, PyroValue};
+use pyroduct::format::value::{PyroRow, PyroRowOwned, PyroValue, arrow::Rowable};
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Row, Table};
-use ratatui::Frame;
 
 use super::keys::{Hotkey, HotkeyProvider};
 
@@ -64,7 +63,6 @@ pub struct TableView {
 
     pub focused: bool,
 }
-
 
 impl TableView {
     pub fn new(batch: RecordBatch) -> Self {
@@ -319,7 +317,11 @@ impl TableView {
         let available_rows = area.height.saturating_sub(4) as usize;
         self.page_size = available_rows.max(1);
 
-        let border_color = if self.focused { Color::Green } else { Color::Cyan };
+        let border_color = if self.focused {
+            Color::Green
+        } else {
+            Color::Cyan
+        };
 
         let total = self.total_rows();
         if total == 0 {
@@ -358,17 +360,16 @@ impl TableView {
         let has_list_expansion = !list_parents.is_empty();
 
         // Build header
-        let header_cells: Vec<Cell> = std::iter::once(
-            Cell::from("#").style(Style::default().fg(Color::DarkGray)),
-        )
-        .chain(flat_cols.iter().map(|fc| {
-            Cell::from(fc.header.clone()).style(
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )
-        }))
-        .collect();
+        let header_cells: Vec<Cell> =
+            std::iter::once(Cell::from("#").style(Style::default().fg(Color::DarkGray)))
+                .chain(flat_cols.iter().map(|fc| {
+                    Cell::from(fc.header.clone()).style(
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                }))
+                .collect();
         let header = Row::new(header_cells).height(1);
 
         // Build rows — potentially multiple visual rows per data row
@@ -389,8 +390,8 @@ impl TableView {
 
             if !has_list_expansion {
                 // Simple case: no list expansion needed
-                let idx_cell = Cell::from(format!("{}", abs_idx))
-                    .style(Style::default().fg(Color::DarkGray));
+                let idx_cell =
+                    Cell::from(format!("{}", abs_idx)).style(Style::default().fg(Color::DarkGray));
                 let data_cells = flat_cols.iter().map(|fc| {
                     let text = format_cell_path(row, &fc.path);
                     Cell::from(text)
@@ -417,8 +418,7 @@ impl TableView {
                         Cell::from(format!("{}", abs_idx))
                             .style(Style::default().fg(Color::DarkGray))
                     } else {
-                        Cell::from("".to_string())
-                            .style(Style::default().fg(Color::DarkGray))
+                        Cell::from("".to_string()).style(Style::default().fg(Color::DarkGray))
                     };
 
                     let data_cells = flat_cols.iter().map(|fc| {
@@ -519,12 +519,10 @@ fn format_list_struct_cell(row: &PyroRow<'_>, path: &[String], list_idx: usize) 
         Some(PyroValue::List(items)) => {
             if let Some(item) = items.get(list_idx) {
                 match item {
-                    PyroValue::Group(inner_row) => {
-                        match inner_row.get(&path[1]) {
-                            None | Some(PyroValue::Null) => NULL_DISPLAY.to_string(),
-                            Some(val) => truncate_display(val),
-                        }
-                    }
+                    PyroValue::Group(inner_row) => match inner_row.get(&path[1]) {
+                        None | Some(PyroValue::Null) => NULL_DISPLAY.to_string(),
+                        Some(val) => truncate_display(val),
+                    },
                     // If the list element is not a struct, show it on the first sub-column only
                     other => {
                         if path[1] == path[0] {

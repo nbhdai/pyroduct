@@ -1,17 +1,16 @@
 use libloading::Library;
-use tokio::sync::oneshot;
 use std::ffi::c_void;
 use std::future::Future;
 use std::ops::DerefMut;
 use std::pin::Pin;
 use std::ptr::NonNull;
-use std::{fmt, slice};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
+use std::{fmt, slice};
+use tokio::sync::oneshot;
 
-use crate::header::PyroData;
-use crate::view::{PyroView, PyroViewPtr};
-use crate::{CapturedError, PyroError, PyroVec, PyroVecPtr};
+use crate::format::{PyroVec, PyroVecPtr, PyroView, PyroViewPtr, header::PyroData};
+use crate::{CapturedError, PyroError};
 
 pub type LogCallback = unsafe extern "C" fn(i64, u64, *const u8, usize);
 
@@ -139,11 +138,15 @@ unsafe impl Sync for PyroObject {}
 
 impl PyroObject {
     /// Creates a new PyroObject from raw components.
-    pub unsafe fn new(state: *mut c_void, dropper: ClassDropper, object_id: u64) -> Result<Self, CapturedError> {
+    pub unsafe fn new(
+        state: *mut c_void,
+        dropper: ClassDropper,
+        object_id: u64,
+    ) -> Result<Self, CapturedError> {
         let state = NonNull::new(state)
             .ok_or_else(|| CapturedError::new("Cannot construct PyroObject from null pointer"))?;
 
-        Ok(Self { 
+        Ok(Self {
             state,
             dropper,
             object_id,
@@ -315,7 +318,8 @@ pub enum FutureInitResult {
 }
 
 pub type SyncClassInitFn = unsafe extern "C" fn(config: PyroViewPtr, object_id: u64) -> InitResult;
-pub type AsyncClassInitFn = unsafe extern "C" fn(config: PyroViewPtr, object_id: u64) -> FutureInitResult;
+pub type AsyncClassInitFn =
+    unsafe extern "C" fn(config: PyroViewPtr, object_id: u64) -> FutureInitResult;
 
 #[repr(C, u8)]
 #[derive(Clone, Copy)]
@@ -494,9 +498,9 @@ pub type CapabilityRegisterFn =
 
 pub type ObjectHandle = i64;
 
-
 pub struct ForeignClass {
     name: String,
+    lib_name: String,
     _library: Option<Arc<Library>>,
     methods: Vec<ForeignMethod>,
     init: ClassInitFn,
@@ -505,7 +509,11 @@ pub struct ForeignClass {
 }
 impl fmt::Debug for ForeignClass {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ForeignClass").field("name", &self.name).field("library", &self._library).field("methods", &self.methods.len()).finish()
+        f.debug_struct("ForeignClass")
+            .field("name", &self.name)
+            .field("library", &self._library)
+            .field("methods", &self.methods.len())
+            .finish()
     }
 }
 
@@ -546,13 +554,15 @@ impl ForeignClass {
     }
 
     pub unsafe fn from_export(
+        lib_name: String,
         library: Arc<Library>,
         export: ClassExport,
     ) -> Result<Self, CapturedError> {
-        unsafe { Self::from_export_inter(Some(library), export) }
+        unsafe { Self::from_export_inter(lib_name, Some(library), export) }
     }
 
     unsafe fn from_export_inter(
+        lib_name: String,
         library: Option<Arc<Library>>,
         export: ClassExport,
     ) -> Result<Self, CapturedError> {
@@ -579,6 +589,7 @@ impl ForeignClass {
 
         Ok(Self {
             name,
+            lib_name,
             methods,
             _library: library,
             init: export.init,
@@ -593,7 +604,6 @@ impl ForeignClass {
         object_id: u64,
         mut log_channel: tokio::sync::mpsc::Receiver<String>,
     ) -> Result<ForeignObject, PyroError> {
-
         let obj = match self.init {
             ClassInitFn::Sync(f) => process_init_result(unsafe { (f)(config.ptr(), object_id) }),
             ClassInitFn::Async(f) => {
@@ -603,7 +613,7 @@ impl ForeignClass {
 
         let log_buffer = Arc::new(Mutex::new(Vec::new()));
         let task_buffer = Arc::clone(&log_buffer);
-        
+
         // 1. Create the oneshot channel for the kill signal
         let (kill_tx, mut kill_rx) = oneshot::channel::<()>();
 
@@ -624,7 +634,7 @@ impl ForeignClass {
                     _ = &mut kill_rx => {
                         // Exit the loop immediately if the kill signal is received
                         // (or if the sender is dropped)
-                        break; 
+                        break;
                     }
                 }
             }
@@ -634,7 +644,9 @@ impl ForeignClass {
             obj: Arc::new(obj),
             class: self.clone(),
             log_buffer,
-            _log_task: Arc::new(LogTaskHandle { kill_tx: Some(kill_tx) }),
+            _log_task: Arc::new(LogTaskHandle {
+                kill_tx: Some(kill_tx),
+            }),
         })
     }
 
@@ -648,20 +660,27 @@ pub struct ForeignObject {
     class: Arc<ForeignClass>,
     obj: Arc<PyroObject>,
     pub log_buffer: Arc<Mutex<Vec<String>>>,
-    // Wrapped in Option so we can take() it to send the signal, 
+    // Wrapped in Option so we can take() it to send the signal,
     // and Arc<Mutex> so ForeignObject remains Cloneable.
     _log_task: Arc<LogTaskHandle>,
 }
 
 impl fmt::Debug for ForeignObject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ForeignClass").field("class", &self.class).field("obj", &self.obj.object_id).finish()
+        f.debug_struct("ForeignClass")
+            .field("class", &self.class)
+            .field("obj", &self.obj.object_id)
+            .finish()
     }
 }
 
 impl ForeignObject {
     pub fn name(&self) -> &str {
         &self.class.name
+    }
+
+    pub fn lib_name(&self) -> &str {
+        &self.class.lib_name
     }
 
     pub fn method_names(&self) -> impl Iterator<Item = &str> {
@@ -739,7 +758,7 @@ struct LogTaskHandle {
 impl Drop for LogTaskHandle {
     fn drop(&mut self) {
         if let Some(tx) = self.kill_tx.take() {
-            let _ = tx.send(()); 
+            let _ = tx.send(());
         }
     }
 }
@@ -747,8 +766,8 @@ impl Drop for LogTaskHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ffi::host::create_log;
-    use crate::header::PyroHeader;
+    use crate::format::header::PyroHeader;
+    use crate::module::capability::create_log;
     use std::cell::RefCell;
     use std::ptr;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -923,12 +942,17 @@ mod tests {
             register: ClientRegisterFn::Null,
         };
 
-        let class = Arc::new(unsafe { ForeignClass::from_export_inter(None, export) }.unwrap());
+        let class = Arc::new(
+            unsafe { ForeignClass::from_export_inter("test".to_string(), None, export) }.unwrap(),
+        );
         let log_channel = create_log(0, 0, 100);
 
         // Create Instance (calls mock_init, which claims m.state_ptr from TLS)
         let config = PyroVec::ok();
-        let handle = class.create_instance(config.view(), 0, log_channel).await.unwrap();
+        let handle = class
+            .create_instance(config.view(), 0, log_channel)
+            .await
+            .unwrap();
 
         // Call Reset
         handle.reset().await.unwrap();
@@ -954,11 +978,16 @@ mod tests {
             register: m.register,
         };
 
-        let class = Arc::new(unsafe { ForeignClass::from_export_inter(None, export) }.unwrap());
+        let class = Arc::new(
+            unsafe { ForeignClass::from_export_inter("test".to_string(), None, export) }.unwrap(),
+        );
         let log_channel = create_log(0, 0, 100);
 
         let config = PyroVec::ok();
-        let handle = class.create_instance(config.view(), 0, log_channel).await.unwrap();
+        let handle = class
+            .create_instance(config.view(), 0, log_channel)
+            .await
+            .unwrap();
 
         let client_data = PyroVec::ok();
         let result = handle.register(client_data.view()).await.unwrap();
@@ -982,9 +1011,14 @@ mod tests {
         };
         let log_channel = create_log(0, 0, 100);
 
-        let class = Arc::new(unsafe { ForeignClass::from_export_inter(None, export) }.unwrap());
+        let class = Arc::new(
+            unsafe { ForeignClass::from_export_inter("test".to_string(), None, export) }.unwrap(),
+        );
         let config = PyroVec::ok();
-        let handle = class.create_instance(config.view(), 0, log_channel).await.unwrap();
+        let handle = class
+            .create_instance(config.view(), 0, log_channel)
+            .await
+            .unwrap();
 
         let client_data = PyroVec::ok();
         let result = handle.register(client_data.view()).await;

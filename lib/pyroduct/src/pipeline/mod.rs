@@ -1,15 +1,12 @@
 pub mod pipeline;
 pub mod wasm_execute;
-pub mod wasm;
 
-pub use pipeline::{ModuleConfig, PipelineConfig, PipelineDef};
+pub use pipeline::{PipelineConfig, PipelineFactory};
+use thiserror::Error;
 pub use wasm_execute::{Failure, Pipeline, PipelinePool};
 
-use thiserror::Error;
-
 use crate::PyroError;
-use crate::ffi::host::CapabilityLoading;
-use crate::pipeline::wasm::WasmError;
+use crate::module::{WasmError, capability::CapabilityError};
 
 #[derive(Error, Debug)]
 pub enum PipelineError {
@@ -20,7 +17,7 @@ pub enum PipelineError {
     Wasm(#[from] WasmError),
 
     #[error(transparent)]
-    Capability(#[from] CapabilityLoading),
+    Capability(#[from] CapabilityError),
 
     #[error("{0}")]
     Config(String),

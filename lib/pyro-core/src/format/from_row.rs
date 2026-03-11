@@ -181,7 +181,7 @@ pub fn ref_from_row(input: &ItemStruct, import_location: &Path) -> syn::Result<T
             GenericParam::Type(t) => {
                 let ident = &t.ident;
                 ref_struct_args
-                    .push(quote! { <#ident as #import_location::DeepRef>::Ref<#lifetime> });
+                    .push(quote! { <#ident as #import_location::format::DeepRef>::Ref<#lifetime> });
             }
             GenericParam::Const(c) => {
                 let ident = &c.ident;
@@ -344,7 +344,7 @@ fn generate_field_try_from_ref(
         // For non-Option, mapped_type (from argument) is already correct.
         // Recalculating it to be safe and consistent with Option fix above.
         let (mapped_type, _) = map_type_to_ref(original_ty);
-        
+
         Ok(quote! {
             #name: {
                 let val = row.get(#name_str)
@@ -400,7 +400,7 @@ fn generate_field_try_from_owned(
             get_vec_inner(ty).ok_or_else(|| syn::Error::new_spanned(ty, "Malformed Vec type"))?;
         let fail = format!("Failed to convert element in field '{}'", name_str);
         let unexpected = format!("Expected List for field '{}'", name_str);
-        
+
         // FIX: map_err must be applied inside the closure, on the Result returned by try_into()
         Ok(quote! {
             #name: {

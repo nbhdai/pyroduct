@@ -342,7 +342,7 @@ impl FnOutput {
             FnOutput::Single(_) => None,
 
             // Maps back to "-> Result<T, E>"
-            FnOutput::Result(_, err) => Some(err)
+            FnOutput::Result(_, err) => Some(err),
         }
     }
 }

@@ -1,10 +1,15 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
     Frame,
+    layout::{Constraint, Direction, Layout, Rect},
 };
 
-use super::{cap_config::CapConfigState, keys::{Hotkey, HotkeyProvider}, wasm, PipelineState};
+use super::{
+    PipelineState,
+    cap_config::CapConfigState,
+    keys::{Hotkey, HotkeyProvider},
+    wasm,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivePane {
@@ -79,7 +84,7 @@ impl ModuleView {
                 } else {
                     self.focused = false;
                 }
-            },
+            }
             (ActivePane::Code, _) => wasm::handle_event(&mut self.code, key)?,
             (ActivePane::CapConfig, KeyCode::Esc) => {
                 if self.cap_config.editing {
@@ -87,7 +92,7 @@ impl ModuleView {
                 } else {
                     self.focused = false;
                 }
-            },
+            }
             (ActivePane::CapConfig, _) => self.cap_config.handle_event(key)?,
         }
         Ok(())

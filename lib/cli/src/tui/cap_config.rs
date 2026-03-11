@@ -1,13 +1,13 @@
+use super::keys::{Hotkey, HotkeyProvider};
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Color, Modifier, Style},
     text::Line,
     widgets::{Block, Borders, Paragraph, Tabs},
-    Frame,
 };
 use ratatui_code_editor::{editor::Editor, theme::vesper};
-use super::keys::{Hotkey, HotkeyProvider};
 
 pub struct CapConfigState {
     pub editing: bool,
@@ -25,7 +25,10 @@ impl CapConfigState {
         }
 
         if editors.is_empty() {
-            editors.push(("DefaultCapability".to_string(), Editor::new("yaml", "", vesper())));
+            editors.push((
+                "DefaultCapability".to_string(),
+                Editor::new("yaml", "", vesper()),
+            ));
         }
 
         Self {
@@ -55,7 +58,8 @@ impl CapConfigState {
                 KeyCode::Enter | KeyCode::Char('i') => {
                     if self.selected_tab == self.editors.len() {
                         let new_name = format!("NewCapability{}", self.editors.len() + 1);
-                        self.editors.push((new_name, Editor::new("yaml", "", vesper())));
+                        self.editors
+                            .push((new_name, Editor::new("yaml", "", vesper())));
                         self.selected_tab = self.editors.len() - 1;
                     } else {
                         self.editing = true;
@@ -113,7 +117,10 @@ impl CapConfigState {
             f.render_widget(&self.editors[self.selected_tab].1, editor_area);
 
             if self.editing {
-                if let Some((x, y)) = self.editors[self.selected_tab].1.get_visible_cursor(&editor_area) {
+                if let Some((x, y)) = self.editors[self.selected_tab]
+                    .1
+                    .get_visible_cursor(&editor_area)
+                {
                     f.set_cursor_position(Position::new(x, y));
                 }
             }

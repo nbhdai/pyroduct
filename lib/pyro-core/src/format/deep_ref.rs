@@ -1,8 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{
-    GenericArgument, Ident, ItemStruct, Path, PathArguments, Type, TypePath,
-};
+use syn::{GenericArgument, Ident, ItemStruct, Path, PathArguments, Type, TypePath};
 
 /// Main function to generate the Deep Reference struct and implementation.
 /// Accepts a list of additional derives to apply to the generated struct.
@@ -20,7 +18,7 @@ pub fn deep_ref(
 
     let struct_name = &input.ident;
     let ref_struct_name = format_ident!("{}Ref", struct_name);
-    
+
     // ItemStruct stores fields directly
     let fields = &input.fields;
 
@@ -71,7 +69,7 @@ pub fn deep_ref(
     };
 
     let impl_owned = quote! {
-        impl #import_location::DeepRef for #struct_name {
+        impl #import_location::format::DeepRef for #struct_name {
             type Ref<'a> = #ref_struct_name<'a>;
 
             fn as_deep_ref(&self) -> Self::Ref<'_> {
@@ -126,7 +124,7 @@ pub fn deep_ref_rkyv(input: &ItemStruct, import_location: &Path) -> syn::Result<
     // 3. Generate the DeepRef implementation for the Archived struct
     let impl_archived = quote! {
         #[cfg(target_endian = "little")]
-        impl #import_location::DeepRef for #archived_struct_name {
+        impl #import_location::format::DeepRef for #archived_struct_name {
             type Ref<'a> = #ref_struct_name<'a>;
 
             fn as_deep_ref(&self) -> Self::Ref<'_> {
@@ -184,18 +182,18 @@ pub(crate) fn map_type_to_ref(ty: &Type) -> (TokenStream, bool) {
                     if let PathArguments::AngleBracketed(args) = &segment.arguments {
                         if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
                             // Recursively map the inner type
-                            
+
                             // 1. If inner is primitive (i32), Option<i32> is Copy (effectively),
                             //    so we keep Option<i32>.
                             if is_primitive(inner_ty) {
                                 return (quote! { Option<#inner_ty> }, true);
                             }
-                            
+
                             // 2. If inner is string-like (String, Arc<str>), we want Option<&'a str>
                             if is_string_like(inner_ty) {
                                 return (quote! { Option<&'a str> }, false);
                             }
-                            
+
                             // 3. Otherwise, map normally (e.g., Option<MyStruct> -> Option<MyStructRef>)
                             let (inner_ref, _) = map_type_to_ref(inner_ty);
                             return (quote! { Option<#inner_ref> }, false);
@@ -315,9 +313,9 @@ fn generate_rkyv_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream 
                 }
 
                 // 2. Multi-byte Endian-Specific Primitives (Rkyv wrappers)
-                "i16" | "i16_le" | "i32" | "i32_le" | "i64" | "i64_le" | 
-                "u16" | "u16_le" | "u32" | "u32_le" | "u64" | "u64_le" | 
-                "f16" | "f16_le" | "f32" | "f32_le" | "f64" | "f64_le" => {
+                "i16" | "i16_le" | "i32" | "i32_le" | "i64" | "i64_le" | "u16" | "u16_le"
+                | "u32" | "u32_le" | "u64" | "u64_le" | "f16" | "f16_le" | "f32" | "f32_le"
+                | "f64" | "f64_le" => {
                     quote! { #field_name: self.#field_name.to_native() }
                 }
 
@@ -331,7 +329,6 @@ fn generate_rkyv_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream 
                     if let PathArguments::AngleBracketed(args) = &segment.arguments {
                         if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
                             if is_primitive(inner_ty) {
-
                                 quote! { #field_name: unsafe { std::mem::transmute(self.#field_name.as_slice()) }}
                             } else if is_string_like(inner_ty) {
                                 // ArchivedVec<ArchivedString>. Inner (in struct def) is String.
@@ -360,16 +357,16 @@ fn generate_rkyv_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream 
                                 // ArchivedOption<ArchivedPrimitive> -> .as_ref() gives Option<&ArchivedPrimitive>
                                 // We need Option<Primitive>.
                                 // .to_native() converts &ArchivedPrimitive (Copy) to Primitive
-                                quote! { 
-                                    #field_name: self.#field_name.as_ref().map(|x| x.to_native()) 
+                                quote! {
+                                    #field_name: self.#field_name.as_ref().map(|x| x.to_native())
                                 }
                             } else if is_string_like(inner_ty) {
-                                // ArchivedOption<ArchivedString>. 
+                                // ArchivedOption<ArchivedString>.
                                 // We need Option<&str>.
                                 // as_ref() -> Option<&ArchivedString>
                                 // .map(|x| x.as_str()) -> Option<&str>
-                                quote! { 
-                                    #field_name: self.#field_name.as_ref().map(|x| x.as_str()) 
+                                quote! {
+                                    #field_name: self.#field_name.as_ref().map(|x| x.as_str())
                                 }
                             } else {
                                 // Standard nested struct
@@ -442,7 +439,10 @@ fn is_string_like(ty: &Type) -> bool {
             if let PathArguments::AngleBracketed(args) = &segment.arguments {
                 if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
                     // Check if inner is "str"
-                    if let Type::Path(TypePath { path: inner_path, .. }) = inner_ty {
+                    if let Type::Path(TypePath {
+                        path: inner_path, ..
+                    }) = inner_ty
+                    {
                         if let Some(inner_seg) = inner_path.segments.last() {
                             return inner_seg.ident == "str";
                         }

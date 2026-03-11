@@ -5,10 +5,10 @@ use anyhow::{Context, Result, anyhow};
 use clap::ValueEnum;
 use fs_err as fs;
 
-use pyroduct::value::arrow::PreBatch;
 use pyroduct::{
-    value::PyroRow,
-    pipeline::{Pipeline, PipelineConfig, PipelineDef, PipelinePool},
+    PyroRow,
+    format::value::arrow::PreBatch,
+    pipeline::{PipelineConfig, PipelineFactory, PipelinePool},
 };
 
 // Use arrow-file to handle reading/writing data formats
@@ -41,24 +41,28 @@ pub fn load_config(config_path: &Path) -> Result<PipelineConfig> {
     let config_str = fs::read_to_string(config_path)?;
     let mut config: PipelineConfig = match config_path.extension().map(|s| s.as_encoded_bytes()) {
         Some(b"toml") => toml::from_str(&config_str).context("Failed to parse pipeline TOML")?,
-        Some(b"yaml") => serde_yaml::from_str(&config_str).context("Failed to parse pipeline yaml")?,
-        Some(b"json") => serde_json::from_str(&config_str).context("Failed to parse pipeline TOML")?,
-        _ => anyhow::bail!("Unknown extension, supports toml, yaml and json")
+        Some(b"yaml") => {
+            serde_yaml::from_str(&config_str).context("Failed to parse pipeline yaml")?
+        }
+        Some(b"json") => {
+            serde_json::from_str(&config_str).context("Failed to parse pipeline TOML")?
+        }
+        _ => anyhow::bail!("Unknown extension, supports toml, yaml and json"),
     };
-        
 
     let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
     // Resolve relative paths
-    for path in config.libraries.values_mut() {
-        if path.is_relative() {
-            *path = config_dir.join(&path);
+    for module in config.pipeline.iter_mut() {
+        for path in module.libraries.iter_mut() {
+            if path.is_relative() {
+                *path = config_dir.join(&path);
+            }
+        }
+        if module.path.is_relative() {
+            module.path = config_dir.join(&module.path);
         }
     }
-    for mod_conf in config.modules.values_mut() {
-        if mod_conf.path.is_relative() {
-            mod_conf.path = config_dir.join(&mod_conf.path);
-        }
-    }
+
     Ok(config)
 }
 
@@ -66,8 +70,8 @@ pub fn load_config(config_path: &Path) -> Result<PipelineConfig> {
 pub async fn run(config_path: &Path, input_json: &str) -> Result<()> {
     // 1. Setup Pipeline (Single instance, no pool needed)
     let config = load_config(config_path)?;
-    let pipeline_def = PipelineDef::load(&config).await?;
-    let mut pipeline = Pipeline::new(pipeline_def).await?;
+    let mut factory = PipelineFactory::load(&config).await?;
+    let mut pipeline = factory.build().await?;
 
     // 2. Parse Input directly to PyroRow
     tracing::debug!("Parsing input JSON directly to PyroRow");
@@ -109,7 +113,7 @@ pub async fn run(config_path: &Path, input_json: &str) -> Result<()> {
 
     if has_logs {
         println!("\n=== Logs ===");
-        let print_step_logs = |step_idx: usize, logs: &pyroduct::pipeline::wasm::PyroLogs| {
+        let print_step_logs = |step_idx: usize, logs: &pyroduct::module::PyroLogs| {
             if logs.module_logs.is_empty() && logs.capability_logs.is_empty() {
                 return;
             }
@@ -150,9 +154,9 @@ pub async fn run_batch(
     format: OutputFormat,
 ) -> Result<()> {
     let config = load_config(config_path)?;
-    let pipeline_def = PipelineDef::load(&config).await?;
+    let mut factory = PipelineFactory::load(&config).await?;
 
-    let pipeline = Pipeline::new(pipeline_def).await?;
+    let pipeline = factory.build().await?;
     let pool = PipelinePool::new(vec![pipeline]);
 
     tracing::info!("Reading input file: {:?}", input_file);
@@ -169,24 +173,33 @@ pub async fn run_batch(
 
     for exec in successes.iter().chain(failures.iter()) {
         let mut all_module_logs = Vec::new();
-        let mut all_cap_logs: std::collections::HashMap<(String, String), Vec<String>> = std::collections::HashMap::new();
+        let mut all_cap_logs: std::collections::HashMap<(String, String), Vec<String>> =
+            std::collections::HashMap::new();
 
         for step in &exec.steps {
             all_module_logs.extend(step.logs.module_logs.iter().cloned());
             for (k, v) in &step.logs.capability_logs {
-                all_cap_logs.entry(k.clone()).or_default().extend(v.iter().cloned());
+                all_cap_logs
+                    .entry(k.clone())
+                    .or_default()
+                    .extend(v.iter().cloned());
             }
         }
 
         if let Some(fail) = &exec.failure {
             all_module_logs.extend(fail.logs.module_logs.iter().cloned());
             for (k, v) in &fail.logs.capability_logs {
-                all_cap_logs.entry(k.clone()).or_default().extend(v.iter().cloned());
+                all_cap_logs
+                    .entry(k.clone())
+                    .or_default()
+                    .extend(v.iter().cloned());
             }
         }
 
         if !all_module_logs.is_empty() || !all_cap_logs.is_empty() {
-            let logs_dir = output_dir.join("logs").join(format!("row_{}", exec.row_index));
+            let logs_dir = output_dir
+                .join("logs")
+                .join(format!("row_{}", exec.row_index));
             fs::create_dir_all(&logs_dir)?;
 
             if !all_module_logs.is_empty() {
@@ -195,7 +208,10 @@ pub async fn run_batch(
 
             for ((lib, cap), logs) in all_cap_logs {
                 if !logs.is_empty() {
-                    fs::write(logs_dir.join(format!("{}_{}.log", lib, cap)), logs.join("\n"))?;
+                    fs::write(
+                        logs_dir.join(format!("{}_{}.log", lib, cap)),
+                        logs.join("\n"),
+                    )?;
                 }
             }
         }
@@ -233,7 +249,8 @@ pub async fn run_batch(
         if !output_dir.exists() {
             fs::create_dir_all(output_dir)?;
         }
-        let schema = pyroduct::value::PyroSchema::trusted(&successes[0].steps.last().unwrap().row)?;
+        let schema =
+            pyroduct::format::value::PyroSchema::trusted(&successes[0].steps.last().unwrap().row)?;
         let mut prebatch = PreBatch::new(schema);
         for row in successes {
             prebatch

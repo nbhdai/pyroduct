@@ -5,7 +5,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use pyroduct::ffi::host::{create_log, destroy_log, log_callback};
+use pyroduct::module::capability::{create_log, destroy_log, log_callback};
 
 // =============================================================================
 // Helpers
@@ -210,11 +210,8 @@ async fn test_log_concurrent_writes() {
     // Drain all messages
     let r = received.clone();
     let drain = tokio::spawn(async move {
-        while let Ok(msg) = tokio::time::timeout(
-            std::time::Duration::from_millis(200),
-            rx.recv(),
-        )
-        .await
+        while let Ok(msg) =
+            tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await
         {
             if msg.is_none() {
                 break;

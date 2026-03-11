@@ -1,12 +1,17 @@
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-use pyroduct::{PyroRow, pipeline::{ModuleConfig, Pipeline, PipelineConfig, PipelineDef}};
+use pyroduct::{
+    PyroRow,
+    module::ModuleConfig,
+    pipeline::{PipelineConfig, PipelineFactory},
+};
 use std::{collections::HashMap, path::Path};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Test that capability state is preserved across multiple calls to the same module instance.
-#[tokio::test] 
+#[tokio::test]
 async fn test_capability_state_preservation() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "trace,cranelift_frontend=off,cranelift_codegen=off,wasmtime=off".into());
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        "trace,cranelift_frontend=off,cranelift_codegen=off,wasmtime=off".into()
+    });
 
     tracing_subscriber::registry()
         .with(fmt::layer().with_target(true).pretty())
@@ -16,26 +21,27 @@ async fn test_capability_state_preservation() {
     let cap_path = Path::new("../../capabilities/state/");
 
     let config = PipelineConfig {
-        libraries: HashMap::from([("state".to_string(), cap_path.to_path_buf())]),
-        modules: HashMap::from([
-            ("state_mod".to_string(), ModuleConfig {
-                path: Path::new("../../modules/cap_state/").to_path_buf(),
-                capabilities: HashMap::new(),
-            })
-        ]),
-        pipeline: vec!["state_mod".to_string()],
+        pipeline: vec![ModuleConfig {
+            path: Path::new("../../modules/cap_state/").to_path_buf(),
+            libraries: vec![cap_path.to_path_buf()],
+            configurations: HashMap::from([("state".to_string(), None)]),
+        }],
     };
 
-    let pipeline_def = PipelineDef::load(&config).await.unwrap();
-    let mut pipeline = Pipeline::new(pipeline_def).await.unwrap();
+    let mut factory = PipelineFactory::load(&config).await.unwrap();
+    let mut pipeline = factory.build().await.unwrap();
 
-    let result1 = pipeline.process(&PyroRow::from([("input", "0".into())])).await;
+    let result1 = pipeline
+        .process(&PyroRow::from([("input", "0".into())]))
+        .await;
     let row1 = result1.row().unwrap();
     // Result should be (count: 0, incremented: 0) since fetch_add returns previous
     assert_eq!(row1.get_u64("incremented").unwrap(), 0);
 
     // Second call: The call_count in CounterServer should now be 1
-    let result2 = pipeline.process(&PyroRow::from([("input", "0".into())])).await;
+    let result2 = pipeline
+        .process(&PyroRow::from([("input", "0".into())]))
+        .await;
     let row2 = result2.row().unwrap();
     assert_eq!(row2.get_u64("incremented").unwrap(), 1);
 }

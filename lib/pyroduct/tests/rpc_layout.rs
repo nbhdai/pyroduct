@@ -1,6 +1,9 @@
 // //! Integration tests for Bridgeable derive macro
 
-use pyroduct::{Bridgeable, bridgeable, bridgeable::BridgeableZeroCopy, format::Receiver};
+use pyroduct::{
+    bridgeable,
+    format::{Bridgeable, bridgeable::BridgeableZeroCopy, format::Receiver},
+};
 
 #[bridgeable]
 #[derive(Debug, PartialEq)]

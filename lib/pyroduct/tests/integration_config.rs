@@ -1,41 +1,43 @@
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-use pyroduct::{PyroRow, pipeline::{ModuleConfig, Pipeline, PipelineConfig, PipelineDef}};
+use pyroduct::{
+    PyroRow,
+    module::ModuleConfig,
+    pipeline::{PipelineConfig, PipelineFactory},
+};
 use serde_json::json;
 use std::{collections::HashMap, path::Path};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Test that capability configurations (passed via PipelineDef) are correctly respected by the server.
 #[tokio::test]
 async fn test_capability_configuration_respect() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "trace,cranelift_frontend=off,cranelift_codegen=off,wasmtime=off".into());
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        "trace,cranelift_frontend=off,cranelift_codegen=off,wasmtime=off".into()
+    });
 
     tracing_subscriber::registry()
         .with(fmt::layer().with_target(true).pretty())
         .with(filter)
         .init();
-    
+
     // Use the counter capability from tests/cap_config
     let cap_path = Path::new("../../capabilities/config/");
-    
+
     let config = PipelineConfig {
-        libraries: HashMap::from([("config".to_string(), cap_path.to_path_buf())]),
-        modules: HashMap::from([
-            ("config_mod".to_string(), ModuleConfig {
-                path: Path::new("../../modules/cap_config/").to_path_buf(),
-                capabilities: HashMap::from([(
-                    "config".to_string(),
-                    json!({
-                        "uppercase": true,
-                        "suffix": "!!!"
-                    }),
-                )]),
-            })
-        ]),
-        pipeline: vec!["config_mod".to_string()],
+        pipeline: vec![ModuleConfig {
+            path: Path::new("../../modules/cap_config/").to_path_buf(),
+            libraries: vec![cap_path.to_path_buf()],
+            configurations: HashMap::from([(
+                "config".to_string(),
+                Some(json!({
+                    "uppercase": true,
+                    "suffix": "!!!"
+                })),
+            )]),
+        }],
     };
 
-    let pipeline_def = PipelineDef::load(&config).await.unwrap();
-    let mut pipeline = Pipeline::new(pipeline_def).await.unwrap();
+    let mut factory = PipelineFactory::load(&config).await.unwrap();
+    let mut pipeline = factory.build().await.unwrap();
 
     let input = PyroRow::from([("input", "hello".into())]);
     let result = pipeline.process(&input).await;
