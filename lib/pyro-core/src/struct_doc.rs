@@ -118,7 +118,8 @@ impl SchemaBuilder {
     /// Build a `PyroSchema` for a struct that is in the registry.
     pub fn schema_for(&self, struct_name: &str) -> Option<PyroSchema<'static>> {
         let entry = self.structs.get(struct_name)?;
-        let fields = self.resolve_fields(&entry.fields);
+        let mut visited = Vec::new();
+        let fields = self.resolve_fields_inner(&entry.fields, &mut visited);
         let mut schema = PyroSchema::new(fields);
         if let Some(d) = &entry.doc {
             schema = schema.add_docstring(Cow::Owned(d.clone()));
@@ -141,12 +142,15 @@ impl SchemaBuilder {
     // Internals
     // -----------------------------------------------------------------
 
-    fn resolve_fields(&self, fields: &[FieldEntry]) -> Vec<PyroField<'static>> {
-        let mut visited = Vec::new();
+    fn resolve_fields_inner(
+        &self,
+        fields: &[FieldEntry],
+        visited: &mut Vec<String>,
+    ) -> Vec<PyroField<'static>> {
         fields
             .iter()
             .map(|f| {
-                let data_type = self.resolve_type_inner(&f.ty, &mut visited);
+                let data_type = self.resolve_type_inner(&f.ty, visited);
                 let nullable = is_option_type(&f.ty);
                 let mut field = PyroField::new(Cow::Owned(f.name.clone()), data_type, nullable);
                 if let Some(doc) = &f.doc {
@@ -244,7 +248,7 @@ impl SchemaBuilder {
                         }
                         if let Some(entry) = self.structs.get(other) {
                             visited.push(other.to_string());
-                            let fields = self.resolve_fields(&entry.fields);
+                            let fields = self.resolve_fields_inner(&entry.fields, visited);
                             visited.pop();
                             PyroType::Group(Cow::Owned(fields))
                         } else {
