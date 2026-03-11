@@ -127,7 +127,9 @@ impl CapabilityManifest {
     /// ready for serialization.
     pub fn to_capability_manifest(self) -> Manifest {
         let mut final_deps = BTreeMap::new();
-        final_deps.insert("pyroduct".to_string(), self.pyroduct.clone());
+        let mut pyro_dep = self.pyroduct.clone();
+        pyro_dep.detail_mut().features.push("capability".to_string());
+        final_deps.insert("pyroduct".to_string(), pyro_dep);
         final_deps.extend(self.dependencies.shared.clone().into_iter());
         self.augment_deps(&mut final_deps, &self.dependencies.host, true);
         self.augment_deps(&mut final_deps, &self.dependencies.module, true);
@@ -270,7 +272,9 @@ impl CapabilityManifest {
 impl ModuleManifest {
     pub fn to_cargo(self) -> Manifest {
         let mut final_deps = BTreeMap::new();
-        final_deps.insert("pyroduct".to_string(), self.pyroduct.clone());
+        let mut pyro_dep = self.pyroduct.clone();
+        pyro_dep.detail_mut().features.push("module".to_string());
+        final_deps.insert("pyroduct".to_string(), pyro_dep);
         final_deps.extend(self.dependencies.clone().into_iter());
         self.augment_deps(&mut final_deps, &self.capabilities);
 
@@ -362,14 +366,14 @@ mod tests {
     #[test]
     fn test_full_transformation() {
         let input_toml = r#"
-[package]
+[capability]
 name = "my-capability"
 version = "0.1.0"
 edition = "2021"
 authors = ["Me"]
 
-[lib]
-crate-type = ["cdylib", "rlib"]
+[pyroduct]
+path = "../../lib/pyroduct"
 
 [dependencies.host]
 tokio = "1.0"

@@ -122,9 +122,9 @@ impl PyroModule {
                                 "Register function didn't have the correct number of parameters"
                             )));
                         }
-                        if matches!(func_type.param(0), Some(ValType::I32)) {
+                        if !matches!(func_type.param(0), Some(ValType::I32)) {
                             return Err(WasmError::SignatureMismatch(format!(
-                                "Register function didn't take a pointer"
+                                "Register function didn't take a pointer: {:?}", func_type.param(0)
                             )));
                         }
 
@@ -133,7 +133,7 @@ impl PyroModule {
                                 "Register function didn't have the correct number of returns"
                             )));
                         }
-                        if matches!(func_type.result(0), Some(ValType::I32)) {
+                        if !matches!(func_type.result(0), Some(ValType::I32)) {
                             return Err(WasmError::SignatureMismatch(format!(
                                 "Register function didn't return a pointer"
                             )));

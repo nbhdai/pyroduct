@@ -22,7 +22,7 @@ async fn test_capability_state_preservation() {
 
     let config = PipelineConfig {
         pipeline: vec![ModuleConfig {
-            path: Path::new("../../modules/state/").to_path_buf(),
+            path: Path::new("../../modules/cap_state/").to_path_buf(),
             libraries: vec![cap_path.to_path_buf()],
             configurations: HashMap::from([("state".to_string(), None)]),
         }],

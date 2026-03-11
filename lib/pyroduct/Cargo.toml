@@ -8,6 +8,9 @@ edition.workspace = true
 capability = [
     "dep:async-ffi",
     "dep:tokio",
+    "dep:pin-project",
+    "dep:libloading",
+    "dep:futures",
 ]
 host = [
     "dep:tokio",
@@ -16,8 +19,8 @@ host = [
     "dep:wasmtime",
     "dep:arrow",
     "dep:parquet",
-    "dep:pin-project",
     "dep:libloading",
+    "dep:pin-project",
     "dep:object",
 ]
 module = []
