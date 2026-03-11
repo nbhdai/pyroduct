@@ -4,7 +4,7 @@ members = [
     "pyro-core",
     "pyro-derive",
     "cli",
-    "arrow-file",
+    "arrow-file", "spec",
 ]
 
 default-members = [
@@ -25,6 +25,7 @@ pyro-core = { path = "pyro-core" }
 pyro-derive = { path = "pyro-derive" }
 pyroduct = { path = "pyroduct" }
 arrow-file = { path = "arrow-file" }
+spec = { path = "spec" }
 
 # Errors and reporting
 anyhow = "1.0.100"

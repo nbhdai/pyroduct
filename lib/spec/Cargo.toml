@@ -1,0 +1,9 @@
+[package]
+name = "spec"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
