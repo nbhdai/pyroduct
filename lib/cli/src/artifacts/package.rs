@@ -148,15 +148,32 @@ fn package_module(
     fs::copy(&built_wasm, &dest_wasm)?;
     tracing::info!("✓ Compiled {}", dest_wasm.display());
 
-    // 4. Create Archive
+    // 4. Generate module spec (module.json)
+    let src_path = ctx.root.join("src").join("lib.rs");
+    let module_spec = if src_path.exists() {
+        let content = fs::read_to_string(&src_path)
+            .with_context(|| format!("Failed to read {:?}", src_path))?;
+        pyro_core::module::generate_module_spec(&content)
+            .map_err(|e| anyhow::anyhow!("Failed to generate module spec: {}", e))?
+    } else {
+        None
+    };
+
+    // 5. Create Archive
     let mut tar = TarballBuilder::new(ctx.archive_path("module"))?;
     tar.add_bytes("Cargo.toml", cargo_toml_content.as_bytes())?;
     tar.add_dir(&ctx.root.join("src"), "src")?;
+
+    if let Some(spec) = module_spec {
+        fs::write(ctx.output_dir.join("module.json"), &spec)?;
+        tar.add_bytes("module.json", spec.as_bytes())?;
+        tracing::info!("✓ Wrote module.json");
+    }
+
     tar.finish()?;
 
     Ok(())
 }
-
 // ============================================================
 // Capability Packaging
 // ============================================================

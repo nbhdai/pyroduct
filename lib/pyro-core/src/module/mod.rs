@@ -1,11 +1,13 @@
 mod codegen;
 mod parse;
+mod spec;
 
 use proc_macro2::TokenStream;
 use syn::parse2;
 
 pub use codegen::expand;
 pub use parse::ModuleAttrs;
+pub use spec::generate_module_spec;
 
 /// For generating module code from source content (used by build tools)
 pub fn generate_module(content: &str) -> syn::Result<syn::File> {
