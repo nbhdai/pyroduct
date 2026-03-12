@@ -116,8 +116,8 @@ mod tests {
         let output = expand_config(code, DocRec::NoReq);
 
         let expected = quote! {
-            #[derive(::pyroduct:;format::serde::Serialize, ::pyroduct:;format::serde::Deserialize)]
-            #[serde(crate = "::pyroduct:;format::serde")]
+            #[derive(::pyroduct::format::serde::Serialize, ::pyroduct::format::serde::Deserialize)]
+            #[serde(crate = "::pyroduct::format::serde")]
             pub struct MyConfig {
                 pub host: String,
                 pub port: u16,
@@ -192,8 +192,8 @@ mod tests {
         // 3. Define Expected Output
         // Derives added, generics preserved, debug preserved.
         let expected = quote! {
-            #[derive(::pyroduct:;format::serde::Serialize, ::pyroduct:;format::serde::Deserialize)]
-            #[serde(crate = "::pyroduct:;format::serde")]
+            #[derive(::pyroduct::format::serde::Serialize, ::pyroduct::format::serde::Deserialize)]
+            #[serde(crate = "::pyroduct::format::serde")]
             #[derive(Clone, Debug)]
             pub struct GenericConfig<T> {
                 pub options: T,
@@ -215,8 +215,8 @@ mod tests {
 
         // 3. Define Expected Output
         let expected = quote! {
-            #[derive(::pyroduct:;format::serde::Serialize, ::pyroduct:;format::serde::Deserialize)]
-            #[serde(crate = "::pyroduct:;format::serde")]
+            #[derive(::pyroduct::format::serde::Serialize, ::pyroduct::format::serde::Deserialize)]
+            #[serde(crate = "::pyroduct::format::serde")]
             pub struct TupleConfig(String, u32);
         };
 

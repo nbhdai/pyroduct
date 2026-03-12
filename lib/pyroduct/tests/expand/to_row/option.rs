@@ -1,6 +1,6 @@
 //! Test ToRow with Option fields
 
-use pyroduct::ToRow;
+use pyroduct::format::ToRow;
 
 #[derive(ToRow)]
 struct WithOption {
@@ -16,15 +16,15 @@ fn main() {
         optional_num: Some(200),
         optional_str: Some("present".to_string()),
     };
-    
+
     let _row1 = data1.to_row();
-    
+
     // Test with None values
     let data2 = WithOption {
         required: 100,
         optional_num: None,
         optional_str: None,
     };
-    
+
     let _row2 = data2.to_row();
 }

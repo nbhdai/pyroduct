@@ -1,6 +1,6 @@
 //! Test FromRow with nested structs
 
-use pyroduct::DeepRef;
+use pyroduct::format::DeepRef;
 
 #[derive(DeepRef)]
 struct Address {
@@ -24,11 +24,11 @@ fn main() {
             street: "123 Main St".to_string(),
             city: "Springfield".to_string(),
             zip: 12345,
-        }
+        },
     };
 
     let p_ref = person.as_deep_ref();
-    
+
     assert_eq!(p_ref.name, "Bob");
     assert_eq!(p_ref.age, 30);
     assert_eq!(p_ref.address.street, "123 Main St");

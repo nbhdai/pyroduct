@@ -1,6 +1,6 @@
 //! Test FromRow with basic primitive types
 
-use pyroduct::{FromRow, RefFromRow, DeepRef, PyroValue, PyroRow};
+use pyroduct::format::{DeepRef, FromRow, PyroRow, PyroValue, RefFromRow};
 
 #[derive(FromRow, RefFromRow, DeepRef)]
 struct SimpleStruct {
@@ -19,7 +19,7 @@ fn main() {
     ]);
 
     let s = SimpleStructRef::try_from(&row).unwrap();
-    
+
     assert_eq!(s.id, 42);
     assert_eq!(s.count, -10);
     assert_eq!(s.active, true);

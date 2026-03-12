@@ -1,9 +1,9 @@
 //! Test FromRow with empty struct (edge case)
-use pyroduct::{FromRow, RefFromRow, DeepRef, PyroRow};
+use pyroduct::format::{DeepRef, FromRow, PyroRow, RefFromRow};
 struct Empty {}
-impl ::pyroduct::value::TypeableRow for Empty {
-    fn schema() -> ::pyroduct::value::PyroSchema<'static> {
-        ::pyroduct::value::PyroSchema {
+impl ::pyroduct::format::value::TypeableRow for Empty {
+    fn schema() -> ::pyroduct::format::value::PyroSchema<'static> {
+        ::pyroduct::format::value::PyroSchema {
             fields: ::std::borrow::Cow::Owned(::alloc::vec::Vec::new()),
             documentation: None,
         }
@@ -49,9 +49,9 @@ impl<'a> std::convert::TryFrom<&::pyroduct::PyroValue<'a>> for Empty {
         }
     }
 }
-impl ::pyroduct::value::TypeableRow for EmptyRef<'_> {
-    fn schema() -> ::pyroduct::value::PyroSchema<'static> {
-        ::pyroduct::value::PyroSchema {
+impl ::pyroduct::format::value::TypeableRow for EmptyRef<'_> {
+    fn schema() -> ::pyroduct::format::value::PyroSchema<'static> {
+        ::pyroduct::format::value::PyroSchema {
             fields: ::std::borrow::Cow::Owned(::alloc::vec::Vec::new()),
             documentation: None,
         }
@@ -106,7 +106,7 @@ impl<'a> std::convert::TryFrom<&::pyroduct::PyroValue<'a>> for EmptyRef<'a> {
 pub struct EmptyRef<'a> {
     _phantom: std::marker::PhantomData<&'a ()>,
 }
-impl ::pyroduct::DeepRef for Empty {
+impl ::pyroduct::format::DeepRef for Empty {
     type Ref<'a> = EmptyRef<'a>;
     fn as_deep_ref(&self) -> Self::Ref<'_> {
         EmptyRef {

@@ -1,4 +1,4 @@
-use pyroduct::{magma, Bridgeable};
+use pyroduct::{format::Bridgeable, magma};
 
 #[magma]
 struct DataContainer {

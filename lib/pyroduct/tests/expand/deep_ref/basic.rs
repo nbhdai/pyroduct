@@ -1,6 +1,6 @@
 //! Test DeepRef with basic types
 
-use pyroduct::{DeepRef};
+use pyroduct::format::DeepRef;
 
 #[derive(DeepRef)]
 struct User {
@@ -15,7 +15,7 @@ fn main() {
         username: "alice".to_string(),
         score: 100,
     };
-    
+
     // as_deep_ref should convert to borrowed view
     let user_ref = user.as_deep_ref();
 }

@@ -1,11 +1,11 @@
 //! Test ToRow with Option fields
-use pyroduct::ToRow;
+use pyroduct::format::ToRow;
 struct WithOption {
     required: i32,
     optional_num: Option<i32>,
     optional_str: Option<String>,
 }
-impl ::pyroduct::ToRow for WithOption {
+impl ::pyroduct::format::ToRow for WithOption {
     fn to_row(&self) -> ::pyroduct::PyroRow<'_> {
         ::pyroduct::PyroRow::from([
             ("required", ::pyroduct::PyroValue::from(&self.required)),

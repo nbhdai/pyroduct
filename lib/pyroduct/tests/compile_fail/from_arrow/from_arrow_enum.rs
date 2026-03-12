@@ -1,6 +1,6 @@
 //! FromRow, DeepRef should only work on structs, not enums
 
-use pyroduct::{FromRow, DeepRef};
+use pyroduct::format::{DeepRef, FromRow};
 
 #[derive(FromRow, DeepRef)]
 enum NotAllowed {

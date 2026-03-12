@@ -1,6 +1,6 @@
 //! Test ToRow with Vec fields
 
-use pyroduct::{ToRow, PyroValue, value::PrimitiveValueList};
+use pyroduct::format::{PyroValue, ToRow, value::PrimitiveValueList};
 use std::borrow::Cow;
 
 #[derive(ToRow)]
@@ -16,9 +16,9 @@ fn main() {
         values: vec![1.1, 2.2],
         strs: vec!["hi".to_string()],
     };
-    
+
     let row = data.to_row();
-    
+
     // Vec should be converted to PrimitiveList (borrowed)
     if let Some(PyroValue::PrimitiveList(PrimitiveValueList::I32(list))) = row.get("scores") {
         match list {

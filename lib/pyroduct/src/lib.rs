@@ -25,9 +25,6 @@ pub use rkyv::rancor::Error as RancorError;
 pub use tracing;
 
 // Documented by the lib.
-pub use pyro_derive::bridgeable;
-
-// Documented by the lib.
 pub use pyro_derive::magma;
 
 /// Registers the library identity and metadata for the pyro system.

@@ -1,4 +1,4 @@
-use pyroduct::Document;
+use pyroduct::format::Document;
 
 #[derive(Document)]
 /// Inner struct

@@ -1,12 +1,12 @@
 //! Test ToRow with basic types
-use pyroduct::{ToRow, PyroValue};
+use pyroduct::format::{PyroValue, ToRow};
 struct BasicData {
     id: u32,
     name: String,
     active: bool,
     score: f64,
 }
-impl ::pyroduct::ToRow for BasicData {
+impl ::pyroduct::format::ToRow for BasicData {
     fn to_row(&self) -> ::pyroduct::PyroRow<'_> {
         ::pyroduct::PyroRow::from([
             ("id", ::pyroduct::PyroValue::from(&self.id)),

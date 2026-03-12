@@ -1,23 +1,24 @@
 use pyroduct::{
-    CapturedError, bridgeable,
+    CapturedError,
     ffi::guest::{deserialize_input, execute_safe, serialize_output, serialize_result},
     format::{
         Bridgeable, BridgeableResult, HasReceiver, PyroVec, Receiver,
         header::{DataStatus, PyroHeader},
     },
+    magma,
     panic::register_ffi_panic_hook,
 };
 
 // --- Test Structures ---
 
-#[bridgeable(derive(Debug, Clone, PartialEq))]
+#[magma(derive(Debug, Clone, PartialEq))]
 #[derive(Debug, Clone, PartialEq)]
 struct UserData {
     id: u32,
     payload: String,
 }
 
-#[bridgeable(derive(Debug, Clone, PartialEq))]
+#[magma(derive(Debug, Clone, PartialEq))]
 #[derive(Debug, Clone, PartialEq)]
 struct UserError {
     code: u16,

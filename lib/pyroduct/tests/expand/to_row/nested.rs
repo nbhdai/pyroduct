@@ -1,6 +1,6 @@
 //! Test ToRow with nested structs
 
-use pyroduct::ToRow;
+use pyroduct::format::ToRow;
 
 #[derive(ToRow)]
 struct Address {
@@ -22,6 +22,6 @@ fn main() {
             zip: 12345,
         },
     };
-    
+
     let _row = person.to_row();
 }

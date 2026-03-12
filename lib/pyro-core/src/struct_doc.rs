@@ -560,9 +560,21 @@ mod tests {
         });
 
         let schema = builder.schema_for("A").unwrap();
+        assert_eq!(schema.fields().len(), 1);
         let next_field = &schema.fields()[0];
-        // The inner A should be an empty group (cycle broken)
-        assert_eq!(next_field.data_type, PyroType::Group(Cow::Owned(vec![])));
+        assert_eq!(next_field.name(), "next");
+
+        // The `next` field has type A, which is a Group containing one field also named `next`.
+        // The inner self-reference is cut off as Group([]) to break the cycle.
+        match &next_field.data_type {
+            PyroType::Group(inner_fields) => {
+                assert_eq!(inner_fields.len(), 1);
+                assert_eq!(inner_fields[0].name(), "next");
+                // Cycle broken at this depth — the recursive self-ref is an empty group
+                assert_eq!(inner_fields[0].data_type, PyroType::Group(Cow::Owned(vec![])));
+            }
+            other => panic!("expected Group for A's next field, got {:?}", other),
+        }
     }
 
     // --- Map of struct ---

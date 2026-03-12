@@ -1,6 +1,6 @@
 //! ToRow should only work on structs, not enums
 
-use pyroduct::ToRow;
+use pyroduct::format::ToRow;
 
 #[derive(ToRow)]
 enum NotAllowed {

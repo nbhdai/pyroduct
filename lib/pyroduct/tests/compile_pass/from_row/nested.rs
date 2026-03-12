@@ -1,6 +1,6 @@
 //! Test FromRow with nested structs
 
-use pyroduct::{FromRow, PyroValue, PyroRow};
+use pyroduct::format::{FromRow, PyroRow, PyroValue};
 
 #[derive(FromRow)]
 struct Address {
@@ -30,7 +30,7 @@ fn main() {
     ]);
 
     let p = Person::try_from(&person_row).unwrap();
-    
+
     assert_eq!(p.name, "Bob");
     assert_eq!(p.age, 30);
     assert_eq!(p.address[0].street, "123 Main St");

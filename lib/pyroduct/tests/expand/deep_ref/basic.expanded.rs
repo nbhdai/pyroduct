@@ -1,5 +1,5 @@
 //! Test DeepRef with basic types
-use pyroduct::DeepRef;
+use pyroduct::format::DeepRef;
 struct User {
     id: u32,
     username: String,
@@ -10,7 +10,7 @@ pub struct UserRef<'a> {
     username: &'a str,
     score: i32,
 }
-impl ::pyroduct::DeepRef for User {
+impl ::pyroduct::format::DeepRef for User {
     type Ref<'a> = UserRef<'a>;
     fn as_deep_ref(&self) -> Self::Ref<'_> {
         UserRef {

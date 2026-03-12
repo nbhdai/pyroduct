@@ -1,6 +1,6 @@
 //! Generics are not currently supported
 
-use pyroduct::{FromRow, DeepRef};
+use pyroduct::format::{DeepRef, FromRow};
 
 #[derive(FromRow, DeepRef)]
 struct GenericStruct<T> {

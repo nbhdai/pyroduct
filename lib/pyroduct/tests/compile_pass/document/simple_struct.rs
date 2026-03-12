@@ -1,4 +1,4 @@
-use pyroduct::Document;
+use pyroduct::format::Document;
 
 #[derive(Document)]
 struct SimpleStruct {
@@ -6,6 +6,4 @@ struct SimpleStruct {
     name: String,
 }
 
-fn main() {
-    
-}
+fn main() {}

@@ -1,6 +1,6 @@
 //! Test DeepRef with Option fields
 
-use pyroduct::DeepRef;
+use pyroduct::format::DeepRef;
 
 #[derive(DeepRef)]
 struct WithOption {
@@ -15,18 +15,18 @@ fn main() {
         name: Some("test".to_string()),
         count: Some(42),
     };
-    
+
     let ref1 = data1.as_deep_ref();
     assert_eq!(ref1.id, 1);
     assert_eq!(ref1.name, Some("test"));
     assert_eq!(ref1.count, Some(42));
-    
+
     let data2 = WithOption {
         id: 2,
         name: None,
         count: None,
     };
-    
+
     let ref2 = data2.as_deep_ref();
     assert_eq!(ref2.id, 2);
     assert_eq!(ref2.name, None);

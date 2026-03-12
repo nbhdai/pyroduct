@@ -1,4 +1,4 @@
-use pyroduct::Document;
+use pyroduct::format::Document;
 
 #[derive(Document)]
 struct DataContainer {
@@ -6,5 +6,4 @@ struct DataContainer {
     labels: Vec<String>,
 }
 
-fn main() {
-}
+fn main() {}

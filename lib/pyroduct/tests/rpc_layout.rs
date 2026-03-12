@@ -1,25 +1,25 @@
 // //! Integration tests for Bridgeable derive macro
 
 use pyroduct::{
-    bridgeable,
     format::{Bridgeable, bridgeable::BridgeableZeroCopy, format::Receiver},
+    magma,
 };
 
-#[bridgeable]
+#[magma]
 #[derive(Debug, PartialEq)]
 struct SimpleStruct {
     id: u32,
     name: String,
 }
 
-#[bridgeable]
+#[magma]
 #[derive(Debug, PartialEq)]
 struct WithVec {
     items: Vec<u8>,
     labels: Vec<String>,
 }
 
-#[bridgeable]
+#[magma]
 #[derive(Debug, PartialEq)]
 struct Nested {
     inner: SimpleStruct,

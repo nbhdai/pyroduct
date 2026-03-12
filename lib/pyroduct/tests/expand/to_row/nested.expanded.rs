@@ -1,10 +1,10 @@
 //! Test ToRow with nested structs
-use pyroduct::ToRow;
+use pyroduct::format::ToRow;
 struct Address {
     street: String,
     zip: u32,
 }
-impl ::pyroduct::ToRow for Address {
+impl ::pyroduct::format::ToRow for Address {
     fn to_row(&self) -> ::pyroduct::PyroRow<'_> {
         ::pyroduct::PyroRow::from([
             ("street", ::pyroduct::PyroValue::from(&self.street)),
@@ -16,7 +16,7 @@ struct Person {
     name: String,
     address: Address,
 }
-impl ::pyroduct::ToRow for Person {
+impl ::pyroduct::format::ToRow for Person {
     fn to_row(&self) -> ::pyroduct::PyroRow<'_> {
         ::pyroduct::PyroRow::from([
             ("name", ::pyroduct::PyroValue::from(&self.name)),

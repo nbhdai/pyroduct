@@ -1,12 +1,12 @@
 //! Test ToRow with Vec fields
-use pyroduct::{ToRow, PyroValue, PrimitiveValueList};
+use pyroduct::format::{PrimitiveValueList, PyroValue, ToRow};
 use std::borrow::Cow;
 struct WithVec {
     scores: Vec<i32>,
     values: Vec<f64>,
     strs: Vec<String>,
 }
-impl ::pyroduct::ToRow for WithVec {
+impl ::pyroduct::format::ToRow for WithVec {
     fn to_row(&self) -> ::pyroduct::PyroRow<'_> {
         ::pyroduct::PyroRow::from([
             ("scores", ::pyroduct::PyroValue::from(&self.scores)),

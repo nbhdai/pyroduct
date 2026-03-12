@@ -1,6 +1,6 @@
 //! Test FromRow with nested structs
 
-use pyroduct::{FromRow, PyroValue, PyroRow};
+use pyroduct::format::{FromRow, PyroRow, PyroValue};
 
 #[derive(FromRow)]
 struct Address {

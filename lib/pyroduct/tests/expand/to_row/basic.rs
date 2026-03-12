@@ -1,6 +1,6 @@
 //! Test ToRow with basic types
 
-use pyroduct::{ToRow, PyroValue};
+use pyroduct::format::{PyroValue, ToRow};
 
 #[derive(ToRow)]
 struct BasicData {
@@ -17,8 +17,8 @@ fn main() {
         active: true,
         score: 85.5,
     };
-    
+
     let row = data.to_row();
-    
+
     assert_eq!(row.get("id"), Some(&PyroValue::U32(99)));
 }

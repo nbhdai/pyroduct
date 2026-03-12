@@ -1,6 +1,6 @@
 //! Generics are not currently supported
 
-use pyroduct::ToRow;
+use pyroduct::format::ToRow;
 
 #[derive(ToRow)]
 struct GenericStruct<T> {
