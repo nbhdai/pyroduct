@@ -380,6 +380,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "artifacts"
+version = "0.1.0"
+dependencies = [
+ "cargo_toml",
+ "flate2",
+ "prettyplease",
+ "pyro-core",
+ "pyroduct",
+ "serde",
+ "serde_json",
+ "sha2",
+ "syn",
+ "tar",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
 name = "async-ffi"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -515,23 +535,6 @@ name = "bytes"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
-
-[[package]]
-name = "cache"
-version = "0.1.0"
-dependencies = [
- "cargo_toml",
- "flate2",
- "pyro-core",
- "pyroduct",
- "serde",
- "sha2",
- "tar",
- "thiserror 2.0.18",
- "tokio",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
-]
 
 [[package]]
 name = "cargo_toml"
@@ -2289,6 +2292,7 @@ dependencies = [
  "anyhow",
  "arrow",
  "arrow-file",
+ "artifacts",
  "cargo_toml",
  "clap",
  "crossterm 0.29.0",

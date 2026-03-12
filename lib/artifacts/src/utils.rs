@@ -1,4 +1,3 @@
-use anyhow::{Context, Result};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use std::path::{Path, PathBuf};
@@ -15,39 +14,6 @@ pub fn dylib_extension() -> &'static str {
         "dll"
     } else {
         "so"
-    }
-}
-
-/// Central context to reduce argument passing
-pub struct ProjectContext<'a> {
-    pub root: &'a Path,
-    pub output_dir: &'a Path,
-    pub name: String,
-    pub version: String,
-}
-
-impl<'a> ProjectContext<'a> {
-    pub fn new(
-        root: &'a Path,
-        output_dir: &'a Path,
-        name: impl Into<String>,
-        version: impl Into<String>,
-    ) -> Self {
-        Self {
-            root,
-            output_dir,
-            name: name.into(),
-            version: version.into(),
-        }
-    }
-
-    pub fn normalized_name(&self) -> String {
-        self.name.replace('-', "_")
-    }
-
-    pub fn archive_path(&self, suffix: &str) -> PathBuf {
-        self.output_dir
-            .join(format!("{}-{}.{}", self.name, self.version, suffix))
     }
 }
 
@@ -72,7 +38,7 @@ impl TarballBuilder {
         Ok(())
     }
 
-    pub fn add_dir(&mut self, host_path: &Path, archive_prefix: &str) -> Result<()> {
+    pub async fn add_dir(&mut self, host_path: &Path, archive_prefix: &str) -> Result<()> {
         if !host_path.exists() {
             return Ok(());
         }
@@ -83,7 +49,7 @@ impl TarballBuilder {
             dir: &Path,
             prefix: &str,
         ) -> Result<()> {
-            for entry in fs::read_dir(dir)? {
+            for entry in fs::read_dir(dir).await? {
                 let entry = entry?;
                 let path = entry.path();
                 let name = entry.file_name();
@@ -118,8 +84,8 @@ impl TarballBuilder {
     }
 }
 
-pub fn extract_tarball(data: &[u8], dest: &Path) -> Result<()> {
-    fs::create_dir_all(dest)?;
+pub async fn extract_tarball(data: &[u8], dest: &Path) -> Result<()> {
+    fs::create_dir_all(dest).await?;
     let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(std::io::Cursor::new(data)));
     archive.unpack(dest).context("Failed to unpack tarball")?;
     Ok(())
@@ -169,7 +135,7 @@ impl InterfaceGenerator {
     }
 
     /// Helper to generate a lockfile string by creating a temporary cargo project.
-    fn generate_lockfile_content(&self) -> Result<String> {
+    async fn generate_lockfile_content(&self) -> Result<String> {
         // Create a unique temporary directory INSIDE the project root.
         // This ensures relative paths in Cargo.toml resolve correctly.
         let temp_dir = self
@@ -177,16 +143,16 @@ impl InterfaceGenerator {
             .join(format!(".interface-gen-{}", std::process::id()));
 
         if temp_dir.exists() {
-            fs::remove_dir_all(&temp_dir)?;
+            fs::remove_dir_all(&temp_dir).await?;
         }
-        fs::create_dir_all(&temp_dir)?;
+        fs::create_dir_all(&temp_dir).await?;
 
         // Wrap operations in a closure to ensure cleanup runs even if errors occur
         let result = {
-            fs::write(temp_dir.join("Cargo.toml"), &self.cargo_toml_content)?;
+            fs::write(temp_dir.join("Cargo.toml"), &self.cargo_toml_content).await?;
             let src_dir = temp_dir.join("src");
-            fs::create_dir_all(&src_dir)?;
-            fs::write(src_dir.join("lib.rs"), &self.lib_rs_content)?;
+            fs::create_dir_all(&src_dir).await?;
+            fs::write(src_dir.join("lib.rs"), &self.lib_rs_content).await?;
 
             let status = Command::new("cargo")
                 .arg("generate-lockfile")
@@ -198,7 +164,7 @@ impl InterfaceGenerator {
                 anyhow::bail!("cargo generate-lockfile failed");
             }
 
-            Ok(fs::read_to_string(temp_dir.join("Cargo.lock"))?)
+            Ok(fs::read_to_string(temp_dir.join("Cargo.lock")).await?)
         };
 
         let _ = fs::remove_dir_all(&temp_dir);
@@ -208,16 +174,16 @@ impl InterfaceGenerator {
 
     /// Writes the generated crate to a physical directory on disk.
     /// Also runs rustfmt on the generated source and generates a lockfile.
-    pub fn write_to_disk(&self, output_dir: &Path, lockfile: bool) -> Result<()> {
-        fs::create_dir_all(output_dir)?;
+    pub async fn write_to_disk(&self, output_dir: &Path, lockfile: bool) -> Result<()> {
+        fs::create_dir_all(output_dir).await?;
 
-        fs::write(output_dir.join("Cargo.toml"), &self.cargo_toml_content)?;
+        fs::write(output_dir.join("Cargo.toml"), &self.cargo_toml_content).await?;
         tracing::info!("  ✓ Wrote interface/Cargo.toml");
         let src_dir = output_dir.join("src");
-        fs::create_dir_all(&src_dir)?;
+        fs::create_dir_all(&src_dir).await?;
 
         let lib_path = src_dir.join("lib.rs");
-        fs::write(&lib_path, &self.lib_rs_content)?;
+        fs::write(&lib_path, &self.lib_rs_content).await?;
 
         tracing::info!("  ✓ Wrote interface/src/lib.rs");
         let _ = Command::new("rustfmt").arg(&lib_path).status();
@@ -239,13 +205,13 @@ impl InterfaceGenerator {
         Ok(())
     }
 
-    pub fn add_to_archive(&self, tar: &mut TarballBuilder, lockfile: bool) -> Result<()> {
+    pub async fn add_to_archive(&self, tar: &mut TarballBuilder, lockfile: bool) -> Result<()> {
         tar.add_bytes("Cargo.toml", self.cargo_toml_content.as_bytes())?;
         tar.add_bytes("src/lib.rs", self.lib_rs_content.as_bytes())?;
 
         if lockfile {
             // Attempt to generate and add the lockfile
-            match self.generate_lockfile_content() {
+            match self.generate_lockfile_content().await {
                 Ok(lock_content) => {
                     tar.add_bytes("Cargo.lock", lock_content.as_bytes())?;
                 }

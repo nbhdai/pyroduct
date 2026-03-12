@@ -46,29 +46,39 @@ impl CacheManager {
     }
 
     /// The folder instantiator
-    pub fn init(&self) -> Result<()> {
+    pub async fn init(&self) -> Result<()> {
         fs::create_dir_all(self.capabilities_base_dir())
+            .await
             .context("Failed to create capabilities cache dir")?;
         fs::create_dir_all(self.interfaces_dir())
+            .await
             .context("Failed to create interfaces cache dir")?;
         let module_dir = self.root.join("modules");
-        fs::create_dir_all(&module_dir).context("Failed to create modules cache dir")?;
+        fs::create_dir_all(&module_dir)
+            .await
+            .context("Failed to create modules cache dir")?;
 
         let build_dir = self.root.join("build");
-        fs::create_dir_all(build_dir).context("Failed to create build dir")?;
+        fs::create_dir_all(build_dir)
+            .await
+            .context("Failed to create build dir")?;
         let cargo_dir = self.root.join(".cargo");
-        fs::create_dir_all(&cargo_dir).context("Failed to create .cargo dir")?;
+        fs::create_dir_all(&cargo_dir)
+            .await
+            .context("Failed to create .cargo dir")?;
         let config = self.config();
         if let Some(target) = config.target {
             fs::write(
                 cargo_dir.join("config.toml"),
                 format!("[build]\ntarget-dir = \"{}\"", target.display()),
-            )?;
+            )
+            .await?;
         } else {
             fs::write(
                 cargo_dir.join("config.toml"),
                 "[build]\ntarget-dir = \"target\"",
-            )?;
+            )
+            .await?;
         }
         Ok(())
     }
@@ -95,7 +105,7 @@ impl CacheManager {
     }
 
     /// Returns the interface documentation (interface.json) for a shipped capability.
-    pub fn capability_interface_spec(
+    pub async fn capability_interface_spec(
         &self,
         author: &str,
         name: &str,
@@ -105,11 +115,12 @@ impl CacheManager {
             .capabilities_dir(author, name, version)
             .join("interface.json");
         fs::read_to_string(&path)
+            .await
             .with_context(|| format!("Failed to read interface.json from {}", path.display()))
     }
 
     /// Returns the config documentation (config.json) for a shipped capability, if it exists.
-    pub fn capability_config_spec(
+    pub async fn capability_config_spec(
         &self,
         author: &str,
         name: &str,
@@ -120,6 +131,7 @@ impl CacheManager {
             .join("config.json");
         if path.exists() {
             let content = fs::read_to_string(&path)
+                .await
                 .with_context(|| format!("Failed to read config.json from {}", path.display()))?;
             Ok(Some(content))
         } else {
@@ -127,21 +139,25 @@ impl CacheManager {
         }
     }
 
-    pub fn add_anon_module(&self, hash: &str, wasm: &[u8]) -> Result<()> {
+    pub async fn add_anon_module(&self, hash: &str, wasm: &[u8]) -> Result<()> {
         let module_dir = self.root.join("modules");
         let module_path = module_dir.join(format!("{}.wasm", hash));
-        fs::write(module_path, wasm).context("Failed to write module")?;
+        fs::write(module_path, wasm)
+            .await
+            .context("Failed to write module")?;
         Ok(())
     }
 
-    pub fn module_dir(&self, author: &str, name: &str, version: &str) -> Result<PathBuf> {
+    pub async fn module_dir(&self, author: &str, name: &str, version: &str) -> Result<PathBuf> {
         let dir = self
             .root
             .join("modules")
             .join(author)
             .join(name)
             .join(version);
-        fs::create_dir_all(&dir).context("Failed to create module dir")?;
+        fs::create_dir_all(&dir)
+            .await
+            .context("Failed to create module dir")?;
         Ok(dir)
     }
 

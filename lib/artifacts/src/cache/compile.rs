@@ -150,7 +150,6 @@ version = "*"
     run_cargo_command(
         &build_dir,
         &build_args,
-        &[],
         "Failed to run cargo build",
         true, // always capture
     )?;
