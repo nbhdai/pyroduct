@@ -3,12 +3,6 @@ use std::path::Path;
 
 use fs_err as fs;
 
-use crate::artifacts::{
-    cargo::{CapabilityManifest, ModuleManifest},
-    symbols,
-    utils::{InterfaceGenerator, format_syn_error},
-};
-
 use pyro_core::{ffi::generate_capability, module::generate_module};
 
 pub fn expand(path: &Path, bin_mode: bool, lockfile: bool) -> Result<()> {

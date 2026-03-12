@@ -1,12 +1,12 @@
 use anyhow::{Context, Result};
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use fs_err as fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tar::Builder;
+use tokio::fs;
 
-use crate::artifacts::cargo::CapabilityManifest;
+use crate::cargo::CapabilityManifest;
 
 pub fn dylib_extension() -> &'static str {
     if cfg!(target_os = "macos") {

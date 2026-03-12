@@ -3,6 +3,9 @@ use fs_err as fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::cargo::{CapabilityManifest, ModuleManifest};
+use crate::utils::{InterfaceGenerator, ProjectContext, TarballBuilder, extract_tarball};
+
 pub struct Artifact {
     pub name: String,
     pub data: Vec<u8>,
@@ -40,7 +43,7 @@ fn dylib_extension() -> &'static str {
     }
 }
 
-fn run_cargo_command(
+pub fn run_cargo_command(
     path: &Path,
     tool_args: &[&str],
     error_ctx: &str,
@@ -92,9 +95,6 @@ fn package_module(
 
     // 1. Generate Cargo.toml
     let cargo_toml_content = toml::to_string_pretty(&manifest.to_cargo())?;
-    // We don't write to the project root anymore, we just keep it in memory
-    // fs::write(ctx.root.join("Cargo.toml"), &cargo_toml_content)?;
-    // tracing::info!("✓ Wrote Cargo.toml");
 
     // 2. Build WASM with pass-through args
     tracing::info!("Compiling WASM module...");
@@ -235,119 +235,4 @@ fn package_capability(
             },
         ],
     })
-}
-
-// ============================================================
-// Entry Points
-// ============================================================
-
-pub fn write_package_result(result: &PackageResult, output_dir: &Path) -> Result<()> {
-    fs::create_dir_all(output_dir)?;
-    for artifact in &result.artifacts {
-        let path = output_dir.join(&artifact.name);
-        fs::write(&path, &artifact.data)?;
-        tracing::info!("✓ Wrote artifact: {}", path.display());
-
-        // Extract contents to artifacts directory as well
-        extract_tarball(&artifact.data, output_dir)?;
-    }
-    Ok(())
-}
-
-pub fn package_single(
-    path: &Path,
-    output: Option<&Path>,
-    capture: bool,
-) -> Result<Vec<PackageResult>> {
-    let output_dir = output
-        .map(|p| p.to_path_buf())
-        .unwrap_or(path.join("artifacts"));
-
-    let cap_toml = path.join("Capability.toml");
-    let mod_toml = path.join("Module.toml");
-
-    if cap_toml.exists() && mod_toml.exists() {
-        bail!("Both Capability.toml and Module.toml found in {:?}", path);
-    }
-
-    let result = if cap_toml.exists() {
-        let manifest: CapabilityManifest = toml::from_str(&fs::read_to_string(&cap_toml)?)?;
-        let pkg = manifest
-            .capability
-            .as_ref()
-            .context("Package section missing in Capability.toml")?;
-
-        let ctx = ProjectContext::new(path, output_dir.as_path(), &pkg.name, pkg.version());
-        package_capability(&ctx, manifest, capture)?
-    } else if mod_toml.exists() {
-        let manifest: ModuleManifest = toml::from_str(&fs::read_to_string(&mod_toml)?)?;
-        let pkg = manifest
-            .module
-            .as_ref()
-            .context("Module section missing in Module.toml")?;
-        let ctx = ProjectContext::new(path, output_dir.as_path(), &pkg.name, pkg.version());
-        package_module(&ctx, manifest, capture)?
-    } else {
-        bail!(
-            "Neither Capability.toml nor Module.toml found in {:?}",
-            path
-        )
-    };
-
-    Ok(vec![result])
-}
-
-pub fn package(path: &Path, output: Option<&Path>, capture: bool) -> Result<Vec<PackageResult>> {
-    // 1. Direct package mode
-    if path.join("Capability.toml").exists() || path.join("Module.toml").exists() {
-        return package_single(path, output, capture);
-    }
-
-    // 2. Recursive scan mode
-    if !capture {
-        tracing::info!(
-            "No manifest found in {:?}, scanning subdirectories...",
-            path
-        );
-    }
-
-    let mut results = Vec::new();
-    let mut errors = Vec::new();
-    let mut found_any = false;
-
-    for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        let subpath = entry.path();
-
-        if !subpath.is_dir() {
-            continue;
-        }
-
-        if subpath.join("Capability.toml").exists() || subpath.join("Module.toml").exists() {
-            found_any = true;
-            match package_single(&subpath, output, capture) {
-                Ok(mut res) => results.append(&mut res),
-                Err(e) => errors.push((subpath, e)),
-            }
-        }
-    }
-
-    if !found_any {
-        bail!(
-            "No Capability.toml or Module.toml found in {:?} or subdirectories",
-            path
-        );
-    }
-
-    if !errors.is_empty() {
-        let mut err_msg = String::from("\nErrors encountered:\n");
-        for (p, e) in &errors {
-            err_msg.push_str(&format!("  {:?}: {:#}\n", p, e));
-        }
-
-        tracing::error!("{}", err_msg);
-        bail!("{} packaging(s) failed. {}", errors.len(), err_msg);
-    }
-
-    Ok(results)
 }

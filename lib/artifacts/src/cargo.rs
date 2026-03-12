@@ -46,8 +46,16 @@ pub struct CapabilityManifest<Metadata = Value> {
     pub lints: Inheritable<LintGroups>,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum ManifestError {
+    #[error("Pyroduct does not support inherited versions (yet!)")]
+    InheritedVersionNotSupported,
+    #[error("[capability] section is missing")]
+    CapabilitySectionMissing,
+}
+
 impl CapabilityManifest {
-    pub fn name_version(&self) -> anyhow::Result<(String, String)> {
+    pub fn name_version(&self) -> Result<(String, String), ManifestError> {
         Ok(match &self.capability {
             Some(Package {
                 name,
@@ -57,8 +65,8 @@ impl CapabilityManifest {
             Some(Package {
                 version: Inheritable::Inherited,
                 ..
-            }) => anyhow::bail!("Pyroduct does not support inherited versions (yet!)"),
-            None => anyhow::bail!("[capability] section is missing"),
+            }) => return Err(ManifestError::InheritedVersionNotSupported),
+            None => return Err(ManifestError::CapabilitySectionMissing),
         })
     }
 }

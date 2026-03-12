@@ -6,6 +6,7 @@ edition.workspace = true
 
 [dependencies]
 pyro-core.workspace = true
+artifacts.workspace = true
 pyroduct =  { workspace = true, features = ["host"] }
 wasmtime.workspace = true
 arrow-file.workspace = true
