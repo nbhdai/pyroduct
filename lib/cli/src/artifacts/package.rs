@@ -35,47 +35,22 @@ fn dylib_extension() -> &'static str {
 fn run_cargo_command(
     path: &Path,
     tool_args: &[&str],
-    user_args: &[String],
     error_ctx: &str,
     capture: bool,
 ) -> Result<()> {
-    // 1. Identify flags in the tool_args to prevent user overrides
-    let restricted_flags: std::collections::HashSet<_> = tool_args
-        .iter()
-        .filter(|arg| arg.starts_with('-'))
-        .map(|arg| arg.split('=').next().unwrap_or(arg))
-        .collect();
-
-    // 2. Check user_args for conflicts
-    for user_arg in user_args {
-        if user_arg.starts_with('-') {
-            let flag_key = user_arg.split('=').next().unwrap_or(user_arg);
-            if restricted_flags.contains(flag_key) {
-                bail!(
-                    "Conflict detected: User argument '{}' overrides internal tool flag '{}'",
-                    user_arg,
-                    flag_key
-                );
-            }
-        }
-    }
-
-    // 3. Combine and execute
     let mut cmd = Command::new("cargo");
-    cmd.args(tool_args).args(user_args).current_dir(path);
+    cmd.args(tool_args).current_dir(path);
 
     if capture {
-        // .output() executes the command as a child process and strictly captures everything
         let output = cmd.output().with_context(|| error_ctx.to_string())?;
 
         if !output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             bail!(
-                "Cargo command failed with status {}.\nArgs: {:?} {:?}\n\nStdout:\n{}\nStderr:\n{}",
+                "Cargo command failed with status {}.\nArgs: {:?}\n\nStdout:\n{}\nStderr:\n{}",
                 output.status,
                 tool_args,
-                user_args,
                 stdout,
                 stderr
             );
@@ -86,10 +61,9 @@ fn run_cargo_command(
 
         if !status.success() {
             bail!(
-                "Cargo command failed with status {}. Args: {:?} {:?}",
+                "Cargo command failed with status {}. Args: {:?}",
                 status,
                 tool_args,
-                user_args
             );
         }
     }
@@ -101,12 +75,7 @@ fn run_cargo_command(
 // Module Packaging
 // ============================================================
 
-fn package_module(
-    ctx: &ProjectContext,
-    manifest: ModuleManifest,
-    cargo_args: &[String],
-    capture: bool,
-) -> Result<()> {
+fn package_module(ctx: &ProjectContext, manifest: ModuleManifest, capture: bool) -> Result<()> {
     tracing::info!("Packaging module: {:?}", ctx.root);
 
     // 1. Generate Cargo.toml
@@ -125,13 +94,7 @@ fn package_module(
         &ctx.name,
     ];
 
-    run_cargo_command(
-        ctx.root,
-        &build_args,
-        cargo_args,
-        "Failed to run cargo build",
-        capture,
-    )?;
+    run_cargo_command(ctx.root, &build_args, "Failed to run cargo build", capture)?;
 
     // 3. Locate and Copy Artifact
     let target_dir = get_target_dir(ctx.root)?;
@@ -181,7 +144,6 @@ fn package_module(
 fn package_capability(
     ctx: &ProjectContext,
     manifest: CapabilityManifest,
-    cargo_args: &[String],
     capture: bool,
 ) -> Result<()> {
     tracing::info!("Packaging capability: {:?}", ctx.root);
@@ -202,13 +164,7 @@ fn package_capability(
         &ctx.name,
     ];
 
-    run_cargo_command(
-        ctx.root,
-        &build_args,
-        cargo_args,
-        "Failed to run cargo build",
-        capture,
-    )?;
+    run_cargo_command(ctx.root, &build_args, "Failed to run cargo build", capture)?;
 
     // 3. Locate and Copy Artifact
     let target_dir = get_target_dir(ctx.root)?;
@@ -252,12 +208,7 @@ fn package_capability(
 // Entry Points
 // ============================================================
 
-fn package_single(
-    path: &Path,
-    output: Option<&Path>,
-    cargo_args: &[String],
-    capture: bool,
-) -> Result<()> {
+fn package_single(path: &Path, output: Option<&Path>, capture: bool) -> Result<()> {
     let output_dir = output
         .map(|p| p.to_path_buf())
         .unwrap_or(path.join("artifacts"));
@@ -277,7 +228,7 @@ fn package_single(
             .context("Package section missing in Capability.toml")?;
 
         let ctx = ProjectContext::new(path, output_dir.as_path(), &pkg.name, pkg.version());
-        package_capability(&ctx, manifest, cargo_args, capture)
+        package_capability(&ctx, manifest, capture)
     } else if mod_toml.exists() {
         let manifest: ModuleManifest = toml::from_str(&fs::read_to_string(&mod_toml)?)?;
         let pkg = manifest
@@ -285,7 +236,7 @@ fn package_single(
             .as_ref()
             .context("Module section missing in Module.toml")?;
         let ctx = ProjectContext::new(path, output_dir.as_path(), &pkg.name, pkg.version());
-        package_module(&ctx, manifest, cargo_args, capture)
+        package_module(&ctx, manifest, capture)
     } else {
         bail!(
             "Neither Capability.toml nor Module.toml found in {:?}",
@@ -294,15 +245,10 @@ fn package_single(
     }
 }
 
-pub fn package(
-    path: &Path,
-    output: Option<&Path>,
-    cargo_args: &[String],
-    capture: bool,
-) -> Result<()> {
+pub fn package(path: &Path, output: Option<&Path>, capture: bool) -> Result<()> {
     // 1. Direct package mode
     if path.join("Capability.toml").exists() || path.join("Module.toml").exists() {
-        return package_single(path, output, cargo_args, capture);
+        return package_single(path, output, capture);
     }
 
     // 2. Recursive scan mode
@@ -326,7 +272,7 @@ pub fn package(
 
         if subpath.join("Capability.toml").exists() || subpath.join("Module.toml").exists() {
             found_any = true;
-            if let Err(e) = package_single(&subpath, output, cargo_args, capture) {
+            if let Err(e) = package_single(&subpath, output, capture) {
                 errors.push((subpath, e));
             }
         }

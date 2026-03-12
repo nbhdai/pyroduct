@@ -45,10 +45,6 @@ enum Commands {
         path: PathBuf,
         #[arg(short, long)]
         output: Option<PathBuf>,
-
-        /// Pass additional arguments to cargo build
-        #[arg(last = true)]
-        cargo_args: Vec<String>,
     },
     /// Places package artifacts into the local cache repository
     Ship {
@@ -117,12 +113,13 @@ async fn main() -> Result<()> {
             bin,
             lockfile,
         } => artifacts::expand::expand(&path, bin, lockfile),
-        Commands::Package {
-            path,
-            output,
-            cargo_args,
-        } => artifacts::package::package(&path, output.as_deref(), &cargo_args, false),
-        Commands::Ship { path } => cache::ship::ship(&path),
+        Commands::Package { path, output } => {
+            artifacts::package::package(&path, output.as_deref(), false)
+        }
+        Commands::Ship { path } => {
+            artifacts::package::package(&path, None, false)?;
+            cache::ship::ship(&path)
+        }
         Commands::Clean { path } => artifacts::clean::clean(&path),
         Commands::Run {
             config,
