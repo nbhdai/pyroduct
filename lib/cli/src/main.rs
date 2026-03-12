@@ -114,12 +114,14 @@ async fn main() -> Result<()> {
             lockfile,
         } => artifacts::expand::expand(&path, bin, lockfile),
         Commands::Package { path, output } => {
-            artifacts::package::package(&path, output.as_deref(), false)
+            let results = artifacts::package::package(&path, output.as_deref(), false)?;
+            let output_base = output.clone().unwrap_or_else(|| path.join("artifacts"));
+            for res in results {
+                artifacts::package::write_package_result(&res, &output_base)?;
+            }
+            Ok(())
         }
-        Commands::Ship { path } => {
-            artifacts::package::package(&path, None, false)?;
-            cache::ship::ship(&path)
-        }
+        Commands::Ship { path } => cache::ship::ship(&path),
         Commands::Clean { path } => artifacts::clean::clean(&path),
         Commands::Run {
             config,

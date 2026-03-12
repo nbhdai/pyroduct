@@ -12,7 +12,8 @@ mod repair;
 mod bridgeable;
 mod schema;
 pub use repair::ScalarRepairError;
-pub use schema::{PrimitiveDataType, PyroField, PyroSchema, PyroType, ValueSchemaInferenceError};
+pub use schema::ValueSchemaInferenceError;
+pub use spec::{PrimitiveDataType, PyroField, PyroSchema, PyroType};
 pub use typeable::{Typeable, TypeableRow};
 
 #[cfg(feature = "host")]
@@ -39,7 +40,7 @@ impl InvalidValue {
     /// Use this for small scalar values that are cheap to clone and store.
     pub fn new(value: &PyroValue<'_>) -> Self {
         Self {
-            v_type: PyroType::from_value(value).into_owned(),
+            v_type: value.data_type().into_owned(),
             value: Some(value.to_static()),
         }
     }
@@ -49,7 +50,7 @@ impl InvalidValue {
     /// the invalid data would be too expensive or redundant.
     pub fn new_large(value: &PyroValue<'_>) -> Self {
         Self {
-            v_type: PyroType::from_value(value).into_owned(),
+            v_type: value.data_type().into_owned(),
             value: None,
         }
     }

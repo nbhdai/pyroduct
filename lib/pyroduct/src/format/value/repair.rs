@@ -1,10 +1,10 @@
 use std::borrow::Cow;
 use std::convert::TryInto;
 
+use spec::{PrimitiveDataType, PyroField, PyroType};
 use thiserror::Error;
 
 use super::{PrimitiveValueList, PyroRow, PyroValue, RowItem};
-use crate::format::value::schema::{PrimitiveDataType, PyroField, PyroType};
 
 #[derive(Error, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ScalarRepairError<'a> {

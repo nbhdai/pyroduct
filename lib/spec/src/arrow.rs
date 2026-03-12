@@ -7,9 +7,9 @@
 
 use std::{borrow::Cow, sync::Arc};
 
-use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use arrow_schema::{DataType, Field, Schema, TimeUnit};
 
-use crate::format::value::schema::{PrimitiveDataType, PyroField, PyroSchema, PyroType};
+use crate::{PrimitiveDataType, PyroField, PyroSchema, PyroType};
 
 // =============================================================================
 // PyroType → arrow::datatypes::DataType

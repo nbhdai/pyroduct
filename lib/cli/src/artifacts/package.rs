@@ -4,7 +4,20 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::cargo::{CapabilityManifest, ModuleManifest};
-use crate::artifacts::utils::{InterfaceGenerator, ProjectContext, TarballBuilder};
+use crate::artifacts::utils::{
+    InterfaceGenerator, ProjectContext, TarballBuilder, extract_tarball,
+};
+
+pub struct Artifact {
+    pub name: String,
+    pub data: Vec<u8>,
+}
+
+pub struct PackageResult {
+    pub name: String,
+    pub version: String,
+    pub artifacts: Vec<Artifact>,
+}
 
 fn get_target_dir(path: &Path) -> Result<PathBuf> {
     let output = Command::new("cargo")
@@ -75,13 +88,18 @@ fn run_cargo_command(
 // Module Packaging
 // ============================================================
 
-fn package_module(ctx: &ProjectContext, manifest: ModuleManifest, capture: bool) -> Result<()> {
+fn package_module(
+    ctx: &ProjectContext,
+    manifest: ModuleManifest,
+    capture: bool,
+) -> Result<PackageResult> {
     tracing::info!("Packaging module: {:?}", ctx.root);
 
     // 1. Generate Cargo.toml
     let cargo_toml_content = toml::to_string_pretty(&manifest.to_cargo())?;
-    fs::write(ctx.root.join("Cargo.toml"), &cargo_toml_content)?;
-    tracing::info!("✓ Wrote Cargo.toml");
+    // We don't write to the project root anymore, we just keep it in memory
+    // fs::write(ctx.root.join("Cargo.toml"), &cargo_toml_content)?;
+    // tracing::info!("✓ Wrote Cargo.toml");
 
     // 2. Build WASM with pass-through args
     tracing::info!("Compiling WASM module...");
@@ -96,7 +114,7 @@ fn package_module(ctx: &ProjectContext, manifest: ModuleManifest, capture: bool)
 
     run_cargo_command(ctx.root, &build_args, "Failed to run cargo build", capture)?;
 
-    // 3. Locate and Copy Artifact
+    // 3. Locate Artifact
     let target_dir = get_target_dir(ctx.root)?;
     let wasm_filename = format!("{}.wasm", ctx.normalized_name());
     let built_wasm = target_dir
@@ -107,9 +125,7 @@ fn package_module(ctx: &ProjectContext, manifest: ModuleManifest, capture: bool)
         bail!("Could not find compiled WASM: {}", built_wasm.display());
     }
 
-    let dest_wasm = ctx.output_dir.join("mod.wasm");
-    fs::copy(&built_wasm, &dest_wasm)?;
-    tracing::info!("✓ Compiled {}", dest_wasm.display());
+    let wasm_bytes = fs::read(&built_wasm)?;
 
     // 4. Generate module spec (module.json)
     let src_path = ctx.root.join("src").join("lib.rs");
@@ -123,19 +139,27 @@ fn package_module(ctx: &ProjectContext, manifest: ModuleManifest, capture: bool)
     };
 
     // 5. Create Archive
-    let mut tar = TarballBuilder::new(ctx.archive_path("module"))?;
+    let mut tar = TarballBuilder::new()?;
     tar.add_bytes("Cargo.toml", cargo_toml_content.as_bytes())?;
+    tar.add_bytes("mod.wasm", &wasm_bytes)?;
     tar.add_dir(&ctx.root.join("src"), "src")?;
 
     if let Some(spec) = module_spec {
-        fs::write(ctx.output_dir.join("module.json"), &spec)?;
         tar.add_bytes("module.json", spec.as_bytes())?;
-        tracing::info!("✓ Wrote module.json");
+        tracing::info!("✓ Added module.json to archive");
     }
 
-    tar.finish()?;
+    let tar_data = tar.finish()?;
+    let artifact_name = format!("{}-{}.module", ctx.name, ctx.version);
 
-    Ok(())
+    Ok(PackageResult {
+        name: ctx.name.clone(),
+        version: ctx.version.clone(),
+        artifacts: vec![Artifact {
+            name: artifact_name,
+            data: tar_data,
+        }],
+    })
 }
 // ============================================================
 // Capability Packaging
@@ -145,13 +169,13 @@ fn package_capability(
     ctx: &ProjectContext,
     manifest: CapabilityManifest,
     capture: bool,
-) -> Result<()> {
+) -> Result<PackageResult> {
     tracing::info!("Packaging capability: {:?}", ctx.root);
 
-    // 1. Generate Cargo.toml
+    // 1. Generate Cargo.toml content
     let cargo_toml_content = toml::to_string_pretty(&manifest.clone().to_capability_manifest())?;
-    fs::write(ctx.root.join("Cargo.toml"), &cargo_toml_content)?;
-    tracing::info!("✓ Wrote Cargo.toml");
+    // fs::write(ctx.root.join("Cargo.toml"), &cargo_toml_content)?;
+    // tracing::info!("✓ Wrote Cargo.toml");
 
     // 2. Build Dynamic Library with pass-through args
     tracing::info!("Compiling capability binary...");
@@ -166,7 +190,7 @@ fn package_capability(
 
     run_cargo_command(ctx.root, &build_args, "Failed to run cargo build", capture)?;
 
-    // 3. Locate and Copy Artifact
+    // 3. Locate Artifact
     let target_dir = get_target_dir(ctx.root)?;
     let lib_filename = format!("lib{}.{}", ctx.normalized_name(), dylib_extension());
     let built_lib = target_dir.join("release").join(&lib_filename);
@@ -175,44 +199,75 @@ fn package_capability(
         bail!("Could not find compiled binary: {}", built_lib.display());
     }
 
-    let dest_lib = ctx.output_dir.join(format!("lib.{}", dylib_extension()));
-    fs::copy(&built_lib, &dest_lib)?;
-    tracing::info!("✓ Compiled {}", dest_lib.display());
+    let lib_bytes = fs::read(&built_lib)?;
 
-    // 4. Create Source Archive (.cargo)
-    let mut cap_tar = TarballBuilder::new(ctx.archive_path("cargo"))?;
+    // 4. Create Source Archive (.cap)
+    let mut cap_tar = TarballBuilder::new()?;
     cap_tar.add_bytes("Cargo.toml", cargo_toml_content.as_bytes())?;
+    cap_tar.add_bytes(&format!("lib.{}", dylib_extension()), &lib_bytes)?;
     cap_tar.add_dir(&ctx.root.join("src"), "src")?;
 
-    // 5. Create Interface Archive (.interface)
-    let mut interface_tar = TarballBuilder::new(ctx.archive_path("interface"))?;
+    // 5. Interface Generation
     let interface = InterfaceGenerator::new(ctx.root, &manifest)?;
+
+    // 6. Create Interface Archive (.interface)
+    let mut interface_tar = TarballBuilder::new()?;
     interface.add_to_archive(&mut interface_tar, true)?;
-
-    // 6. Add documentation
     interface_tar.add_bytes("interface.json", interface.spec().as_bytes())?;
-    fs::write(ctx.output_dir.join("interface.json"), interface.spec())?;
 
-    // 7. Generate config spec
+    // 7. Add config spec to .cap
     if let Some(spec) = interface.config() {
         cap_tar.add_bytes("config.json", spec.as_bytes())?;
-        fs::write(ctx.output_dir.join("config.json"), spec)?;
     }
 
-    interface_tar.finish()?;
-    cap_tar.finish()?;
-    Ok(())
+    let cap_data = cap_tar.finish()?;
+    let interface_data = interface_tar.finish()?;
+
+    let cap_name = format!("{}-{}.cap", ctx.name, ctx.version);
+    let interface_name = format!("{}-{}.interface", ctx.name, ctx.version);
+
+    Ok(PackageResult {
+        name: ctx.name.clone(),
+        version: ctx.version.clone(),
+        artifacts: vec![
+            Artifact {
+                name: cap_name,
+                data: cap_data,
+            },
+            Artifact {
+                name: interface_name,
+                data: interface_data,
+            },
+        ],
+    })
 }
 
 // ============================================================
 // Entry Points
 // ============================================================
 
-fn package_single(path: &Path, output: Option<&Path>, capture: bool) -> Result<()> {
+pub fn write_package_result(result: &PackageResult, output_dir: &Path) -> Result<()> {
+    fs::create_dir_all(output_dir)?;
+    for artifact in &result.artifacts {
+        let path = output_dir.join(&artifact.name);
+        fs::write(&path, &artifact.data)?;
+        tracing::info!("✓ Wrote artifact: {}", path.display());
+
+        // Extract contents to artifacts directory as well
+        extract_tarball(&artifact.data, output_dir)?;
+    }
+    Ok(())
+}
+
+pub fn package_single(
+    path: &Path,
+    output: Option<&Path>,
+    capture: bool,
+) -> Result<Vec<PackageResult>> {
     let output_dir = output
         .map(|p| p.to_path_buf())
         .unwrap_or(path.join("artifacts"));
-    fs::create_dir_all(&output_dir)?;
+
     let cap_toml = path.join("Capability.toml");
     let mod_toml = path.join("Module.toml");
 
@@ -220,7 +275,7 @@ fn package_single(path: &Path, output: Option<&Path>, capture: bool) -> Result<(
         bail!("Both Capability.toml and Module.toml found in {:?}", path);
     }
 
-    if cap_toml.exists() {
+    let result = if cap_toml.exists() {
         let manifest: CapabilityManifest = toml::from_str(&fs::read_to_string(&cap_toml)?)?;
         let pkg = manifest
             .capability
@@ -228,7 +283,7 @@ fn package_single(path: &Path, output: Option<&Path>, capture: bool) -> Result<(
             .context("Package section missing in Capability.toml")?;
 
         let ctx = ProjectContext::new(path, output_dir.as_path(), &pkg.name, pkg.version());
-        package_capability(&ctx, manifest, capture)
+        package_capability(&ctx, manifest, capture)?
     } else if mod_toml.exists() {
         let manifest: ModuleManifest = toml::from_str(&fs::read_to_string(&mod_toml)?)?;
         let pkg = manifest
@@ -236,16 +291,18 @@ fn package_single(path: &Path, output: Option<&Path>, capture: bool) -> Result<(
             .as_ref()
             .context("Module section missing in Module.toml")?;
         let ctx = ProjectContext::new(path, output_dir.as_path(), &pkg.name, pkg.version());
-        package_module(&ctx, manifest, capture)
+        package_module(&ctx, manifest, capture)?
     } else {
         bail!(
             "Neither Capability.toml nor Module.toml found in {:?}",
             path
         )
-    }
+    };
+
+    Ok(vec![result])
 }
 
-pub fn package(path: &Path, output: Option<&Path>, capture: bool) -> Result<()> {
+pub fn package(path: &Path, output: Option<&Path>, capture: bool) -> Result<Vec<PackageResult>> {
     // 1. Direct package mode
     if path.join("Capability.toml").exists() || path.join("Module.toml").exists() {
         return package_single(path, output, capture);
@@ -259,6 +316,7 @@ pub fn package(path: &Path, output: Option<&Path>, capture: bool) -> Result<()> 
         );
     }
 
+    let mut results = Vec::new();
     let mut errors = Vec::new();
     let mut found_any = false;
 
@@ -272,8 +330,9 @@ pub fn package(path: &Path, output: Option<&Path>, capture: bool) -> Result<()> 
 
         if subpath.join("Capability.toml").exists() || subpath.join("Module.toml").exists() {
             found_any = true;
-            if let Err(e) = package_single(&subpath, output, capture) {
-                errors.push((subpath, e));
+            match package_single(&subpath, output, capture) {
+                Ok(mut res) => results.append(&mut res),
+                Err(e) => errors.push((subpath, e)),
             }
         }
     }
@@ -295,5 +354,5 @@ pub fn package(path: &Path, output: Option<&Path>, capture: bool) -> Result<()> 
         bail!("{} packaging(s) failed. {}", errors.len(), err_msg);
     }
 
-    Ok(())
+    Ok(results)
 }

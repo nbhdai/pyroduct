@@ -249,8 +249,7 @@ pub async fn run_batch(
         if !output_dir.exists() {
             fs::create_dir_all(output_dir)?;
         }
-        let schema =
-            pyroduct::format::value::PyroSchema::trusted(&successes[0].steps.last().unwrap().row)?;
+        let schema = successes[0].steps.last().unwrap().row.schema()?;
         let mut prebatch = PreBatch::new(schema);
         for row in successes {
             prebatch

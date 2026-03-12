@@ -9,6 +9,9 @@
 //
 // Conversion to/from `arrow::datatypes::DataType` lives in `value::arrow::schema`.
 
+#[cfg(feature = "arrow")]
+mod arrow;
+
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt;

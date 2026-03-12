@@ -4,8 +4,8 @@ use std::convert::TryInto;
 use half::f16;
 
 use super::repair::ScalarRepairError;
-use super::schema::{PrimitiveDataType, PyroSchema, PyroType};
 use super::{PrimitiveValueList, PyroRow, PyroValue, ToRow};
+use spec::{PrimitiveDataType, PyroSchema, PyroType};
 
 // =============================================================================
 // Sealed trait pattern
@@ -638,7 +638,7 @@ impl<T: ToRow> CoerceToSchema for T {
 
 #[cfg(test)]
 mod tests {
-    use crate::format::value::PyroField;
+    use spec::PyroField;
 
     use super::*;
 

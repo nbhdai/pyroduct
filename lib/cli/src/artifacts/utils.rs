@@ -52,17 +52,14 @@ impl<'a> ProjectContext<'a> {
 }
 
 pub struct TarballBuilder {
-    tar: Builder<GzEncoder<fs::File>>,
-    path: PathBuf,
+    tar: Builder<GzEncoder<Vec<u8>>>,
 }
 
 impl TarballBuilder {
-    pub fn new(path: PathBuf) -> Result<Self> {
-        let file = fs::File::create(&path)?;
-        let enc = GzEncoder::new(file, Compression::default());
+    pub fn new() -> Result<Self> {
+        let enc = GzEncoder::new(Vec::new(), Compression::default());
         Ok(Self {
             tar: Builder::new(enc),
-            path,
         })
     }
 
@@ -90,7 +87,11 @@ impl TarballBuilder {
                 let entry = entry?;
                 let path = entry.path();
                 let name = entry.file_name();
-                let archive_path = format!("{}/{}", prefix, name.to_string_lossy());
+                let archive_path = if prefix.is_empty() {
+                    name.to_string_lossy().into_owned()
+                } else {
+                    format!("{}/{}", prefix, name.to_string_lossy())
+                };
 
                 if path.is_dir() {
                     append_recursive(tar, &path, &archive_path)?;
@@ -110,11 +111,18 @@ impl TarballBuilder {
         Ok(())
     }
 
-    pub fn finish(self) -> Result<()> {
-        self.tar.into_inner()?.finish()?;
-        tracing::info!("✓ Created {}", self.path.display());
-        Ok(())
+    pub fn finish(self) -> Result<Vec<u8>> {
+        let mut gz = self.tar.into_inner()?;
+        gz.try_finish()?;
+        Ok(gz.finish()?)
     }
+}
+
+pub fn extract_tarball(data: &[u8], dest: &Path) -> Result<()> {
+    fs::create_dir_all(dest)?;
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(std::io::Cursor::new(data)));
+    archive.unpack(dest).context("Failed to unpack tarball")?;
+    Ok(())
 }
 
 pub struct InterfaceGenerator {
