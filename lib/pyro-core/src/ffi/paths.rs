@@ -214,7 +214,7 @@ impl InputParams {
                     .unwrap_or(fn_name.input_struct_name());
                 let fields: Vec<_> = params.iter().map(|(n, t)| quote! { pub #n: #t }).collect();
                 quote! {
-                    #[::pyroduct::bridgeable]
+                    #[::pyroduct::magma]
                     struct #input_struct_name {
                         #(#fields),*
                     }

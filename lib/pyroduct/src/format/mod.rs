@@ -47,8 +47,7 @@
 //! ### Basic example
 //!
 //! ```rust,ignore
-//! use pyroduct::{magma, Bridgeable};
-//! use pyroduct::format::HasReceiver;
+//! use pyroduct::{magma, format::{Bridgeable, HasReceiver}};
 //!
 //! #[magma]
 //! #[derive(Debug, PartialEq)]
@@ -103,7 +102,7 @@
 //! ### Example: Result transport
 //!
 //! ```rust,ignore
-//! use pyroduct::{magma, Bridgeable, BridgeableResult};
+//! use pyroduct::{magma, format::{Bridgeable, BridgeableResult}};
 //!
 //! #[magma]
 //! #[derive(Debug, PartialEq)]
@@ -254,7 +253,7 @@ pub use serde_json;
 ///
 /// Example:
 /// ```rust
-/// use pyroduct::{FromRow, DeepRef};
+/// use pyroduct::format::{FromRow, DeepRef};
 ///
 /// #[derive(FromRow, DeepRef)]
 /// struct Foo { val: String }
@@ -269,7 +268,7 @@ pub use pyro_derive::{FromRow, RefFromRow};
 ///
 /// Example:
 /// ```rust
-/// use pyroduct::DeepRef;
+/// use pyroduct::format::DeepRef;
 ///
 /// #[derive(DeepRef)]
 /// struct Foo { val: String }
@@ -299,7 +298,7 @@ pub use pyro_derive::DeepRefArchived;
 ///
 /// Example:
 /// ```rust
-/// use pyroduct::ToRow;
+/// use pyroduct::format::ToRow;
 ///
 /// #[derive(ToRow)]
 /// struct Foo { val: String }
@@ -321,7 +320,7 @@ pub use pyro_derive::ToRow;
 ///
 /// # Example
 /// ```rust
-/// use pyroduct::Document;
+/// use pyroduct::format::Document;
 ///
 /// #[derive(Document)]
 /// /// A sensor reading.

@@ -261,6 +261,19 @@ pub trait Capture<T> {
     where
         C: Display,
         F: FnOnce() -> C;
+
+    /// Alias for `context`.
+    #[track_caller]
+    fn capture<C>(self, context: C) -> Result<T, CapturedError>
+    where
+        C: Display;
+
+    /// Alias for `with_context`.
+    #[track_caller]
+    fn with_capture<C, F>(self, f: F) -> Result<T, CapturedError>
+    where
+        C: Display,
+        F: FnOnce() -> C;
 }
 
 impl<T, E> Capture<T> for Result<T, E>
@@ -295,6 +308,23 @@ where
                 .with_backtrace(std::backtrace::Backtrace::capture())),
         }
     }
+
+    #[track_caller]
+    fn capture<C>(self, context: C) -> Result<T, CapturedError>
+    where
+        C: Display,
+    {
+        self.context(context)
+    }
+
+    #[track_caller]
+    fn with_capture<C, F>(self, f: F) -> Result<T, CapturedError>
+    where
+        C: Display,
+        F: FnOnce() -> C,
+    {
+        self.with_context(f)
+    }
 }
 
 impl<T> Capture<T> for Option<T> {
@@ -323,5 +353,22 @@ impl<T> Capture<T> for Option<T> {
                 .with_location(std::panic::Location::caller())
                 .with_backtrace(std::backtrace::Backtrace::capture())),
         }
+    }
+
+    #[track_caller]
+    fn capture<C>(self, context: C) -> Result<T, CapturedError>
+    where
+        C: Display,
+    {
+        self.context(context)
+    }
+
+    #[track_caller]
+    fn with_capture<C, F>(self, f: F) -> Result<T, CapturedError>
+    where
+        C: Display,
+        F: FnOnce() -> C,
+    {
+        self.with_context(f)
     }
 }

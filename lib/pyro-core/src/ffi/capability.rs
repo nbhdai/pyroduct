@@ -677,7 +677,7 @@ mod tests {
             }
             impl AdvancedClientMethods for ::pyroduct::wasm::Client<AdvancedClient> {
                 fn process(&self, val: u32, flag: bool) -> Result<u32, MyError> {
-                    #[::pyroduct::bridgeable]
+                    #[::pyroduct::magma]
                     struct p__AdvancedStruct__Process__Input {
                         pub val: u32,
                         pub flag: bool

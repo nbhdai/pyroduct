@@ -708,7 +708,7 @@ mod tests {
         };
 
         let output_capability = quote! {
-            #[::pyroduct::bridgeable]
+            #[::pyroduct::magma]
             struct p__MockServer__TestSciMulti__Input {
                 pub a: i32,
                 pub b: i32,
@@ -747,7 +747,7 @@ mod tests {
         let output_module = quote! {
             impl Mod {
                 fn test_sci_multi(&self, a: i32, b: i32) -> u32 {
-                    #[::pyroduct::bridgeable]
+                    #[::pyroduct::magma]
                     struct p__MockServer__TestSciMulti__Input {
                         pub a: i32,
                         pub b: i32,

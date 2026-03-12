@@ -1,9 +1,9 @@
 error[E0277]: the trait bound `&[CallMessageRef<'_>]: TryFrom<PyroValue<'_>>` is not satisfied
-  --> tests/compile_fail/module/struct_sans_lifetime.rs:10:23
+  --> tests/compile_fail/module/struct_sans_lifetime.rs:13:23
    |
- 9 | #[module(output = (output, messages))]
+12 | #[module(output = (output, messages))]
    | -------------------------------------- required by a bound introduced by this call
-10 | fn process<'a>(input: &[CallMessageRef]) -> Result<(String, Vec<CallMessage>), String> {
+13 | fn process<'a>(input: &[CallMessageRef]) -> Result<(String, Vec<CallMessage>), String> {
    |                       ^^^^^^^^^^^^^^^^^ the trait `From<PyroValue<'_>>` is not implemented for `&[CallMessageRef<'_>]`
    |
    = help: the following other types implement trait `From<T>`:
@@ -18,8 +18,8 @@ error[E0277]: the trait bound `&[CallMessageRef<'_>]: TryFrom<PyroValue<'_>>` is
            and $N others
    = note: required for `PyroValue<'_>` to implement `Into<&[CallMessageRef<'_>]>`
    = note: required for `&[CallMessageRef<'_>]` to implement `TryFrom<PyroValue<'_>>`
-note: required by a bound in `pyroduct::value::get_value::<impl PyroRow<'a>>::get_value`
-  --> src/value/get_value.rs
+note: required by a bound in `pyroduct::format::value::get_value::<impl PyroRow<'a>>::get_value`
+  --> src/format/value/get_value.rs
    |
    |     pub fn get_value<T: TryFrom<PyroValue<'a>>>(&self, key: &str) -> Option<T> {
-   |                         ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `pyroduct::value::get_value::<impl PyroRow<'a>>::get_value`
+   |                         ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `pyroduct::format::value::get_value::<impl PyroRow<'a>>::get_value`
