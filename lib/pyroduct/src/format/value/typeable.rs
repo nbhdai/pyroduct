@@ -83,6 +83,7 @@ impl_primitive!(u8, U8, U8);
 impl_primitive!(u16, U16, U16);
 impl_primitive!(u32, U32, U32);
 impl_primitive!(u64, U64, U64);
+impl_primitive!(usize, U64, U64);
 impl_primitive!(i8, I8, I8);
 impl_primitive!(i16, I16, I16);
 impl_primitive!(i32, I32, I32);

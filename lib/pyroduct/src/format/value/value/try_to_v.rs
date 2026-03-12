@@ -89,6 +89,30 @@ impl<'a> TryFrom<PyroValue<'a>> for () {
 // Primitives
 // =============================================================================
 
+impl<'a> TryFrom<PyroValue<'a>> for usize {
+    type Error = PyroValue<'a>;
+
+    fn try_from(value: PyroValue<'a>) -> Result<Self, Self::Error> {
+        match value {
+            PyroValue::U64(v) => Ok(v as usize),
+            PyroValue::U32(v) => Ok(v as usize),
+            other => Err(other),
+        }
+    }
+}
+
+impl<'a> TryFrom<PyroValue<'a>> for isize {
+    type Error = PyroValue<'a>;
+
+    fn try_from(value: PyroValue<'a>) -> Result<Self, Self::Error> {
+        match value {
+            PyroValue::I64(v) => Ok(v as isize),
+            PyroValue::I32(v) => Ok(v as isize),
+            other => Err(other),
+        }
+    }
+}
+
 impl_try_from_primitive!(bool, Bool);
 impl_try_from_primitive!(i8, I8);
 impl_try_from_primitive!(i16, I16);

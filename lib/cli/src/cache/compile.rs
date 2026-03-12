@@ -72,6 +72,7 @@ fn run_cargo_command(
 }
 
 /// A resolved capability for anon module compilation.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct ResolvedCapability {
     pub author: String,
     pub package: String,

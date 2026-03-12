@@ -159,8 +159,8 @@ pub(crate) fn map_type_to_ref(ty: &Type) -> (TokenStream, bool) {
             }
 
             match ident_str.as_str() {
-                "bool" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "f16"
-                | "f32" | "f64" => {
+                "bool" | "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
+                | "f16" | "f32" | "f64" => {
                     let ident = &segment.ident;
                     (quote! { #ident }, true)
                 }
@@ -233,8 +233,8 @@ fn generate_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream {
 
             match ident_str.as_str() {
                 // Primitives: Copy
-                "bool" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "f16"
-                | "f32" | "f64" => {
+                "bool" | "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
+                | "f16" | "f32" | "f64" => {
                     quote! { #field_name: self.#field_name }
                 }
 
@@ -313,10 +313,10 @@ fn generate_rkyv_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream 
                 }
 
                 // 2. Multi-byte Endian-Specific Primitives (Rkyv wrappers)
-                "i16" | "i16_le" | "i32" | "i32_le" | "i64" | "i64_le" | "u16" | "u16_le"
-                | "u32" | "u32_le" | "u64" | "u64_le" | "f16" | "f16_le" | "f32" | "f32_le"
-                | "f64" | "f64_le" => {
-                    quote! { #field_name: self.#field_name.to_native() }
+                "i16" | "i16_le" | "i32" | "i32_le" | "i64" | "i64_le" | "isize" | "u16" | "u16_le"
+                | "u32" | "u32_le" | "u64" | "usize" | "u64_le" | "f16" | "f16_le" | "f32"
+                | "f32_le" | "f64" | "f64_le" => {
+                    quote! { #field_name: self.#field_name.to_native() as _ }
                 }
 
                 // 3. String: ArchivedString has .as_str()
@@ -358,7 +358,7 @@ fn generate_rkyv_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream 
                                 // We need Option<Primitive>.
                                 // .to_native() converts &ArchivedPrimitive (Copy) to Primitive
                                 quote! {
-                                    #field_name: self.#field_name.as_ref().map(|x| x.to_native())
+                                    #field_name: self.#field_name.as_ref().map(|x| x.to_native() as _)
                                 }
                             } else if is_string_like(inner_ty) {
                                 // ArchivedOption<ArchivedString>.
@@ -399,10 +399,12 @@ fn is_primitive(ty: &Type) -> bool {
             "i8" | "i16"
                 | "i32"
                 | "i64"
+                | "isize"
                 | "u8"
                 | "u16"
                 | "u32"
                 | "u64"
+                | "usize"
                 | "f16"
                 | "f32"
                 | "f64"

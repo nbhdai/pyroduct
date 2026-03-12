@@ -4,7 +4,6 @@ pub struct HttpConfig {
     pub timeout_ms: u64,
 }
 
-
 #[pyroduct::magma]
 pub struct HttpClient;
 
@@ -17,23 +16,27 @@ impl HttpServer {
     type Client = HttpClient;
     type Config = HttpConfig;
     type Error = String;
-    
+
     async fn new(config: Option<HttpConfig>) -> Self {
-        let config = config.unwrap_or(HttpConfig {
-            timeout_ms: 30000,
-        });
+        let config = config.unwrap_or(HttpConfig { timeout_ms: 30000 });
         Self {
             timeout: std::time::Duration::from_millis(config.timeout_ms),
         }
     }
-    
+
     async fn reset(&mut self) {}
-    
+
     fn register(&self, _client: &HttpClient) -> Result<(), String> {
         Ok(())
     }
-    
-    async fn post(&self, _client: &HttpClient, url: String, body: String) -> Result<String, String> {
+
+    async fn post(
+        &self,
+        _client: &HttpClient,
+        url: String,
+        body: String,
+        len: u64,
+    ) -> Result<String, String> {
         Ok(format!("POST {} bytes to {}", body.len(), url))
     }
 }

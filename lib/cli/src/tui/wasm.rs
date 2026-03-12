@@ -17,7 +17,7 @@ pub struct CodeState {
 }
 
 pub fn render(f: &mut Frame, pipeline: &PipelineState, state: &mut CodeState, area: Rect) {
-    let step = &pipeline.steps[state.selected_step];
+    let step = &pipeline.tui.modules[state.selected_step];
 
     let src_path = step.path.join("src/lib.rs");
     let src_label = src_path.file_name().unwrap_or_default().to_string_lossy();

@@ -68,6 +68,30 @@ impl From<&Time> for PyroValue<'_> {
     }
 }
 
+impl From<usize> for PyroValue<'_> {
+    fn from(dt: usize) -> Self {
+        PyroValue::U64(dt as u64)
+    }
+}
+
+impl From<&usize> for PyroValue<'_> {
+    fn from(dt: &usize) -> Self {
+        PyroValue::U64(*dt as u64)
+    }
+}
+
+impl From<isize> for PyroValue<'_> {
+    fn from(dt: isize) -> Self {
+        PyroValue::I64(dt as i64)
+    }
+}
+
+impl From<&isize> for PyroValue<'_> {
+    fn from(dt: &isize) -> Self {
+        PyroValue::I64(*dt as i64)
+    }
+}
+
 // -----------------------------------------------------------------------------
 // Macros
 // -----------------------------------------------------------------------------

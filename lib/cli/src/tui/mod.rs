@@ -1,5 +1,6 @@
 // lib/cli/src/tui/mod.rs
 use std::{
+    collections::{BTreeMap, HashMap},
     fs,
     io::stdout,
     path::{Path, PathBuf},
@@ -10,19 +11,25 @@ use std::{
 use arrow::array::RecordBatch;
 use arrow::datatypes::Schema;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use cargo_toml::Dependency;
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use pyroduct::pipeline::wasm_execute::PipelineExecution;
+use pyroduct::pipeline::wasm_execute::{Pipeline, PipelineExecution};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
 };
 use ratatui_code_editor::{editor::Editor, theme::vesper};
+use serde::{Deserialize, Serialize};
+
+use crate::cache::CacheManager;
+use crate::cache::compile::ResolvedCapability;
+use pyroduct::module::{PyroFactory, PyroModule, capability::CapabilityLibrary};
 
 pub mod cap_config;
 pub mod keys;
@@ -35,16 +42,103 @@ pub mod wasm;
 
 use keys::{Hotkey, HotkeyProvider};
 
-pub struct ModuleStep {
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CompleteModule {
     pub name: String,
     pub path: PathBuf,
     pub source_code: String,
-    pub cap_configs: Vec<(String, String)>,
+    pub dependencies: BTreeMap<String, Dependency>,
+    pub capabilities: Vec<ResolvedCapability>,
+    pub configurations: HashMap<String, Option<serde_json::Value>>,
+    pub compiled_wasm: Option<Vec<u8>>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TuiPipeline {
+    pub modules: Vec<CompleteModule>,
+}
+
+impl TuiPipeline {
+    pub async fn from_config(yaml_path: &Path) -> Result<Self> {
+        let config = crate::run::load_config(yaml_path)?;
+        let mut modules = Vec::new();
+
+        for mod_conf in config.pipeline {
+            let name = mod_conf
+                .path
+                .file_name()
+                .expect("Non empty path")
+                .to_string_lossy()
+                .to_string();
+
+            let src_path = mod_conf.path.join("src/lib.rs");
+            let source_code = fs::read_to_string(&src_path)
+                .unwrap_or_else(|_| "// No source found\n".to_string());
+
+            let mut dependencies = BTreeMap::new();
+            let mod_toml_path = mod_conf.path.join("Module.toml");
+            if mod_toml_path.exists() {
+                let toml_content = fs::read_to_string(&mod_toml_path)?;
+                let manifest: crate::artifacts::cargo::ModuleManifest =
+                    toml::from_str(&toml_content)?;
+                dependencies = manifest.dependencies;
+            }
+
+            let mut capabilities = Vec::new();
+            for lib_path in &mod_conf.libraries {
+                let cap_toml_path = lib_path.join("Capability.toml");
+                if cap_toml_path.exists() {
+                    let toml_content = fs::read_to_string(&cap_toml_path)?;
+                    let manifest: crate::artifacts::cargo::CapabilityManifest =
+                        toml::from_str(&toml_content)?;
+                    let (cap_name, cap_version) = manifest.name_version()?;
+                    let pkg = manifest.capability.as_ref().unwrap();
+                    let author = pkg
+                        .authors
+                        .get()
+                        .ok()
+                        .and_then(|a| a.first().map(|s| s.as_str()))
+                        .unwrap_or("unknown")
+                        .to_string();
+
+                    capabilities.push(ResolvedCapability {
+                        author,
+                        package: cap_name,
+                        version: cap_version,
+                    });
+                }
+            }
+
+            modules.push(CompleteModule {
+                name,
+                path: mod_conf.path,
+                source_code,
+                dependencies,
+                capabilities,
+                configurations: mod_conf.configurations,
+                compiled_wasm: None,
+            });
+        }
+
+        Ok(TuiPipeline { modules })
+    }
+
+    pub fn from_json(json_path: &Path) -> Result<Self> {
+        let content = fs::read_to_string(json_path)?;
+        let pipeline = serde_json::from_str::<TuiPipeline>(&content)?;
+        Ok(pipeline)
+    }
+
+    pub fn save(&self, json_path: &Path) -> Result<()> {
+        let json = serde_json::to_string_pretty(self)?;
+        fs::write(json_path, json)?;
+        Ok(())
+    }
 }
 
 pub struct PipelineState {
     pub yaml_path: PathBuf,
-    pub steps: Vec<ModuleStep>,
+    pub tui: TuiPipeline,
     pub input: RecordBatch,
     pub execution: Vec<PipelineExecution>,
 }
@@ -64,61 +158,30 @@ pub struct App {
 
 impl App {
     pub async fn load(yaml_path: &Path, input_path: &Path) -> Result<Self> {
-        let config = crate::run::load_config(yaml_path)?;
-
-        let mut steps = Vec::new();
-        for mod_conf in &config.pipeline {
-            let path = mod_conf.path.clone();
-            let name = path
-                .components()
-                .last()
-                .expect("Non empty path")
-                .as_os_str()
-                .display()
-                .to_string();
-            let src_path = path.join("src/lib.rs");
-
-            let source_code = fs::read_to_string(&src_path)
-                .unwrap_or_else(|_| "// No source found\n".to_string());
-
-            // Extract capability configs as (name, yaml_string) pairs
-            let cap_configs: Vec<(String, String)> = mod_conf
-                .configurations
-                .iter()
-                .map(|(name, value)| {
-                    let yaml = serde_yaml::to_string(value).unwrap_or_default();
-                    (name.clone(), yaml)
-                })
-                .collect();
-
-            steps.push(ModuleStep {
-                name,
-                path,
-                source_code,
-                cap_configs,
-            });
-        }
-
-        let initial_code = steps
-            .first()
-            .map(|s| s.source_code.clone())
-            .unwrap_or_default();
-        let initial_caps = steps
-            .first()
-            .map(|s| s.cap_configs.clone())
-            .unwrap_or_default();
-
-        let mut input_batch = RecordBatch::new_empty(Arc::new(Schema::empty()));
-        if input_path.exists() {
-            let bytes = fs::read(input_path)?;
-            let filename = input_path.file_name().unwrap_or_default().to_string_lossy();
-            let batches = arrow_file::parse_data_to_batch(bytes, &filename).await?;
-            if !batches.is_empty() {
-                input_batch = batches[0].clone().to_batch();
-            }
+        let tui_path = yaml_path.with_extension("tui.json");
+        let tui_pipeline = if tui_path.exists() {
+            TuiPipeline::from_json(&tui_path)?
         } else {
-            anyhow::bail!("Input file does not exist: {}", input_path.display());
-        }
+            TuiPipeline::from_config(yaml_path).await?
+        };
+
+        let initial_code = tui_pipeline
+            .modules
+            .first()
+            .map(|m| m.source_code.clone())
+            .unwrap_or_default();
+        let initial_caps: Vec<(String, String)> = tui_pipeline
+            .modules
+            .first()
+            .map(|m| {
+                m.configurations
+                    .iter()
+                    .map(|(k, v)| (k.clone(), serde_yaml::to_string(v).unwrap_or_default()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let input_batch = Self::load_input(input_path).await?;
 
         let code_state = wasm::CodeState {
             editing: false,
@@ -131,7 +194,7 @@ impl App {
         Ok(App {
             pipeline: PipelineState {
                 yaml_path: yaml_path.to_path_buf(),
-                steps,
+                tui: tui_pipeline,
                 input: input_batch,
                 execution: Vec::new(),
             },
@@ -141,25 +204,54 @@ impl App {
         })
     }
 
+    async fn load_input(input_path: &Path) -> Result<RecordBatch> {
+        if !input_path.exists() {
+            anyhow::bail!("Input file does not exist: {}", input_path.display());
+        }
+        let bytes = fs::read(input_path)?;
+        let filename = input_path.file_name().unwrap_or_default().to_string_lossy();
+        let batches = arrow_file::parse_data_to_batch(bytes, &filename).await?;
+        if batches.is_empty() {
+            Ok(RecordBatch::new_empty(Arc::new(Schema::empty())))
+        } else {
+            Ok(batches[0].clone().to_batch())
+        }
+    }
+
+
     pub fn save(&mut self) {
         if let ViewState::Module(mv) = &mut self.view {
             let step_idx = mv.selected_step();
-            self.pipeline.steps[step_idx].source_code = mv.code.editor.get_content();
+            let mut module = self.pipeline.tui.modules[step_idx].clone();
+            module.source_code = mv.code.editor.get_content();
 
-            let step = &self.pipeline.steps[step_idx];
-            let path = step.path.join("src/lib.rs");
+            // Compile the module ephemerally
+            let dependencies: Vec<(String, Dependency)> = module
+                .dependencies
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
 
-            match fs::write(&path, &step.source_code) {
-                Ok(_) => {
-                    // Package/compile the module (capturing the output to keep TUI clean)
-                    match crate::artifacts::package::package(&step.path, None, &[], true) {
-                        Ok(_) => self.status_msg = format!("Saved & compiled {}", step.name),
-                        Err(e) => self.status_msg = format!("Saved, but compilation failed: {}", e),
-                    }
+            match crate::cache::compile::compile_module(
+                dependencies,
+                module.capabilities.clone(),
+                &module.source_code,
+            ) {
+                Ok(wasm) => {
+                    module.compiled_wasm = Some(wasm);
+                    self.status_msg = format!("Compiled {}", module.name);
                 }
                 Err(e) => {
-                    self.status_msg = format!("Save failed: {}", e);
+                    self.status_msg = format!("Compilation failed: {}", e);
                 }
+            }
+
+            self.pipeline.tui.modules[step_idx] = module;
+
+            // Persist the entire TUI pipeline to JSON
+            let tui_path = self.pipeline.yaml_path.with_extension("tui.json");
+            if let Err(e) = self.pipeline.tui.save(&tui_path) {
+                self.status_msg = format!("Failed to save TUI state: {}", e);
             }
         } else {
             self.status_msg = "Nothing to save here.".into();
@@ -167,9 +259,68 @@ impl App {
     }
 
     async fn run_pipeline_inner(&mut self) -> Result<()> {
-        let config = crate::run::load_config(&self.pipeline.yaml_path)?;
-        let mut factory = pyroduct::pipeline::PipelineFactory::load(&config).await?;
-        let pipeline = factory.build().await?;
+        let cache = CacheManager::new()?;
+        let mut steps = Vec::new();
+
+        let mut config = wasmtime::Config::new();
+        config.async_support(true);
+        let engine = wasmtime::Engine::new(&config)
+            .map_err(|e| anyhow::anyhow!("Failed to create wasmtime engine: {}", e))?;
+
+        for module in &mut self.pipeline.tui.modules {
+            // 1. Ensure module is compiled
+            if module.compiled_wasm.is_none() {
+                let dependencies: Vec<(String, Dependency)> = module
+                    .dependencies
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+
+                let wasm = crate::cache::compile::compile_module(
+                    dependencies,
+                    module.capabilities.clone(),
+                    &module.source_code,
+                )?;
+                module.compiled_wasm = Some(wasm);
+            }
+
+            let wasm = module.compiled_wasm.as_ref().unwrap();
+
+            // 2. Load capabilities from cache
+            let mut libs = Vec::new();
+            let lib_file = format!("lib.{}", crate::artifacts::utils::dylib_extension());
+
+            for cap in &module.capabilities {
+                let cap_dir = cache.capabilities_dir(&cap.author, &cap.package, &cap.version);
+                let artifact_path = cap_dir.join(&lib_file);
+
+                let library = CapabilityLibrary::load(cap.package.clone(), &artifact_path)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Failed to load capability library from cache: {}",
+                            artifact_path.display()
+                        )
+                    })?;
+                libs.push(library);
+            }
+
+            // 3. Create PyroFactory and instantiate
+            let wasmtime_module = wasmtime::Module::from_binary(&engine, wasm)
+                .map_err(|e| anyhow::anyhow!("Failed to compile WASM: {}", e))?;
+            let pyro_module = PyroModule::new(wasmtime_module)?;
+
+            let mut factory = PyroFactory::new(libs, module.configurations.clone(), pyro_module)
+                .map_err(|e| anyhow::anyhow!("Failed to create PyroFactory: {}", e))?;
+
+            let instance = factory
+                .instantiate()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to instantiate module: {}", e))?;
+            steps.push(instance);
+        }
+
+        let pipeline = Pipeline { steps };
         let pool = pyroduct::pipeline::PipelinePool::new(vec![pipeline]);
 
         let (successes, failures) = pool.process_batch(&self.pipeline.input).await?;
@@ -206,19 +357,20 @@ impl App {
         match &self.view {
             ViewState::InputTable(_) => 0,
             ViewState::Module(mv) => (mv.selected_step() * 2) + 1,
-            ViewState::OutputTable(_) => self.pipeline.steps.len() + 1,
+            ViewState::OutputTable(_) => self.pipeline.tui.modules.len() + 1,
         }
     }
 
     pub fn nav_to(&mut self, new_idx: usize) {
-        let max_idx = self.pipeline.steps.len() + 1;
+        let max_idx = self.pipeline.tui.modules.len() + 1;
         if new_idx > max_idx {
             return;
         }
 
         // Sync old code text to domain before navigating away
         if let ViewState::Module(mv) = &self.view {
-            self.pipeline.steps[mv.selected_step()].source_code = mv.code.editor.get_content();
+            self.pipeline.tui.modules[mv.selected_step()].source_code =
+                mv.code.editor.get_content();
         }
 
         // Hydrate the new view from the domain state
@@ -228,14 +380,21 @@ impl App {
             let stage_idx = (new_idx - 1) / 2;
             let is_code = new_idx % 2 == 1;
             if is_code {
-                let step = &self.pipeline.steps[stage_idx];
+                let module = &self.pipeline.tui.modules[stage_idx];
                 let code_state = wasm::CodeState {
                     editing: false,
                     area: Rect::default(),
-                    editor: Editor::new("rust", &step.source_code, vesper()),
+                    editor: Editor::new("rust", &module.source_code, vesper()),
                     selected_step: stage_idx,
                 };
-                let cap_state = cap_config::CapConfigState::new(step.cap_configs.clone());
+
+                let initial_caps: Vec<(String, String)> = module
+                    .configurations
+                    .iter()
+                    .map(|(k, v)| (k.clone(), serde_yaml::to_string(v).unwrap_or_default()))
+                    .collect();
+
+                let cap_state = cap_config::CapConfigState::new(initial_caps);
                 self.view = ViewState::Module(module::ModuleView::new(code_state, cap_state));
             } else {
                 self.view = ViewState::OutputTable(

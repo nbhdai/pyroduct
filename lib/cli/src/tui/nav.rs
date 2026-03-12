@@ -21,7 +21,8 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let mut items = vec![ListItem::new("Input Table")];
     items.extend(
         app.pipeline
-            .steps
+            .tui
+            .modules
             .iter()
             .map(|s| ListItem::new(format!("Step: {}", s.name))),
     );
