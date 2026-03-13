@@ -1,6 +1,6 @@
 use super::symbols;
 use anyhow::{Result, Context};
-use artifacts::{cargo::CapabilityManifest, environment::{Environment, format_syn_error}};
+use artifacts::{cargo::CapabilityManifest, environment::Environment};
 use fs_err as fs;
 use pyro_core::{ffi::generate_capability, module::generate_module};
 use std::path::Path;
@@ -19,7 +19,7 @@ pub fn expand_artifacts(path: &Path) -> Result<bool> {
         
         let source_path = path.join("src/lib.rs");
         let source = fs::read_to_string(&source_path).context("Unable to read source")?;
-        let code = generate_capability(&source, &name, &version).map_err(|s| format_syn_error("Capability code", s))?;
+        let code = generate_capability(&source, &name, &version).context("Capability code")?;
         let code = prettyplease::unparse(&code);
         let artifacts_dir = path.join("artifacts");
         fs::create_dir_all(&artifacts_dir)?;
@@ -32,7 +32,7 @@ pub fn expand_artifacts(path: &Path) -> Result<bool> {
     if is_mod {
         let source_path = path.join("src/lib.rs");
         let source = fs::read_to_string(&source_path).context("Unable to read source")?;
-        let code = generate_module(&source).map_err(|s| format_syn_error("Capability code", s))?;
+        let code = generate_module(&source).context("Module code")?;
         let code = prettyplease::unparse(&code);
         let artifacts_dir = path.join("artifacts");
         fs::create_dir_all(&artifacts_dir)?;

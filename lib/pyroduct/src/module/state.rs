@@ -124,7 +124,8 @@ impl PyroModule {
                         }
                         if !matches!(func_type.param(0), Some(ValType::I32)) {
                             return Err(WasmError::SignatureMismatch(format!(
-                                "Register function didn't take a pointer: {:?}", func_type.param(0)
+                                "Register function didn't take a pointer: {:?}",
+                                func_type.param(0)
                             )));
                         }
 

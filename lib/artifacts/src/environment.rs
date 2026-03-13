@@ -1,6 +1,6 @@
 use crate::artifacts::{Artifacts, CapBinary};
+use crate::build::{CommandError, run_command};
 use crate::cargo::{CapabilityManifest, ModuleManifest};
-use cargo_toml::Dependency;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use tokio::fs;
@@ -14,15 +14,8 @@ pub enum EnvironmentError {
     #[error("Cargo metadata failed: {0}")]
     Metadata(String),
 
-    #[error(
-        "Cargo command failed with status {status}. Args: {args:?}\nStdout: {stdout}\nStderr: {stderr}"
-    )]
-    CargoCommand {
-        status: std::process::ExitStatus,
-        args: Vec<String>,
-        stdout: String,
-        stderr: String,
-    },
+    #[error(transparent)]
+    CommandError(#[from] CommandError),
 
     #[error("Failed to parse or write: {0}")]
     Serde(String),
@@ -57,7 +50,6 @@ pub type EnvResult<T> = std::result::Result<T, EnvironmentError>;
 pub enum Manifest {
     Module(ModuleManifest),
     Capability(CapabilityManifest),
-    Anon(cargo_toml::Manifest),
     Interface(CapabilityManifest),
 }
 
@@ -115,7 +107,6 @@ impl Environment {
         match &self.manifest {
             Manifest::Module(m) => Some(m.module.name.clone()),
             Manifest::Capability(m) => Some(m.capability.name.clone()),
-            Manifest::Anon(_) => None,
             Manifest::Interface(_) => None,
         }
     }
@@ -124,7 +115,6 @@ impl Environment {
         match &self.manifest {
             Manifest::Module(m) => Some(m.module.version.clone()),
             Manifest::Capability(m) => Some(m.capability.version.clone()),
-            Manifest::Anon(_) => None,
             Manifest::Interface(_) => None,
         }
     }
@@ -133,7 +123,6 @@ impl Environment {
         match &self.manifest {
             Manifest::Module(m) => Some(m.module.author.clone()),
             Manifest::Capability(m) => Some(m.capability.author.clone()),
-            Manifest::Anon(_) => None,
             Manifest::Interface(_) => None,
         }
     }
@@ -154,14 +143,6 @@ impl Environment {
             let manifest: CapabilityManifest = toml::from_str(&content)
                 .map_err(|e| EnvironmentError::ParseManifest(format!("Capability.toml: {}", e)))?;
             return Ok(Manifest::Capability(manifest));
-        }
-
-        let cargo_toml = root.join("Cargo.toml");
-        if cargo_toml.exists() {
-            let content = tokio::fs::read_to_string(&cargo_toml).await?;
-            let manifest = cargo_toml::Manifest::from_str(&content)
-                .map_err(|e| EnvironmentError::ParseManifest(format!("Cargo.toml: {}", e)))?;
-            return Ok(Manifest::Anon(manifest));
         }
 
         // Default for anon compilations or when no package section is found
@@ -192,40 +173,8 @@ impl Environment {
             .ok_or(EnvironmentError::MissingTargetDir)
     }
 
-    /// Run a cargo command within this environment
-    pub async fn run_command(&self, tool_args: &[&str], capture: bool) -> EnvResult<String> {
-        let mut cmd = Command::new("cargo");
-        cmd.args(tool_args).current_dir(&self.root);
-
-        if capture {
-            let output = cmd.output().await?;
-
-            if !output.status.success() {
-                return Err(EnvironmentError::CargoCommand {
-                    status: output.status,
-                    args: tool_args.iter().map(|s| s.to_string()).collect(),
-                    stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                    stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-                });
-            }
-            Ok(String::from_utf8(output.stdout)?)
-        } else {
-            let status = cmd.status().await?;
-
-            if !status.success() {
-                return Err(EnvironmentError::CargoCommand {
-                    status,
-                    args: tool_args.iter().map(|s| s.to_string()).collect(),
-                    stdout: String::from("Not captured"),
-                    stderr: String::from("Not captured"),
-                });
-            }
-            Ok(String::new())
-        }
-    }
-
     pub async fn generate_lockfile(&self) -> EnvResult<String> {
-        self.run_command(&["generate-lockfile"], true).await?;
+        run_command(&self.root, &["generate-lockfile"], true).await?;
 
         Ok(fs::read_to_string(self.root.join("Cargo.lock")).await?)
     }
@@ -234,7 +183,7 @@ impl Environment {
     pub async fn compile(&self, extra_args: &[&str], capture: bool) -> EnvResult<()> {
         let mut args = vec!["build", "--release"];
         args.extend_from_slice(extra_args);
-        self.run_command(&args, capture).await?;
+        run_command(&self.root, &args, capture).await?;
         Ok(())
     }
 
@@ -376,27 +325,6 @@ impl Environment {
                     config_json,
                 }
             }
-            Manifest::Anon(_) => {
-                tracing::info!("Compiling WASM module...");
-                self.compile(&["--target", "wasm32-unknown-unknown"], capture)
-                    .await?;
-
-                let built_wasm = self.get_wasm_artifact("mod")?;
-                let wasm = fs::read(&built_wasm).await?;
-
-                let src_path = self.root.join("src").join("lib.rs");
-                let doc = if src_path.exists() {
-                    let source = fs::read_to_string(&src_path).await?;
-                    let (_, spec_res, _) =
-                        pyro_core::ffi::generate_interface(&source, "anon", "0.0.0")
-                            .map_err(|r| format_syn_error(&source, r))?;
-                    spec_res.map_err(|e| EnvironmentError::Serde(e.to_string()))?
-                } else {
-                    String::new()
-                };
-
-                Artifacts::AnonModule { wasm, doc }
-            }
             Manifest::Interface(manifest) => {
                 tracing::info!("Packaging interface: {:?}", self.root);
                 let manifest = toml::to_string_pretty(&manifest)
@@ -442,64 +370,6 @@ impl Environment {
         Ok(artifacts)
     }
 
-    /// Creates a new environment for compiling an anonymous module.
-    pub async fn new_module(
-        root: PathBuf,
-        pyroduct_dep: Dependency,
-        dependencies: Vec<(String, Dependency)>,
-        capabilities: Vec<ResolvedCapability>,
-        code: &str,
-    ) -> EnvResult<Self> {
-        // 1. Set up the source directory and write the code
-        let src_dir = root.join("src");
-        fs::create_dir_all(&src_dir).await?;
-        fs::write(src_dir.join("lib.rs"), code).await?;
-
-        let basic_toml = format!(
-            r#"
-[module]
-name = "mod"
-version = "0.1.0"
-authors = ["anon"]
-edition = "2024"
-
-[pyroduct]
-version = "*"
-"#,
-        );
-
-        let mut manifest: ModuleManifest = toml::from_str(&basic_toml).map_err(|e| {
-            EnvironmentError::ParseManifest(format!("Couldn't make Cargo.toml: {}", e))
-        })?;
-        manifest.pyroduct = pyroduct_dep;
-        for (dep_name, dep) in dependencies {
-            manifest.dependencies.insert(dep_name, dep);
-        }
-
-        for cap in capabilities {
-            let dep = Dependency::Detailed(Box::new(cargo_toml::DependencyDetail {
-                path: Some(cap.interface_dir().to_string_lossy().into_owned()),
-                ..Default::default()
-            }));
-            manifest.dependencies.insert(cap.package, dep);
-        }
-
-        let cargo_toml_content = toml::to_string_pretty(&manifest)
-            .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
-        fs::write(root.join("Cargo.toml"), &cargo_toml_content).await?;
-
-        let target_dir = match Self::get_target_dir(&root).await {
-            Ok(dir) => dir,
-            Err(_) => root.join("target"),
-        };
-
-        Ok(Self {
-            root,
-            target_dir,
-            manifest: Manifest::Module(manifest),
-        })
-    }
-
     /// Creates an interface environment from a capability environment in the directory specified.
     pub async fn create_interface(&self) -> EnvResult<Option<Artifacts>> {
         let manifest = match &self.manifest {
@@ -519,7 +389,7 @@ version = "*"
 
         let (lib_rs_file, spec_res, config_res) =
             pyro_core::ffi::generate_interface(&original_source, &cap_name, &cap_version)
-                .map_err(|r| format_syn_error(&original_source, r))?;
+                .map_err(|r| EnvironmentError::InterfaceGeneration(format_syn_error(&original_source, r)))?;
 
         let lib_rs_content = prettyplease::unparse(&lib_rs_file);
         let spec = spec_res.map_err(|e| EnvironmentError::Serde(e.to_string()))?;
@@ -564,7 +434,7 @@ pub fn dylib_extension() -> &'static str {
 }
 
 /// Format a syn::Error with source context
-pub fn format_syn_error(source: &str, err: syn::Error) -> EnvironmentError {
+pub fn format_syn_error(source: &str, err: syn::Error) -> String {
     let span = err.span();
     let start = span.start();
     let msg = err.to_string();
@@ -596,5 +466,5 @@ pub fn format_syn_error(source: &str, err: syn::Error) -> EnvironmentError {
     }
     output.push_str("   |\n");
 
-    EnvironmentError::InterfaceGeneration(output)
+    output
 }

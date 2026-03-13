@@ -18,7 +18,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use pyroduct::pipeline::wasm_execute::{Pipeline, PipelineExecution};
+use pyroduct::{format::value::ModuleFunc, pipeline::wasm_execute::{Pipeline, PipelineExecution}};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
@@ -27,8 +27,7 @@ use ratatui::{
 use ratatui_code_editor::{editor::Editor, theme::vesper};
 use serde::{Deserialize, Serialize};
 
-use crate::cache::CacheManager;
-use crate::cache::compile::ResolvedCapability;
+use artifacts::{cache::CacheManager, cargo::{CapabilityManifest, ModuleManifest}, environment::{ResolvedCapability, dylib_extension}};
 use pyroduct::module::{PyroFactory, PyroModule, capability::CapabilityLibrary};
 
 pub mod cap_config;
@@ -51,6 +50,7 @@ pub struct CompleteModule {
     pub capabilities: Vec<ResolvedCapability>,
     pub configurations: HashMap<String, Option<serde_json::Value>>,
     pub compiled_wasm: Option<Vec<u8>>,
+    pub documentation: Option<ModuleFunc<'static>>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -79,7 +79,7 @@ impl TuiPipeline {
             let mod_toml_path = mod_conf.path.join("Module.toml");
             if mod_toml_path.exists() {
                 let toml_content = fs::read_to_string(&mod_toml_path)?;
-                let manifest: crate::commands::cargo::ModuleManifest =
+                let manifest: ModuleManifest =
                     toml::from_str(&toml_content)?;
                 dependencies = manifest.dependencies;
             }
@@ -89,22 +89,16 @@ impl TuiPipeline {
                 let cap_toml_path = lib_path.join("Capability.toml");
                 if cap_toml_path.exists() {
                     let toml_content = fs::read_to_string(&cap_toml_path)?;
-                    let manifest: crate::commands::cargo::CapabilityManifest =
+                    let manifest: CapabilityManifest =
                         toml::from_str(&toml_content)?;
-                    let (cap_name, cap_version) = manifest.name_version()?;
-                    let pkg = manifest.capability.as_ref().unwrap();
-                    let author = pkg
-                        .authors
-                        .get()
-                        .ok()
-                        .and_then(|a| a.first().map(|s| s.as_str()))
-                        .unwrap_or("unknown")
-                        .to_string();
+                    let author = manifest.capability.author.clone();
+                    let package = manifest.capability.name.clone();
+                    let version = manifest.capability.version.clone();
 
                     capabilities.push(ResolvedCapability {
                         author,
-                        package: cap_name,
-                        version: cap_version,
+                        package,
+                        version,
                     });
                 }
             }
@@ -117,6 +111,7 @@ impl TuiPipeline {
                 capabilities,
                 configurations: mod_conf.configurations,
                 compiled_wasm: None,
+                documentation: None,
             });
         }
 
@@ -150,6 +145,7 @@ pub enum ViewState {
 }
 
 pub struct App {
+    pub cache: CacheManager,
     pub pipeline: PipelineState,
     pub view: ViewState,
     pub status_msg: String,
@@ -158,6 +154,7 @@ pub struct App {
 
 impl App {
     pub async fn load(yaml_path: &Path, input_path: &Path) -> Result<Self> {
+        let cache = CacheManager::new().await?;
         let tui_path = yaml_path.with_extension("tui.json");
         let tui_pipeline = if tui_path.exists() {
             TuiPipeline::from_json(&tui_path)?
@@ -192,6 +189,7 @@ impl App {
         let cap_state = cap_config::CapConfigState::new(initial_caps);
 
         Ok(App {
+            cache,
             pipeline: PipelineState {
                 yaml_path: yaml_path.to_path_buf(),
                 tui: tui_pipeline,
@@ -219,7 +217,7 @@ impl App {
     }
 
 
-    pub fn save(&mut self) {
+    pub async fn save(&mut self) {
         if let ViewState::Module(mv) = &mut self.view {
             let step_idx = mv.selected_step();
             let mut module = self.pipeline.tui.modules[step_idx].clone();
@@ -232,14 +230,15 @@ impl App {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
 
-            match crate::cache::compile::compile_module(
+            match self.cache.compile_anon(
                 dependencies,
                 module.capabilities.clone(),
                 &module.source_code,
-            ) {
-                Ok(wasm) => {
+            ).await {
+                Ok((wasm, doc)) => {
                     module.compiled_wasm = Some(wasm);
                     self.status_msg = format!("Compiled {}", module.name);
+                    module.documentation = doc;
                 }
                 Err(e) => {
                     self.status_msg = format!("Compilation failed: {}", e);
@@ -259,7 +258,6 @@ impl App {
     }
 
     async fn run_pipeline_inner(&mut self) -> Result<()> {
-        let cache = CacheManager::new()?;
         let mut steps = Vec::new();
 
         let mut config = wasmtime::Config::new();
@@ -276,22 +274,30 @@ impl App {
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
 
-                let wasm = crate::cache::compile::compile_module(
+                match self.cache.compile_anon(
                     dependencies,
                     module.capabilities.clone(),
                     &module.source_code,
-                )?;
-                module.compiled_wasm = Some(wasm);
+                ).await {
+                    Ok((wasm, doc)) => {
+                        module.compiled_wasm = Some(wasm);
+                        self.status_msg = format!("Compiled {}", module.name);
+                        module.documentation = doc;
+                    }
+                    Err(e) => {
+                        self.status_msg = format!("Compilation failed: {}", e);
+                    }
+                }
             }
 
             let wasm = module.compiled_wasm.as_ref().unwrap();
 
             // 2. Load capabilities from cache
             let mut libs = Vec::new();
-            let lib_file = format!("lib.{}", crate::commands::utils::dylib_extension());
+            let lib_file = format!("lib.{}", dylib_extension());
 
             for cap in &module.capabilities {
-                let cap_dir = cache.capabilities_dir(&cap.author, &cap.package, &cap.version);
+                let cap_dir = self.cache.capabilities_dir(&cap.author, &cap.package, &cap.version);
                 let artifact_path = cap_dir.join(&lib_file);
 
                 let library = CapabilityLibrary::load(cap.package.clone(), &artifact_path)
@@ -343,7 +349,7 @@ impl App {
     }
 
     pub async fn run_pipeline(&mut self) {
-        self.save();
+        self.save().await;
         self.status_msg = "Executing run...".into();
 
         if let Err(e) = self.run_pipeline_inner().await {
@@ -486,7 +492,7 @@ async fn handle_event(app: &mut App) -> Result<()> {
             return Ok(());
         }
         (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
-            app.save();
+            app.save().await;
             return Ok(());
         }
         (KeyModifiers::CONTROL, KeyCode::Char('r')) => {

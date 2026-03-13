@@ -19,6 +19,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 /// Documentation for the main function of a module
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ModuleFunc<'a> {
     pub name: Cow<'a, str>,
     pub description: Option<Cow<'a, str>>,
@@ -27,6 +28,7 @@ pub struct ModuleFunc<'a> {
 }
 
 /// Documentation for a capability function
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CapabilityFunc<'a> {
     pub name: Cow<'a, str>,
     pub description: Option<Cow<'a, str>>,
@@ -243,7 +245,7 @@ impl<'a> fmt::Display for PyroField<'a> {
 // =============================================================================
 
 /// An ordered collection of [`PyroField`]s — the Pyro equivalent of `arrow::datatypes::Schema`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PyroSchema<'a> {
     pub documentation: Option<Cow<'a, str>>,
     pub fields: Cow<'a, [PyroField<'a>]>,

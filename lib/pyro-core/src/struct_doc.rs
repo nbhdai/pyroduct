@@ -19,8 +19,6 @@ use std::collections::HashMap;
 use spec::{PrimitiveDataType, PyroField, PyroSchema, PyroType};
 use syn::{Attribute, Expr, Fields, Lit, Meta};
 
-use crate::format::documentation::MagmaDocumentation;
-
 // =============================================================================
 // SchemaBuilder
 // =============================================================================
@@ -63,27 +61,6 @@ impl SchemaBuilder {
             }
         }
         Self { structs }
-    }
-
-    /// Register a single struct that was already parsed as `MagmaDocumentation`.
-    pub fn register_magma(&mut self, doc: &MagmaDocumentation) {
-        let name = doc.ident.to_string();
-        let fields = doc
-            .fields
-            .iter()
-            .map(|f| FieldEntry {
-                name: f.name.clone(),
-                ty: f.ty.clone(),
-                doc: f.doc.clone(),
-            })
-            .collect();
-        self.structs.insert(
-            name,
-            StructEntry {
-                doc: doc.doc.clone(),
-                fields,
-            },
-        );
     }
 
     fn collect_fields(fields: &Fields) -> Vec<FieldEntry> {
@@ -571,7 +548,10 @@ mod tests {
                 assert_eq!(inner_fields.len(), 1);
                 assert_eq!(inner_fields[0].name(), "next");
                 // Cycle broken at this depth — the recursive self-ref is an empty group
-                assert_eq!(inner_fields[0].data_type, PyroType::Group(Cow::Owned(vec![])));
+                assert_eq!(
+                    inner_fields[0].data_type,
+                    PyroType::Group(Cow::Owned(vec![]))
+                );
             }
             other => panic!("expected Group for A's next field, got {:?}", other),
         }

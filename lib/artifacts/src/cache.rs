@@ -1,7 +1,11 @@
-use crate::artifacts::Artifacts; // Ensure you have this import
+use crate::artifacts::Artifacts; use crate::build::{CommandError, run_command};
+// Ensure you have this import
 use crate::cargo::{CapabilityManifest, ModuleManifest};
+use crate::environment::{ResolvedCapability, format_syn_error};
 use cargo_toml::Dependency;
+use pyro_core::module::generate_module_spec;
 use sha2::{Digest, Sha256};
+use pyroduct::format::value::ModuleFunc;
 use std::path::PathBuf;
 use tokio::fs;
 
@@ -13,8 +17,44 @@ pub struct CacheError {
     pub error: std::io::Error,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum BuildError {
+    #[error("IO error — {context}: {error}")]
+    Io {
+        context: &'static str,
+        #[source]
+        error: std::io::Error,
+    },
+
+    #[error("Cargo error: {0}")]
+    Command(#[from] CommandError),
+
+    #[error("Manifest parse error: {0}")]
+    Manifest(String),
+
+    #[error("Documentation error: {0}")]
+    Documentation(String),
+}
+
+impl From<std::io::Error> for BuildError {
+    fn from(e: std::io::Error) -> Self {
+        BuildError::Io {
+            context: "unexpected IO error",
+            error: e,
+        }
+    }
+}
+
+impl BuildError {
+    pub fn io(context: &'static str,  error: std::io::Error) -> Self {
+        BuildError::Io { context, error }
+    }
+}
+
 pub struct CacheManager {
     pub(crate) root: PathBuf,
+    target_dir: PathBuf,
+    pyroduct_dep: Dependency,
 }
 
 impl CacheManager {
@@ -29,7 +69,7 @@ impl CacheManager {
                 home.join(".pyroduct")
             });
 
-        let manager = Self { root };
+        let mut manager = Self { root, target_dir: PathBuf::new(), pyroduct_dep: Dependency::Simple("*".to_string()) };
         manager.init().await?;
         Ok(manager)
     }
@@ -55,7 +95,7 @@ impl CacheManager {
     }
 
     /// The folder instantiator
-    pub async fn init(&self) -> Result<(), CacheError> {
+    pub async fn init(&mut self) -> Result<(), CacheError> {
         fs::create_dir_all(self.capabilities_base_dir())
             .await
             .map_err(|error| CacheError {
@@ -113,6 +153,7 @@ impl CacheManager {
                 context: "Failed to write target config.toml".to_string(),
                 error,
             })?;
+            self.target_dir = target;
         } else {
             fs::write(
                 cargo_dir.join("config.toml"),
@@ -123,7 +164,12 @@ impl CacheManager {
                 context: "Failed to write target config.toml".to_string(),
                 error,
             })?;
+            self.target_dir = self.root.join("target");
         }
+        if let Some(pyroduct_dep) = config.pyroduct.as_ref() {
+            self.pyroduct_dep = pyroduct_dep.clone();
+        }
+
         Ok(())
     }
 
@@ -210,6 +256,67 @@ impl CacheManager {
             })?;
         Ok(())
     }
+
+    /// Compile the module written by `set_build` and store the wasm as an anon
+    /// artifact. Returns the hex SHA-256 hash that identifies it in the cache.
+    pub async fn compile_anon(&self,
+        dependencies: Vec<(String, Dependency)>,
+        capabilities: Vec<ResolvedCapability>,
+        code: &str,
+    ) -> Result<(Vec<u8>, Option<ModuleFunc<'static>>), BuildError> {
+        let build_dir = self.root.join("build");
+        let src_dir = build_dir.join("src");
+        fs::create_dir_all(&src_dir).await.map_err(|e| BuildError::io("create src dir", e))?;
+        fs::write(src_dir.join("lib.rs"), code).await.map_err(|e| BuildError::io("write lib.rs", e))?;
+
+        let basic_toml = r#"
+[module]
+name = "mod"
+version = "0.1.0"
+authors = ["anon"]
+edition = "2024"
+
+[pyroduct]
+version = "*"
+"#;
+
+        let mut manifest: ModuleManifest = toml::from_str(basic_toml)
+            .map_err(|e| BuildError::Manifest(format!("Couldn't build base manifest: {}", e)))?;
+
+        manifest.pyroduct = self.pyroduct_dep.clone();
+        for (dep_name, dep) in dependencies {
+            manifest.dependencies.insert(dep_name, dep);
+        }
+        for cap in capabilities {
+            let dep = Dependency::Detailed(Box::new(cargo_toml::DependencyDetail {
+                path: Some(cap.interface_dir().to_string_lossy().into_owned()),
+                ..Default::default()
+            }));
+            manifest.dependencies.insert(cap.package, dep);
+        }
+
+        let cargo_toml_content =
+            toml::to_string_pretty(&manifest).map_err(|e| BuildError::Manifest(e.to_string()))?;
+        fs::write(build_dir.join("Cargo.toml"), &cargo_toml_content).await.map_err(|e| BuildError::io("write Cargo.toml", e))?;
+
+
+        run_command(&build_dir, &["--target", "wasm32-unknown-unknown", "-p", "mod"], false)
+            .await?;
+        let wasm_path = self
+            .target_dir
+            .join("wasm32-unknown-unknown")
+            .join("release")
+            .join("mod.wasm");
+
+        let wasm: Vec<u8> = tokio::fs::read(wasm_path).await.map_err(|e| BuildError::io("read compiled wasm", e))?;
+
+        let doc = generate_module_spec(code).map_err(|s| BuildError::Documentation(format_syn_error("Cannot generate docstring", s)))?;
+        
+
+        Ok((wasm, doc))
+    }
+
+    
 
     pub async fn write_artifacts(&self, artifacts: Artifacts) -> Result<(), CacheError> {
         // 1. Determine the target directory based on the artifact type

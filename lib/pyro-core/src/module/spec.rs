@@ -23,7 +23,6 @@
 
 use std::borrow::Cow;
 
-use serde::Serialize;
 use spec::{ModuleFunc, PyroField, PyroSchema};
 use syn::{Attribute, Expr, FnArg, ItemFn, Lit, Meta, Pat, ReturnType, Type};
 
@@ -39,7 +38,7 @@ use super::parse::{ModuleAttrs, OutputSpec};
 /// function, and return a pretty-printed JSON string describing it.
 ///
 /// Returns `None` when no `#[module(...)]` function is found.
-pub fn generate_module_spec(content: &str) -> syn::Result<Option<String>> {
+pub fn generate_module_spec(content: &str) -> syn::Result<Option<ModuleFunc<'static>>> {
     let file = syn::parse_file(content)?;
     let builder = SchemaBuilder::from_file(&file);
 
@@ -58,45 +57,12 @@ pub fn generate_module_spec(content: &str) -> syn::Result<Option<String>> {
 
             let attrs: ModuleAttrs = syn::parse2(attr_tokens)?;
             let spec = ModuleSpecBuilder::build(item_fn, &attrs, &builder)?;
-            let json = serde_json::to_string_pretty(&spec)
-                .map_err(|e| syn::Error::new_spanned(item_fn, e.to_string()))?;
 
-            return Ok(Some(json));
+            return Ok(Some(spec.into()));
         }
     }
 
     Ok(None)
-}
-
-// =============================================================================
-// Serialisable mirror of ModuleFunc
-// =============================================================================
-
-/// Serialisable counterpart of [`spec::ModuleFunc`].
-///
-/// [`spec::ModuleFunc`] is not `Serialize` (it holds borrowed data and is
-/// intended as a runtime descriptor), so we produce this owned mirror for JSON
-/// output.
-#[derive(Serialize)]
-pub struct ModuleFuncSpec {
-    pub name: String,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-
-    pub input: PyroSchema<'static>,
-    pub output: PyroSchema<'static>,
-}
-
-impl<'a> From<ModuleFunc<'a>> for ModuleFuncSpec {
-    fn from(f: ModuleFunc<'a>) -> Self {
-        Self {
-            name: f.name.into_owned(),
-            description: f.description.map(|d| d.into_owned()),
-            input: f.input.into_owned(),
-            output: f.output.into_owned(),
-        }
-    }
 }
 
 // =============================================================================
@@ -111,7 +77,7 @@ impl ModuleSpecBuilder {
         item_fn: &ItemFn,
         attrs: &ModuleAttrs,
         builder: &SchemaBuilder,
-    ) -> syn::Result<ModuleFuncSpec> {
+    ) -> syn::Result<ModuleFunc<'static>> {
         let name = item_fn.sig.ident.to_string();
         let description = extract_doc_string(&item_fn.attrs);
 
@@ -152,7 +118,7 @@ impl ModuleSpecBuilder {
             output,
         };
 
-        Ok(ModuleFuncSpec::from(func))
+        Ok(func)
     }
 }
 
@@ -305,11 +271,6 @@ fn extract_doc_string(attrs: &[Attribute]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Value;
-
-    fn parse_json(s: &str) -> Value {
-        serde_json::from_str(s).expect("invalid JSON")
-    }
 
     // ── Single field output ──────────────────────────────────────────────────
 
@@ -322,19 +283,18 @@ mod tests {
             }
         "#;
 
-        let json = generate_module_spec(src).unwrap().unwrap();
-        let v = parse_json(&json);
+        let v = generate_module_spec(src).unwrap().unwrap();
 
-        assert_eq!(v["name"], "call");
-        assert!(v["description"].is_null());
+        assert_eq!(v.name, "call");
+        assert!(v.description.is_none());
 
         // input: one field called `input` of type Str
-        let in_fields = &v["input"]["fields"];
-        assert_eq!(in_fields[0]["name"], "input");
+        let in_fields = &v.input.fields;
+        assert_eq!(in_fields[0].name, "input");
 
         // output: one field called `message` of type Str
-        let out_fields = &v["output"]["fields"];
-        assert_eq!(out_fields[0]["name"], "message");
+        let out_fields = &v.output.fields;
+        assert_eq!(out_fields[0].name, "message");
     }
 
     // ── Tuple field output ───────────────────────────────────────────────────
@@ -348,12 +308,11 @@ mod tests {
             }
         "#;
 
-        let json = generate_module_spec(src).unwrap().unwrap();
-        let v = parse_json(&json);
+        let v = generate_module_spec(src).unwrap().unwrap();
 
-        let out_fields = &v["output"]["fields"];
-        assert_eq!(out_fields[0]["name"], "score");
-        assert_eq!(out_fields[1]["name"], "label");
+        let out_fields = &v.output.fields;
+        assert_eq!(out_fields[0].name, "score");
+        assert_eq!(out_fields[1].name, "label");
     }
 
     // ── Struct output ────────────────────────────────────────────────────────
@@ -373,20 +332,19 @@ mod tests {
             }
         "#;
 
-        let json = generate_module_spec(src).unwrap().unwrap();
-        let v = parse_json(&json);
+        let v = generate_module_spec(src).unwrap().unwrap();
 
-        assert_eq!(v["name"], "embed");
-        assert_eq!(v["description"], "Embed a piece of text.");
+        assert_eq!(v.name, "embed");
+        assert_eq!(v.description.unwrap(), "Embed a piece of text.");
 
-        let in_fields = &v["input"]["fields"];
-        assert_eq!(in_fields.as_array().unwrap().len(), 2);
-        assert_eq!(in_fields[0]["name"], "text");
-        assert_eq!(in_fields[1]["name"], "model");
+        let in_fields = &v.input.fields;
+        assert_eq!(in_fields.len(), 2);
+        assert_eq!(in_fields[0].name, "text");
+        assert_eq!(in_fields[1].name, "model");
 
-        let out_fields = &v["output"]["fields"];
-        assert_eq!(out_fields[0]["name"], "embedding");
-        assert_eq!(out_fields[1]["name"], "tokens");
+        let out_fields = &v.output.fields;
+        assert_eq!(out_fields[0].name, "embedding");
+        assert_eq!(out_fields[1].name, "tokens");
     }
 
     // ── No module function ───────────────────────────────────────────────────
