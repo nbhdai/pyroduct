@@ -8,9 +8,25 @@ use std::collections::BTreeMap;
 use toml::Value;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PyroPackage {
+    pub name: String,
+    pub version: String,
+    pub author: String,
+}
+
+impl PyroPackage {
+    pub fn to_package(self) -> Package<Value> {
+        let mut package = Package::new(self.name, self.version);
+        package.authors = Inheritable::Set(vec![self.author]);
+        package.edition = Inheritable::Set(Edition::E2024);
+        package
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct CapabilityManifest<Metadata = Value> {
-    pub capability: Option<Package<Metadata>>,
+    pub capability: PyroPackage,
     pub workspace: Option<Workspace<Metadata>>,
     #[serde(default = "default_pyroduct")]
     pub pyroduct: Dependency,
@@ -54,27 +70,10 @@ pub enum ManifestError {
     CapabilitySectionMissing,
 }
 
-impl CapabilityManifest {
-    pub fn name_version(&self) -> Result<(String, String), ManifestError> {
-        Ok(match &self.capability {
-            Some(Package {
-                name,
-                version: Inheritable::Set(version),
-                ..
-            }) => (name.clone(), version.clone()),
-            Some(Package {
-                version: Inheritable::Inherited,
-                ..
-            }) => return Err(ManifestError::InheritedVersionNotSupported),
-            None => return Err(ManifestError::CapabilitySectionMissing),
-        })
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct ModuleManifest<Metadata = Value> {
-    pub module: Option<Package<Metadata>>,
+    pub module: PyroPackage,
     pub workspace: Option<Workspace<Metadata>>,
     #[serde(default = "default_pyroduct")]
     pub pyroduct: Dependency,
@@ -136,7 +135,10 @@ impl CapabilityManifest {
     pub fn to_capability_manifest(self) -> Manifest {
         let mut final_deps = BTreeMap::new();
         let mut pyro_dep = self.pyroduct.clone();
-        pyro_dep.detail_mut().features.push("capability".to_string());
+        pyro_dep
+            .detail_mut()
+            .features
+            .push("capability".to_string());
         final_deps.insert("pyroduct".to_string(), pyro_dep);
         final_deps.extend(self.dependencies.shared.clone().into_iter());
         self.augment_deps(&mut final_deps, &self.dependencies.host, true);
@@ -145,7 +147,7 @@ impl CapabilityManifest {
 
         #[allow(deprecated)]
         Manifest {
-            package: self.capability.map(ensure_edition_2024),
+            package: Some(self.capability.to_package()),
             workspace: self.workspace,
             dependencies: final_deps,
             dev_dependencies: self.dev_dependencies,
@@ -196,7 +198,7 @@ impl CapabilityManifest {
 
         #[allow(deprecated)]
         Manifest {
-            package: self.capability.map(ensure_edition_2024),
+            package: Some(self.capability.to_package()),
             workspace: self.workspace,
             dependencies: final_deps,
             dev_dependencies: self.dev_dependencies,
@@ -288,7 +290,7 @@ impl ModuleManifest {
 
         #[allow(deprecated)]
         Manifest {
-            package: self.module.map(ensure_edition_2024),
+            package: Some(self.module.to_package()),
             workspace: self.workspace,
             dependencies: final_deps,
             dev_dependencies: self.dev_dependencies,
@@ -343,11 +345,6 @@ impl ModuleManifest {
             target_map.insert(name.clone(), new_dep);
         }
     }
-}
-
-fn ensure_edition_2024<Metadata>(mut package: Package<Metadata>) -> Package<Metadata> {
-    package.edition = Inheritable::Set(Edition::E2024);
-    package
 }
 
 fn ensure_cdylib(lib: Option<Product>) -> Option<Product> {

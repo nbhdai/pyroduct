@@ -1,31 +1,53 @@
-use anyhow::Result;
+use super::symbols;
+use anyhow::{Result, Context};
+use artifacts::{cargo::ModuleManifest, environment::format_syn_error, cargo::{CapabilityManifest}};
+use fs_err as fs;
+use pyro_core::{ffi::generate_capability, module::generate_module};
 use std::path::Path;
 
-use fs_err as fs;
-
-use pyro_core::{ffi::generate_capability, module::generate_module};
-
-pub fn expand(path: &Path, bin_mode: bool, lockfile: bool) -> Result<()> {
+pub fn expand_single(path: &Path) -> Result<bool> {
     let is_cap = path.join("Capability.toml").exists();
     let is_mod = path.join("Module.toml").exists();
 
-    if (is_cap || is_mod) && !bin_mode {
-        return expand_single(path, lockfile);
+    if is_cap {
+        let cap_toml_path = path.join("Capability.toml");
+        let manifest_str = fs::read_to_string(&cap_toml_path).context("Unable to read manifest")?;
+        let cap_manifest: CapabilityManifest = toml::from_str(&manifest_str).context("Unable to deserialize manifest")?;
+        
+        let author = cap_manifest.capability.author;
+        let name = cap_manifest.capability.name;
+        let version = cap_manifest.capability.version;
+        
+        let source_path = path.join("src/lib.rs");
+        let source = fs::read_to_string(&source_path).context("Unable to read source")?;
+        let code = generate_capability(&source, &name, &version).map_err(|s| format_syn_error("Capability code", s))?;
+        let code = prettyplease::unparse(&code);
+        let artifacts_dir = path.join("artifacts");
+        fs::create_dir_all(&artifacts_dir)?;
+        fs::write(artifacts_dir.join("cap.rs"), code)?;
+
+        dylib_project(path)?;
+        return Ok(true);
     }
-    if bin_mode {
-        let mut expanded_something = false;
 
-        if is_mod {
-            expanded_something |= wat_project(path)?;
-        }
+    if is_mod {
+        let source_path = path.join("src/lib.rs");
+        let source = fs::read_to_string(&source_path).context("Unable to read source")?;
+        let code = generate_module(&source).map_err(|s| format_syn_error("Capability code", s))?;
+        let code = prettyplease::unparse(&code);
+        let artifacts_dir = path.join("artifacts");
+        fs::create_dir_all(&artifacts_dir)?;
+        fs::write(artifacts_dir.join("cap.rs"), code)?;
 
-        if is_cap {
-            expanded_something |= dylib_project(path)?;
-        }
+        wat_project(path)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
 
-        if expanded_something {
-            return Ok(());
-        }
+pub fn expand(path: &Path) -> Result<()> {
+    if expand_single(path)? {
+        return Ok(());
     }
 
     // No manifest found, try expanding subdirectories
@@ -45,39 +67,21 @@ pub fn expand(path: &Path, bin_mode: bool, lockfile: bool) -> Result<()> {
             continue;
         }
 
-        let is_cap = subpath.join("Capability.toml").exists();
-        let is_mod = subpath.join("Module.toml").exists();
-
-        if (is_cap || is_mod) && !bin_mode {
-            found_any = true;
-            if let Err(e) = expand_single(&subpath, lockfile) {
-                errors.push((subpath.clone(), e));
-            }
-        }
-        if is_mod && bin_mode {
-            match wat_project(&subpath) {
-                Ok(true) => found_any = true,
-                Ok(false) => {}
-                Err(e) => errors.push((subpath.clone(), e)),
-            }
-        }
-        if is_cap && bin_mode {
-            match dylib_project(&subpath) {
-                Ok(true) => found_any = true,
-                Ok(false) => {}
-                Err(e) => errors.push((subpath, e)),
-            }
+        match expand_single(&subpath) {
+            Ok(true) => found_any = true,
+            Ok(false) => {},
+            Err(error) => errors.push((subpath, error)),
         }
     }
 
-    if !found_any && !bin_mode {
+    if !found_any {
         anyhow::bail!(
             "No Capability.toml or Module.toml found in {:?} or its subdirectories",
             path
         );
     }
 
-    if !found_any && bin_mode {
+    if !found_any {
         anyhow::bail!("No Module.toml found in {:?} or its subdirectories", path);
     }
 
@@ -142,106 +146,6 @@ fn dylib_project(path: &Path) -> Result<bool> {
         // Silent return if no binary artifacts found (expected if not built yet)
         Ok(false)
     }
-}
-
-fn expand_single(path: &Path, lockfile: bool) -> Result<()> {
-    println!("Expanding: {:?}", path);
-
-    let cap_toml_path = path.join("Capability.toml");
-    let mod_toml_path = path.join("Module.toml");
-    let cargo_toml_path = path.join("Cargo.toml");
-
-    match (cap_toml_path.exists(), mod_toml_path.exists()) {
-        (true, true) => anyhow::bail!("Both 'Capability.toml' and 'Module.toml' found."),
-        (true, false) => {
-            let module_path = path.join("interface");
-            let manifest_str = fs::read_to_string(&cap_toml_path)?;
-            let cap_manifest: CapabilityManifest = toml::from_str(&manifest_str)?;
-
-            let standard_manifest = cap_manifest.clone().to_capability_manifest();
-            let output_str = toml::to_string_pretty(&standard_manifest)?;
-            fs::write(&cargo_toml_path, output_str)?;
-            println!("  ✓ Wrote Cargo.toml");
-
-            generate_capability_artifacts(path, &cap_manifest)?;
-            generate_interface_crate(path, &module_path, cap_manifest, lockfile)?;
-        }
-        (false, true) => {
-            let manifest_str = fs::read_to_string(&mod_toml_path)?;
-            let mod_manifest: ModuleManifest = toml::from_str(&manifest_str)?;
-
-            let standard_manifest = mod_manifest.to_cargo();
-            let output_str = toml::to_string_pretty(&standard_manifest)?;
-            generate_module_artifacts(path)?;
-            fs::write(cargo_toml_path, output_str)?;
-
-            let wasm_artifact_path = path.join("artifact").join("mod.wasm");
-            if wasm_artifact_path.exists() {
-                wat(&wasm_artifact_path)?;
-            }
-
-            println!("  ✓ Wrote Cargo.toml");
-        }
-        (false, false) => anyhow::bail!("Neither 'Capability.toml' nor 'Module.toml' found."),
-    }
-
-    Ok(())
-}
-
-fn generate_interface_crate(
-    input: &Path,
-    output: &Path,
-    cap_manifest: CapabilityManifest,
-    lockfile: bool,
-) -> Result<()> {
-    let generator = InterfaceGenerator::new(input, &cap_manifest)?;
-    generator.write_to_disk(output, lockfile)?;
-
-    Ok(())
-}
-
-fn generate_capability_artifacts(path: &Path, cap_manifest: &CapabilityManifest) -> Result<()> {
-    let src_path = path.join("src/lib.rs");
-    let artifacts_dir = path.join("artifacts");
-    let output_path = artifacts_dir.join("capability.rs");
-
-    if !src_path.exists() {
-        anyhow::bail!("Source file not found: {:?}", src_path);
-    }
-
-    let content = fs::read_to_string(&src_path)?;
-    let (cap_name, cap_version) = cap_manifest.name_version()?;
-
-    let generated_code = generate_capability(&content, &cap_name, &cap_version)
-        .map_err(|r| format_syn_error(&content, r))?;
-    let generated_code = prettyplease::unparse(&generated_code);
-
-    fs::create_dir_all(&artifacts_dir)?;
-    fs::write(&output_path, generated_code)?;
-    println!("  ✓ Wrote artifacts/capability.rs");
-
-    Ok(())
-}
-
-fn generate_module_artifacts(path: &Path) -> Result<()> {
-    let src_path = path.join("src/lib.rs");
-    let artifacts_dir = path.join("artifacts");
-    let output_path = artifacts_dir.join("module.rs");
-
-    if !src_path.exists() {
-        anyhow::bail!("Source file not found: {:?}", src_path);
-    }
-
-    let content = fs::read_to_string(&src_path)?;
-
-    let generated_code = generate_module(&content).map_err(|r| format_syn_error(&content, r))?;
-    let generated_code = prettyplease::unparse(&generated_code);
-
-    fs::create_dir_all(&artifacts_dir)?;
-    fs::write(&output_path, generated_code)?;
-    println!("  ✓ Wrote artifacts/module.rs");
-
-    Ok(())
 }
 
 pub fn wat(input: &Path) -> anyhow::Result<()> {
