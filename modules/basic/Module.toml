@@ -1,6 +1,5 @@
 [module]
-authors = ["nbhdai"]
-edition = "2024"
+author = "nbhdai"
 name = "basic"
 version = "0.1.0"
 

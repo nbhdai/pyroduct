@@ -1,5 +1,5 @@
 [capability]
-authors = ["nbhdai"]
+author = "nbhdai"
 name = "cpu_client"
 version = "0.1.0"
 

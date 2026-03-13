@@ -19,9 +19,11 @@ pub async fn ship_single(
 }
 
 pub async fn ship(path: &Path) -> Result<()> {
+    let is_cap = path.join("Capability.toml").exists();
+    let is_mod = path.join("Module.toml").exists();
     let cache = CacheManager::new().await?;
     // 1. Direct package mode
-    if path.join("Capability.toml").exists() || path.join("Module.toml").exists() {
+    if is_cap || is_mod {
         return ship_single(&cache, path).await;
     }
 
@@ -35,8 +37,10 @@ pub async fn ship(path: &Path) -> Result<()> {
         if !subpath.is_dir() {
             continue;
         }
+        let is_cap = subpath.join("Capability.toml").exists();
+        let is_mod = subpath.join("Module.toml").exists();
 
-        if subpath.join("Capability.toml").exists() || subpath.join("Module.toml").exists() {
+        if is_cap || is_mod {
             found_any = true;
             match ship_single(&cache, &subpath).await {
                 Ok(()) => {},

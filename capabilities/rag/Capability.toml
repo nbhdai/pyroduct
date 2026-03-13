@@ -1,5 +1,5 @@
 [capability]
-authors = ["nbhdai"]
+author = "nbhdai"
 version = "0.1.0"
 name = "rag"
 

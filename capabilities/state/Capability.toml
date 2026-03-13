@@ -1,7 +1,7 @@
 [capability]
 name = "state"
 version = "0.1.0"
-authors = ["nbhdai"]
+author = "nbhdai"
 
 [pyroduct]
 path = "../../lib/pyroduct"

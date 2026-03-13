@@ -374,8 +374,7 @@ mod tests {
 [capability]
 name = "my-capability"
 version = "0.1.0"
-edition = "2021"
-authors = ["Me"]
+author = "Me"
 
 [pyroduct]
 path = "../../lib/pyroduct"

@@ -1,8 +1,7 @@
 [module]
 name = "cap_config"
 version = "0.1.0"
-edition = "2024"
-authors = ["nbhdai"]
+author = "nbhdai"
 
 [pyroduct]
 path = "../../lib/pyroduct"
