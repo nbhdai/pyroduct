@@ -105,10 +105,6 @@ async fn main() -> Result<()> {
             let input_path = Path::new(&input);
 
             if input_path.exists() && input_path.is_file() {
-                println!(
-                    "📂 Input file detected: {:?}. Running in Batch Mode...",
-                    input_path
-                );
                 run::run_batch(&config, input_path, &output_dir, format).await
             } else {
                 run::run(&config, &input).await

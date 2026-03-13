@@ -7,6 +7,7 @@ author = "nbhdai"
 path = "../../lib/pyroduct"
 
 [capabilities]
-state.path = "../../capabilities/state"
+state = { package = "state", author = "nbhdai", version = "0.1.0" }
+
 
 [dependencies]

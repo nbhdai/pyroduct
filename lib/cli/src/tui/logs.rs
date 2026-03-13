@@ -102,6 +102,35 @@ impl LogsView {
 
         f.render_widget(paragraph, area);
     }
+
+    pub fn from_stderr(stderr: &str) -> Self {
+        let lines: Vec<Line<'static>> = stderr
+            .lines()
+            .map(|line| {
+                let style = if line.contains("error") {
+                    Style::default().fg(Color::Red)
+                } else if line.contains("warning") {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default().fg(Color::Gray)
+                };
+                Line::from(Span::styled(line.to_string(), style))
+            })
+            .collect();
+
+        Self {
+            logs: PyroLogs::empty(),
+            scroll: 0,
+            formatted_lines: if lines.is_empty() {
+                vec![Line::from(Span::styled(
+                    "No logs for this step.",
+                    Style::default().fg(Color::DarkGray),
+                ))]
+            } else {
+                lines
+            },
+        }
+    }
 }
 
 impl HotkeyProvider for LogsView {
@@ -113,3 +142,4 @@ impl HotkeyProvider for LogsView {
         ]
     }
 }
+

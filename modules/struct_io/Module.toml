@@ -7,6 +7,6 @@ version = "0.1.0"
 path = "../../lib/pyroduct"
 
 [capabilities]
-httpc = { path = "../../capabilities/httpc" }
+httpc = { package = "httpc", author = "nbhdai", version = "0.1.0" }
 
 [dependencies]

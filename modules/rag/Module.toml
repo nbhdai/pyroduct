@@ -7,7 +7,7 @@ version = "0.1.0"
 path = "../../lib/pyroduct"
 
 [capabilities]
-rag = { path = "../../capabilities/rag" }
+rag = { package = "rag", author = "nbhdai", version = "0.1.0" }
 
 [dependencies]
 text-splitter = "0.15"

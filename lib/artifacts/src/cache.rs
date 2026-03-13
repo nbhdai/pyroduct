@@ -180,7 +180,6 @@ impl CacheManager {
             self.target_dir = self.root.join("target");
         }
         if let Some(pyroduct_dep) = config.pyroduct.as_ref() {
-            println!("Setting pyroduct");
             self.pyroduct_dep = pyroduct_dep.clone();
         }
 
@@ -269,6 +268,25 @@ impl CacheManager {
         Ok(())
     }
 
+    pub async fn get_anon(&self, 
+        _dependencies: &BTreeMap<String, Dependency>,
+        _capabilities: &Vec<ResolvedCapability>,
+        code: &str,
+    ) -> Result<Option<AnonModule>, BuildError> {
+        let mut hasher = Sha256::new();
+        hasher.update(&code);
+        // TODO The hash should also depend on the dependencies
+        // hasher.update(&anon.dependencies);
+        let hash = format!("{:x}", hasher.finalize());
+        let path = self.root.join("anon").join(hash);
+        if path.exists() {
+            let module = AnonModule::from_dir(&path).await?;
+            Ok(Some(module))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Compile the module written by `set_build` and store the wasm as an anon
     /// artifact. Returns the hex SHA-256 hash that identifies it in the cache.
     pub async fn compile_anon(
@@ -277,6 +295,10 @@ impl CacheManager {
         capabilities: Vec<ResolvedCapability>,
         code: &str,
     ) -> Result<AnonModule, BuildError> {
+        if let Some(module) = self.get_anon(&dependencies, &capabilities, code).await? {
+            return Ok(module);
+        }
+
         let build_dir = self.root.join("build");
         let src_dir = build_dir.join("src");
         fs::create_dir_all(&src_dir)
@@ -356,12 +378,14 @@ edition = "2024"
             capabilities,
         };
 
-        Ok(AnonModule {
+        let module = AnonModule {
             source: code.to_string(),
             wasm,
             spec,
             dependencies,
-        })
+        };
+        let _ = self.write_artifacts(module.clone().into()).await;
+        Ok(module)
     }
 
     pub async fn write_artifacts(&self, artifacts: Artifacts) -> Result<(), CacheError> {
@@ -391,6 +415,10 @@ edition = "2024"
                     &interface.manifest.capability.name,
                     &interface.manifest.capability.version,
                 );
+                fs::create_dir_all(&path).await.map_err(|e| CacheError {
+                        context: format!("Failed to create  {}", path.display()),
+                        error: e,
+                    })?;
                 interface.manifest.pyroduct = self.pyroduct_dep.clone();
                 let cargo_path = path.join("Cargo.toml");
                 let cargo = interface.manifest.clone().to_interface_manifest();
@@ -414,7 +442,9 @@ edition = "2024"
             }
             Artifacts::AnonModule(anon) => {
                 let mut hasher = Sha256::new();
-                hasher.update(&anon.wasm);
+                hasher.update(&anon.source);
+                // TODO The hash should also depend on the dependencies
+                // hasher.update(&anon.dependencies);
                 let hash = format!("{:x}", hasher.finalize());
                 let path = self.root.join("anon").join(hash);
                 anon.write_to_directory(&path)
@@ -425,25 +455,6 @@ edition = "2024"
                     })
             }
         }
-    }
-
-    pub async fn module_dir(
-        &self,
-        author: &str,
-        name: &str,
-        version: &str,
-    ) -> Result<PathBuf, CacheError> {
-        let dir = self
-            .root
-            .join("modules")
-            .join(author)
-            .join(name)
-            .join(version);
-        fs::create_dir_all(&dir).await.map_err(|error| CacheError {
-            context: "Failed to create module dir".to_string(),
-            error,
-        })?;
-        Ok(dir)
     }
 
     pub async fn target_dir(&self) -> Result<PathBuf, CacheError> {

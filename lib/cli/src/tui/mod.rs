@@ -14,15 +14,14 @@ use arrow::datatypes::Schema;
 use anyhow::{Context, Result};
 use cargo_toml::Dependency;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers},
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    event::{self, Event, KeyCode, KeyModifiers}, execute, terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode}
 };
 use pyroduct::pipeline::wasm_execute::{Pipeline, PipelineExecution};
 use ratatui::{
+    prelude::*,
     Frame, Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Rect}, style::Style,
 };
 use ratatui_code_editor::{editor::Editor, theme::vesper};
 use serde::{Deserialize, Serialize};
@@ -32,6 +31,7 @@ use artifacts::{
     cache::CacheManager,
     cargo::{CapabilityManifest, ModuleManifest, ResolvedCapability},
     environment::dylib_extension,
+    build::CommandError,
 };
 use pyroduct::module::{PyroFactory, PyroModule, capability::CapabilityLibrary};
 
@@ -262,7 +262,7 @@ impl App {
         let engine = wasmtime::Engine::new(&config)
             .map_err(|e| anyhow::anyhow!("Failed to create wasmtime engine: {}", e))?;
 
-        for module in &mut self.pipeline.tui.modules {
+        for (i, module) in self.pipeline.tui.modules.iter_mut().enumerate() {
             // 1. Ensure module is compiled
             if module.artifact.is_none() {
                 let dependencies: BTreeMap<String, Dependency> = module
@@ -282,10 +282,18 @@ impl App {
                 {
                     Ok(artifact) => {
                         module.artifact = Some(artifact);
-                        self.status_msg = format!("Compiled {}", module.name);
                     }
                     Err(e) => {
-                        self.status_msg = format!("Compilation failed: {}", e);
+                        match &e {
+                            artifacts::cache::BuildError::Command(CommandError::Cargo { stderr, .. }) => {
+                                if let ViewState::Module(mv) = &mut self.view {
+                                    mv.logs = logs::LogsView::from_stderr(&stderr);
+                                    mv.bottom_tab = module::BottomTab::Logs;
+                                }
+                            },
+                            _ => {},
+                        };
+                        anyhow::bail!("Module {} is not compiled: {:?}", i, e)
                     }
                 }
             }
@@ -415,9 +423,11 @@ impl App {
 }
 
 fn ui(f: &mut Frame, app: &mut App) {
+    let status_height = if app.status_msg.is_empty() { 1 } else { 2 };
+
     let vertical_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(10), Constraint::Length(1)])
+        .constraints([Constraint::Min(10), Constraint::Length(status_height)])
         .split(f.area());
 
     let horizontal_chunks = Layout::default()
@@ -475,8 +485,28 @@ impl HotkeyProvider for App {
 }
 
 fn render_status(f: &mut Frame, app: &App, area: Rect) {
-    let hk = app.hotkeys();
-    keys::render(f, &hk, area);
+    if !app.status_msg.is_empty() {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(area);
+
+        let style = if app.status_msg.contains("failed") || app.status_msg.contains("Failed") {
+            Style::default().fg(Color::Red)
+        } else {
+            Style::default().fg(Color::Green)
+        };
+        let status = ratatui::widgets::Paragraph::new(
+            ratatui::text::Span::styled(&app.status_msg, style),
+        );
+        f.render_widget(status, chunks[0]);
+
+        let hk = app.hotkeys();
+        keys::render(f, &hk, chunks[1]);
+    } else {
+        let hk = app.hotkeys();
+        keys::render(f, &hk, area);
+    }
 }
 
 async fn handle_event(app: &mut App) -> Result<()> {

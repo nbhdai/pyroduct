@@ -2,25 +2,37 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::Line,
+    widgets::Tabs,
 };
 
 use super::{
     PipelineState,
     cap_config::CapConfigState,
     keys::{Hotkey, HotkeyProvider},
+    logs::LogsView,
     wasm,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivePane {
     Code,
-    CapConfig,
+    Bottom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BottomTab {
+    Config,
+    Logs,
 }
 
 pub struct ModuleView {
     pub code: wasm::CodeState,
     pub cap_config: CapConfigState,
+    pub logs: LogsView,
     pub active_pane: ActivePane,
+    pub bottom_tab: BottomTab,
     pub focused: bool,
 }
 
@@ -29,7 +41,9 @@ impl ModuleView {
         Self {
             code,
             cap_config,
+            logs: LogsView::default(),
             active_pane: ActivePane::Code,
+            bottom_tab: BottomTab::Config,
             focused: false,
         }
     }
@@ -44,36 +58,69 @@ impl ModuleView {
             .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
             .split(area);
 
+        // Code pane
         let orig_editing = self.code.editing;
         self.code.editing = self.focused && self.active_pane == ActivePane::Code;
         wasm::render(f, pipeline, &mut self.code, chunks[0]);
         self.code.editing = orig_editing;
 
-        // Only mark cap_config as "active" (highlighted border) when it's the
-        // focused pane — but do NOT override its internal `editing` flag.
-        // The cap_config pane manages its own editing state: it starts in
-        // tab-navigation mode (editing=false) so the user can browse tabs and
-        // reach the "+" tab, and only enters editing mode on explicit Enter.
-        let is_active_pane = self.focused && self.active_pane == ActivePane::CapConfig;
-        self.cap_config.active = is_active_pane;
-        self.cap_config.render(f, chunks[1], "Cap Config");
+        // Bottom pane: tab bar + content
+        let bottom_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(0)])
+            .split(chunks[1]);
+
+        let tab_idx = match self.bottom_tab {
+            BottomTab::Config => 0,
+            BottomTab::Logs => 1,
+        };
+        let tabs = Tabs::new(vec![Line::from("Config"), Line::from("Logs")])
+            .select(tab_idx)
+            .highlight_style(
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(Color::Yellow),
+            )
+            .divider(" │ ");
+        f.render_widget(tabs, bottom_chunks[0]);
+
+        let is_bottom_focused = self.focused && self.active_pane == ActivePane::Bottom;
+
+        match self.bottom_tab {
+            BottomTab::Config => {
+                self.cap_config.active = is_bottom_focused;
+                self.cap_config.render(f, bottom_chunks[1], "Cap Config");
+            }
+            BottomTab::Logs => {
+                self.logs.render(f, bottom_chunks[1], "Compiler Output", is_bottom_focused);
+            }
+        }
     }
 
     pub fn handle_event(&mut self, key: KeyEvent) -> anyhow::Result<()> {
+        // Tab switches between code and bottom pane
         if key.code == KeyCode::Tab {
             match self.active_pane {
                 ActivePane::Code => self.code.editing = false,
-                ActivePane::CapConfig => self.cap_config.editing = false,
+                ActivePane::Bottom => self.cap_config.editing = false,
             }
             self.active_pane = match self.active_pane {
-                ActivePane::Code => ActivePane::CapConfig,
-                ActivePane::CapConfig => ActivePane::Code,
+                ActivePane::Code => ActivePane::Bottom,
+                ActivePane::Bottom => ActivePane::Code,
             };
-            // Code pane enters editing immediately; cap_config starts in
-            // tab-navigation mode so the user can reach the "+" tab first.
             if self.active_pane == ActivePane::Code {
                 self.code.editing = true;
             }
+            return Ok(());
+        }
+
+        // Backtab (Shift+Tab) switches bottom tabs when bottom pane is active
+        if key.code == KeyCode::BackTab && self.active_pane == ActivePane::Bottom {
+            self.cap_config.editing = false;
+            self.bottom_tab = match self.bottom_tab {
+                BottomTab::Config => BottomTab::Logs,
+                BottomTab::Logs => BottomTab::Config,
+            };
             return Ok(());
         }
 
@@ -86,14 +133,26 @@ impl ModuleView {
                 }
             }
             (ActivePane::Code, _) => wasm::handle_event(&mut self.code, key)?,
-            (ActivePane::CapConfig, KeyCode::Esc) => {
-                if self.cap_config.editing {
-                    self.cap_config.editing = false;
-                } else {
-                    self.focused = false;
+            (ActivePane::Bottom, KeyCode::Esc) => {
+                match self.bottom_tab {
+                    BottomTab::Config => {
+                        if self.cap_config.editing {
+                            self.cap_config.editing = false;
+                        } else {
+                            self.focused = false;
+                        }
+                    }
+                    BottomTab::Logs => {
+                        self.focused = false;
+                    }
                 }
             }
-            (ActivePane::CapConfig, _) => self.cap_config.handle_event(key)?,
+            (ActivePane::Bottom, _) => {
+                match self.bottom_tab {
+                    BottomTab::Config => self.cap_config.handle_event(key)?,
+                    BottomTab::Logs => self.logs.handle_event(key),
+                }
+            }
         }
         Ok(())
     }
@@ -104,7 +163,13 @@ impl HotkeyProvider for ModuleView {
         let mut hk = vec![Hotkey::new("Tab", "Switch pane")];
         match self.active_pane {
             ActivePane::Code => hk.push(Hotkey::new("...", "Code editor")),
-            ActivePane::CapConfig => hk.extend(self.cap_config.hotkeys()),
+            ActivePane::Bottom => {
+                hk.push(Hotkey::new("S-Tab", "Switch tab"));
+                match self.bottom_tab {
+                    BottomTab::Config => hk.extend(self.cap_config.hotkeys()),
+                    BottomTab::Logs => hk.extend(self.logs.hotkeys()),
+                }
+            }
         }
         hk
     }

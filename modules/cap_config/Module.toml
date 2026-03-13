@@ -7,6 +7,6 @@ author = "nbhdai"
 path = "../../lib/pyroduct"
 
 [capabilities]
-config.path = "../../capabilities/config"
+config = { package = "config", author = "nbhdai", version = "0.1.0" }
 
 [dependencies]
