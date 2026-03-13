@@ -1,0 +1,26 @@
+{
+  "modules": [
+    {
+      "name": "gemma",
+      "path": "examples/chat/../../modules/chat/",
+      "source_code": "use ollama::{OllamaClient, ChatMessage, ChatMessageRef, OllamaClientMethods};\n\n\n/// Takes an array of chat messages, sends them to the HF LLM capability,\n/// and returns the assistant's reply along with the full updated history.\n#[pyroduct::module(output = response)]\nfn process<'a>(\n    input: Vec<ChatMessage>,\n) -> Result<ChatMessage> {\n\n    // 1. Register a client with the HF LLM capability\n    let llm = OllamaClient {\n        model: \"gemma3:270m\".to_string(),\n        temperature: 0.7,\n    }\n    .register()?;\n\n    // 3. Call the capability\n    let reply = llm.chat(input.to_owned())?;\n\n    Ok(reply)\n}",
+      "dependencies": {},
+      "capabilities": [
+        {
+          "author": "nbhdai",
+          "package": "ollama",
+          "version": "0.1.0"
+        }
+      ],
+      "configurations": {
+        "ollama": {
+          "base_url": "http://devserver3:11434",
+          "model": "gemma3:270m",
+          "permitted_models": [],
+          "system_prompt": "You're a rude and unhelpful bot name Andrew. Talk about yourself."
+        }
+      },
+      "artifact": null
+    }
+  ]
+}

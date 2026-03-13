@@ -18,7 +18,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use pyroduct::{format::value::ModuleFunc, pipeline::wasm_execute::{Pipeline, PipelineExecution}};
+use pyroduct::{pipeline::wasm_execute::{Pipeline, PipelineExecution}};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
@@ -27,7 +27,7 @@ use ratatui::{
 use ratatui_code_editor::{editor::Editor, theme::vesper};
 use serde::{Deserialize, Serialize};
 
-use artifacts::{cache::CacheManager, cargo::{CapabilityManifest, ModuleManifest}, environment::{ResolvedCapability, dylib_extension}};
+use artifacts::{artifacts::AnonModule, cache::CacheManager, cargo::{CapabilityManifest, ModuleManifest}, environment::{ResolvedCapability, dylib_extension}};
 use pyroduct::module::{PyroFactory, PyroModule, capability::CapabilityLibrary};
 
 pub mod cap_config;
@@ -48,9 +48,9 @@ pub struct CompleteModule {
     pub source_code: String,
     pub dependencies: BTreeMap<String, Dependency>,
     pub capabilities: Vec<ResolvedCapability>,
+    
     pub configurations: HashMap<String, Option<serde_json::Value>>,
-    pub compiled_wasm: Option<Vec<u8>>,
-    pub documentation: Option<ModuleFunc<'static>>,
+    pub artifact: Option<AnonModule>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -103,8 +103,7 @@ impl TuiPipeline {
                 dependencies,
                 capabilities,
                 configurations: mod_conf.configurations,
-                compiled_wasm: None,
-                documentation: None,
+                artifact: None,
             });
         }
 
@@ -217,7 +216,7 @@ impl App {
             module.source_code = mv.code.editor.get_content();
 
             // Compile the module ephemerally
-            let dependencies: Vec<(String, Dependency)> = module
+            let dependencies: BTreeMap<String, Dependency> = module
                 .dependencies
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -228,10 +227,9 @@ impl App {
                 module.capabilities.clone(),
                 &module.source_code,
             ).await {
-                Ok((wasm, doc)) => {
-                    module.compiled_wasm = Some(wasm);
+                Ok(artifact) => {
+                    module.artifact = Some(artifact);
                     self.status_msg = format!("Compiled {}", module.name);
-                    module.documentation = doc;
                 }
                 Err(e) => {
                     self.status_msg = format!("Compilation failed: {}", e);
@@ -260,8 +258,8 @@ impl App {
 
         for module in &mut self.pipeline.tui.modules {
             // 1. Ensure module is compiled
-            if module.compiled_wasm.is_none() {
-                let dependencies: Vec<(String, Dependency)> = module
+            if module.artifact.is_none() {
+                let dependencies: BTreeMap<String, Dependency> = module
                     .dependencies
                     .iter()
                     .map(|(k, v)| (k.clone(), v.clone()))
@@ -272,10 +270,9 @@ impl App {
                     module.capabilities.clone(),
                     &module.source_code,
                 ).await {
-                    Ok((wasm, doc)) => {
-                        module.compiled_wasm = Some(wasm);
+                    Ok(artifact) => {
+                        module.artifact = Some(artifact);
                         self.status_msg = format!("Compiled {}", module.name);
-                        module.documentation = doc;
                     }
                     Err(e) => {
                         self.status_msg = format!("Compilation failed: {}", e);
@@ -283,7 +280,7 @@ impl App {
                 }
             }
 
-            let wasm = module.compiled_wasm.as_ref().unwrap();
+            let artifact = module.artifact.as_ref().unwrap();
 
             // 2. Load capabilities from cache
             let mut libs = Vec::new();
@@ -305,7 +302,7 @@ impl App {
             }
 
             // 3. Create PyroFactory and instantiate
-            let wasmtime_module = wasmtime::Module::from_binary(&engine, wasm)
+            let wasmtime_module = wasmtime::Module::from_binary(&engine, &artifact.wasm)
                 .map_err(|e| anyhow::anyhow!("Failed to compile WASM: {}", e))?;
             let pyro_module = PyroModule::new(wasmtime_module)?;
 

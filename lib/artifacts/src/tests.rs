@@ -43,7 +43,7 @@ async fn ship_httpc_capability_to_cache() {
         .unwrap()
         .expect("httpc is a capability, so create_interface must return Some");
 
-    cache.write_artifacts(interface).await.unwrap();
+    cache.write_artifacts(interface.into()).await.unwrap();
 
     let iface_dir = cache.interface_dir("nbhdai", "httpc", "0.1.0");
     assert!(iface_dir.join("Capability.toml").exists());

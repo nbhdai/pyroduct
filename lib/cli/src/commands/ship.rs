@@ -9,7 +9,7 @@ pub async fn ship_single(
 ) -> Result<()> {
     let env = Environment::new(path.to_path_buf()).await?;
     if let Some(interface_artifact) = env.create_interface().await? {
-        cache.write_artifacts(interface_artifact).await?;
+        cache.write_artifacts(interface_artifact.into()).await?;
     }
 
     let artifacts = env.package(false).await?;

@@ -1,11 +1,11 @@
-use crate::artifacts::Artifacts; use crate::build::{CommandError, run_command};
+use crate::artifacts::{AnonModule, Artifact, Artifacts, Capability, Interface, Module, ModuleDependencies}; use crate::build::{CommandError, run_command};
 // Ensure you have this import
 use crate::cargo::{CapabilityManifest, ModuleManifest};
 use crate::environment::{ResolvedCapability, format_syn_error};
 use cargo_toml::Dependency;
 use pyro_core::module::generate_module_spec;
 use sha2::{Digest, Sha256};
-use pyroduct::format::value::ModuleFunc;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use tokio::fs;
 
@@ -260,10 +260,10 @@ impl CacheManager {
     /// Compile the module written by `set_build` and store the wasm as an anon
     /// artifact. Returns the hex SHA-256 hash that identifies it in the cache.
     pub async fn compile_anon(&self,
-        dependencies: Vec<(String, Dependency)>,
+        dependencies: BTreeMap<String, Dependency>,
         capabilities: Vec<ResolvedCapability>,
         code: &str,
-    ) -> Result<(Vec<u8>, Option<ModuleFunc<'static>>), BuildError> {
+    ) -> Result<AnonModule, BuildError> {
         let build_dir = self.root.join("build");
         let src_dir = build_dir.join("src");
         fs::create_dir_all(&src_dir).await.map_err(|e| BuildError::io("create src dir", e))?;
@@ -284,15 +284,15 @@ version = "*"
             .map_err(|e| BuildError::Manifest(format!("Couldn't build base manifest: {}", e)))?;
 
         manifest.pyroduct = self.pyroduct_dep.clone();
-        for (dep_name, dep) in dependencies {
-            manifest.dependencies.insert(dep_name, dep);
+        for (dep_name, dep) in dependencies.iter() {
+            manifest.dependencies.insert(dep_name.clone(), dep.clone());
         }
-        for cap in capabilities {
+        for cap in capabilities.iter() {
             let dep = Dependency::Detailed(Box::new(cargo_toml::DependencyDetail {
                 path: Some(cap.interface_dir().to_string_lossy().into_owned()),
                 ..Default::default()
             }));
-            manifest.dependencies.insert(cap.package, dep);
+            manifest.dependencies.insert(cap.package.clone(), dep);
         }
 
         let cargo_toml_content =
@@ -310,10 +310,16 @@ version = "*"
 
         let wasm: Vec<u8> = tokio::fs::read(wasm_path).await.map_err(|e| BuildError::io("read compiled wasm", e))?;
 
-        let doc = generate_module_spec(code).map_err(|s| BuildError::Documentation(format_syn_error("Cannot generate docstring", s)))?;
+        let spec = generate_module_spec(code).map_err(|s| BuildError::Documentation(format_syn_error("Cannot generate docstring", s)))?
+        .ok_or(BuildError::Documentation("Module main functions is missing".to_string()))?;
+        
+        let dependencies = ModuleDependencies {
+            dependencies,
+            capabilities,
+        };
         
 
-        Ok((wasm, doc))
+        Ok(AnonModule {source: code.to_string(), wasm, spec, dependencies})
     }
 
     
@@ -321,7 +327,7 @@ version = "*"
     pub async fn write_artifacts(&self, artifacts: Artifacts) -> Result<(), CacheError> {
         // 1. Determine the target directory based on the artifact type
         let dir = match &artifacts {
-            Artifacts::Module { manifest, .. } => {
+            Artifacts::Module(Module { manifest, .. }) => {
                 let m: ModuleManifest = toml::from_str(manifest).map_err(|e| CacheError {
                     context: "Failed to deserialize Module.toml".to_string(),
                     error: std::io::Error::new(std::io::ErrorKind::InvalidData, e),
@@ -332,7 +338,7 @@ version = "*"
                     .join(&m.module.name)
                     .join(&m.module.version)
             }
-            Artifacts::Capability { manifest, .. } => {
+            Artifacts::Capability(Capability { manifest, .. }) => {
                 let m: CapabilityManifest = toml::from_str(manifest).map_err(|e| CacheError {
                     context: "Failed to deserialize Capability.toml".to_string(),
                     error: std::io::Error::new(std::io::ErrorKind::InvalidData, e),
@@ -343,7 +349,7 @@ version = "*"
                     &m.capability.version,
                 )
             }
-            Artifacts::Interface { manifest, .. } => {
+            Artifacts::Interface(Interface { manifest, .. }) => {
                 let m: CapabilityManifest = toml::from_str(manifest).map_err(|e| CacheError {
                     context: "Failed to deserialize Capability.toml (interface)".to_string(),
                     error: std::io::Error::new(std::io::ErrorKind::InvalidData, e),
@@ -354,7 +360,7 @@ version = "*"
                     &m.capability.version,
                 )
             }
-            Artifacts::AnonModule { wasm, .. } => {
+            Artifacts::AnonModule(AnonModule { wasm, .. }) => {
                 let mut hasher = Sha256::new();
                 hasher.update(wasm);
                 let hash = format!("{:x}", hasher.finalize());

@@ -1,6 +1,6 @@
 use super::symbols;
 use anyhow::{Result, Context};
-use artifacts::{cargo::CapabilityManifest, environment::Environment};
+use artifacts::{artifacts::Artifact, cargo::CapabilityManifest, environment::Environment};
 use fs_err as fs;
 use pyro_core::{ffi::generate_capability, module::generate_module};
 use std::path::Path;

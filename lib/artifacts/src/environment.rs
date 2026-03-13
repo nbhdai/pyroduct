@@ -1,4 +1,4 @@
-use crate::artifacts::{Artifacts, CapBinary};
+use crate::artifacts::{Artifact, Artifacts, CapBinary, Capability, Interface, Module};
 use crate::build::{CommandError, run_command};
 use crate::cargo::{CapabilityManifest, ModuleManifest};
 use std::path::{Path, PathBuf};
@@ -67,14 +67,6 @@ impl ResolvedCapability {
             self.author, self.package, self.version
         ))
     }
-}
-
-pub struct Interface {
-    pub cap: ResolvedCapability,
-    pub cargo_toml_content: String,
-    pub lib_rs_content: String,
-    pub doc_string: String,
-    pub config_string: Option<String>,
 }
 
 /// Central context to manage cargo compilation environment
@@ -265,13 +257,13 @@ impl Environment {
                     String::new()
                 };
 
-                Artifacts::Module {
+                Artifacts::Module(Module {
                     manifest,
                     wasm,
                     cargo_toml,
                     cargo_lock,
                     src_lib_rs,
-                }
+                })
             }
             Manifest::Capability(manifest) => {
                 tracing::info!("Packaging capability: {:?}", self.root);
@@ -315,7 +307,7 @@ impl Environment {
                     None
                 };
 
-                Artifacts::Capability {
+                Artifacts::Capability(Capability {
                     manifest,
                     libs: vec![lib],
                     cargo_toml,
@@ -323,7 +315,7 @@ impl Environment {
                     src_lib_rs,
                     interface_json,
                     config_json,
-                }
+                })
             }
             Manifest::Interface(manifest) => {
                 tracing::info!("Packaging interface: {:?}", self.root);
@@ -357,13 +349,13 @@ impl Environment {
                     None
                 };
 
-                Artifacts::Interface {
+                Artifacts::Interface(Interface {
                     manifest,
                     cargo_toml,
                     src_lib_rs,
                     interface_json,
                     config_json,
-                }
+                })
             }
         };
 
@@ -371,7 +363,7 @@ impl Environment {
     }
 
     /// Creates an interface environment from a capability environment in the directory specified.
-    pub async fn create_interface(&self) -> EnvResult<Option<Artifacts>> {
+    pub async fn create_interface(&self) -> EnvResult<Option<Interface>> {
         let manifest = match &self.manifest {
             Manifest::Capability(capability_manifest) => capability_manifest,
             _ => return Ok(None),
@@ -401,7 +393,7 @@ impl Environment {
         let cargo_toml_content = toml::to_string_pretty(&interface_manifest)
             .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
 
-        Ok(Some(Artifacts::Interface { 
+        Ok(Some(Interface { 
             manifest: toml::to_string_pretty(manifest)
                 .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?,
             cargo_toml: cargo_toml_content,
@@ -412,13 +404,7 @@ impl Environment {
     }
 
     pub async fn new_interface(root: PathBuf, interface: Interface) -> EnvResult<Self> {
-        fs::create_dir_all(root.join("src")).await?;
-        fs::write(root.join("Cargo.toml"), &interface.cargo_toml_content).await?;
-        fs::write(root.join("src").join("lib.rs"), &interface.lib_rs_content).await?;
-        fs::write(root.join("interface.json"), &interface.doc_string).await?;
-        if let Some(c) = &interface.config_string {
-            fs::write(root.join("config.json"), c).await?;
-        }
+        interface.write_to_directory(&root).await?;
         Self::new(root).await
     }
 }
