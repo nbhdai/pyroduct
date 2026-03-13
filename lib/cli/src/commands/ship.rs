@@ -1,12 +1,9 @@
 use anyhow::{Result, bail};
+use artifacts::{cache::CacheManager, environment::Environment};
 use fs_err as fs;
 use std::path::Path;
-use artifacts::{environment::Environment, cache::CacheManager};
 
-pub async fn ship_single(
-    cache: &CacheManager,
-    path: &Path,
-) -> Result<()> {
+pub async fn ship_single(cache: &CacheManager, path: &Path) -> Result<()> {
     let env = Environment::new(path.to_path_buf()).await?;
     if let Some(interface_artifact) = env.create_interface().await? {
         cache.write_artifacts(interface_artifact.into()).await?;
@@ -43,7 +40,7 @@ pub async fn ship(path: &Path) -> Result<()> {
         if is_cap || is_mod {
             found_any = true;
             match ship_single(&cache, &subpath).await {
-                Ok(()) => {},
+                Ok(()) => {}
                 Err(e) => errors.push((subpath, e)),
             }
         }

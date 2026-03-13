@@ -15,11 +15,15 @@ pub enum CommandError {
         args: Vec<String>,
         stdout: String,
         stderr: String,
-    }
+    },
 }
 
 /// Run a cargo command within this environment
-pub async fn run_command(root: &Path, tool_args: &[&str], capture: bool) -> Result<String, CommandError> {
+pub async fn run_command(
+    root: &Path,
+    tool_args: &[&str],
+    capture: bool,
+) -> Result<String, CommandError> {
     let mut cmd = Command::new("cargo");
     cmd.args(tool_args).current_dir(&root);
 

@@ -1,8 +1,8 @@
 pub mod artifacts;
+pub mod build;
 pub mod cache;
 pub mod cargo;
 pub mod environment;
-pub mod build;
 
 #[cfg(test)]
 mod tests;

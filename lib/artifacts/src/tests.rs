@@ -6,7 +6,8 @@
 //! them #[ignore] if you only want fast unit tests in CI.
 
 use crate::cache::CacheManager;
-use crate::environment::Environment;
+use crate::environment::{Environment, ResolvedCapability};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// Resolve the repo root from the artifacts crate (lib/artifacts -> ../..).
@@ -19,10 +20,6 @@ fn repo_root() -> PathBuf {
         .unwrap()
         .to_path_buf()
 }
-
-// ---------------------------------------------------------------------------
-// Ship capabilities/httpc (capability + interface) into the cache
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn ship_httpc_capability_to_cache() {
@@ -69,10 +66,6 @@ async fn ship_httpc_capability_to_cache() {
     assert!(has_lib, "expected a native library in the cache");
 }
 
-// ---------------------------------------------------------------------------
-// Ship modules/basic into the cache
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn ship_basic_module_to_cache() {
     let cache = CacheManager::new().await.unwrap();
@@ -112,5 +105,50 @@ async fn ship_basic_module_to_cache() {
     assert!(
         wasm.starts_with(&[0x00, 0x61, 0x73, 0x6D]),
         "mod.wasm should start with the wasm magic number"
+    );
+}
+
+#[tokio::test]
+async fn test_anon_compile_with_interface() {
+    let cache = CacheManager::new().await.unwrap();
+
+    // 1. Generate the interface for httpc to compile against
+    let httpc_path = repo_root().join("capabilities/httpc");
+    let env = Environment::new(httpc_path).await.unwrap();
+    let interface = env
+        .create_interface()
+        .await
+        .unwrap()
+        .expect("httpc is a capability, so create_interface must return Some");
+
+    // Write the interface manually to the capabilities directory to satisfy the `ResolvedCapability::interface_dir`
+    cache.write_artifacts(interface.into()).await.unwrap();
+
+    let cap = ResolvedCapability {
+        author: "nbhdai".to_string(),
+        package: "httpc".to_string(),
+        version: "0.1.0".to_string(),
+    };
+
+    let code = r#"
+        use httpc::{HttpClient, HttpClientMethods};
+
+        #[pyroduct::module(output = response)]
+        fn call(url: &str) -> Result<String, String> {
+            let client = HttpClient.register().map_err(|e| e.to_string())?;
+            let response = client.get(url.to_string())?;
+            Ok(response)
+        }
+    "#;
+
+    let anon = cache
+        .compile_anon(BTreeMap::new(), vec![cap], code)
+        .await
+        .unwrap();
+
+    assert!(!anon.wasm.is_empty());
+    assert!(
+        anon.wasm.starts_with(&[0x00, 0x61, 0x73, 0x6D]),
+        "Compiled output should be a valid WASM binary"
     );
 }

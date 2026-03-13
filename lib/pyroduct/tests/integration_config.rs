@@ -36,7 +36,7 @@ async fn test_capability_configuration_respect() {
                         "suffix": "!!!"
                     })),
                 )]),
-            }
+            },
         )]),
     };
 

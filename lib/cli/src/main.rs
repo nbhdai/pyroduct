@@ -93,9 +93,7 @@ async fn main() -> Result<()> {
 
     match args.command {
         Commands::Init { path, cap } => init::init(path, cap),
-        Commands::Expand {
-            path,
-        } => commands::expand::expand(&path).await,
+        Commands::Expand { path } => commands::expand::expand(&path).await,
         Commands::Ship { path } => commands::ship::ship(&path).await,
         Commands::Clean { path } => commands::clean::clean(&path),
         Commands::Run {

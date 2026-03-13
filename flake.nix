@@ -76,6 +76,7 @@
         # Shared Library Extension
         libExt = if pkgs.stdenv.isDarwin then "dylib" else "so";
 
+        ROOT_DIR = (builtins.getEnv "ROOT_DIR");
       in {
         packages = {
           inherit pyroduct;
@@ -115,7 +116,7 @@
           RUST_SRC_PATH = "${nightlyToolchain}/lib/rustlib/src/rust/library";
           CARGO = "${nightlyToolchain}/bin/cargo";
           RUSTUP_TOOLCHAIN = "${nightlyToolchain}";
-          PYRODUCT = "./test";
+          PYRODUCT = ROOT_DIR + "/test";
           
           shellHook = ''
             ${lib.optionalString pkgs.stdenv.isLinux ''

@@ -1,4 +1,4 @@
-use crate::artifacts::{Artifact, Artifacts, CapBinary, Capability, Interface, Module};
+use crate::artifacts::{Artifact, Artifacts, CapBinary, Capability, Interface};
 use crate::build::{CommandError, run_command};
 use crate::cargo::{CapabilityManifest, ModuleManifest};
 use std::path::{Path, PathBuf};
@@ -60,15 +60,6 @@ pub struct ResolvedCapability {
     pub version: String,
 }
 
-impl ResolvedCapability {
-    pub fn interface_dir(&self) -> PathBuf {
-        PathBuf::from(format!(
-            "../capabilities/{}/{}/{}/interface",
-            self.author, self.package, self.version
-        ))
-    }
-}
-
 /// Central context to manage cargo compilation environment
 pub struct Environment {
     pub root: PathBuf,
@@ -91,7 +82,7 @@ impl Environment {
     pub fn is_capability(&self) -> bool {
         match self.manifest {
             Manifest::Capability(_) => true,
-            _ => false
+            _ => false,
         }
     }
 
@@ -220,50 +211,7 @@ impl Environment {
 
         let artifacts = match &self.manifest {
             Manifest::Module(manifest) => {
-                tracing::info!("Packaging module: {:?}", self.root);
-
-                // 1. Generate Cargo.toml
-                let cargo = manifest.clone().to_cargo();
-                let cargo_toml = toml::to_string_pretty(&cargo)
-                    .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
-
-                let manifest = toml::to_string_pretty(&manifest)
-                    .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
-
-                // 2. Build WASM
-                tracing::info!("Compiling WASM module...");
-                self.compile(
-                    &["--target", "wasm32-unknown-unknown", "-p", &name],
-                    capture,
-                )
-                .await?;
-
-                // 3. Locate Artifact
-                let built_wasm = self.get_wasm_artifact(&name)?;
-                let wasm = fs::read(&built_wasm).await?;
-
-                // 4. Read Source & Lockfile
-                let src_path = self.root.join("src").join("lib.rs");
-                let src_lib_rs = if src_path.exists() {
-                    fs::read_to_string(&src_path).await?
-                } else {
-                    String::new()
-                };
-
-                let lockfile_path = self.root.join("Cargo.lock");
-                let cargo_lock = if lockfile_path.exists() {
-                    fs::read_to_string(&lockfile_path).await?
-                } else {
-                    String::new()
-                };
-
-                Artifacts::Module(Module {
-                    manifest,
-                    wasm,
-                    cargo_toml,
-                    cargo_lock,
-                    src_lib_rs,
-                })
+                unimplemented!()
             }
             Manifest::Capability(manifest) => {
                 tracing::info!("Packaging capability: {:?}", self.root);
@@ -319,14 +267,6 @@ impl Environment {
             }
             Manifest::Interface(manifest) => {
                 tracing::info!("Packaging interface: {:?}", self.root);
-                let manifest = toml::to_string_pretty(&manifest)
-                    .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
-                let cargo_toml_path = self.root.join("Cargo.toml");
-                let cargo_toml = if cargo_toml_path.exists() {
-                    fs::read_to_string(&cargo_toml_path).await?
-                } else {
-                    String::new()
-                };
 
                 let src_path = self.root.join("src").join("lib.rs");
                 let src_lib_rs = if src_path.exists() {
@@ -350,8 +290,7 @@ impl Environment {
                 };
 
                 Artifacts::Interface(Interface {
-                    manifest,
-                    cargo_toml,
+                    manifest: manifest.clone(),
                     src_lib_rs,
                     interface_json,
                     config_json,
@@ -380,8 +319,9 @@ impl Environment {
         let original_source = fs::read_to_string(&source_path).await?;
 
         let (lib_rs_file, spec_res, config_res) =
-            pyro_core::ffi::generate_interface(&original_source, &cap_name, &cap_version)
-                .map_err(|r| EnvironmentError::InterfaceGeneration(format_syn_error(&original_source, r)))?;
+            pyro_core::ffi::generate_interface(&original_source, &cap_name, &cap_version).map_err(
+                |r| EnvironmentError::InterfaceGeneration(format_syn_error(&original_source, r)),
+            )?;
 
         let lib_rs_content = prettyplease::unparse(&lib_rs_file);
         let spec = spec_res.map_err(|e| EnvironmentError::Serde(e.to_string()))?;
@@ -389,14 +329,8 @@ impl Environment {
             .transpose()
             .map_err(|e| EnvironmentError::Serde(e.to_string()))?;
 
-        let interface_manifest = manifest.clone().to_interface_manifest();
-        let cargo_toml_content = toml::to_string_pretty(&interface_manifest)
-            .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
-
-        Ok(Some(Interface { 
-            manifest: toml::to_string_pretty(manifest)
-                .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?,
-            cargo_toml: cargo_toml_content,
+        Ok(Some(Interface {
+            manifest: manifest.clone(),
             src_lib_rs: lib_rs_content,
             interface_json: spec,
             config_json: config,

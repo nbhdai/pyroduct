@@ -22,14 +22,14 @@ async fn test_capability_state_preservation() {
     let cap_path = Path::new("../../capabilities/state/");
 
     let config = PipelineConfig {
-         pipeline: IndexMap::from([(
+        pipeline: IndexMap::from([(
             "step".to_string(),
             ModuleConfig {
                 path: Path::new("../../modules/cap_state/").to_path_buf(),
                 libraries: vec![cap_path.to_path_buf()],
                 configurations: HashMap::from([("state".to_string(), None)]),
-            }
-         )]),
+            },
+        )]),
     };
 
     let mut factory = PipelineFactory::load(&config).await.unwrap();

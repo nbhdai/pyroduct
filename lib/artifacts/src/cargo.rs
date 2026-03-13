@@ -170,20 +170,7 @@ impl CapabilityManifest {
     pub fn to_interface_manifest(self) -> Manifest {
         let mut final_deps = BTreeMap::new();
 
-        let pyroduct = match self.pyroduct.clone() {
-            // 1) Simple -> Detailed with registry + optional flag
-            p @ (Dependency::Simple(_) | Dependency::Inherited(_)) => p,
-
-            // 2) Detailed -> Add registry only if NOT path or git
-            Dependency::Detailed(detail) => {
-                let mut d = detail.clone();
-
-                if let Some(path) = d.path.as_mut() {
-                    *path = format!("../{path}");
-                }
-                Dependency::Detailed(d)
-            }
-        };
+        let pyroduct = self.pyroduct.clone();
 
         // 1. Shared Dependencies (Required)
         final_deps.extend(self.dependencies.shared.clone().into_iter());
@@ -347,7 +334,7 @@ impl ModuleManifest {
     }
 }
 
-fn ensure_cdylib(lib: Option<Product>) -> Option<Product> {
+pub fn ensure_cdylib(lib: Option<Product>) -> Option<Product> {
     let lib = if let Some(mut lib) = lib {
         if !lib.crate_type.iter().any(|s| s.as_str() == "cdylib") {
             lib.crate_type.push("cdylib".to_string());

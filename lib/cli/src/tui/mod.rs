@@ -18,7 +18,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use pyroduct::{pipeline::wasm_execute::{Pipeline, PipelineExecution}};
+use pyroduct::pipeline::wasm_execute::{Pipeline, PipelineExecution};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
@@ -27,7 +27,12 @@ use ratatui::{
 use ratatui_code_editor::{editor::Editor, theme::vesper};
 use serde::{Deserialize, Serialize};
 
-use artifacts::{artifacts::AnonModule, cache::CacheManager, cargo::{CapabilityManifest, ModuleManifest}, environment::{ResolvedCapability, dylib_extension}};
+use artifacts::{
+    artifacts::AnonModule,
+    cache::CacheManager,
+    cargo::{CapabilityManifest, ModuleManifest},
+    environment::{ResolvedCapability, dylib_extension},
+};
 use pyroduct::module::{PyroFactory, PyroModule, capability::CapabilityLibrary};
 
 pub mod cap_config;
@@ -48,7 +53,7 @@ pub struct CompleteModule {
     pub source_code: String,
     pub dependencies: BTreeMap<String, Dependency>,
     pub capabilities: Vec<ResolvedCapability>,
-    
+
     pub configurations: HashMap<String, Option<serde_json::Value>>,
     pub artifact: Option<AnonModule>,
 }
@@ -72,8 +77,7 @@ impl TuiPipeline {
             let mod_toml_path = mod_conf.path.join("Module.toml");
             if mod_toml_path.exists() {
                 let toml_content = fs::read_to_string(&mod_toml_path)?;
-                let manifest: ModuleManifest =
-                    toml::from_str(&toml_content)?;
+                let manifest: ModuleManifest = toml::from_str(&toml_content)?;
                 dependencies = manifest.dependencies;
             }
 
@@ -82,8 +86,7 @@ impl TuiPipeline {
                 let cap_toml_path = lib_path.join("Capability.toml");
                 if cap_toml_path.exists() {
                     let toml_content = fs::read_to_string(&cap_toml_path)?;
-                    let manifest: CapabilityManifest =
-                        toml::from_str(&toml_content)?;
+                    let manifest: CapabilityManifest = toml::from_str(&toml_content)?;
                     let author = manifest.capability.author.clone();
                     let package = manifest.capability.name.clone();
                     let version = manifest.capability.version.clone();
@@ -208,7 +211,6 @@ impl App {
         }
     }
 
-
     pub async fn save(&mut self) {
         if let ViewState::Module(mv) = &mut self.view {
             let step_idx = mv.selected_step();
@@ -222,11 +224,15 @@ impl App {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
 
-            match self.cache.compile_anon(
-                dependencies,
-                module.capabilities.clone(),
-                &module.source_code,
-            ).await {
+            match self
+                .cache
+                .compile_anon(
+                    dependencies,
+                    module.capabilities.clone(),
+                    &module.source_code,
+                )
+                .await
+            {
                 Ok(artifact) => {
                     module.artifact = Some(artifact);
                     self.status_msg = format!("Compiled {}", module.name);
@@ -265,11 +271,15 @@ impl App {
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
 
-                match self.cache.compile_anon(
-                    dependencies,
-                    module.capabilities.clone(),
-                    &module.source_code,
-                ).await {
+                match self
+                    .cache
+                    .compile_anon(
+                        dependencies,
+                        module.capabilities.clone(),
+                        &module.source_code,
+                    )
+                    .await
+                {
                     Ok(artifact) => {
                         module.artifact = Some(artifact);
                         self.status_msg = format!("Compiled {}", module.name);
@@ -287,7 +297,9 @@ impl App {
             let lib_file = format!("lib.{}", dylib_extension());
 
             for cap in &module.capabilities {
-                let cap_dir = self.cache.capabilities_dir(&cap.author, &cap.package, &cap.version);
+                let cap_dir = self
+                    .cache
+                    .capabilities_dir(&cap.author, &cap.package, &cap.version);
                 let artifact_path = cap_dir.join(&lib_file);
 
                 let library = CapabilityLibrary::load(cap.package.clone(), &artifact_path)

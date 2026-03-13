@@ -1,5 +1,5 @@
 use super::symbols;
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use artifacts::{artifacts::Artifact, cargo::CapabilityManifest, environment::Environment};
 use fs_err as fs;
 use pyro_core::{ffi::generate_capability, module::generate_module};
@@ -10,17 +10,15 @@ pub fn expand_artifacts(path: &Path) -> Result<bool> {
     let is_mod = path.join("Module.toml").exists();
 
     if is_cap {
-        println!(
-            "Expanding capability in {:?}.",
-            path
-        );
+        println!("Expanding capability in {:?}.", path);
         let cap_toml_path = path.join("Capability.toml");
         let manifest_str = fs::read_to_string(&cap_toml_path).context("Unable to read manifest")?;
-        let cap_manifest: CapabilityManifest = toml::from_str(&manifest_str).context("Unable to deserialize manifest")?;
-        
+        let cap_manifest: CapabilityManifest =
+            toml::from_str(&manifest_str).context("Unable to deserialize manifest")?;
+
         let name = cap_manifest.capability.name;
         let version = cap_manifest.capability.version;
-        
+
         let source_path = path.join("src/lib.rs");
         let source = fs::read_to_string(&source_path).context("Unable to read source")?;
         let code = generate_capability(&source, &name, &version).context("Capability code")?;
@@ -34,10 +32,7 @@ pub fn expand_artifacts(path: &Path) -> Result<bool> {
     }
 
     if is_mod {
-        println!(
-            "Expanding module in {:?}.",
-            path
-        );
+        println!("Expanding module in {:?}.", path);
         let source_path = path.join("src/lib.rs");
         let source = fs::read_to_string(&source_path).context("Unable to read source")?;
         let code = generate_module(&source).context("Module code")?;
@@ -70,9 +65,8 @@ pub async fn expand(path: &Path) -> Result<()> {
     let mut errors = Vec::new();
 
     for entry in fs::read_dir(path)? {
-        
         let entry = entry?;
-        
+
         let subpath = entry.path();
         if !subpath.is_dir() {
             continue;
@@ -84,7 +78,7 @@ pub async fn expand(path: &Path) -> Result<()> {
         }
         match expand_single(&subpath).await {
             Ok(true) => found_any = true,
-            Ok(false) => {},
+            Ok(false) => {}
             Err(error) => errors.push((subpath, error)),
         }
     }
@@ -188,16 +182,15 @@ pub fn wat(input: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn expand_single(
-    path: &Path,
-) -> Result<bool> {
-
+pub async fn expand_single(path: &Path) -> Result<bool> {
     let output_dir = path.join("artifacts");
 
     let env = Environment::new(path.to_path_buf()).await?;
     if let Some(interface_artifact) = env.create_interface().await? {
         let interface_dir = output_dir.join("interface");
-        interface_artifact.write_to_directory(&interface_dir).await?;
+        interface_artifact
+            .write_to_directory(&interface_dir)
+            .await?;
     }
     let artifacts = env.package(false).await?;
     artifacts.write_to_directory(&output_dir).await?;
