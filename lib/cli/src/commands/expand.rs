@@ -77,7 +77,11 @@ pub async fn expand(path: &Path) -> Result<()> {
         if !subpath.is_dir() {
             continue;
         }
-
+        let is_cap = subpath.join("Capability.toml").exists();
+        let is_mod = subpath.join("Module.toml").exists();
+        if !is_cap && !is_mod {
+            continue;
+        }
         match expand_single(&subpath).await {
             Ok(true) => found_any = true,
             Ok(false) => {},

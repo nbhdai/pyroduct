@@ -11,3 +11,10 @@ modules/**/Cargo.*
 modules/**/artifacts
 examples/**/logs
 .antigravity
+
+test/.cargo
+test/anon
+test/capabilities
+test/interfaces
+test/modules
+test/build

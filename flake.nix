@@ -115,6 +115,7 @@
           RUST_SRC_PATH = "${nightlyToolchain}/lib/rustlib/src/rust/library";
           CARGO = "${nightlyToolchain}/bin/cargo";
           RUSTUP_TOOLCHAIN = "${nightlyToolchain}";
+          PYRODUCT = "./test";
           
           shellHook = ''
             ${lib.optionalString pkgs.stdenv.isLinux ''
