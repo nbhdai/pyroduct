@@ -1,11 +1,11 @@
 use super::symbols;
 use anyhow::{Result, Context};
-use artifacts::{cargo::ModuleManifest, environment::format_syn_error, cargo::{CapabilityManifest}};
+use artifacts::{cargo::CapabilityManifest, environment::{Environment, format_syn_error}};
 use fs_err as fs;
 use pyro_core::{ffi::generate_capability, module::generate_module};
 use std::path::Path;
 
-pub fn expand_single(path: &Path) -> Result<bool> {
+pub fn expand_artifacts(path: &Path) -> Result<bool> {
     let is_cap = path.join("Capability.toml").exists();
     let is_mod = path.join("Module.toml").exists();
 
@@ -14,7 +14,6 @@ pub fn expand_single(path: &Path) -> Result<bool> {
         let manifest_str = fs::read_to_string(&cap_toml_path).context("Unable to read manifest")?;
         let cap_manifest: CapabilityManifest = toml::from_str(&manifest_str).context("Unable to deserialize manifest")?;
         
-        let author = cap_manifest.capability.author;
         let name = cap_manifest.capability.name;
         let version = cap_manifest.capability.version;
         
@@ -45,8 +44,8 @@ pub fn expand_single(path: &Path) -> Result<bool> {
     Ok(false)
 }
 
-pub fn expand(path: &Path) -> Result<()> {
-    if expand_single(path)? {
+pub async fn expand(path: &Path) -> Result<()> {
+    if expand_single(path).await? {
         return Ok(());
     }
 
@@ -67,7 +66,7 @@ pub fn expand(path: &Path) -> Result<()> {
             continue;
         }
 
-        match expand_single(&subpath) {
+        match expand_single(&subpath).await {
             Ok(true) => found_any = true,
             Ok(false) => {},
             Err(error) => errors.push((subpath, error)),
@@ -171,4 +170,20 @@ pub fn wat(input: &Path) -> anyhow::Result<()> {
     println!("Converted {} -> {}", input.display(), output.display());
 
     Ok(())
+}
+
+pub async fn expand_single(
+    path: &Path,
+) -> Result<bool> {
+    let output_dir = path.join("artifacts");
+
+    let env = Environment::new(path.to_path_buf()).await?;
+    if let Some(interface_artifact) = env.create_interface().await? {
+        let interface_dir = output_dir.join("interface");
+        interface_artifact.write_to_directory(&interface_dir).await?;
+    }
+
+    let artifacts = env.package(false).await?;
+    artifacts.write_to_directory(&output_dir).await?;
+    expand_artifacts(path)
 }

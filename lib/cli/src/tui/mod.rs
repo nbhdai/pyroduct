@@ -79,7 +79,7 @@ impl TuiPipeline {
             let mod_toml_path = mod_conf.path.join("Module.toml");
             if mod_toml_path.exists() {
                 let toml_content = fs::read_to_string(&mod_toml_path)?;
-                let manifest: crate::artifacts::cargo::ModuleManifest =
+                let manifest: crate::commands::cargo::ModuleManifest =
                     toml::from_str(&toml_content)?;
                 dependencies = manifest.dependencies;
             }
@@ -89,7 +89,7 @@ impl TuiPipeline {
                 let cap_toml_path = lib_path.join("Capability.toml");
                 if cap_toml_path.exists() {
                     let toml_content = fs::read_to_string(&cap_toml_path)?;
-                    let manifest: crate::artifacts::cargo::CapabilityManifest =
+                    let manifest: crate::commands::cargo::CapabilityManifest =
                         toml::from_str(&toml_content)?;
                     let (cap_name, cap_version) = manifest.name_version()?;
                     let pkg = manifest.capability.as_ref().unwrap();
@@ -288,7 +288,7 @@ impl App {
 
             // 2. Load capabilities from cache
             let mut libs = Vec::new();
-            let lib_file = format!("lib.{}", crate::artifacts::utils::dylib_extension());
+            let lib_file = format!("lib.{}", crate::commands::utils::dylib_extension());
 
             for cap in &module.capabilities {
                 let cap_dir = cache.capabilities_dir(&cap.author, &cap.package, &cap.version);

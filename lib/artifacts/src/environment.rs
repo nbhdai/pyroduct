@@ -104,6 +104,13 @@ impl Environment {
         })
     }
 
+    pub fn is_capability(&self) -> bool {
+        match self.manifest {
+            Manifest::Capability(_) => true,
+            _ => false
+        }
+    }
+
     pub fn name(&self) -> Option<String> {
         match &self.manifest {
             Manifest::Module(m) => Some(m.module.name.clone()),
@@ -392,8 +399,6 @@ impl Environment {
             }
             Manifest::Interface(manifest) => {
                 tracing::info!("Packaging interface: {:?}", self.root);
-
-                let cargo_lock = self.generate_lockfile().await?;
                 let manifest = toml::to_string_pretty(&manifest)
                     .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
                 let cargo_toml_path = self.root.join("Cargo.toml");
@@ -427,7 +432,6 @@ impl Environment {
                 Artifacts::Interface {
                     manifest,
                     cargo_toml,
-                    cargo_lock,
                     src_lib_rs,
                     interface_json,
                     config_json,
@@ -497,7 +501,7 @@ version = "*"
     }
 
     /// Creates an interface environment from a capability environment in the directory specified.
-    pub async fn create_interface(&self, root_path: &Path) -> EnvResult<Option<Self>> {
+    pub async fn create_interface(&self) -> EnvResult<Option<Artifacts>> {
         let manifest = match &self.manifest {
             Manifest::Capability(capability_manifest) => capability_manifest,
             _ => return Ok(None),
@@ -523,28 +527,18 @@ version = "*"
             .transpose()
             .map_err(|e| EnvironmentError::Serde(e.to_string()))?;
 
-        // Write files to root_path
-        fs::create_dir_all(root_path.join("src")).await?;
-
         let interface_manifest = manifest.clone().to_interface_manifest();
         let cargo_toml_content = toml::to_string_pretty(&interface_manifest)
             .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
 
-        fs::write(
-            root_path.join("Capability.toml"),
-            toml::to_string_pretty(manifest)
+        Ok(Some(Artifacts::Interface { 
+            manifest: toml::to_string_pretty(manifest)
                 .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?,
-        )
-        .await?;
-        fs::write(root_path.join("Cargo.toml"), &cargo_toml_content).await?;
-        fs::write(root_path.join("src").join("lib.rs"), &lib_rs_content).await?;
-        fs::write(root_path.join("interface.json"), &spec).await?;
-        if let Some(c) = config {
-            fs::write(root_path.join("config.json"), &c).await?;
-        }
-
-        // Return a new environment at the root_path
-        Ok(Some(Self::new(root_path.to_path_buf()).await?))
+            cargo_toml: cargo_toml_content,
+            src_lib_rs: lib_rs_content,
+            interface_json: spec,
+            config_json: config,
+        }))
     }
 
     pub async fn new_interface(root: PathBuf, interface: Interface) -> EnvResult<Self> {

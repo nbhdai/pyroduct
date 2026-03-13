@@ -32,7 +32,6 @@ pub enum Artifacts {
     Interface {
         manifest: String,
         cargo_toml: String,
-        cargo_lock: String,
         src_lib_rs: String,
         interface_json: String,
         config_json: Option<String>,
@@ -98,14 +97,12 @@ impl Artifacts {
             Artifacts::Interface {
                 manifest,
                 cargo_toml,
-                cargo_lock,
                 src_lib_rs,
                 interface_json,
                 config_json,
             } => {
                 fs::write(path.join("Capability.toml"), manifest).await?;
                 fs::write(path.join("Cargo.toml"), cargo_toml).await?;
-                fs::write(path.join("Cargo.lock"), cargo_lock).await?;
                 fs::write(path.join("interface.json"), interface_json).await?;
 
                 if let Some(config) = config_json {
@@ -180,14 +177,12 @@ impl Artifacts {
             Artifacts::Interface {
                 manifest,
                 cargo_toml,
-                cargo_lock,
                 src_lib_rs,
                 interface_json,
                 config_json,
             } => {
                 append_file("Capability.toml", manifest.as_bytes())?;
                 append_file("Cargo.toml", cargo_toml.as_bytes())?;
-                append_file("Cargo.lock", cargo_lock.as_bytes())?;
                 append_file("src/lib.rs", src_lib_rs.as_bytes())?;
                 append_file("interface.json", interface_json.as_bytes())?;
                 if let Some(config) = config_json {
@@ -314,7 +309,6 @@ impl Artifacts {
 
         let mut manifest = None;
         let mut cargo_toml = None;
-        let mut cargo_lock = None;
         let mut src_lib_rs = None;
         let mut interface_json = None;
         let mut config_json = None;
@@ -328,7 +322,6 @@ impl Artifacts {
             match path.to_string_lossy().as_ref() {
                 "Capability.toml" => manifest = String::from_utf8(content).ok(),
                 "Cargo.toml" => cargo_toml = String::from_utf8(content).ok(),
-                "Cargo.lock" => cargo_lock = String::from_utf8(content).ok(),
                 "src/lib.rs" => src_lib_rs = String::from_utf8(content).ok(),
                 "interface.json" => interface_json = String::from_utf8(content).ok(),
                 "config.json" => config_json = String::from_utf8(content).ok(),
@@ -342,8 +335,6 @@ impl Artifacts {
             })?,
             cargo_toml: cargo_toml
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing Cargo.toml"))?,
-            cargo_lock: cargo_lock
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing Cargo.lock"))?,
             src_lib_rs: src_lib_rs
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing src/lib.rs"))?,
             interface_json: interface_json.ok_or_else(|| {

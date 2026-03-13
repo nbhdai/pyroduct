@@ -1,5 +1,4 @@
-pub mod artifacts;
-pub mod cache;
+pub mod commands;
 pub mod init;
 pub mod run;
 pub mod tui;
@@ -31,20 +30,6 @@ enum Commands {
     Expand {
         #[arg(value_name = "DIRECTORY")]
         path: PathBuf,
-
-        /// Convert WASM binaries to WAT format and gets the symbols from libraries
-        #[arg(short, long)]
-        bin: bool,
-
-        /// Generates the Cargo.lock files
-        #[arg(short, long, default_value = "true")]
-        lockfile: bool,
-    },
-    Package {
-        #[arg(value_name = "DIRECTORY")]
-        path: PathBuf,
-        #[arg(short, long)]
-        output: Option<PathBuf>,
     },
     /// Places package artifacts into the local cache repository
     Ship {
@@ -110,19 +95,9 @@ async fn main() -> Result<()> {
         Commands::Init { path, cap } => init::init(path, cap),
         Commands::Expand {
             path,
-            bin,
-            lockfile,
-        } => artifacts::expand::expand(&path, bin, lockfile),
-        Commands::Package { path, output } => {
-            let results = artifacts::package::package(&path, output.as_deref(), false)?;
-            let output_base = output.clone().unwrap_or_else(|| path.join("artifacts"));
-            for res in results {
-                artifacts::package::write_package_result(&res, &output_base)?;
-            }
-            Ok(())
-        }
-        Commands::Ship { path } => cache::ship::ship(&path),
-        Commands::Clean { path } => artifacts::clean::clean(&path),
+        } => commands::expand::expand(&path).await,
+        Commands::Ship { path } => commands::ship::ship(&path).await,
+        Commands::Clean { path } => commands::clean::clean(&path),
         Commands::Run {
             config,
             input,
