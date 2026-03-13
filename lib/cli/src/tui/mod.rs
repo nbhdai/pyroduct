@@ -63,14 +63,7 @@ impl TuiPipeline {
         let config = crate::run::load_config(yaml_path)?;
         let mut modules = Vec::new();
 
-        for mod_conf in config.pipeline {
-            let name = mod_conf
-                .path
-                .file_name()
-                .expect("Non empty path")
-                .to_string_lossy()
-                .to_string();
-
+        for (name, mod_conf) in config.pipeline {
             let src_path = mod_conf.path.join("src/lib.rs");
             let source_code = fs::read_to_string(&src_path)
                 .unwrap_or_else(|_| "// No source found\n".to_string());

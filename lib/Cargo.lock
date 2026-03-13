@@ -2265,6 +2265,7 @@ dependencies = [
  "dashmap",
  "futures",
  "half",
+ "indexmap",
  "libloading",
  "macrotest",
  "object 0.38.1",

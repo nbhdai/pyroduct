@@ -1,13 +1,8 @@
-libraries:
-  transform: ../../capabilities/config/
-
-modules:
+pipeline:
   prefix:
     path: ../../modules/cap_config/
-    capabilities:
+    libraries: ["../../capabilities/config/"]
+    configurations:
       transform:
         uppercase: true
         suffix: "!!!"
-
-pipeline:
-  - prefix

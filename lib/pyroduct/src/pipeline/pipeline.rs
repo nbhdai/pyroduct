@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use indexmap::IndexMap;
 use serde::Deserialize;
 
 use crate::{
@@ -15,13 +16,13 @@ use super::PipelineError;
 
 #[derive(Deserialize, Debug)]
 pub struct PipelineConfig {
-    pub pipeline: Vec<ModuleConfig>,
+    pub pipeline: IndexMap<String, ModuleConfig>,
 }
 
 impl PipelineConfig {
     pub fn repair_relative(&mut self, config_dir: &Path) {
         // Resolve relative paths
-        for module in self.pipeline.iter_mut() {
+        for module in self.pipeline.values_mut() {
             for path in module.libraries.iter_mut() {
                 if path.is_relative() {
                     *path = config_dir.join(&path);
@@ -57,7 +58,7 @@ impl PipelineFactory {
     /// 3. Returns the ordered pipeline steps with capabilities attached.
     pub async fn load(config: &PipelineConfig) -> Result<Self, PipelineError> {
         let mut pipeline = Vec::new();
-        for module in &config.pipeline {
+        for module in config.pipeline.values() {
             let module_factory = module.load_factory().await?;
             pipeline.push(module_factory);
         }

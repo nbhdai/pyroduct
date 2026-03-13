@@ -60,6 +60,7 @@ parquet = { workspace = true, optional = true }
 pin-project = { workspace = true, optional = true }
 libloading = { workspace = true, optional = true }
 object = { workspace = true, optional = true }
+indexmap = { version = "2.13.0", features = ["serde"] }
 
 [dev-dependencies]
 trybuild.workspace = true

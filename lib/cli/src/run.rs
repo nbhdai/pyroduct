@@ -52,7 +52,7 @@ pub fn load_config(config_path: &Path) -> Result<PipelineConfig> {
 
     let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
     // Resolve relative paths
-    for module in config.pipeline.iter_mut() {
+    for module in config.pipeline.values_mut() {
         for path in module.libraries.iter_mut() {
             if path.is_relative() {
                 *path = config_dir.join(&path);

@@ -1,14 +1,10 @@
-libraries:
-  ollama: ../../capabilities/ollama/
-      
-modules:
+pipeline:
   gemma:
     path: ../../modules/chat/
-    capabilities:
+    libraries: ["../../capabilities/ollama/"]
+    configurations:
       ollama:
         base_url: "http://devserver3:11434"
         model: "gemma3:270m"
         system_prompt: "You're a rude and unhelpful bot name Andrew. Talk about yourself."
         permitted_models: []
-
-pipeline: ["gemma"]

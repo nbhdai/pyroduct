@@ -1,3 +1,4 @@
+use indexmap::IndexMap;
 use pyroduct::{
     PyroRow,
     module::ModuleConfig,
@@ -23,17 +24,20 @@ async fn test_capability_configuration_respect() {
     let cap_path = Path::new("../../capabilities/config/");
 
     let config = PipelineConfig {
-        pipeline: vec![ModuleConfig {
-            path: Path::new("../../modules/cap_config/").to_path_buf(),
-            libraries: vec![cap_path.to_path_buf()],
-            configurations: HashMap::from([(
-                "config".to_string(),
-                Some(json!({
-                    "uppercase": true,
-                    "suffix": "!!!"
-                })),
-            )]),
-        }],
+        pipeline: IndexMap::from([(
+            "config".to_string(),
+            ModuleConfig {
+                path: Path::new("../../modules/cap_config/").to_path_buf(),
+                libraries: vec![cap_path.to_path_buf()],
+                configurations: HashMap::from([(
+                    "config".to_string(),
+                    Some(json!({
+                        "uppercase": true,
+                        "suffix": "!!!"
+                    })),
+                )]),
+            }
+        )]),
     };
 
     let mut factory = PipelineFactory::load(&config).await.unwrap();
