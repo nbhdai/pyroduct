@@ -4,7 +4,7 @@ use cargo_toml::{
     TargetDepsSet, Workspace,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::Path};
 use toml::Value;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -70,6 +70,13 @@ pub enum ManifestError {
     CapabilitySectionMissing,
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+pub struct ResolvedCapability {
+    pub author: String,
+    pub package: String,
+    pub version: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct ModuleManifest<Metadata = Value> {
@@ -78,7 +85,7 @@ pub struct ModuleManifest<Metadata = Value> {
     #[serde(default = "default_pyroduct")]
     pub pyroduct: Dependency,
     #[serde(default)]
-    pub capabilities: DepsSet,
+    pub capabilities: BTreeMap<String, ResolvedCapability>,
     #[serde(default)]
     pub dependencies: DepsSet,
     #[serde(default)]
@@ -297,39 +304,23 @@ impl ModuleManifest {
         }
     }
 
-    fn augment_deps(&self, target_map: &mut DepsSet, source_map: &DepsSet) {
-        let registry_url = Some("sparse+http://pyroduct.io/capabilities".to_string());
-
-        for (name, dep) in source_map {
-            let new_dep = match dep {
-                // 1) Simple -> Detailed with registry + optional flag
-                Dependency::Simple(ver) => Dependency::Detailed(Box::new(DependencyDetail {
-                    version: Some(ver.clone()),
-                    registry: registry_url.clone(),
-                    ..Default::default()
-                })),
-
-                Dependency::Detailed(detail) => {
-                    let mut d = detail.clone();
-
-                    // Logic: If it's not a local path and not a git repo, apply the registry
-                    if d.path.is_none() && d.git.is_none() && d.registry.is_none() {
-                        d.registry = registry_url.clone();
-                    }
-                    // if it is a path, it's a path to the capability and we expand the interface in this folder
-                    if let Some(path) = d.path.as_mut() {
-                        *path = format!("{path}/interface");
-                    }
-
-                    Dependency::Detailed(d)
-                }
-
-                Dependency::Inherited(inherited) => {
-                    let d = inherited.clone();
-                    Dependency::Inherited(d)
-                }
-            };
-            target_map.insert(name.clone(), new_dep);
+    fn augment_deps(
+        &self,
+        target_map: &mut DepsSet,
+        capabilities: &BTreeMap<String, ResolvedCapability>,
+    ) {
+        for (name, cap) in capabilities.iter() {
+            let path = Path::new("..")
+                .join(&cap.author)
+                .join(&cap.package)
+                .join(&cap.version)
+                .to_string_lossy()
+                .into();
+            let dep = Dependency::Detailed(Box::new(DependencyDetail {
+                path: Some(path),
+                ..Default::default()
+            }));
+            target_map.insert(name.clone(), dep);
         }
     }
 }

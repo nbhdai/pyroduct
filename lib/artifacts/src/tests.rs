@@ -6,7 +6,8 @@
 //! them #[ignore] if you only want fast unit tests in CI.
 
 use crate::cache::CacheManager;
-use crate::environment::{Environment, ResolvedCapability};
+use crate::cargo::ResolvedCapability;
+use crate::environment::Environment;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 

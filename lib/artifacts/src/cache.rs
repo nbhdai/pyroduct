@@ -1,8 +1,8 @@
 use crate::artifacts::{AnonModule, Artifact, Artifacts, ModuleDependencies};
 use crate::build::{CommandError, run_command};
 // Ensure you have this import
-use crate::cargo::{CapabilityManifest};
-use crate::environment::{ResolvedCapability, format_syn_error};
+use crate::cargo::{CapabilityManifest, ResolvedCapability};
+use crate::environment::format_syn_error;
 use cargo_toml::Dependency;
 use pyro_core::module::generate_module_spec;
 use sha2::{Digest, Sha256};
@@ -291,6 +291,7 @@ impl CacheManager {
 name = "mod"
 version = "0.1.0"
 author = "anon"
+edition = "2024"
 
 [workspace]
 
@@ -394,10 +395,12 @@ author = "anon"
                 let cargo_path = path.join("Cargo.toml");
                 let cargo = interface.manifest.clone().to_interface_manifest();
                 let cargo = toml::to_string_pretty(&cargo).map_err(|e| CacheError {
-                        context: format!("Failed to serialize Cargo.toml to {}", cargo_path.display()),
-                        error: io::Error::new(io::ErrorKind::InvalidData, e),
-                    })?;
-                fs::write(&cargo_path, cargo).await.map_err(|e| CacheError {
+                    context: format!("Failed to serialize Cargo.toml to {}", cargo_path.display()),
+                    error: io::Error::new(io::ErrorKind::InvalidData, e),
+                })?;
+                fs::write(&cargo_path, cargo)
+                    .await
+                    .map_err(|e| CacheError {
                         context: format!("Failed to write Cargo.toml to {}", cargo_path.display()),
                         error: e,
                     })?;

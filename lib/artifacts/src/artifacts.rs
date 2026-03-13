@@ -10,8 +10,7 @@ use std::path::Path;
 use tar::{Builder, Header};
 use tokio::fs;
 
-use crate::cargo::CapabilityManifest;
-use crate::environment::ResolvedCapability;
+use crate::cargo::{CapabilityManifest, ResolvedCapability};
 
 pub enum CapBinary {
     Pe(Vec<u8>),

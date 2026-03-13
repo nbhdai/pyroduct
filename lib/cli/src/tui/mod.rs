@@ -30,8 +30,8 @@ use serde::{Deserialize, Serialize};
 use artifacts::{
     artifacts::AnonModule,
     cache::CacheManager,
-    cargo::{CapabilityManifest, ModuleManifest},
-    environment::{ResolvedCapability, dylib_extension},
+    cargo::{CapabilityManifest, ModuleManifest, ResolvedCapability},
+    environment::dylib_extension,
 };
 use pyroduct::module::{PyroFactory, PyroModule, capability::CapabilityLibrary};
 

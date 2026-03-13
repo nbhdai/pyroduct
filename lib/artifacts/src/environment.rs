@@ -1,5 +1,6 @@
 use crate::artifacts::{Artifact, Artifacts, CapBinary, Capability, Interface};
 use crate::build::{CommandError, run_command};
+use crate::cache::{BuildError, CacheError, CacheManager};
 use crate::cargo::{CapabilityManifest, ModuleManifest};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -37,6 +38,12 @@ pub enum EnvironmentError {
 
     #[error("Source not found: {0}")]
     SourceNotFound(PathBuf),
+
+    #[error("Cache error: {0}")]
+    Cache(#[from] CacheError),
+
+    #[error("Build error: {0}")]
+    Build(#[from] BuildError),
 }
 
 impl From<serde_json::Error> for EnvironmentError {
@@ -51,13 +58,6 @@ pub enum Manifest {
     Module(ModuleManifest),
     Capability(CapabilityManifest),
     Interface(CapabilityManifest),
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
-pub struct ResolvedCapability {
-    pub author: String,
-    pub package: String,
-    pub version: String,
 }
 
 /// Central context to manage cargo compilation environment
@@ -211,7 +211,20 @@ impl Environment {
 
         let artifacts = match &self.manifest {
             Manifest::Module(manifest) => {
-                unimplemented!()
+                let src_path = self.root.join("src").join("lib.rs");
+                if !src_path.exists() {
+                    return Err(EnvironmentError::SourceNotFound(src_path));
+                }
+                let code = fs::read_to_string(&src_path).await?;
+                let manager = CacheManager::new().await?;
+                let anon = manager
+                    .compile_anon(
+                        manifest.dependencies.clone(),
+                        manifest.capabilities.values().cloned().collect(),
+                        &code,
+                    )
+                    .await?;
+                Artifacts::AnonModule(anon)
             }
             Manifest::Capability(manifest) => {
                 tracing::info!("Packaging capability: {:?}", self.root);
