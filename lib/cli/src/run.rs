@@ -1,17 +1,23 @@
+use std::collections::BTreeMap;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
+use artifacts::{
+    cache::CacheManager,
+    cargo::{CapabilityManifest, ModuleManifest, ResolvedCapability},
+    environment::dylib_extension,
+};
 use clap::ValueEnum;
 use fs_err as fs;
 
 use pyroduct::{
     PyroRow,
     format::value::arrow::PreBatch,
-    pipeline::{PipelineConfig, PipelineFactory, PipelinePool},
+    module::{PyroFactory, PyroModule, capability::CapabilityLibrary},
+    pipeline::{Pipeline, PipelineConfig, PipelinePool},
 };
 
-// Use arrow-file to handle reading/writing data formats
 use arrow_file::{
     parse_data_to_batch, record_batch_to_bytes, write_csv, write_jsonl, write_parquet,
 };
@@ -45,13 +51,12 @@ pub fn load_config(config_path: &Path) -> Result<PipelineConfig> {
             serde_yaml::from_str(&config_str).context("Failed to parse pipeline yaml")?
         }
         Some(b"json") => {
-            serde_json::from_str(&config_str).context("Failed to parse pipeline TOML")?
+            serde_json::from_str(&config_str).context("Failed to parse pipeline JSON")?
         }
         _ => anyhow::bail!("Unknown extension, supports toml, yaml and json"),
     };
 
     let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
-    // Resolve relative paths
     for module in config.pipeline.values_mut() {
         for path in module.libraries.iter_mut() {
             if path.is_relative() {
@@ -66,24 +71,110 @@ pub fn load_config(config_path: &Path) -> Result<PipelineConfig> {
     Ok(config)
 }
 
+/// Build a `Pipeline` by compiling each module via the cache and loading
+/// capability libraries from the cache.
+async fn build_pipeline_from_cache(
+    config: &PipelineConfig,
+    cache: &CacheManager,
+) -> Result<Pipeline> {
+    let mut wasmtime_cfg = wasmtime::Config::new();
+    wasmtime_cfg.async_support(true);
+    let engine = wasmtime::Engine::new(&wasmtime_cfg)
+        .map_err(|e| anyhow!("Failed to create wasmtime engine: {}", e))?;
+
+    let lib_file = format!("lib.{}", dylib_extension());
+    let mut steps = Vec::new();
+
+    for (name, mod_conf) in &config.pipeline {
+        // 1. Read source code
+        let src_path = mod_conf.path.join("src/lib.rs");
+        let source_code = fs::read_to_string(&src_path)
+            .with_context(|| format!("Failed to read source for module '{}'", name))?;
+
+        // 2. Read dependencies from Module.toml
+        let mut dependencies = BTreeMap::new();
+        let mod_toml_path = mod_conf.path.join("Module.toml");
+        if mod_toml_path.exists() {
+            let toml_content = fs::read_to_string(&mod_toml_path)?;
+            let manifest: ModuleManifest = toml::from_str(&toml_content)
+                .with_context(|| format!("Failed to parse Module.toml for '{}'", name))?;
+            dependencies = manifest.dependencies;
+        }
+
+        // 3. Resolve capabilities from Capability.toml files
+        let mut capabilities: Vec<ResolvedCapability> = Vec::new();
+        for lib_path in &mod_conf.libraries {
+            let cap_toml_path = lib_path.join("Capability.toml");
+            if cap_toml_path.exists() {
+                let toml_content = fs::read_to_string(&cap_toml_path)?;
+                let manifest: CapabilityManifest = toml::from_str(&toml_content)
+                    .with_context(|| {
+                        format!("Failed to parse Capability.toml at {:?}", cap_toml_path)
+                    })?;
+                capabilities.push(ResolvedCapability {
+                    author: manifest.capability.author.clone(),
+                    package: manifest.capability.name.clone(),
+                    version: manifest.capability.version.clone(),
+                });
+            }
+        }
+
+        // 4. Compile via cache
+        tracing::info!("Compiling module '{}' via cache...", name);
+        let artifact = cache
+            .compile_anon(dependencies, capabilities.clone(), &source_code)
+            .await
+            .with_context(|| format!("Compilation failed for module '{}'", name))?;
+
+        // 5. Load capability libraries from cache
+        let mut libs = Vec::new();
+        for cap in &capabilities {
+            let cap_dir = cache.capabilities_dir(&cap.author, &cap.package, &cap.version);
+            let artifact_path = cap_dir.join(&lib_file);
+            let library = CapabilityLibrary::load(cap.package.clone(), &artifact_path)
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to load capability library from cache: {}",
+                        artifact_path.display()
+                    )
+                })?;
+            libs.push(library);
+        }
+
+        // 6. Instantiate
+        let wasmtime_module = wasmtime::Module::from_binary(&engine, &artifact.wasm)
+            .map_err(|e| anyhow!("Failed to compile WASM for '{}': {}", name, e))?;
+        let pyro_module = PyroModule::new(wasmtime_module)?;
+
+        let mut factory =
+            PyroFactory::new(libs, mod_conf.configurations.clone(), pyro_module)
+                .map_err(|e| anyhow!("Failed to create PyroFactory for '{}': {}", name, e))?;
+
+        let instance = factory
+            .instantiate()
+            .await
+            .map_err(|e| anyhow!("Failed to instantiate module '{}': {}", name, e))?;
+
+        steps.push(instance);
+    }
+
+    Ok(Pipeline { steps })
+}
+
 /// Processes a single row from a JSON string and prints the result to stdout.
 pub async fn run(config_path: &Path, input_json: &str) -> Result<()> {
-    // 1. Setup Pipeline (Single instance, no pool needed)
     let config = load_config(config_path)?;
-    let mut factory = PipelineFactory::load(&config).await?;
-    let mut pipeline = factory.build().await?;
+    let cache = CacheManager::new().await?;
+    let mut pipeline = build_pipeline_from_cache(&config, &cache).await?;
 
-    // 2. Parse Input directly to PyroRow
     tracing::debug!("Parsing input JSON directly to PyroRow");
     let input_row: PyroRow<'static> =
         serde_json::from_str(input_json).context("Failed to deserialize input JSON to PyroRow")?;
 
-    // 3. Execute
     tracing::info!("Executing pipeline...");
     let result_row = pipeline.process(&input_row).await;
 
-    // 4. Print Result
-    // 4. Print Result
     if let Some(failure) = &result_row.failure {
         println!("Pipeline Failed!");
         match &failure.result {
@@ -154,9 +245,8 @@ pub async fn run_batch(
     format: OutputFormat,
 ) -> Result<()> {
     let config = load_config(config_path)?;
-    let mut factory = PipelineFactory::load(&config).await?;
-
-    let pipeline = factory.build().await?;
+    let cache = CacheManager::new().await?;
+    let pipeline = build_pipeline_from_cache(&config, &cache).await?;
     let pool = PipelinePool::new(vec![pipeline]);
 
     tracing::info!("Reading input file: {:?}", input_file);

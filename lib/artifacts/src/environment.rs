@@ -70,13 +70,31 @@ pub struct Environment {
 impl Environment {
     /// Create a new Environment by fetching metadata and detecting manifests from the given root
     pub async fn new(root: PathBuf) -> EnvResult<Self> {
-        let target_dir = Self::get_target_dir(&root).await?;
         let manifest = Self::load_manifest(&root).await?;
+        Self::ensure_cargo_toml(&root, &manifest).await?;
+        let target_dir = Self::get_target_dir(&root).await?;
         Ok(Self {
             root,
             target_dir,
             manifest,
         })
+    }
+
+    /// Write Cargo.toml from Module.toml or Capability.toml if it doesn't exist
+    async fn ensure_cargo_toml(root: &Path, manifest: &Manifest) -> EnvResult<()> {
+        let cargo_toml_path = root.join("Cargo.toml");
+        if cargo_toml_path.exists() {
+            return Ok(());
+        }
+        let cargo_manifest = match manifest {
+            Manifest::Module(m) => m.clone().to_cargo(),
+            Manifest::Capability(m) => m.clone().to_capability_manifest(),
+            Manifest::Interface(m) => m.clone().to_capability_manifest(),
+        };
+        let contents = toml::to_string_pretty(&cargo_manifest)
+            .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
+        fs::write(&cargo_toml_path, contents).await?;
+        Ok(())
     }
 
     pub fn is_capability(&self) -> bool {

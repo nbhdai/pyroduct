@@ -3,6 +3,6 @@ pipeline:
     path: ../../modules/cap_config/
     libraries: ["../../capabilities/config/"]
     configurations:
-      transform:
+      config:
         uppercase: true
         suffix: "!!!"

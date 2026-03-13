@@ -241,7 +241,7 @@ impl PyroFactory {
                                 let output_view = PyroView::from(&output_vec);
                                 let ptr = io.new_input(&output_view).await?;
 
-                                Ok((ptr,))
+                                Ok(ptr)
                             })
                         },
                     )
@@ -272,7 +272,7 @@ impl PyroFactory {
                             let output_view = PyroView::from(&output_vec);
                             let ptr = io.new_input(&output_view).await?;
 
-                            Ok((ptr,))
+                            Ok(ptr)
                         })
                     },
                 )
