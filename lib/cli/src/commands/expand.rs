@@ -10,6 +10,10 @@ pub fn expand_artifacts(path: &Path) -> Result<bool> {
     let is_mod = path.join("Module.toml").exists();
 
     if is_cap {
+        println!(
+            "Expanding capability in {:?}.",
+            path
+        );
         let cap_toml_path = path.join("Capability.toml");
         let manifest_str = fs::read_to_string(&cap_toml_path).context("Unable to read manifest")?;
         let cap_manifest: CapabilityManifest = toml::from_str(&manifest_str).context("Unable to deserialize manifest")?;
@@ -30,6 +34,10 @@ pub fn expand_artifacts(path: &Path) -> Result<bool> {
     }
 
     if is_mod {
+        println!(
+            "Expanding module in {:?}.",
+            path
+        );
         let source_path = path.join("src/lib.rs");
         let source = fs::read_to_string(&source_path).context("Unable to read source")?;
         let code = generate_module(&source).context("Module code")?;
@@ -45,7 +53,10 @@ pub fn expand_artifacts(path: &Path) -> Result<bool> {
 }
 
 pub async fn expand(path: &Path) -> Result<()> {
-    if expand_single(path).await? {
+    let is_cap = path.join("Capability.toml").exists();
+    let is_mod = path.join("Module.toml").exists();
+    if is_cap || is_mod {
+        expand_single(path).await?;
         return Ok(());
     }
 
@@ -59,9 +70,10 @@ pub async fn expand(path: &Path) -> Result<()> {
     let mut errors = Vec::new();
 
     for entry in fs::read_dir(path)? {
+        
         let entry = entry?;
+        
         let subpath = entry.path();
-
         if !subpath.is_dir() {
             continue;
         }
@@ -175,6 +187,7 @@ pub fn wat(input: &Path) -> anyhow::Result<()> {
 pub async fn expand_single(
     path: &Path,
 ) -> Result<bool> {
+
     let output_dir = path.join("artifacts");
 
     let env = Environment::new(path.to_path_buf()).await?;
@@ -182,7 +195,6 @@ pub async fn expand_single(
         let interface_dir = output_dir.join("interface");
         interface_artifact.write_to_directory(&interface_dir).await?;
     }
-
     let artifacts = env.package(false).await?;
     artifacts.write_to_directory(&output_dir).await?;
     expand_artifacts(path)

@@ -73,7 +73,7 @@ enum Commands {
 
 pub fn start_logging() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        "trace,cranelift_frontend=off,cranelift_codegen=off,wasmtime=off".into()
+        "trace,cranelift_frontend=off,cranelift_codegen=off,wasmtime=off,mio=off".into()
     });
 
     tracing_subscriber::registry()
