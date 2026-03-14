@@ -156,6 +156,38 @@ impl PyroFactory {
 
         Self::link_logger(&mut linker)?;
         Self::link_capabilities(&mut linker, &objects)?;
+
+        for (class_name, object) in objects.iter() {
+            for method_name in object.method_names() {
+                // Check what the linker actually holds for this class & method
+                if let Some(ext) = linker.get(&mut store, class_name, &method_name) {
+                    if let Some(func) = ext.into_func() {
+                        let ty = func.ty(&store);
+                        
+                        // Print the actual signature Wasmtime is about to use
+                        tracing::debug!("LINKER CHECK: {}::{} -> {:?}", class_name, method_name, ty);
+                        
+                        // Catch the ghost 4-parameter signature
+                        if ty.params().len() != 2 {
+                            tracing::error!(class_name, method_name, ?ty,
+                                "Incorrectly registered in the linker. Need 2 parameters right before instantiation! ",
+                            );
+                        }
+                        if ty.results().len() != 1 {
+                            tracing::error!(class_name, method_name, ?ty,
+                                "Incorrectly registered in the linker. Need 1 result right before instantiation! ",
+                            );
+                        }
+                    } else {
+                        tracing::error!("LINKER CHECK: {}::{} is registered, but it's NOT a function!", class_name, method_name);
+                    }
+                } else {
+                    tracing::error!("LINKER CHECK: {}::{} is completely MISSING from the linker!", class_name, method_name);
+                }
+                tracing::debug!("LINKER CHECK: {}::{} PASSED", class_name, method_name);
+            }
+        }
+
         let instance = linker
             .instantiate_async(&mut store, self.module.module())
             .await

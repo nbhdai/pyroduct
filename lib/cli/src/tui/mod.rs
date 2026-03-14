@@ -149,7 +149,7 @@ pub struct App {
 
 impl App {
     pub async fn load(yaml_path: &Path, input_path: &Path) -> Result<Self> {
-        let cache = CacheManager::new().await?;
+        let cache = CacheManager::from_env().await?;
         let tui_path = yaml_path.with_extension("tui.json");
         let tui_pipeline = if tui_path.exists() {
             TuiPipeline::from_json(&tui_path)?

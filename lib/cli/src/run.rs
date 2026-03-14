@@ -164,7 +164,7 @@ async fn build_pipeline_from_cache(
 /// Processes a single row from a JSON string and prints the result to stdout.
 pub async fn run(config_path: &Path, input_json: &str) -> Result<()> {
     let config = load_config(config_path)?;
-    let cache = CacheManager::new().await?;
+    let cache = CacheManager::from_env().await?;
     let mut pipeline = build_pipeline_from_cache(&config, &cache).await?;
 
     tracing::debug!("Parsing input JSON directly to PyroRow");
@@ -244,7 +244,7 @@ pub async fn run_batch(
     format: OutputFormat,
 ) -> Result<()> {
     let config = load_config(config_path)?;
-    let cache = CacheManager::new().await?;
+    let cache = CacheManager::from_env().await?;
     let pipeline = build_pipeline_from_cache(&config, &cache).await?;
     let pool = PipelinePool::new(vec![pipeline]);
 

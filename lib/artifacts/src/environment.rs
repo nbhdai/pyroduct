@@ -234,7 +234,7 @@ impl Environment {
                     return Err(EnvironmentError::SourceNotFound(src_path));
                 }
                 let code = fs::read_to_string(&src_path).await?;
-                let manager = CacheManager::new().await?;
+                let manager = CacheManager::from_env().await?;
                 let anon = manager
                     .compile_anon(
                         &manifest.dependencies,

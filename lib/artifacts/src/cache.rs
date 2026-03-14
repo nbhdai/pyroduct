@@ -55,14 +55,53 @@ impl BuildError {
     }
 }
 
+#[derive(serde::Deserialize)]
+pub struct PyroductConfig {
+    pub author: Option<String>,
+    pub target: Option<PathBuf>,
+    pub pyroduct: Option<Dependency>,
+}
+
 pub struct CacheManager {
     pub(crate) root: PathBuf,
     pub target_dir: PathBuf,
     pub pyroduct_dep: Dependency,
+    pub config: PyroductConfig,
 }
 
 impl CacheManager {
-    pub async fn new() -> Result<Self, CacheError> {
+pub async fn new(root: &Path, mut config: PyroductConfig) -> Result<Self, CacheError> {
+        fs::create_dir_all(&root).await.map_err(|e| CacheError {
+            context: "Failed to create cache root".to_string(),
+            error: e,
+        })?;
+        let pyroduct_dep = if let Some(dep) = &mut config.pyroduct {
+            resolve_dependency_path(dep, &root);
+            dep.clone()
+        } else {
+            Dependency::Simple("*".to_string())
+        };
+        let target_dir = if let Some(target) = &mut config.target {
+            if target.is_relative() {
+                *target = root.join(&target);
+            }
+            target.clone()
+        } else {
+            root.join("target")
+        };
+        let manager = Self {
+            root: root.to_path_buf(),
+            target_dir,
+            pyroduct_dep,
+            config,
+        };
+
+        manager.init().await?;
+        Ok(manager)
+    }
+
+    /// The previous new() logic, now moved to from_env()
+    pub async fn from_env() -> Result<Self, CacheError> {
         let root = std::env::var("PYRODUCT")
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
@@ -72,42 +111,25 @@ impl CacheManager {
                     .unwrap_or_else(|_| PathBuf::from("."));
                 home.join(".pyroduct")
             });
-
-        let mut manager = Self {
-            root,
-            target_dir: PathBuf::new(),
-            pyroduct_dep: Dependency::Simple("*".to_string()),
-        };
-        manager.init().await?;
-        Ok(manager)
-    }
-
-    pub async fn config(&self) -> Result<PyroductConfig, CacheError> {
-        let path = self.root.join("config.toml");
-        let content = fs::read_to_string(&path)
+        
+        let config_path = root.join("config.toml");
+        let content = fs::read_to_string(&config_path)
             .await
             .map_err(|error| CacheError {
                 context: format!("Failed to read the configuration"),
                 error,
             })?;
-        let mut config =
+        let config =
             toml::from_str::<PyroductConfig>(&content).map_err(|error| CacheError {
                 context: format!("Failed to parse the configuration"),
                 error: io::Error::new(io::ErrorKind::InvalidData, error),
             })?;
-        if let Some(dep) = &mut config.pyroduct {
-            resolve_dependency_path(dep, &self.root);
-        }
-        if let Some(target) = &mut config.target {
-            if target.is_relative() {
-                *target = self.root.join(&target);
-            }
-        }
-        Ok(config)
+
+        Self::new(&root, config).await
     }
 
     /// The folder instantiator
-    pub async fn init(&mut self) -> Result<(), CacheError> {
+    pub async fn init(&self) -> Result<(), CacheError> {
         fs::create_dir_all(self.capabilities_base_dir())
             .await
             .map_err(|error| CacheError {
@@ -157,33 +179,15 @@ impl CacheManager {
                 error,
             })?;
 
-        let config = self.config().await?;
-        if let Some(target) = config.target {
-            fs::write(
-                cargo_dir.join("config.toml"),
-                format!("[build]\ntarget-dir = \"{}\"", target.display()),
-            )
-            .await
-            .map_err(|error| CacheError {
-                context: "Failed to write target config.toml".to_string(),
-                error,
-            })?;
-            self.target_dir = target;
-        } else {
-            fs::write(
-                cargo_dir.join("config.toml"),
-                "[build]\ntarget-dir = \"target\"",
-            )
-            .await
-            .map_err(|error| CacheError {
-                context: "Failed to write target config.toml".to_string(),
-                error,
-            })?;
-            self.target_dir = self.root.join("target");
-        }
-        if let Some(pyroduct_dep) = config.pyroduct.as_ref() {
-            self.pyroduct_dep = pyroduct_dep.clone();
-        }
+        fs::write(
+            cargo_dir.join("config.toml"),
+            format!("[build]\ntarget-dir = \"{}\"", self.target_dir.display()),
+        )
+        .await
+        .map_err(|error| CacheError {
+            context: "Failed to write target config.toml".to_string(),
+            error,
+        })?;
 
         Ok(())
     }
@@ -519,13 +523,6 @@ edition = "2024"
             }
         }
     }
-
-    pub async fn target_dir(&self) -> Result<PathBuf, CacheError> {
-        Ok(match self.config().await?.target {
-            Some(target) => PathBuf::from(target),
-            None => self.root.join("target"),
-        })
-    }
 }
 
 /// If a `Dependency` has a relative path, resolve it to absolute
@@ -547,9 +544,3 @@ fn resolve_dependency_path(dep: &mut Dependency, base: &std::path::Path) {
     }
 }
 
-#[derive(serde::Deserialize)]
-pub struct PyroductConfig {
-    pub author: Option<String>,
-    pub target: Option<PathBuf>,
-    pub pyroduct: Option<Dependency>,
-}

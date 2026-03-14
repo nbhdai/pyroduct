@@ -5,12 +5,13 @@
 //! These tests invoke `cargo build` under the hood so they are slow — mark
 //! them #[ignore] if you only want fast unit tests in CI.
 
-use crate::cache::CacheManager;
+use crate::cache::{CacheManager, PyroductConfig};
 use crate::cargo::ResolvedCapability;
 use crate::environment::Environment;
 use sha2::Digest;
-use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::{collections::BTreeMap};
+use tempfile::TempDir;
 
 /// Resolve the repo root from the artifacts crate (lib/artifacts -> ../..).
 fn repo_root() -> PathBuf {
@@ -23,9 +24,39 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
+pub fn test_config() -> PyroductConfig {
+    let root = std::env::var("PYRODUCT").expect("PYRODUCT env var not set");
+    let config_path = std::path::Path::new(&root).join("config.toml");
+    
+    // Read the base configuration for pyroduct dependencies
+    let content = std::fs::read_to_string(&config_path).expect("Failed to read config.toml");
+    let config = toml::from_str::<PyroductConfig>(&content).expect("Failed to parse config.toml");
+
+    // Execute cargo metadata to find the actual target directory absolute path
+    let output = std::process::Command::new("cargo")
+        .args(["metadata", "--format-version=1", "--no-deps"])
+        .output()
+        .expect("Failed to execute cargo metadata");
+
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .expect("Failed to parse cargo metadata JSON");
+
+    let target_dir = metadata["target_directory"]
+        .as_str()
+        .map(std::path::PathBuf::from)
+        .expect("Missing target_directory in metadata");
+
+    PyroductConfig {
+        author: None,
+        target: Some(target_dir), // Set the target to the absolute path found via cargo
+        pyroduct: config.pyroduct,
+    }
+}
+
 #[tokio::test]
 async fn ship_httpc_capability_to_cache() {
-    let cache = CacheManager::new().await.unwrap();
+    let dir = TempDir::new().unwrap();
+    let cache = CacheManager::new(dir.path(), test_config()).await.unwrap();
 
     let httpc_path = repo_root().join("capabilities/httpc");
     assert!(
@@ -68,51 +99,53 @@ async fn ship_httpc_capability_to_cache() {
     assert!(has_lib, "expected a native library in the cache");
 }
 
-// #[tokio::test]
-// async fn ship_basic_module_to_cache() {
-//     let cache = CacheManager::new().await.unwrap();
+#[tokio::test]
+async fn ship_basic_module_to_cache() {
+let dir = TempDir::new().unwrap();
+    let cache = CacheManager::new(dir.path(), test_config()).await.unwrap();
 
-//     let basic_path = repo_root().join("modules/basic");
-//     assert!(
-//         basic_path.join("Module.toml").exists(),
-//         "Cannot find modules/basic — run tests from the repo root"
-//     );
+    let basic_path = repo_root().join("modules/basic");
+    assert!(
+        basic_path.join("Module.toml").exists(),
+        "Cannot find modules/basic — run tests from the repo root"
+    );
 
-//     let env = Environment::new(basic_path).await.unwrap();
+    let env = Environment::new(basic_path).await.unwrap();
 
-//     // Modules have no interface step
-//     assert!(
-//         env.create_interface().await.unwrap().is_none(),
-//         "a module should not produce an interface"
-//     );
+    // Modules have no interface step
+    assert!(
+        env.create_interface().await.unwrap().is_none(),
+        "a module should not produce an interface"
+    );
 
-//     let module_artifacts = env.package(true).await.unwrap();
-//     cache.write_artifacts(module_artifacts).await.unwrap();
+    let module_artifacts = env.package(true).await.unwrap();
+    cache.write_artifacts(&module_artifacts).await.unwrap();
 
-//     let mod_dir = cache
-//         .root
-//         .join("modules")
-//         .join("nbhdai")
-//         .join("basic")
-//         .join("0.1.0");
+    let mod_dir = cache
+        .root
+        .join("modules")
+        .join("nbhdai")
+        .join("basic")
+        .join("0.1.0");
 
-//     assert!(mod_dir.join("mod.wasm").exists());
-//     assert!(mod_dir.join("Module.toml").exists());
-//     assert!(mod_dir.join("Cargo.toml").exists());
-//     assert!(mod_dir.join("Cargo.lock").exists());
-//     assert!(mod_dir.join("src/lib.rs").exists());
+    assert!(mod_dir.join("mod.wasm").exists());
+    assert!(mod_dir.join("Module.toml").exists());
+    assert!(mod_dir.join("Cargo.toml").exists());
+    assert!(mod_dir.join("Cargo.lock").exists());
+    assert!(mod_dir.join("src/lib.rs").exists());
 
-//     // Sanity-check the wasm has the right magic bytes
-//     let wasm = std::fs::read(mod_dir.join("mod.wasm")).unwrap();
-//     assert!(
-//         wasm.starts_with(&[0x00, 0x61, 0x73, 0x6D]),
-//         "mod.wasm should start with the wasm magic number"
-//     );
-// }
+    // Sanity-check the wasm has the right magic bytes
+    let wasm = std::fs::read(mod_dir.join("mod.wasm")).unwrap();
+    assert!(
+        wasm.starts_with(&[0x00, 0x61, 0x73, 0x6D]),
+        "mod.wasm should start with the wasm magic number"
+    );
+}
 
 #[tokio::test]
 async fn test_anon_compile_with_interface() {
-    let cache = CacheManager::new().await.unwrap();
+let dir = TempDir::new().unwrap();
+    let cache = CacheManager::new(dir.path(), test_config()).await.unwrap();
 
     // 1. Generate the interface for httpc to compile against
     let httpc_path = repo_root().join("capabilities/httpc");

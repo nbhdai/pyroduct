@@ -27,7 +27,7 @@ pub async fn ship_single(cache: &CacheManager, path: &Path, debug: bool) -> Resu
 pub async fn ship(path: &Path, debug: bool) -> Result<()> {
     let is_cap = path.join("Capability.toml").exists();
     let is_mod = path.join("Module.toml").exists();
-    let cache = CacheManager::new().await?;
+    let cache = CacheManager::from_env().await?;
     // 1. Direct package mode
     if is_cap || is_mod {
         return ship_single(&cache, path, debug).await;

@@ -23,3 +23,6 @@ tracing.workspace = true
 wasmprinter = "0.244.0"
 object = { version = "0.38.1", features = ["macho", "elf", "pe"] }
 gimli = "0.33.0"
+
+[dev-dependencies]
+tempfile.workspace = true
