@@ -42,7 +42,7 @@ async fn ship_httpc_capability_to_cache() {
         .unwrap()
         .expect("httpc is a capability, so create_interface must return Some");
 
-    cache.write_artifacts(interface.into()).await.unwrap();
+    cache.write_artifacts(&interface.into()).await.unwrap();
 
     let iface_dir = cache.interface_dir("nbhdai", "httpc", "0.1.0");
     assert!(iface_dir.join("Capability.toml").exists());
@@ -52,7 +52,7 @@ async fn ship_httpc_capability_to_cache() {
 
     // 2. Build and ship the capability binary
     let cap_artifacts = env.package(true).await.unwrap();
-    cache.write_artifacts(cap_artifacts).await.unwrap();
+    cache.write_artifacts(&cap_artifacts).await.unwrap();
 
     let cap_dir = cache.capabilities_dir("nbhdai", "httpc", "0.1.0");
     assert!(cap_dir.join("Capability.toml").exists());
@@ -124,7 +124,7 @@ async fn test_anon_compile_with_interface() {
         .expect("httpc is a capability, so create_interface must return Some");
 
     // Write the interface manually to the capabilities directory to satisfy the `ResolvedCapability::interface_dir`
-    cache.write_artifacts(interface.into()).await.unwrap();
+    cache.write_artifacts(&interface.into()).await.unwrap();
 
     let cap = ResolvedCapability {
         author: "nbhdai".to_string(),

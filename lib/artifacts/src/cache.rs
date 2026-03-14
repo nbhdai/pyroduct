@@ -451,12 +451,12 @@ edition = "2024"
             spec,
             dependencies,
         };
-        let _ = self.write_artifacts(module.clone().into()).await;
+        let _ = self.write_artifacts(&module.clone().into()).await;
         Ok(module)
     }
 
-    pub async fn write_artifacts(&self, artifacts: Artifacts) -> Result<(), CacheError> {
-        match artifacts {
+    pub async fn write_artifacts(&self, artifacts: &Artifacts) -> Result<(), CacheError> {
+        match &artifacts {
             Artifacts::Capability(capability) => {
                 let path = self.capabilities_dir(
                     &capability.manifest.capability.author,
@@ -471,7 +471,7 @@ edition = "2024"
                         error: e,
                     })
             }
-            Artifacts::Interface(mut interface) => {
+            Artifacts::Interface(interface) => {
                 let path = self.interface_dir(
                     &interface.manifest.capability.author,
                     &interface.manifest.capability.name,
@@ -481,9 +481,10 @@ edition = "2024"
                     context: format!("Failed to create  {}", path.display()),
                     error: e,
                 })?;
-                interface.manifest.pyroduct = self.pyroduct_dep.clone();
+                let mut manifest = interface.manifest.clone();
+                manifest.pyroduct = self.pyroduct_dep.clone();
                 let cargo_path = path.join("Cargo.toml");
-                let cargo = interface.manifest.clone().to_interface_manifest();
+                let cargo = manifest.clone().to_interface_manifest();
                 let cargo = toml::to_string_pretty(&cargo).map_err(|e| CacheError {
                     context: format!("Failed to serialize Cargo.toml to {}", cargo_path.display()),
                     error: io::Error::new(io::ErrorKind::InvalidData, e),

@@ -3,25 +3,34 @@ use artifacts::{cache::CacheManager, environment::Environment};
 use fs_err as fs;
 use std::path::Path;
 
-pub async fn ship_single(cache: &CacheManager, path: &Path) -> Result<()> {
+pub async fn ship_single(cache: &CacheManager, path: &Path, debug: bool) -> Result<()> {
     let env = Environment::new(path.to_path_buf()).await?;
     if let Some(interface_artifact) = env.create_interface().await? {
-        cache.write_artifacts(interface_artifact.into()).await?;
+        cache.write_artifacts(&interface_artifact.into()).await?;
     }
 
     let artifacts = env.package(false).await?;
-    cache.write_artifacts(artifacts).await?;
-
+    cache.write_artifacts(&artifacts).await?;
+    if debug {
+        match &artifacts {
+            artifacts::artifacts::Artifacts::Capability(capability) => {let _ = cache.debug_capabilities(&capability.manifest.capability.author, &capability.manifest.capability.name, &capability.manifest.capability.version).await;},
+            artifacts::artifacts::Artifacts::Interface(_) => {},
+            artifacts::artifacts::Artifacts::Module(module) => {
+                let _ = cache.debug_module(&module.dependencies.dependencies, &module.dependencies.capabilities, &module.source).await;
+            }
+        }
+    }
+    
     Ok(())
 }
 
-pub async fn ship(path: &Path) -> Result<()> {
+pub async fn ship(path: &Path, debug: bool) -> Result<()> {
     let is_cap = path.join("Capability.toml").exists();
     let is_mod = path.join("Module.toml").exists();
     let cache = CacheManager::new().await?;
     // 1. Direct package mode
     if is_cap || is_mod {
-        return ship_single(&cache, path).await;
+        return ship_single(&cache, path, debug).await;
     }
 
     let mut errors = Vec::new();
@@ -39,7 +48,7 @@ pub async fn ship(path: &Path) -> Result<()> {
 
         if is_cap || is_mod {
             found_any = true;
-            match ship_single(&cache, &subpath).await {
+            match ship_single(&cache, &subpath, debug).await {
                 Ok(()) => {}
                 Err(e) => errors.push((subpath, e)),
             }
