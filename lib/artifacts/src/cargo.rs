@@ -1,3 +1,5 @@
+//! Conversions between our manifest and Cargo's
+
 use cargo_toml::{
     Badges, Dependency, DependencyDetail, DepsSet, Edition, FeatureSet, Inheritable,
     InheritedDependencyDetail, LintGroups, Manifest, Package, PatchSet, Product, Profiles,

@@ -1,3 +1,5 @@
+//! Advanced debugging tools for artifacts
+
 use std::{borrow::Cow, collections::HashMap};
 
 use crate::artifacts::{Module, Capability};

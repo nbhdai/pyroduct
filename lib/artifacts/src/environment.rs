@@ -1,5 +1,5 @@
 use crate::artifacts::{Artifact, Artifacts, CapBinary, Capability, Interface};
-use crate::build::{CommandError, run_command};
+use crate::build::{CommandError, format_syn_error, run_command};
 use crate::cache::{BuildError, CacheError, CacheManager};
 use crate::cargo::{CapabilityManifest, ModuleManifest};
 use std::path::{Path, PathBuf};
@@ -380,40 +380,4 @@ pub fn dylib_extension() -> &'static str {
     } else {
         "so"
     }
-}
-
-/// Format a syn::Error with source context
-pub fn format_syn_error(source: &str, err: syn::Error) -> String {
-    let span = err.span();
-    let start = span.start();
-    let msg = err.to_string();
-
-    let lines: Vec<&str> = source.lines().collect();
-    let line_num = start.line;
-    let col = start.column;
-
-    let mut output = String::new();
-    output.push_str(&format!("error: {}\n", msg));
-    output.push_str(&format!("  --> src/lib.rs:{}:{}\n", line_num, col + 1));
-    output.push_str("   |\n");
-
-    // Show context: line before, error line, line after
-    let start_line = line_num.saturating_sub(2);
-    let end_line = (line_num + 1).min(lines.len());
-
-    for i in start_line..end_line {
-        let line_content = lines.get(i).unwrap_or(&"");
-        let display_num = i + 1;
-
-        if display_num == line_num {
-            output.push_str(&format!("{:3} | {}\n", display_num, line_content));
-            // Add caret pointing to the column
-            output.push_str(&format!("    | {}^\n", " ".repeat(col)));
-        } else {
-            output.push_str(&format!("{:3} | {}\n", display_num, line_content));
-        }
-    }
-    output.push_str("   |\n");
-
-    output
 }

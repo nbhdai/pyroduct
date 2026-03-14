@@ -1,8 +1,6 @@
 use crate::artifacts::{Module, Artifact, Artifacts, ModuleDependencies};
-use crate::build::{CommandError, run_command};
-// Ensure you have this import
+use crate::build::{CommandError, run_command, format_syn_error};
 use crate::cargo::ResolvedCapability;
-use crate::environment::format_syn_error;
 use cargo_toml::Dependency;
 use pyro_core::module::generate_module_spec;
 use sha2::{Digest, Sha256};
