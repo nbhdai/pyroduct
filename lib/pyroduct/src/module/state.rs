@@ -40,6 +40,7 @@ impl PyroModule {
             return Err(WasmError::MissingExport("memory".to_string()));
         }
         let classes = Self::gather_classes(&module)?;
+        Self::verify_class_functions(&module)?;
 
         Ok(Self { module, classes })
     }
@@ -150,6 +151,37 @@ impl PyroModule {
             }
         }
         Ok(pyro_classes)
+    }
+
+    fn verify_class_functions(module: &Module) -> Result<(), WasmError> {
+        for import in module.imports() {
+            if import.module() == "env" || import.name() == "register" {
+                continue;
+            }
+            match import.ty() {
+                ExternType::Func(func_type) => {
+                    let params_ok = func_type.params().len() == 2
+                        && matches!(func_type.param(0), Some(ValType::I32))
+                        && matches!(func_type.param(1), Some(ValType::I32));
+                    let results_ok = func_type.results().len() == 1
+                        && matches!(func_type.result(0), Some(ValType::I32));
+                    if !params_ok || !results_ok {
+                        return Err(WasmError::SignatureMismatch(format!(
+                            "{}::{} must have type (i32, i32) -> i32",
+                            import.module(),
+                            import.name()
+                        )));
+                    }
+                }
+                _ => return Err(WasmError::SignatureMismatch(format!(
+                    "{}::{} is not a function",
+                    import.module(),
+                    import.name()
+                ))),
+            }
+            tracing::debug!(class=import.module(), name=import.name(), "Function is of the correct type.")
+        }
+        Ok(())
     }
 
     pub fn has_class(&self, class: &str) -> bool {

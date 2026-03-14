@@ -27,7 +27,7 @@ use ratatui_code_editor::{editor::Editor, theme::vesper};
 use serde::{Deserialize, Serialize};
 
 use artifacts::{
-    artifacts::AnonModule,
+    artifacts::Module,
     cache::CacheManager,
     cargo::{CapabilityManifest, ModuleManifest, ResolvedCapability},
     environment::dylib_extension,
@@ -55,7 +55,7 @@ pub struct CompleteModule {
     pub capabilities: Vec<ResolvedCapability>,
 
     pub configurations: HashMap<String, Option<serde_json::Value>>,
-    pub artifact: Option<AnonModule>,
+    pub artifact: Option<Module>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

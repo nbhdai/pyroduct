@@ -242,14 +242,12 @@ impl Environment {
                         &code,
                     )
                     .await?;
-                Artifacts::AnonModule(anon)
+                Artifacts::Module(anon)
             }
             Manifest::Capability(manifest) => {
                 tracing::info!("Packaging capability: {:?}", self.root);
 
                 let cargo_toml = toml::to_string_pretty(&manifest.clone().to_capability_manifest())
-                    .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
-                let manifest = toml::to_string_pretty(&manifest)
                     .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
 
                 tracing::info!("Compiling capability binary...");
@@ -287,7 +285,7 @@ impl Environment {
                 };
 
                 Artifacts::Capability(Capability {
-                    manifest,
+                    manifest: manifest.clone(),
                     libs: vec![lib],
                     cargo_toml,
                     cargo_lock,

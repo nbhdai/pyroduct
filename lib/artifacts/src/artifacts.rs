@@ -6,6 +6,7 @@ use pyroduct::format::value::ModuleFunc;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::io::{self, Read, Write};
+use std::ops::Deref;
 use std::path::Path;
 use tar::{Builder, Header};
 use tokio::fs;
@@ -18,9 +19,21 @@ pub enum CapBinary {
     Elf(Vec<u8>),
 }
 
+impl Deref for CapBinary {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            CapBinary::Pe(items) => &*items,
+            CapBinary::MachO(items) => &*items,
+            CapBinary::Elf(items) => &*items,
+        }
+    }
+}
+
 pub struct Capability {
     pub libs: Vec<CapBinary>,
-    pub manifest: String,
+    pub manifest: CapabilityManifest,
     pub cargo_toml: String,
     pub cargo_lock: String,
     pub src_lib_rs: String,
@@ -42,7 +55,7 @@ pub struct ModuleDependencies {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
-pub struct AnonModule {
+pub struct Module {
     pub dependencies: ModuleDependencies,
     pub source: String,
     pub wasm: Vec<u8>,
@@ -52,7 +65,7 @@ pub struct AnonModule {
 pub enum Artifacts {
     Capability(Capability),
     Interface(Interface),
-    AnonModule(AnonModule),
+    Module(Module),
 }
 
 impl From<Capability> for Artifacts {
@@ -67,9 +80,9 @@ impl From<Interface> for Artifacts {
     }
 }
 
-impl From<AnonModule> for Artifacts {
-    fn from(value: AnonModule) -> Self {
-        Artifacts::AnonModule(value)
+impl From<Module> for Artifacts {
+    fn from(value: Module) -> Self {
+        Artifacts::Module(value)
     }
 }
 
@@ -106,7 +119,13 @@ impl Artifact for Capability {
                 CapBinary::Elf(bytes) => fs::write(path.join("lib.so"), bytes).await?,
             }
         }
-        fs::write(path.join("Capability.toml"), &self.manifest).await?;
+        let manifest = toml::to_string_pretty(&self.manifest).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unable to serialize manifest: {}", e),
+            )
+        })?;
+        fs::write(path.join("Capability.toml"), &manifest).await?;
         fs::write(path.join("Cargo.toml"), &self.cargo_toml).await?;
         fs::write(path.join("Cargo.lock"), &self.cargo_lock).await?;
         fs::write(path.join("interface.json"), &self.interface_json).await?;
@@ -132,7 +151,13 @@ impl Artifact for Capability {
                 CapBinary::Elf(bytes) => append_file(&mut tar, "lib.so", bytes)?,
             }
         }
-        append_file(&mut tar, "Capability.toml", self.manifest.as_bytes())?;
+        let manifest = toml::to_string_pretty(&self.manifest).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unable to serialize manifest: {}", e),
+            )
+        })?;
+        append_file(&mut tar, "Capability.toml", manifest.as_bytes())?;
         append_file(&mut tar, "Cargo.toml", self.cargo_toml.as_bytes())?;
         append_file(&mut tar, "Cargo.lock", self.cargo_lock.as_bytes())?;
         append_file(&mut tar, "src/lib.rs", self.src_lib_rs.as_bytes())?;
@@ -163,7 +188,14 @@ impl Artifact for Capability {
             file.read_to_end(&mut content)?;
 
             match path.to_string_lossy().as_ref() {
-                "Capability.toml" => manifest = String::from_utf8(content).ok(),
+                "Capability.toml" => {
+                    manifest = toml::from_slice(&content).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Unable to deserialize manifest: {}", e),
+                        )
+                    })?;
+                }
                 "lib.dll" => libs.push(CapBinary::Pe(content)),
                 "lib.dylib" => libs.push(CapBinary::MachO(content)),
                 "lib.so" => libs.push(CapBinary::Elf(content)),
@@ -217,9 +249,17 @@ impl Artifact for Capability {
             ));
         }
 
+        let manifest_string = fs::read(path.join("Capability.toml")).await?;
+        let manifest = serde_json::from_slice(&manifest_string).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unable to deserialize manifest: {}", e),
+            )
+        })?;
+
         Ok(Capability {
             libs,
-            manifest: fs::read_to_string(path.join("Capability.toml")).await?,
+            manifest,
             cargo_toml: fs::read_to_string(path.join("Cargo.toml")).await?,
             cargo_lock: fs::read_to_string(path.join("Cargo.lock")).await?,
             src_lib_rs: fs::read_to_string(path.join("src").join("lib.rs")).await?,
@@ -332,7 +372,7 @@ impl Artifact for Interface {
     }
 }
 
-impl Artifact for AnonModule {
+impl Artifact for Module {
     async fn write_to_directory(&self, path: &Path) -> io::Result<()> {
         let spec = serde_json::to_string_pretty(&self.spec).map_err(|e| {
             io::Error::new(
@@ -418,7 +458,7 @@ impl Artifact for AnonModule {
             }
         }
 
-        Ok(AnonModule {
+        Ok(Module {
             source: source
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Missing source.rs"))?,
             wasm: wasm
@@ -446,7 +486,7 @@ impl Artifact for AnonModule {
                 format!("Unable to deserialize dependencies: {}", e),
             )
         })?;
-        Ok(AnonModule {
+        Ok(Module {
             source: fs::read_to_string(path.join("source.rs")).await?,
             wasm: fs::read(path.join("mod.wasm")).await?,
             spec,
@@ -464,7 +504,7 @@ impl Artifact for Artifacts {
         match self {
             Artifacts::Capability(c) => c.write_to_directory(path).await,
             Artifacts::Interface(i) => i.write_to_directory(path).await,
-            Artifacts::AnonModule(a) => a.write_to_directory(path).await,
+            Artifacts::Module(a) => a.write_to_directory(path).await,
         }
     }
 
@@ -472,7 +512,7 @@ impl Artifact for Artifacts {
         match self {
             Artifacts::Capability(c) => c.to_tarball(),
             Artifacts::Interface(i) => i.to_tarball(),
-            Artifacts::AnonModule(a) => a.to_tarball(),
+            Artifacts::Module(a) => a.to_tarball(),
         }
     }
 
@@ -498,7 +538,7 @@ impl Artifact for Artifacts {
         }
 
         if is_anon {
-            Ok(Artifacts::AnonModule(AnonModule::from_tarball(bytes)?))
+            Ok(Artifacts::Module(Module::from_tarball(bytes)?))
         } else if is_cap_or_interface {
             if has_lib {
                 Ok(Artifacts::Capability(Capability::from_tarball(bytes)?))
@@ -518,7 +558,7 @@ impl Artifact for Artifacts {
             .await
             .unwrap_or(false)
         {
-            Ok(Artifacts::AnonModule(AnonModule::from_dir(path).await?))
+            Ok(Artifacts::Module(Module::from_dir(path).await?))
         } else if fs::try_exists(path.join("Capability.toml"))
             .await
             .unwrap_or(false)

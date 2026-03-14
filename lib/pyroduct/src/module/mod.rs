@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::Deserialize;
-use wasmtime::{Caller, Engine, Instance, Linker, Memory, Store, TypedFunc};
+use wasmtime::{Caller, Engine, FuncType, Instance, Linker, Memory, Store, TypedFunc};
 
 use crate::ffi::ForeignObject;
 use crate::format::{
@@ -207,14 +207,11 @@ impl PyroFactory {
 
             for method_name in object.method_names() {
                 let method_name = method_name.to_string();
-
                 let class_name = class_name.clone();
                 let fn_name = method_name.clone();
                 let object = object.clone();
-
-                linker
-                    .func_wrap_async(
-                        &class_name,
+                linker.func_wrap_async(
+                    &class_name,
                         &method_name,
                         move |caller: Caller<'_, PyroState>,
                               (client_ptr, input_ptr): (i32, i32)| {
@@ -228,16 +225,13 @@ impl PyroFactory {
                                 );
                                 let mut io = PyroCallIo::from_caller(caller)?;
 
-                                // Read input and get state — both are &self borrows.
                                 let client_view = io.borrow_argument(client_ptr).await?;
                                 let input_view = io.borrow_argument(input_ptr).await?;
 
-                                // Call user function — consumes both borrows on return.
                                 let output_vec =
                                     object.call(&fn_name, client_view, input_view).await?;
                                 output_vec.parse_as_error()?;
 
-                                // Write output back into wasm memory.
                                 let output_view = PyroView::from(&output_vec);
                                 let ptr = io.new_input(&output_view).await?;
 
@@ -246,7 +240,7 @@ impl PyroFactory {
                         },
                     )
                     .map_err(|e| {
-                        WasmError::LinkFunctionFailed(class_name, method_name, e.to_string())
+                        WasmError::LinkFunctionFailed(class_name, method_name, format!("Error: {:#}\nBacktrace: {}", e, e.backtrace()))
                     })?;
             }
 
@@ -282,6 +276,7 @@ impl PyroFactory {
         }
         Ok(())
     }
+
 }
 
 pub struct PyroInstance {

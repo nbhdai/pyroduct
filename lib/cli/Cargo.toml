@@ -33,8 +33,6 @@ prettyplease.workspace = true
 
 tracing.workspace = true
 tracing-subscriber.workspace = true
-wasmprinter = "0.244.0"
-object = { version = "0.38.1", features = ["macho"] }
 
 crossterm = "0.29.0"
 ratatui = "0.29.0"

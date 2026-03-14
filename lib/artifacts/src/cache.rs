@@ -1,7 +1,7 @@
-use crate::artifacts::{AnonModule, Artifact, Artifacts, ModuleDependencies};
+use crate::artifacts::{Module, Artifact, Artifacts, ModuleDependencies};
 use crate::build::{CommandError, run_command};
 // Ensure you have this import
-use crate::cargo::{CapabilityManifest, ResolvedCapability};
+use crate::cargo::ResolvedCapability;
 use crate::environment::format_syn_error;
 use cargo_toml::Dependency;
 use pyro_core::module::generate_module_spec;
@@ -272,7 +272,7 @@ impl CacheManager {
         _dependencies: &BTreeMap<String, Dependency>,
         _capabilities: &Vec<ResolvedCapability>,
         code: &str,
-    ) -> Result<Option<AnonModule>, BuildError> {
+    ) -> Result<Option<Module>, BuildError> {
         let mut hasher = Sha256::new();
         hasher.update(&code);
         // TODO The hash should also depend on the dependencies
@@ -280,7 +280,7 @@ impl CacheManager {
         let hash = format!("{:x}", hasher.finalize());
         let path = self.root.join("anon").join(hash);
         if path.exists() {
-            let module = AnonModule::from_dir(&path).await?;
+            let module = Module::from_dir(&path).await?;
             Ok(Some(module))
         } else {
             Ok(None)
@@ -294,7 +294,7 @@ impl CacheManager {
         dependencies: BTreeMap<String, Dependency>,
         capabilities: Vec<ResolvedCapability>,
         code: &str,
-    ) -> Result<AnonModule, BuildError> {
+    ) -> Result<Module, BuildError> {
         if let Some(module) = self.get_anon(&dependencies, &capabilities, code).await? {
             return Ok(module);
         }
@@ -378,7 +378,7 @@ edition = "2024"
             capabilities,
         };
 
-        let module = AnonModule {
+        let module = Module {
             source: code.to_string(),
             wasm,
             spec,
@@ -391,15 +391,10 @@ edition = "2024"
     pub async fn write_artifacts(&self, artifacts: Artifacts) -> Result<(), CacheError> {
         match artifacts {
             Artifacts::Capability(capability) => {
-                let m: CapabilityManifest =
-                    toml::from_str(&capability.manifest).map_err(|e| CacheError {
-                        context: "Failed to deserialize Capability.toml".to_string(),
-                        error: std::io::Error::new(std::io::ErrorKind::InvalidData, e),
-                    })?;
                 let path = self.capabilities_dir(
-                    &m.capability.author,
-                    &m.capability.name,
-                    &m.capability.version,
+                    &capability.manifest.capability.author,
+                    &capability.manifest.capability.name,
+                    &capability.manifest.capability.version,
                 );
                 capability
                     .write_to_directory(&path)
@@ -440,7 +435,7 @@ edition = "2024"
                         error: e,
                     })
             }
-            Artifacts::AnonModule(anon) => {
+            Artifacts::Module(anon) => {
                 let mut hasher = Sha256::new();
                 hasher.update(&anon.source);
                 // TODO The hash should also depend on the dependencies
