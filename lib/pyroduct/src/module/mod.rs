@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::Deserialize;
-use wasmtime::{Caller, Engine, FuncType, Instance, Linker, Memory, Store, TypedFunc};
+use wasmtime::{Caller, Engine, FuncType, Instance, Linker, Memory, Store, TypedFunc, Val, ValType};
 
 use crate::ffi::ForeignObject;
 use crate::format::{
@@ -159,7 +159,7 @@ impl PyroFactory {
         let instance = linker
             .instantiate_async(&mut store, self.module.module())
             .await
-            .map_err(|e| WasmError::InstantiationFailed(e.to_string()))?;
+            .map_err(|e| WasmError::InstantiationFailed(format!("{:#}", e)))?;
         let memory = instance
             .get_memory(&mut store, "memory")
             .ok_or_else(|| WasmError::MissingExport("Missing 'memory'".to_string()))?;
@@ -210,50 +210,75 @@ impl PyroFactory {
                 let class_name = class_name.clone();
                 let fn_name = method_name.clone();
                 let object = object.clone();
-                linker.func_wrap_async(
-                    &class_name,
+
+                let ty = FuncType::new(
+                    linker.engine(),
+                    [ValType::I32, ValType::I32],
+                    [ValType::I32],
+                );
+
+                linker
+                    .func_new_async(
+                        &class_name,
                         &method_name,
-                        move |caller: Caller<'_, PyroState>,
-                              (client_ptr, input_ptr): (i32, i32)| {
+                        ty,
+                        move |caller, params, results| {
+                            let client_ptr = params[0].unwrap_i32();
+                            let input_ptr = params[1].unwrap_i32();
+
                             let object = object.clone();
                             let fn_name = fn_name.clone();
+
                             Box::new(async move {
                                 tracing::debug!(
                                     class_name = object.name(),
                                     fn_name,
                                     "Calling function"
                                 );
+                                
                                 let mut io = PyroCallIo::from_caller(caller)?;
 
                                 let client_view = io.borrow_argument(client_ptr).await?;
                                 let input_view = io.borrow_argument(input_ptr).await?;
 
-                                let output_vec =
-                                    object.call(&fn_name, client_view, input_view).await?;
+                                let output_vec = object.call(&fn_name, client_view, input_view).await?;
                                 output_vec.parse_as_error()?;
 
                                 let output_view = PyroView::from(&output_vec);
                                 let ptr = io.new_input(&output_view).await?;
 
-                                Ok(ptr)
+                                results[0] = Val::I32(ptr);
+
+                                Ok(())
                             })
                         },
                     )
                     .map_err(|e| {
-                        WasmError::LinkFunctionFailed(class_name, method_name, format!("Error: {:#}\nBacktrace: {}", e, e.backtrace()))
+                        WasmError::LinkFunctionFailed(
+                            class_name,
+                            method_name,
+                            format!("Error: {:#}\nBacktrace: {}", e, e.backtrace()),
+                        )
                     })?;
             }
 
             let class_name = class_name.clone();
             let object = object.clone();
+            let ty = FuncType::new(
+                linker.engine(),
+                [ValType::I32],
+                [ValType::I32],
+            );
             linker
-                .func_wrap_async(
+                .func_new_async(
                     &class_name,
                     "register",
-                    move |caller: Caller<'_, PyroState>, (client_ptr,): (i32,)| {
+                    ty,
+                    move |caller, params, results| {
                         let object = object.clone();
                         Box::new(async move {
                             let mut io = PyroCallIo::from_caller(caller)?;
+                            let client_ptr = params[0].unwrap_i32();
 
                             // Read input and get state — both are &self borrows.
                             let client_view = io.borrow_argument(client_ptr).await?;
@@ -265,8 +290,8 @@ impl PyroFactory {
                             // Write output back into wasm memory.
                             let output_view = PyroView::from(&output_vec);
                             let ptr = io.new_input(&output_view).await?;
-
-                            Ok(ptr)
+                            results[0] = Val::I32(ptr);
+                            Ok(())
                         })
                     },
                 )

@@ -227,8 +227,8 @@ impl App {
             match self
                 .cache
                 .compile_anon(
-                    dependencies,
-                    module.capabilities.clone(),
+                    &dependencies,
+                    &module.capabilities,
                     &module.source_code,
                 )
                 .await
@@ -274,8 +274,8 @@ impl App {
                 match self
                     .cache
                     .compile_anon(
-                        dependencies,
-                        module.capabilities.clone(),
+                        &dependencies,
+                        &module.capabilities,
                         &module.source_code,
                     )
                     .await

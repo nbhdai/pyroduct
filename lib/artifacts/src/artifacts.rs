@@ -97,7 +97,7 @@ pub trait Artifact: Sized {
 }
 
 // --- Helper for appending files to a tarball ---
-fn append_file<W: Write>(tar: &mut Builder<W>, name: &str, data: &[u8]) -> Result<(), io::Error> {
+pub(crate) fn append_file<W: Write>(tar: &mut Builder<W>, name: &str, data: &[u8]) -> Result<(), io::Error> {
     let mut header = Header::new_gnu();
     header.set_size(data.len() as u64);
     header.set_mode(0o644);
@@ -250,7 +250,7 @@ impl Artifact for Capability {
         }
 
         let manifest_string = fs::read(path.join("Capability.toml")).await?;
-        let manifest = serde_json::from_slice(&manifest_string).map_err(|e| {
+        let manifest = toml::from_slice(&manifest_string).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Unable to deserialize manifest: {}", e),
@@ -357,7 +357,7 @@ impl Artifact for Interface {
 
     async fn from_dir(path: &Path) -> Result<Self, io::Error> {
         let manifest_string = fs::read(path.join("Capability.toml")).await?;
-        let manifest = serde_json::from_slice(&manifest_string).map_err(|e| {
+        let manifest = toml::from_slice(&manifest_string).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Unable to deserialize manifest: {}", e),

@@ -237,8 +237,8 @@ impl Environment {
                 let manager = CacheManager::new().await?;
                 let anon = manager
                     .compile_anon(
-                        manifest.dependencies.clone(),
-                        manifest.capabilities.values().cloned().collect(),
+                        &manifest.dependencies,
+                        &manifest.capabilities.values().cloned().collect(),
                         &code,
                     )
                     .await?;

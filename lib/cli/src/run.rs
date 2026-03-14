@@ -107,8 +107,8 @@ async fn build_pipeline_from_cache(
             let cap_toml_path = lib_path.join("Capability.toml");
             if cap_toml_path.exists() {
                 let toml_content = fs::read_to_string(&cap_toml_path)?;
-                let manifest: CapabilityManifest = toml::from_str(&toml_content)
-                    .with_context(|| {
+                let manifest: CapabilityManifest =
+                    toml::from_str(&toml_content).with_context(|| {
                         format!("Failed to parse Capability.toml at {:?}", cap_toml_path)
                     })?;
                 capabilities.push(ResolvedCapability {
@@ -122,7 +122,7 @@ async fn build_pipeline_from_cache(
         // 4. Compile via cache
         tracing::info!("Compiling module '{}' via cache...", name);
         let artifact = cache
-            .compile_anon(dependencies, capabilities.clone(), &source_code)
+            .compile_anon(&dependencies, &capabilities, &source_code)
             .await
             .with_context(|| format!("Compilation failed for module '{}'", name))?;
 
@@ -147,9 +147,8 @@ async fn build_pipeline_from_cache(
             .map_err(|e| anyhow!("Failed to compile WASM for '{}': {}", name, e))?;
         let pyro_module = PyroModule::new(wasmtime_module)?;
 
-        let mut factory =
-            PyroFactory::new(libs, mod_conf.configurations.clone(), pyro_module)
-                .map_err(|e| anyhow!("Failed to create PyroFactory for '{}': {}", name, e))?;
+        let mut factory = PyroFactory::new(libs, mod_conf.configurations.clone(), pyro_module)
+            .map_err(|e| anyhow!("Failed to create PyroFactory for '{}': {}", name, e))?;
 
         let instance = factory
             .instantiate()

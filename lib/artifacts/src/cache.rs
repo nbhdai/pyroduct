@@ -1,8 +1,12 @@
-use crate::artifacts::{Module, Artifact, Artifacts, ModuleDependencies};
-use crate::build::{CommandError, run_command, format_syn_error};
+use crate::artifacts::{Artifact, Artifacts, Capability, Module, ModuleDependencies};
+use crate::build::{CommandError, format_syn_error, run_command};
 use crate::cargo::ResolvedCapability;
+use crate::debug::{self, CapabilityDebug, ModuleDebug};
 use cargo_toml::Dependency;
-use pyro_core::module::generate_module_spec;
+use pyro_core::{
+    ffi::generate_capability,
+    module::{generate_module, generate_module_spec},
+};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io;
@@ -223,6 +227,70 @@ impl CacheManager {
         })
     }
 
+    pub async fn debug_capabilities(
+        &self,
+        author: &str,
+        name: &str,
+        version: &str,
+    ) -> Result<CapabilityDebug, BuildError> {
+        let path = self.capabilities_dir(author, name, version);
+        let capability = Capability::from_dir(&path)
+            .await
+            .map_err(|error| BuildError::io("failed to load capability from cache", error))?;
+
+        let symbols = debug::symbols(&capability);
+
+        let code = generate_capability(
+            &capability.src_lib_rs,
+            &capability.manifest.capability.name,
+            &capability.manifest.capability.version,
+        )
+        .map_err(|e| {
+            BuildError::Documentation(format!("Capability code generation error: {}", e))
+        })?;
+        let cap_rs = Some(prettyplease::unparse(&code));
+
+        let debug = CapabilityDebug { symbols, cap_rs };
+        debug.write_to_directory(&path).await?;
+
+        Ok(debug)
+    }
+
+    pub async fn debug_module(
+        &self,
+        _dependencies: &BTreeMap<String, Dependency>,
+        _capabilities: &Vec<ResolvedCapability>,
+        code: &str,
+    ) -> Result<ModuleDebug, BuildError> {
+        let mut hasher = Sha256::new();
+        hasher.update(&code);
+        // TODO The hash should also depend on the dependencies
+        // hasher.update(&anon.dependencies);
+        let hash = format!("{:x}", hasher.finalize());
+        let path = self.root.join("anon").join(hash);
+        let module = Module::from_dir(&path)
+            .await
+            .map_err(|error| BuildError::io("failed to load module from cache", error))?;
+
+        let wat = match debug::wat(&module) {
+            Ok(wat) => Some(wat),
+            Err(error) => {
+                tracing::error!(error, "Unable to create wat");
+                None
+            }
+        };
+
+        let generated_code = generate_module(&module.source).map_err(|e| {
+            BuildError::Documentation(format!("Module code generation error: {}", e))
+        })?;
+        let cap_rs = Some(prettyplease::unparse(&generated_code));
+
+        let debug = ModuleDebug { wat, cap_rs };
+        debug.write_to_directory(&path).await?;
+
+        Ok(debug)
+    }
+
     /// Returns the config documentation (config.json) for a shipped capability, if it exists.
     pub async fn capability_config_spec(
         &self,
@@ -266,7 +334,8 @@ impl CacheManager {
         Ok(())
     }
 
-    pub async fn get_anon(&self, 
+    pub async fn get_anon(
+        &self,
         _dependencies: &BTreeMap<String, Dependency>,
         _capabilities: &Vec<ResolvedCapability>,
         code: &str,
@@ -289,8 +358,8 @@ impl CacheManager {
     /// artifact. Returns the hex SHA-256 hash that identifies it in the cache.
     pub async fn compile_anon(
         &self,
-        dependencies: BTreeMap<String, Dependency>,
-        capabilities: Vec<ResolvedCapability>,
+        dependencies: &BTreeMap<String, Dependency>,
+        capabilities: &Vec<ResolvedCapability>,
         code: &str,
     ) -> Result<Module, BuildError> {
         if let Some(module) = self.get_anon(&dependencies, &capabilities, code).await? {
@@ -372,8 +441,8 @@ edition = "2024"
             ))?;
 
         let dependencies = ModuleDependencies {
-            dependencies,
-            capabilities,
+            dependencies: dependencies.clone(),
+            capabilities: capabilities.clone(),
         };
 
         let module = Module {
@@ -409,9 +478,9 @@ edition = "2024"
                     &interface.manifest.capability.version,
                 );
                 fs::create_dir_all(&path).await.map_err(|e| CacheError {
-                        context: format!("Failed to create  {}", path.display()),
-                        error: e,
-                    })?;
+                    context: format!("Failed to create  {}", path.display()),
+                    error: e,
+                })?;
                 interface.manifest.pyroduct = self.pyroduct_dep.clone();
                 let cargo_path = path.join("Cargo.toml");
                 let cargo = interface.manifest.clone().to_interface_manifest();

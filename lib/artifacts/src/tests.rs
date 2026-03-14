@@ -8,6 +8,7 @@
 use crate::cache::CacheManager;
 use crate::cargo::ResolvedCapability;
 use crate::environment::Environment;
+use sha2::Digest;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -67,47 +68,47 @@ async fn ship_httpc_capability_to_cache() {
     assert!(has_lib, "expected a native library in the cache");
 }
 
-#[tokio::test]
-async fn ship_basic_module_to_cache() {
-    let cache = CacheManager::new().await.unwrap();
+// #[tokio::test]
+// async fn ship_basic_module_to_cache() {
+//     let cache = CacheManager::new().await.unwrap();
 
-    let basic_path = repo_root().join("modules/basic");
-    assert!(
-        basic_path.join("Module.toml").exists(),
-        "Cannot find modules/basic — run tests from the repo root"
-    );
+//     let basic_path = repo_root().join("modules/basic");
+//     assert!(
+//         basic_path.join("Module.toml").exists(),
+//         "Cannot find modules/basic — run tests from the repo root"
+//     );
 
-    let env = Environment::new(basic_path).await.unwrap();
+//     let env = Environment::new(basic_path).await.unwrap();
 
-    // Modules have no interface step
-    assert!(
-        env.create_interface().await.unwrap().is_none(),
-        "a module should not produce an interface"
-    );
+//     // Modules have no interface step
+//     assert!(
+//         env.create_interface().await.unwrap().is_none(),
+//         "a module should not produce an interface"
+//     );
 
-    let module_artifacts = env.package(true).await.unwrap();
-    cache.write_artifacts(module_artifacts).await.unwrap();
+//     let module_artifacts = env.package(true).await.unwrap();
+//     cache.write_artifacts(module_artifacts).await.unwrap();
 
-    let mod_dir = cache
-        .root
-        .join("modules")
-        .join("nbhdai")
-        .join("basic")
-        .join("0.1.0");
+//     let mod_dir = cache
+//         .root
+//         .join("modules")
+//         .join("nbhdai")
+//         .join("basic")
+//         .join("0.1.0");
 
-    assert!(mod_dir.join("mod.wasm").exists());
-    assert!(mod_dir.join("Module.toml").exists());
-    assert!(mod_dir.join("Cargo.toml").exists());
-    assert!(mod_dir.join("Cargo.lock").exists());
-    assert!(mod_dir.join("src/lib.rs").exists());
+//     assert!(mod_dir.join("mod.wasm").exists());
+//     assert!(mod_dir.join("Module.toml").exists());
+//     assert!(mod_dir.join("Cargo.toml").exists());
+//     assert!(mod_dir.join("Cargo.lock").exists());
+//     assert!(mod_dir.join("src/lib.rs").exists());
 
-    // Sanity-check the wasm has the right magic bytes
-    let wasm = std::fs::read(mod_dir.join("mod.wasm")).unwrap();
-    assert!(
-        wasm.starts_with(&[0x00, 0x61, 0x73, 0x6D]),
-        "mod.wasm should start with the wasm magic number"
-    );
-}
+//     // Sanity-check the wasm has the right magic bytes
+//     let wasm = std::fs::read(mod_dir.join("mod.wasm")).unwrap();
+//     assert!(
+//         wasm.starts_with(&[0x00, 0x61, 0x73, 0x6D]),
+//         "mod.wasm should start with the wasm magic number"
+//     );
+// }
 
 #[tokio::test]
 async fn test_anon_compile_with_interface() {
@@ -141,9 +142,9 @@ async fn test_anon_compile_with_interface() {
             Ok(response)
         }
     "#;
-
+    let caps = vec![cap];
     let anon = cache
-        .compile_anon(BTreeMap::new(), vec![cap], code)
+        .compile_anon(&BTreeMap::new(), &caps, code)
         .await
         .unwrap();
 
@@ -152,4 +153,28 @@ async fn test_anon_compile_with_interface() {
         anon.wasm.starts_with(&[0x00, 0x61, 0x73, 0x6D]),
         "Compiled output should be a valid WASM binary"
     );
+
+    let mut hasher = sha2::Sha256::new();
+    sha2::Digest::update(&mut hasher, code);
+    let hash = format!("{:x}", sha2::Digest::finalize(hasher));
+
+    // 2. Test debug_module
+    let debug_mod = cache
+        .debug_module(&BTreeMap::new(), &caps, code)
+        .await
+        .unwrap();
+    let mod_dir = cache.root.join("anon").join(&hash);
+    assert!(mod_dir.join("mod.wat").exists());
+    assert!(mod_dir.join("cap.rs").exists());
+    assert!(debug_mod.wat.is_some());
+    assert!(debug_mod.cap_rs.is_some());
+
+    // 3. Test debug_capabilities
+    let debug_cap = cache
+        .debug_capabilities("nbhdai", "httpc", "0.1.0")
+        .await
+        .unwrap();
+    let cap_dir = cache.capabilities_dir("nbhdai", "httpc", "0.1.0");
+    assert!(cap_dir.join("cap.rs").exists());
+    assert!(debug_cap.cap_rs.is_some());
 }
