@@ -486,7 +486,7 @@ impl ModuleConfig {
         config.async_support(true);
         let engine = Engine::new(&config).map_err(|e| WasmError::EngineError(e.to_string()))?;
 
-        let wasm_path = self.path.join("artifacts").join("mod.wasm");
+        let wasm_path = self.path.join("mod.wasm");
         let binary = std::fs::read(&wasm_path).map_err(|e| {
             WasmError::InstantiationFailed(format!(
                 "Failed to read WASM at {}: {}",
@@ -511,7 +511,7 @@ impl ModuleConfig {
         let lib_file = "lib.so";
 
         for lib_path in &self.libraries {
-            let artifact_path = lib_path.join("artifacts").join(lib_file);
+            let artifact_path = lib_path.join(lib_file);
             let lib_name = lib_path
                 .file_name()
                 .unwrap_or_default()

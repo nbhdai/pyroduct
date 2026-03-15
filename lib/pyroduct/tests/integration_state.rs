@@ -19,13 +19,13 @@ async fn test_capability_state_preservation() {
         .with(filter)
         .init();
     // Use the counter capability from tests/cap_config
-    let cap_path = Path::new("../../capabilities/state/");
+    let cap_path = Path::new("../../capabilities/state/artifacts/");
 
     let config = PipelineConfig {
         pipeline: IndexMap::from([(
             "step".to_string(),
             ModuleConfig {
-                path: Path::new("../../modules/cap_state/").to_path_buf(),
+                path: Path::new("../../modules/cap_state/artifacts/").to_path_buf(),
                 libraries: vec![cap_path.to_path_buf()],
                 configurations: HashMap::from([("state".to_string(), None)]),
             },

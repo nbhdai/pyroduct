@@ -62,6 +62,46 @@ pub struct Module {
     pub spec: ModuleFunc<'static>,
 }
 
+use sha2::{Digest, Sha256};
+
+impl Module {
+    /// Computes a deterministic hash of the module's source and dependencies.
+    pub fn hash(&self) -> String {
+        Self::compute_hash(
+            &self.source,
+            &self.dependencies.dependencies,
+            &self.dependencies.capabilities,
+        )
+    }
+
+    pub fn compute_hash(
+        code: &str,
+        dependencies: &std::collections::BTreeMap<String, cargo_toml::Dependency>,
+        capabilities: &[crate::cargo::ResolvedCapability],
+    ) -> String {
+        let mut hasher = Sha256::new();
+
+        hasher.update(code.as_bytes());
+
+        if let Ok(deps_json) = serde_json::to_string(dependencies) {
+            hasher.update(deps_json.as_bytes());
+        }
+
+        let mut sorted_caps = capabilities.to_vec();
+        sorted_caps.sort_by(|a, b| {
+            a.package.cmp(&b.package)
+                .then_with(|| a.author.cmp(&b.author))
+                .then_with(|| a.version.cmp(&b.version))
+        });
+
+        if let Ok(caps_json) = serde_json::to_string(&sorted_caps) {
+            hasher.update(caps_json.as_bytes());
+        }
+
+        format!("{:x}", hasher.finalize())
+    }
+}
+
 pub enum Artifacts {
     Capability(Capability),
     Interface(Interface),

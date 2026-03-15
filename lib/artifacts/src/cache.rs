@@ -7,7 +7,6 @@ use pyro_core::{
     ffi::generate_capability,
     module::{generate_module, generate_module_spec},
 };
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -262,15 +261,11 @@ pub async fn new(root: &Path, mut config: PyroductConfig) -> Result<Self, CacheE
 
     pub async fn debug_module(
         &self,
-        _dependencies: &BTreeMap<String, Dependency>,
-        _capabilities: &Vec<ResolvedCapability>,
+        dependencies: &BTreeMap<String, Dependency>,
+        capabilities: &Vec<ResolvedCapability>,
         code: &str,
     ) -> Result<ModuleDebug, BuildError> {
-        let mut hasher = Sha256::new();
-        hasher.update(&code);
-        // TODO The hash should also depend on the dependencies
-        // hasher.update(&anon.dependencies);
-        let hash = format!("{:x}", hasher.finalize());
+        let hash = Module::compute_hash(code, dependencies, capabilities);
         let path = self.root.join("anon").join(hash);
         let module = Module::from_dir(&path)
             .await
@@ -340,15 +335,11 @@ pub async fn new(root: &Path, mut config: PyroductConfig) -> Result<Self, CacheE
 
     pub async fn get_anon(
         &self,
-        _dependencies: &BTreeMap<String, Dependency>,
-        _capabilities: &Vec<ResolvedCapability>,
+        dependencies: &BTreeMap<String, Dependency>,
+        capabilities: &Vec<ResolvedCapability>,
         code: &str,
     ) -> Result<Option<Module>, BuildError> {
-        let mut hasher = Sha256::new();
-        hasher.update(&code);
-        // TODO The hash should also depend on the dependencies
-        // hasher.update(&anon.dependencies);
-        let hash = format!("{:x}", hasher.finalize());
+        let hash = Module::compute_hash(code, dependencies, capabilities);
         let path = self.root.join("anon").join(hash);
         if path.exists() {
             let module = Module::from_dir(&path).await?;
@@ -508,11 +499,7 @@ edition = "2024"
                     })
             }
             Artifacts::Module(anon) => {
-                let mut hasher = Sha256::new();
-                hasher.update(&anon.source);
-                // TODO The hash should also depend on the dependencies
-                // hasher.update(&anon.dependencies);
-                let hash = format!("{:x}", hasher.finalize());
+                let hash = anon.hash();
                 let path = self.root.join("anon").join(hash);
                 anon.write_to_directory(&path)
                     .await

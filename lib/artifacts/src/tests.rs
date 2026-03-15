@@ -5,12 +5,14 @@
 //! These tests invoke `cargo build` under the hood so they are slow — mark
 //! them #[ignore] if you only want fast unit tests in CI.
 
+use crate::artifacts::{Artifact, Artifacts};
 use crate::cache::{CacheManager, PyroductConfig};
 use crate::cargo::ResolvedCapability;
 use crate::environment::Environment;
+use cargo_toml::Dependency;
 use sha2::Digest;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::{collections::BTreeMap};
 use tempfile::TempDir;
 
 /// Resolve the repo root from the artifacts crate (lib/artifacts -> ../..).
@@ -27,10 +29,10 @@ fn repo_root() -> PathBuf {
 pub fn test_config() -> PyroductConfig {
     let root = std::env::var("PYRODUCT").expect("PYRODUCT env var not set");
     let config_path = std::path::Path::new(&root).join("config.toml");
-    
+
     // Read the base configuration for pyroduct dependencies
     let content = std::fs::read_to_string(&config_path).expect("Failed to read config.toml");
-    let config = toml::from_str::<PyroductConfig>(&content).expect("Failed to parse config.toml");
+    let mut config = toml::from_str::<PyroductConfig>(&content).expect("Failed to parse config.toml");
 
     // Execute cargo metadata to find the actual target directory absolute path
     let output = std::process::Command::new("cargo")
@@ -38,13 +40,26 @@ pub fn test_config() -> PyroductConfig {
         .output()
         .expect("Failed to execute cargo metadata");
 
-    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .expect("Failed to parse cargo metadata JSON");
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("Failed to parse cargo metadata JSON");
 
     let target_dir = metadata["target_directory"]
         .as_str()
         .map(std::path::PathBuf::from)
         .expect("Missing target_directory in metadata");
+
+    // Ensure the pyroduct dependency path is absolute before we pass it to 
+    // a CacheManager running inside a temporary directory.
+    if let Some(Dependency::Detailed(detail)) = &mut config.pyroduct {
+        if let Some(path) = &mut detail.path {
+            let absolute_path = std::path::Path::new(&root).join(&path);
+            *path = absolute_path
+                .canonicalize()
+                .unwrap_or(absolute_path)
+                .to_string_lossy()
+                .into_owned();
+        }
+    }
 
     PyroductConfig {
         author: None,
@@ -101,7 +116,7 @@ async fn ship_httpc_capability_to_cache() {
 
 #[tokio::test]
 async fn ship_basic_module_to_cache() {
-let dir = TempDir::new().unwrap();
+    let dir = TempDir::new().unwrap();
     let cache = CacheManager::new(dir.path(), test_config()).await.unwrap();
 
     let basic_path = repo_root().join("modules/basic");
@@ -121,18 +136,22 @@ let dir = TempDir::new().unwrap();
     let module_artifacts = env.package(true).await.unwrap();
     cache.write_artifacts(&module_artifacts).await.unwrap();
 
-    let mod_dir = cache
-        .root
-        .join("modules")
-        .join("nbhdai")
-        .join("basic")
-        .join("0.1.0");
+    let module = match &module_artifacts {
+        Artifacts::Module(m) => m,
+        _ => panic!("Expected Module artifact"),
+    };
+
+    // Modules are ephemeral and are placed in anon/{hash}
+    let mut hasher = sha2::Sha256::new();
+    sha2::Digest::update(&mut hasher, &module.source);
+    let hash = format!("{:x}", sha2::Digest::finalize(hasher));
+    
+    let mod_dir = cache.root.join("anon").join(&hash);
 
     assert!(mod_dir.join("mod.wasm").exists());
-    assert!(mod_dir.join("Module.toml").exists());
-    assert!(mod_dir.join("Cargo.toml").exists());
-    assert!(mod_dir.join("Cargo.lock").exists());
-    assert!(mod_dir.join("src/lib.rs").exists());
+    assert!(mod_dir.join("source.rs").exists());
+    assert!(mod_dir.join("spec.json").exists());
+    assert!(mod_dir.join("dependencies.json").exists());
 
     // Sanity-check the wasm has the right magic bytes
     let wasm = std::fs::read(mod_dir.join("mod.wasm")).unwrap();
@@ -144,7 +163,7 @@ let dir = TempDir::new().unwrap();
 
 #[tokio::test]
 async fn test_anon_compile_with_interface() {
-let dir = TempDir::new().unwrap();
+    let dir = TempDir::new().unwrap();
     let cache = CacheManager::new(dir.path(), test_config()).await.unwrap();
 
     // 1. Generate the interface for httpc to compile against
@@ -155,9 +174,12 @@ let dir = TempDir::new().unwrap();
         .await
         .unwrap()
         .expect("httpc is a capability, so create_interface must return Some");
+    let capability = env.package(true).await.unwrap();
+
 
     // Write the interface manually to the capabilities directory to satisfy the `ResolvedCapability::interface_dir`
     cache.write_artifacts(&interface.into()).await.unwrap();
+    cache.write_artifacts(&capability).await.unwrap();
 
     let cap = ResolvedCapability {
         author: "nbhdai".to_string(),
@@ -210,4 +232,121 @@ let dir = TempDir::new().unwrap();
     let cap_dir = cache.capabilities_dir("nbhdai", "httpc", "0.1.0");
     assert!(cap_dir.join("cap.rs").exists());
     assert!(debug_cap.cap_rs.is_some());
+}
+
+// -----------------------------------------------------------------------------
+// Data Integrity Roundtrip Tests
+// -----------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_module_wasm_exact_match() {
+    let dir = TempDir::new().unwrap();
+    let cache = CacheManager::new(dir.path(), test_config()).await.unwrap();
+
+    let basic_path = repo_root().join("modules/basic");
+    let env = Environment::new(basic_path).await.unwrap();
+
+    let module_artifacts = env.package(true).await.unwrap();
+
+    // Extract original WASM bytes
+    let (original_wasm, source) = match &module_artifacts {
+        Artifacts::Module(m) => (m.wasm.clone(), m.source.clone()),
+        _ => panic!("Expected Module artifact"),
+    };
+
+    // Write to disk
+    cache.write_artifacts(&module_artifacts).await.unwrap();
+    
+    // Resolve the ephemeral anon/ directory
+    let mut hasher = sha2::Sha256::new();
+    sha2::Digest::update(&mut hasher, &source);
+    let hash = format!("{:x}", sha2::Digest::finalize(hasher));
+    let mod_dir = cache.root.join("anon").join(&hash);
+
+    // 1. Verify exact match against file on disk
+    let disk_wasm = std::fs::read(mod_dir.join("mod.wasm")).unwrap();
+    assert_eq!(
+        original_wasm, disk_wasm,
+        "WASM on disk does not match original memory representation"
+    );
+
+    // 2. Verify exact match after Artifacts::from_dir read
+    let loaded_artifact = Artifacts::from_dir(&mod_dir).await.unwrap();
+    let loaded_wasm = match loaded_artifact {
+        Artifacts::Module(m) => m.wasm,
+        _ => panic!("Expected reconstructed artifact to be a Module"),
+    };
+    assert_eq!(
+        original_wasm, loaded_wasm,
+        "WASM reloaded from dir does not match original"
+    );
+}
+
+#[tokio::test]
+async fn test_capability_lib_exact_match() {
+    let dir = TempDir::new().unwrap();
+    let cache = CacheManager::new(dir.path(), test_config()).await.unwrap();
+
+    let httpc_path = repo_root().join("capabilities/httpc");
+    let env = Environment::new(httpc_path).await.unwrap();
+
+    let cap_artifacts = env.package(true).await.unwrap();
+
+    // Extract original shared library bytes
+    let original_lib_bytes = match &cap_artifacts {
+        Artifacts::Capability(c) => {
+            assert!(!c.libs.is_empty(), "Capability has no compiled libraries");
+            c.libs[0].to_vec() // Derefs to &[u8]
+        }
+        _ => panic!("Expected Capability artifact"),
+    };
+
+    // Write to disk
+    cache.write_artifacts(&cap_artifacts).await.unwrap();
+    let cap_dir = cache.capabilities_dir("nbhdai", "httpc", "0.1.0");
+
+    // Verify exact match after Artifacts::from_dir read
+    let loaded_artifact = Artifacts::from_dir(&cap_dir).await.unwrap();
+    let loaded_lib_bytes = match loaded_artifact {
+        Artifacts::Capability(c) => {
+            assert!(!c.libs.is_empty(), "Loaded capability has no libraries");
+            c.libs[0].to_vec()
+        }
+        _ => panic!("Expected reconstructed artifact to be a Capability"),
+    };
+
+    assert_eq!(
+        original_lib_bytes, loaded_lib_bytes,
+        "Capability library bytes do not match after roundtrip to disk"
+    );
+}
+
+#[tokio::test]
+async fn test_artifact_tarball_roundtrips() {
+    let basic_path = repo_root().join("modules/basic");
+    let env = Environment::new(basic_path).await.unwrap();
+
+    let module_artifacts = env.package(true).await.unwrap();
+
+    // Serialize to .tar.gz buffer
+    let tarball_bytes = module_artifacts
+        .to_tarball()
+        .expect("Failed to create tarball");
+
+    // Deserialize back into memory
+    let unpacked = Artifacts::from_tarball(&tarball_bytes).expect("Failed to unpack tarball");
+
+    match unpacked {
+        Artifacts::Module(m) => {
+            let original_wasm = match &module_artifacts {
+                Artifacts::Module(orig) => &orig.wasm,
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                &m.wasm, original_wasm,
+                "WASM bytes corrupted after tarball extraction"
+            );
+        }
+        _ => panic!("Expected unpacked tarball to be a Module"),
+    }
 }

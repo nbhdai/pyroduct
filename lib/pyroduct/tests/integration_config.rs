@@ -20,14 +20,13 @@ async fn test_capability_configuration_respect() {
         .with(filter)
         .init();
 
-    // Use the counter capability from tests/cap_config
-    let cap_path = Path::new("../../capabilities/config/");
+    let cap_path = Path::new("../../capabilities/config/artifacts/");
 
     let config = PipelineConfig {
         pipeline: IndexMap::from([(
             "config".to_string(),
             ModuleConfig {
-                path: Path::new("../../modules/cap_config/").to_path_buf(),
+                path: Path::new("../../modules/cap_config/artifacts/").to_path_buf(),
                 libraries: vec![cap_path.to_path_buf()],
                 configurations: HashMap::from([(
                     "config".to_string(),
