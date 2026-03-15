@@ -14,7 +14,7 @@ use super::PipelineError;
 // Config (deserialized from TOML / JSON)
 // =============================================================================
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct PipelineConfig {
     pub pipeline: IndexMap<String, ModuleConfig>,
 }

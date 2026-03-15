@@ -62,7 +62,7 @@ pub struct PyroductConfig {
 }
 
 pub struct CacheManager {
-    pub(crate) root: PathBuf,
+    pub root: PathBuf,
     pub target_dir: PathBuf,
     pub pyroduct_dep: Dependency,
     pub config: PyroductConfig,

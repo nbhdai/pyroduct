@@ -470,7 +470,7 @@ fn classify_error(error: anyhow::Error) -> WasmError {
 }
 
 /// A single wasm module in the pipeline.
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct ModuleConfig {
     /// Path to the module directory.
     pub path: PathBuf,

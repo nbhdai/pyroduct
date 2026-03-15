@@ -32,7 +32,8 @@ pub fn test_config() -> PyroductConfig {
 
     // Read the base configuration for pyroduct dependencies
     let content = std::fs::read_to_string(&config_path).expect("Failed to read config.toml");
-    let mut config = toml::from_str::<PyroductConfig>(&content).expect("Failed to parse config.toml");
+    let mut config =
+        toml::from_str::<PyroductConfig>(&content).expect("Failed to parse config.toml");
 
     // Execute cargo metadata to find the actual target directory absolute path
     let output = std::process::Command::new("cargo")
@@ -48,7 +49,7 @@ pub fn test_config() -> PyroductConfig {
         .map(std::path::PathBuf::from)
         .expect("Missing target_directory in metadata");
 
-    // Ensure the pyroduct dependency path is absolute before we pass it to 
+    // Ensure the pyroduct dependency path is absolute before we pass it to
     // a CacheManager running inside a temporary directory.
     if let Some(Dependency::Detailed(detail)) = &mut config.pyroduct {
         if let Some(path) = &mut detail.path {
@@ -142,10 +143,8 @@ async fn ship_basic_module_to_cache() {
     };
 
     // Modules are ephemeral and are placed in anon/{hash}
-    let mut hasher = sha2::Sha256::new();
-    sha2::Digest::update(&mut hasher, &module.source);
-    let hash = format!("{:x}", sha2::Digest::finalize(hasher));
-    
+    let hash = module.hash();
+
     let mod_dir = cache.root.join("anon").join(&hash);
 
     assert!(mod_dir.join("mod.wasm").exists());
@@ -175,7 +174,6 @@ async fn test_anon_compile_with_interface() {
         .unwrap()
         .expect("httpc is a capability, so create_interface must return Some");
     let capability = env.package(true).await.unwrap();
-
 
     // Write the interface manually to the capabilities directory to satisfy the `ResolvedCapability::interface_dir`
     cache.write_artifacts(&interface.into()).await.unwrap();
@@ -256,7 +254,7 @@ async fn test_module_wasm_exact_match() {
 
     // Write to disk
     cache.write_artifacts(&module_artifacts).await.unwrap();
-    
+
     // Resolve the ephemeral anon/ directory
     let mut hasher = sha2::Sha256::new();
     sha2::Digest::update(&mut hasher, &source);

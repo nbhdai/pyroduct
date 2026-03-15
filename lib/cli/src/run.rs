@@ -6,7 +6,6 @@ use anyhow::{Context, Result, anyhow};
 use artifacts::{
     cache::CacheManager,
     cargo::{CapabilityManifest, ModuleManifest, ResolvedCapability},
-    environment::dylib_extension,
 };
 use clap::ValueEnum;
 use fs_err as fs;
@@ -14,8 +13,7 @@ use fs_err as fs;
 use pyroduct::{
     PyroRow,
     format::value::arrow::PreBatch,
-    module::{PyroFactory, PyroModule, capability::CapabilityLibrary},
-    pipeline::{Pipeline, PipelineConfig, PipelinePool},
+    pipeline::{Pipeline, PipelineConfig, PipelineFactory, PipelinePool},
 };
 
 use arrow_file::{
@@ -57,16 +55,7 @@ pub fn load_config(config_path: &Path) -> Result<PipelineConfig> {
     };
 
     let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
-    for module in config.pipeline.values_mut() {
-        for path in module.libraries.iter_mut() {
-            if path.is_relative() {
-                *path = config_dir.join(&path);
-            }
-        }
-        if module.path.is_relative() {
-            module.path = config_dir.join(&module.path);
-        }
-    }
+    config.repair_relative(config_dir);
 
     Ok(config)
 }
@@ -77,15 +66,9 @@ async fn build_pipeline_from_cache(
     config: &PipelineConfig,
     cache: &CacheManager,
 ) -> Result<Pipeline> {
-    let mut wasmtime_cfg = wasmtime::Config::new();
-    wasmtime_cfg.async_support(true);
-    let engine = wasmtime::Engine::new(&wasmtime_cfg)
-        .map_err(|e| anyhow!("Failed to create wasmtime engine: {}", e))?;
+    let mut cloned_config = config.clone();
 
-    let lib_file = format!("lib.{}", dylib_extension());
-    let mut steps = Vec::new();
-
-    for (name, mod_conf) in &config.pipeline {
+    for (name, mod_conf) in &mut cloned_config.pipeline {
         // 1. Read source code
         let src_path = mod_conf.path.join("src/lib.rs");
         let source_code = fs::read_to_string(&src_path)
@@ -126,39 +109,27 @@ async fn build_pipeline_from_cache(
             .await
             .with_context(|| format!("Compilation failed for module '{}'", name))?;
 
-        // 5. Load capability libraries from cache
-        let mut libs = Vec::new();
+        // 5. Update paths in the config to point to the cache
+        mod_conf.path = cache.root.join("anon").join(artifact.hash());
+
+        let mut cached_lib_paths = Vec::new();
         for cap in &capabilities {
             let cap_dir = cache.capabilities_dir(&cap.author, &cap.package, &cap.version);
-            let artifact_path = cap_dir.join(&lib_file);
-            let library = CapabilityLibrary::load(cap.package.clone(), &artifact_path)
-                .await
-                .with_context(|| {
-                    format!(
-                        "Failed to load capability library from cache: {}",
-                        artifact_path.display()
-                    )
-                })?;
-            libs.push(library);
+            cached_lib_paths.push(cap_dir);
         }
-
-        // 6. Instantiate
-        let wasmtime_module = wasmtime::Module::from_binary(&engine, &artifact.wasm)
-            .map_err(|e| anyhow!("Failed to compile WASM for '{}': {}", name, e))?;
-        let pyro_module = PyroModule::new(wasmtime_module)?;
-
-        let mut factory = PyroFactory::new(libs, mod_conf.configurations.clone(), pyro_module)
-            .map_err(|e| anyhow!("Failed to create PyroFactory for '{}': {}", name, e))?;
-
-        let instance = factory
-            .instantiate()
-            .await
-            .map_err(|e| anyhow!("Failed to instantiate module '{}': {}", name, e))?;
-
-        steps.push(instance);
+        mod_conf.libraries = cached_lib_paths;
     }
 
-    Ok(Pipeline { steps })
+    // 6. Build using PipelineFactory
+    let mut factory = PipelineFactory::load(&cloned_config)
+        .await
+        .map_err(|e| anyhow!("Failed to load pipeline: {}", e))?;
+    let pipeline = factory
+        .build()
+        .await
+        .map_err(|e| anyhow!("Failed to build pipeline: {}", e))?;
+
+    Ok(pipeline)
 }
 
 /// Processes a single row from a JSON string and prints the result to stdout.
