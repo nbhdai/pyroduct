@@ -13,12 +13,16 @@
 //!
 
 use std::io;
-use std::{collections::HashMap, path::PathBuf};
 use std::sync::Arc;
+use std::{collections::HashMap, path::PathBuf};
 
 use artifacts::cache::{BuildError, CacheError};
 use artifacts::environment::EnvironmentError;
-use artifacts::{artifacts::{ModuleSource, Module as ArtifactModule}, cache::CacheManager, environment::Environment};
+use artifacts::{
+    artifacts::{Module as ArtifactModule, ModuleSource},
+    cache::CacheManager,
+    environment::Environment,
+};
 use serde::{Deserialize, Serialize};
 use wasmtime::{
     Caller, Engine, FuncType, Instance, Linker, Memory, Store, TypedFunc, Val, ValType,
@@ -529,22 +533,20 @@ pub struct ModuleConfig {
 
 impl ModuleConfig {
     pub async fn load_factory(&self, engine: &Engine) -> Result<PyroFactory, WasmError> {
-        let cache = CacheManager::from_env()
-            .await?;
+        let cache = CacheManager::from_env().await?;
 
         // 2. Safely extract the slice now that we guarantee it's a Binary
         let binary = match &self.module {
             Module::Hash(hash) => {
-                cache
-                .get_binary(hash)
-                .await?
-            },
+                tracing::debug!("Loading module from hash: {}", hash);
+                cache.get_binary(hash).await?
+            }
             Module::Source(source) => {
-                cache
-                .compile(source)
-                .await?
-            },
+                tracing::debug!("Loading module from source: {}", source.hash());
+                cache.compile(source).await?
+            }
             Module::Path(path) => {
+                tracing::info!("Loading module from path: {}", path.display());
                 let env = Environment::new(path.clone()).await?;
                 let package = env.package(true).await?;
                 for a in package.iter() {
@@ -553,7 +555,9 @@ impl ModuleConfig {
                 let mut binary = None;
                 for artifact in package {
                     match artifact {
-                        artifacts::artifacts::Artifacts::Module(ArtifactModule::Binary(b)) => binary = Some(b),
+                        artifacts::artifacts::Artifacts::Module(ArtifactModule::Binary(b)) => {
+                            binary = Some(b)
+                        }
                         _ => {}
                     }
                 }
@@ -561,12 +565,13 @@ impl ModuleConfig {
                     context: "Binary was not constructed".to_string(),
                     error: io::Error::new(io::ErrorKind::NotFound, "Not Found"),
                 })?
-            },
+            }
         };
 
-        let wasmtime_module = wasmtime::Module::from_binary(&engine, &binary.wasm).map_err(|e| {
-            WasmError::InstantiationFailed(format!("Failed to compile WASM: {}", e))
-        })?;
+        let wasmtime_module =
+            wasmtime::Module::from_binary(&engine, &binary.wasm).map_err(|e| {
+                WasmError::InstantiationFailed(format!("Failed to compile WASM: {}", e))
+            })?;
         let pyro_module = PyroModule::new(wasmtime_module)?;
 
         let mut libs = Vec::new();

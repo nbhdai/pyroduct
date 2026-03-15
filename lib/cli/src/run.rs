@@ -38,7 +38,7 @@ impl OutputFormat {
 pub async fn load_config(config_path: &Path) -> Result<PipelineConfig> {
     tracing::info!("Loading config from {:?}", config_path);
     let config_str = fs::read_to_string(config_path)?;
-    let pipeline: PipelineConfig = match config_path.extension().map(|s| s.as_encoded_bytes()) {
+    let mut pipeline: PipelineConfig = match config_path.extension().map(|s| s.as_encoded_bytes()) {
         Some(b"toml") => toml::from_str(&config_str).context("Failed to parse pipeline TOML")?,
         Some(b"yaml") => {
             serde_yaml::from_str(&config_str).context("Failed to parse pipeline yaml")?
@@ -48,6 +48,18 @@ pub async fn load_config(config_path: &Path) -> Result<PipelineConfig> {
         }
         _ => anyhow::bail!("Unknown extension, supports toml, yaml and json"),
     };
+    for (name, value) in pipeline.pipeline.iter_mut() {
+        match &mut value.module {
+            pyroduct::module::Module::Path(path) => {
+                if path.is_relative() {
+                    let base = config_path.parent().unwrap_or(Path::new("."));
+                    *path = base.join(&path);
+                }
+                tracing::info!(step = name, path = ?path, "Resolved module path");
+            }
+            _ => {},
+        }
+    }
     Ok(pipeline)
 }
 

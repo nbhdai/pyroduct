@@ -133,6 +133,7 @@ impl Environment {
 
     /// Detect Module.toml, Capability.toml, or Cargo.toml to extract name and version
     async fn load_manifest(root: &Path) -> EnvResult<Manifest> {
+        tracing::info!("Loading manifest from {:?}", root);
         let module_toml = root.join("Module.toml");
         if module_toml.exists() {
             let content = tokio::fs::read_to_string(&module_toml).await?;
