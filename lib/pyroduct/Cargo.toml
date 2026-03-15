@@ -27,6 +27,7 @@ host = [
 module = []
 
 [dependencies]
+artifacts.workspace = true
 spec.workspace = true
 pyro-derive.workspace = true
 rkyv.workspace = true

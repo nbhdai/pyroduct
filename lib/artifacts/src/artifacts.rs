@@ -2,7 +2,7 @@ use cargo_toml::Dependency;
 use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use pyroduct::format::value::ModuleFunc;
+use spec::ModuleFunc;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::io::{self, Read, Write};
@@ -31,14 +31,18 @@ impl Deref for CapBinary {
     }
 }
 
-pub struct Capability {
+pub struct CapabilityBinary {
+    pub manifest: CapabilityManifest,
     pub libs: Vec<CapBinary>,
+    pub interface_json: String,
+    pub config_json: Option<String>,
+}
+
+pub struct CapabilitySource {
     pub manifest: CapabilityManifest,
     pub cargo_toml: String,
     pub cargo_lock: String,
     pub src_lib_rs: String,
-    pub interface_json: String,
-    pub config_json: Option<String>,
 }
 
 pub struct Interface {
@@ -48,23 +52,34 @@ pub struct Interface {
     pub config_json: Option<String>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct ModuleDependencies {
     pub dependencies: BTreeMap<String, Dependency>,
     pub capabilities: Vec<ResolvedCapability>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
-pub struct Module {
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+pub struct ModuleSource {
     pub dependencies: ModuleDependencies,
     pub source: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+pub struct ModuleBinary {
+    pub hash: String,
     pub wasm: Vec<u8>,
     pub spec: ModuleFunc<'static>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+pub enum Module {
+    Source(ModuleSource),
+    Binary(ModuleBinary),
+}
+
 use sha2::{Digest, Sha256};
 
-impl Module {
+impl ModuleSource {
     /// Computes a deterministic hash of the module's source and dependencies.
     pub fn hash(&self) -> String {
         Self::compute_hash(
@@ -89,7 +104,8 @@ impl Module {
 
         let mut sorted_caps = capabilities.to_vec();
         sorted_caps.sort_by(|a, b| {
-            a.package.cmp(&b.package)
+            a.package
+                .cmp(&b.package)
                 .then_with(|| a.author.cmp(&b.author))
                 .then_with(|| a.version.cmp(&b.version))
         });
@@ -102,15 +118,37 @@ impl Module {
     }
 }
 
+impl ModuleBinary {
+    pub fn hash(&self) -> String {
+        self.hash.clone()
+    }
+}
+
+impl Module {
+    pub fn hash(&self) -> String {
+        match self {
+            Module::Source(m) => m.hash(),
+            Module::Binary(m) => m.hash(),
+        }
+    }
+}
+
 pub enum Artifacts {
-    Capability(Capability),
+    CapabilityBinary(CapabilityBinary),
+    CapabilitySource(CapabilitySource),
     Interface(Interface),
     Module(Module),
 }
 
-impl From<Capability> for Artifacts {
-    fn from(value: Capability) -> Self {
-        Artifacts::Capability(value)
+impl From<CapabilityBinary> for Artifacts {
+    fn from(value: CapabilityBinary) -> Self {
+        Artifacts::CapabilityBinary(value)
+    }
+}
+
+impl From<CapabilitySource> for Artifacts {
+    fn from(value: CapabilitySource) -> Self {
+        Artifacts::CapabilitySource(value)
     }
 }
 
@@ -126,6 +164,18 @@ impl From<Module> for Artifacts {
     }
 }
 
+impl From<ModuleBinary> for Artifacts {
+    fn from(value: ModuleBinary) -> Self {
+        Artifacts::Module(Module::Binary(value))
+    }
+}
+
+impl From<ModuleSource> for Artifacts {
+    fn from(value: ModuleSource) -> Self {
+        Artifacts::Module(Module::Source(value))
+    }
+}
+
 /// The common trait for all artifact types.
 /// Requires Sized so we can return Self for the constructors.
 pub trait Artifact: Sized {
@@ -137,7 +187,11 @@ pub trait Artifact: Sized {
 }
 
 // --- Helper for appending files to a tarball ---
-pub(crate) fn append_file<W: Write>(tar: &mut Builder<W>, name: &str, data: &[u8]) -> Result<(), io::Error> {
+pub(crate) fn append_file<W: Write>(
+    tar: &mut Builder<W>,
+    name: &str,
+    data: &[u8],
+) -> Result<(), io::Error> {
     let mut header = Header::new_gnu();
     header.set_size(data.len() as u64);
     header.set_mode(0o644);
@@ -149,7 +203,7 @@ pub(crate) fn append_file<W: Write>(tar: &mut Builder<W>, name: &str, data: &[u8
 // Trait Implementations for Concrete Structs
 // ==========================================
 
-impl Artifact for Capability {
+impl Artifact for CapabilityBinary {
     async fn write_to_directory(&self, path: &Path) -> io::Result<()> {
         fs::create_dir_all(path).await?;
         for lib in &self.libs {
@@ -159,24 +213,16 @@ impl Artifact for Capability {
                 CapBinary::Elf(bytes) => fs::write(path.join("lib.so"), bytes).await?,
             }
         }
-        let manifest = toml::to_string_pretty(&self.manifest).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Unable to serialize manifest: {}", e),
-            )
-        })?;
-        fs::write(path.join("Capability.toml"), &manifest).await?;
-        fs::write(path.join("Cargo.toml"), &self.cargo_toml).await?;
-        fs::write(path.join("Cargo.lock"), &self.cargo_lock).await?;
-        fs::write(path.join("interface.json"), &self.interface_json).await?;
-
+        fs::write(
+            path.join("Capability.toml"),
+            toml::to_string_pretty(&self.manifest)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+        )
+        .await?;
+        fs::write(path.join("interface.json"), self.interface_json.as_bytes()).await?;
         if let Some(config) = &self.config_json {
-            fs::write(path.join("config.json"), config).await?;
+            fs::write(path.join("config.json"), config.as_bytes()).await?;
         }
-
-        let src_dir = path.join("src");
-        fs::create_dir_all(&src_dir).await?;
-        fs::write(src_dir.join("lib.rs"), &self.src_lib_rs).await?;
         Ok(())
     }
 
@@ -191,16 +237,13 @@ impl Artifact for Capability {
                 CapBinary::Elf(bytes) => append_file(&mut tar, "lib.so", bytes)?,
             }
         }
-        let manifest = toml::to_string_pretty(&self.manifest).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Unable to serialize manifest: {}", e),
-            )
-        })?;
-        append_file(&mut tar, "Capability.toml", manifest.as_bytes())?;
-        append_file(&mut tar, "Cargo.toml", self.cargo_toml.as_bytes())?;
-        append_file(&mut tar, "Cargo.lock", self.cargo_lock.as_bytes())?;
-        append_file(&mut tar, "src/lib.rs", self.src_lib_rs.as_bytes())?;
+        append_file(
+            &mut tar,
+            "Capability.toml",
+            toml::to_string_pretty(&self.manifest)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
+                .as_bytes(),
+        )?;
         append_file(&mut tar, "interface.json", self.interface_json.as_bytes())?;
         if let Some(config) = &self.config_json {
             append_file(&mut tar, "config.json", config.as_bytes())?;
@@ -213,11 +256,8 @@ impl Artifact for Capability {
         let tar = GzDecoder::new(bytes);
         let mut archive = tar::Archive::new(tar);
 
-        let mut manifest = None;
         let mut libs = Vec::new();
-        let mut cargo_toml = None;
-        let mut cargo_lock = None;
-        let mut src_lib_rs = None;
+        let mut manifest = None;
         let mut interface_json = None;
         let mut config_json = None;
 
@@ -228,6 +268,9 @@ impl Artifact for Capability {
             file.read_to_end(&mut content)?;
 
             match path.to_string_lossy().as_ref() {
+                "lib.dll" => libs.push(CapBinary::Pe(content)),
+                "lib.dylib" => libs.push(CapBinary::MachO(content)),
+                "lib.so" => libs.push(CapBinary::Elf(content)),
                 "Capability.toml" => {
                     manifest = toml::from_slice(&content).map_err(|e| {
                         io::Error::new(
@@ -236,12 +279,6 @@ impl Artifact for Capability {
                         )
                     })?;
                 }
-                "lib.dll" => libs.push(CapBinary::Pe(content)),
-                "lib.dylib" => libs.push(CapBinary::MachO(content)),
-                "lib.so" => libs.push(CapBinary::Elf(content)),
-                "Cargo.toml" => cargo_toml = String::from_utf8(content).ok(),
-                "Cargo.lock" => cargo_lock = String::from_utf8(content).ok(),
-                "src/lib.rs" => src_lib_rs = String::from_utf8(content).ok(),
                 "interface.json" => interface_json = String::from_utf8(content).ok(),
                 "config.json" => config_json = String::from_utf8(content).ok(),
                 _ => {}
@@ -252,21 +289,15 @@ impl Artifact for Capability {
             return Err(io::Error::new(io::ErrorKind::NotFound, "Missing library"));
         }
 
-        Ok(Capability {
+        Ok(CapabilityBinary {
+            libs,
             manifest: manifest.ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidData, "Missing Capability.toml")
             })?,
-            libs,
-            cargo_toml: cargo_toml
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing Cargo.toml"))?,
-            cargo_lock: cargo_lock
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing Cargo.lock"))?,
-            src_lib_rs: src_lib_rs
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing src/lib.rs"))?,
             interface_json: interface_json.ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidData, "Missing interface.json")
             })?,
-            config_json,
+            config_json: config_json,
         })
     }
 
@@ -297,14 +328,110 @@ impl Artifact for Capability {
             )
         })?;
 
-        Ok(Capability {
+        Ok(CapabilityBinary {
             libs,
+            manifest,
+            interface_json: fs::read_to_string(path.join("interface.json")).await?,
+            config_json: fs::read_to_string(path.join("config.json")).await.ok(),
+        })
+    }
+}
+
+impl Artifact for CapabilitySource {
+    async fn write_to_directory(&self, path: &Path) -> io::Result<()> {
+        fs::create_dir_all(path).await?;
+        let manifest = toml::to_string_pretty(&self.manifest).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unable to serialize manifest: {}", e),
+            )
+        })?;
+        fs::write(path.join("Capability.toml"), &manifest).await?;
+        fs::write(path.join("Cargo.toml"), &self.cargo_toml).await?;
+        fs::write(path.join("Cargo.lock"), &self.cargo_lock).await?;
+
+        let src_dir = path.join("src");
+        fs::create_dir_all(&src_dir).await?;
+        fs::write(src_dir.join("lib.rs"), &self.src_lib_rs).await?;
+        Ok(())
+    }
+
+    fn to_tarball(&self) -> Result<Vec<u8>, io::Error> {
+        let encoder = GzEncoder::new(Vec::new(), Compression::default());
+        let mut tar = Builder::new(encoder);
+
+        let manifest = toml::to_string_pretty(&self.manifest).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unable to serialize manifest: {}", e),
+            )
+        })?;
+        append_file(&mut tar, "Capability.toml", manifest.as_bytes())?;
+        append_file(&mut tar, "Cargo.toml", self.cargo_toml.as_bytes())?;
+        append_file(&mut tar, "Cargo.lock", self.cargo_lock.as_bytes())?;
+        append_file(&mut tar, "src/lib.rs", self.src_lib_rs.as_bytes())?;
+
+        tar.into_inner()?.finish()
+    }
+
+    fn from_tarball(bytes: &[u8]) -> Result<Self, io::Error> {
+        let tar = GzDecoder::new(bytes);
+        let mut archive = tar::Archive::new(tar);
+
+        let mut manifest = None;
+        let mut cargo_toml = None;
+        let mut cargo_lock = None;
+        let mut src_lib_rs = None;
+
+        for file in archive.entries()? {
+            let mut file = file?;
+            let path = file.path()?.to_path_buf();
+            let mut content = Vec::new();
+            file.read_to_end(&mut content)?;
+
+            match path.to_string_lossy().as_ref() {
+                "Capability.toml" => {
+                    manifest = toml::from_slice(&content).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Unable to deserialize manifest: {}", e),
+                        )
+                    })?;
+                }
+                "Cargo.toml" => cargo_toml = String::from_utf8(content).ok(),
+                "Cargo.lock" => cargo_lock = String::from_utf8(content).ok(),
+                "src/lib.rs" => src_lib_rs = String::from_utf8(content).ok(),
+                _ => {}
+            }
+        }
+
+        Ok(CapabilitySource {
+            manifest: manifest.ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "Missing Capability.toml")
+            })?,
+            cargo_toml: cargo_toml
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing Cargo.toml"))?,
+            cargo_lock: cargo_lock
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing Cargo.lock"))?,
+            src_lib_rs: src_lib_rs
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing src/lib.rs"))?,
+        })
+    }
+
+    async fn from_dir(path: &Path) -> Result<Self, io::Error> {
+        let manifest_string = fs::read(path.join("Capability.toml")).await?;
+        let manifest = toml::from_slice(&manifest_string).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unable to deserialize manifest: {}", e),
+            )
+        })?;
+
+        Ok(CapabilitySource {
             manifest,
             cargo_toml: fs::read_to_string(path.join("Cargo.toml")).await?,
             cargo_lock: fs::read_to_string(path.join("Cargo.lock")).await?,
             src_lib_rs: fs::read_to_string(path.join("src").join("lib.rs")).await?,
-            interface_json: fs::read_to_string(path.join("interface.json")).await?,
-            config_json: fs::read_to_string(path.join("config.json")).await.ok(),
         })
     }
 }
@@ -404,7 +531,7 @@ impl Artifact for Interface {
             )
         })?;
         Ok(Interface {
-            manifest: manifest,
+            manifest,
             src_lib_rs: fs::read_to_string(path.join("src").join("lib.rs")).await?,
             interface_json: fs::read_to_string(path.join("interface.json")).await?,
             config_json: fs::read_to_string(path.join("config.json")).await.ok(),
@@ -412,27 +539,16 @@ impl Artifact for Interface {
     }
 }
 
-impl Artifact for Module {
+impl Artifact for ModuleSource {
     async fn write_to_directory(&self, path: &Path) -> io::Result<()> {
-        let spec = serde_json::to_string_pretty(&self.spec).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Unable to serialize spec: {}", e),
-            )
-        })?;
         fs::create_dir_all(path).await?;
-
         let dependencies = serde_json::to_string_pretty(&self.dependencies).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Unable to serialize spec: {}", e),
+                format!("Unable to serialize dependencies: {}", e),
             )
         })?;
-        fs::create_dir_all(path).await?;
-
         fs::write(path.join("source.rs"), &self.source).await?;
-        fs::write(path.join("mod.wasm"), &self.wasm).await?;
-        fs::write(path.join("spec.json"), &spec).await?;
         fs::write(path.join("dependencies.json"), &dependencies).await?;
         Ok(())
     }
@@ -440,33 +556,21 @@ impl Artifact for Module {
     fn to_tarball(&self) -> Result<Vec<u8>, io::Error> {
         let encoder = GzEncoder::new(Vec::new(), Compression::default());
         let mut tar = Builder::new(encoder);
-        let spec = serde_json::to_string_pretty(&self.spec).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Unable to serialize spec: {}", e),
-            )
-        })?;
         let dependencies = serde_json::to_string_pretty(&self.dependencies).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Unable to serialize spec: {}", e),
+                format!("Unable to serialize dependencies: {}", e),
             )
         })?;
         append_file(&mut tar, "source.rs", self.source.as_bytes())?;
-        append_file(&mut tar, "mod.wasm", &self.wasm)?;
-        append_file(&mut tar, "spec.json", spec.as_bytes())?;
         append_file(&mut tar, "dependencies.json", dependencies.as_bytes())?;
-
         tar.into_inner()?.finish()
     }
 
     fn from_tarball(bytes: &[u8]) -> Result<Self, io::Error> {
         let tar = GzDecoder::new(bytes);
         let mut archive = tar::Archive::new(tar);
-
         let mut source = None;
-        let mut wasm = None;
-        let mut spec = None;
         let mut dependencies = None;
 
         for file in archive.entries()? {
@@ -477,15 +581,6 @@ impl Artifact for Module {
 
             match path.to_string_lossy().as_ref() {
                 "source.rs" => source = String::from_utf8(content).ok(),
-                "mod.wasm" => wasm = Some(content),
-                "spec.json" => {
-                    spec = serde_json::from_slice(&content).map_err(|e| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("Unable to deserialize spec: {}", e),
-                        )
-                    })?;
-                }
                 "dependencies.json" => {
                     dependencies = serde_json::from_slice(&content).map_err(|e| {
                         io::Error::new(
@@ -498,16 +593,102 @@ impl Artifact for Module {
             }
         }
 
-        Ok(Module {
+        Ok(ModuleSource {
             source: source
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Missing source.rs"))?,
+            dependencies: dependencies.ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "Missing dependencies.json")
+            })?,
+        })
+    }
+
+    async fn from_dir(path: &Path) -> Result<Self, io::Error> {
+        let dependencies_string = fs::read(path.join("dependencies.json")).await?;
+        let dependencies = serde_json::from_slice(&dependencies_string).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unable to deserialize dependencies: {}", e),
+            )
+        })?;
+        Ok(ModuleSource {
+            source: fs::read_to_string(path.join("source.rs")).await?,
+            dependencies,
+        })
+    }
+}
+
+impl Artifact for ModuleBinary {
+    async fn write_to_directory(&self, path: &Path) -> io::Result<()> {
+        fs::create_dir_all(path).await?;
+        fs::write(path.join("hash.txt"), self.hash.as_bytes()).await?;
+        fs::write(path.join("mod.wasm"), &self.wasm).await?;
+        let spec = serde_json::to_string_pretty(&self.spec).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unable to serialize spec: {}", e),
+            )
+        })?;
+        fs::write(path.join("spec.json"), spec).await?;
+        Ok(())
+    }
+
+    fn to_tarball(&self) -> Result<Vec<u8>, io::Error> {
+        let encoder = GzEncoder::new(Vec::new(), Compression::default());
+        let mut tar = Builder::new(encoder);
+        append_file(&mut tar, "hash.txt", self.hash.as_bytes())?;
+        append_file(&mut tar, "mod.wasm", &self.wasm)?;
+        let spec = serde_json::to_string_pretty(&self.spec).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unable to serialize spec: {}", e),
+            )
+        })?;
+        append_file(&mut tar, "spec.json", spec.as_bytes())?;
+        tar.into_inner()?.finish()
+    }
+
+    fn from_tarball(bytes: &[u8]) -> Result<Self, io::Error> {
+        let tar = GzDecoder::new(bytes);
+        let mut archive = tar::Archive::new(tar);
+        let mut wasm = None;
+        let mut spec = None;
+        let mut hash = None;
+
+        for file in archive.entries()? {
+            let mut file = file?;
+            let path = file.path()?.to_path_buf();
+            let mut content = Vec::new();
+            file.read_to_end(&mut content)?;
+
+            match path.to_string_lossy().as_ref() {
+                "hash.txt" => {
+                    hash = Some(String::from_utf8(content).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Unable to deserialize hash: {}", e),
+                        )
+                    })?)
+                }
+                "mod.wasm" => wasm = Some(content),
+                "spec.json" => {
+                    spec = serde_json::from_slice(&content).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Unable to deserialize spec: {}", e),
+                        )
+                    })?;
+                }
+                _ => {}
+            }
+        }
+
+        Ok(ModuleBinary {
+            hash: hash
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Missing hash.txt"))?,
             wasm: wasm
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Missing mod.wasm"))?,
             spec: spec
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Missing spec.json"))?,
-            dependencies: dependencies.ok_or_else(|| {
-                io::Error::new(io::ErrorKind::NotFound, "Missing dependencies.json")
-            })?,
         })
     }
 
@@ -519,76 +700,56 @@ impl Artifact for Module {
                 format!("Unable to deserialize spec: {}", e),
             )
         })?;
-        let dependencies_string = fs::read(path.join("dependencies.json")).await?;
-        let dependencies = serde_json::from_slice(&dependencies_string).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Unable to deserialize dependencies: {}", e),
-            )
-        })?;
-        Ok(Module {
-            source: fs::read_to_string(path.join("source.rs")).await?,
+        Ok(ModuleBinary {
+            hash: fs::read_to_string(path.join("hash.txt")).await?,
             wasm: fs::read(path.join("mod.wasm")).await?,
             spec,
-            dependencies,
         })
     }
 }
 
-// ==========================================
-// Trait Implementation for the Enum (Switch)
-// ==========================================
-
-impl Artifact for Artifacts {
+impl Artifact for Module {
     async fn write_to_directory(&self, path: &Path) -> io::Result<()> {
         match self {
-            Artifacts::Capability(c) => c.write_to_directory(path).await,
-            Artifacts::Interface(i) => i.write_to_directory(path).await,
-            Artifacts::Module(a) => a.write_to_directory(path).await,
+            Module::Source(module_source) => module_source.write_to_directory(path).await,
+            Module::Binary(module_binary) => module_binary.write_to_directory(path).await,
         }
     }
 
     fn to_tarball(&self) -> Result<Vec<u8>, io::Error> {
         match self {
-            Artifacts::Capability(c) => c.to_tarball(),
-            Artifacts::Interface(i) => i.to_tarball(),
-            Artifacts::Module(a) => a.to_tarball(),
+            Module::Source(module_source) => module_source.to_tarball(),
+            Module::Binary(module_binary) => module_binary.to_tarball(),
         }
     }
 
     fn from_tarball(bytes: &[u8]) -> Result<Self, io::Error> {
-        // Peek at the filenames inside the tarball to determine what artifact this is.
+        // Peek at the filenames inside the tarball to determine if it's source or binary.
         let tar = GzDecoder::new(bytes);
         let mut archive = tar::Archive::new(tar);
 
-        let mut is_anon = false;
-        let mut is_cap_or_interface = false;
-        let mut has_lib = false;
+        let mut has_source_rs = false;
+        let mut has_wasm = false;
 
         for file in archive.entries()? {
             let file = file?;
             let path_str = file.path()?.to_string_lossy().into_owned();
 
             match path_str.as_ref() {
-                "source.rs" => is_anon = true,
-                "Capability.toml" => is_cap_or_interface = true,
-                "lib.dll" | "lib.dylib" | "lib.so" => has_lib = true,
+                "source.rs" => has_source_rs = true,
+                "mod.wasm" => has_wasm = true,
                 _ => {}
             }
         }
 
-        if is_anon {
-            Ok(Artifacts::Module(Module::from_tarball(bytes)?))
-        } else if is_cap_or_interface {
-            if has_lib {
-                Ok(Artifacts::Capability(Capability::from_tarball(bytes)?))
-            } else {
-                Ok(Artifacts::Interface(Interface::from_tarball(bytes)?))
-            }
+        if has_source_rs {
+            Ok(Module::Source(ModuleSource::from_tarball(bytes)?))
+        } else if has_wasm {
+            Ok(Module::Binary(ModuleBinary::from_tarball(bytes)?))
         } else {
             Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Unknown artifact format in tarball",
+                "Unknown module format in tarball: missing 'source.rs' or 'mod.wasm'",
             ))
         }
     }
@@ -598,6 +759,100 @@ impl Artifact for Artifacts {
             .await
             .unwrap_or(false)
         {
+            Ok(Module::Source(ModuleSource::from_dir(path).await?))
+        } else if fs::try_exists(path.join("mod.wasm")).await.unwrap_or(false) {
+            Ok(Module::Binary(ModuleBinary::from_dir(path).await?))
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Unknown module format in directory: missing 'source.rs' or 'mod.wasm'",
+            ))
+        }
+    }
+}
+
+// ==========================================
+// Trait Implementation for the Enum (Switch)
+// ==========================================
+
+// ==========================================
+// Trait Implementation for the Enum (Switch)
+// ==========================================
+
+impl Artifact for Artifacts {
+    async fn write_to_directory(&self, path: &Path) -> io::Result<()> {
+        match self {
+            Artifacts::CapabilityBinary(c) => c.write_to_directory(path).await,
+            Artifacts::CapabilitySource(c) => c.write_to_directory(path).await,
+            Artifacts::Interface(i) => i.write_to_directory(path).await,
+            Artifacts::Module(m) => m.write_to_directory(path).await,
+        }
+    }
+
+    fn to_tarball(&self) -> Result<Vec<u8>, io::Error> {
+        match self {
+            Artifacts::CapabilityBinary(c) => c.to_tarball(),
+            Artifacts::CapabilitySource(c) => c.to_tarball(),
+            Artifacts::Interface(i) => i.to_tarball(),
+            Artifacts::Module(m) => m.to_tarball(),
+        }
+    }
+
+    fn from_tarball(bytes: &[u8]) -> Result<Self, io::Error> {
+        // Peek at the filenames inside the tarball to determine what artifact this is.
+        let tar = GzDecoder::new(bytes);
+        let mut archive = tar::Archive::new(tar);
+
+        let mut has_source_rs = false;
+        let mut has_wasm = false;
+        let mut has_cap_toml = false;
+        let mut has_lib = false;
+
+        for file in archive.entries()? {
+            let file = file?;
+            let path_str = file.path()?.to_string_lossy().into_owned();
+
+            match path_str.as_ref() {
+                "source.rs" => has_source_rs = true,
+                "mod.wasm" => has_wasm = true,
+                "Capability.toml" => has_cap_toml = true,
+                "lib.dll" | "lib.dylib" | "lib.so" => has_lib = true,
+                _ => {}
+            }
+        }
+
+        if has_source_rs || has_wasm {
+            // Let the Module implementation handle the Source vs Binary split
+            Ok(Artifacts::Module(Module::from_tarball(bytes)?))
+        } else if has_cap_toml {
+            if has_lib {
+                // This shouldn't happen based on the split, but for backward compatibility or weird cases
+                Ok(Artifacts::CapabilitySource(CapabilitySource::from_tarball(
+                    bytes,
+                )?))
+            } else {
+                Ok(Artifacts::Interface(Interface::from_tarball(bytes)?))
+            }
+        } else if has_lib {
+            Ok(Artifacts::CapabilityBinary(CapabilityBinary::from_tarball(
+                bytes,
+            )?))
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Unknown artifact format in tarball",
+            ))
+        }
+    }
+
+    async fn from_dir(path: &Path) -> Result<Self, io::Error> {
+        let has_source_rs = fs::try_exists(path.join("source.rs"))
+            .await
+            .unwrap_or(false);
+        let has_wasm = fs::try_exists(path.join("mod.wasm")).await.unwrap_or(false);
+
+        if has_source_rs || has_wasm {
+            // Let the Module implementation handle the Source vs Binary split
             Ok(Artifacts::Module(Module::from_dir(path).await?))
         } else if fs::try_exists(path.join("Capability.toml"))
             .await
@@ -610,10 +865,22 @@ impl Artifact for Artifacts {
             let has_so = fs::try_exists(path.join("lib.so")).await.unwrap_or(false);
 
             if has_dll || has_dylib || has_so {
-                Ok(Artifacts::Capability(Capability::from_dir(path).await?))
+                // This shouldn't happen based on the split, but for backward compatibility
+                Ok(Artifacts::CapabilitySource(
+                    CapabilitySource::from_dir(path).await?,
+                ))
             } else {
                 Ok(Artifacts::Interface(Interface::from_dir(path).await?))
             }
+        } else if fs::try_exists(path.join("lib.dll")).await.unwrap_or(false)
+            || fs::try_exists(path.join("lib.dylib"))
+                .await
+                .unwrap_or(false)
+            || fs::try_exists(path.join("lib.so")).await.unwrap_or(false)
+        {
+            Ok(Artifacts::CapabilityBinary(
+                CapabilityBinary::from_dir(path).await?,
+            ))
         } else {
             Err(io::Error::new(
                 io::ErrorKind::InvalidData,

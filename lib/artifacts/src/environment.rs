@@ -1,4 +1,7 @@
-use crate::artifacts::{Artifact, Artifacts, CapBinary, Capability, Interface};
+use crate::artifacts::{
+    Artifact, Artifacts, CapBinary, CapabilityBinary, CapabilitySource, Interface, Module,
+    ModuleDependencies, ModuleSource,
+};
 use crate::build::{CommandError, format_syn_error, run_command};
 use crate::cache::{BuildError, CacheError, CacheManager};
 use crate::cargo::{CapabilityManifest, ModuleManifest};
@@ -222,7 +225,7 @@ impl Environment {
         }
     }
 
-    pub async fn package(&self, capture: bool) -> EnvResult<Artifacts> {
+    pub async fn package(&self, capture: bool) -> EnvResult<Vec<Artifacts>> {
         let name = self.name().ok_or_else(|| {
             EnvironmentError::ParseManifest("Missing name in manifest".to_string())
         })?;
@@ -235,14 +238,18 @@ impl Environment {
                 }
                 let code = fs::read_to_string(&src_path).await?;
                 let manager = CacheManager::from_env().await?;
-                let anon = manager
-                    .compile_anon(
-                        &manifest.dependencies,
-                        &manifest.capabilities.values().cloned().collect(),
-                        &code,
-                    )
-                    .await?;
-                Artifacts::Module(anon)
+                let source = ModuleSource {
+                    dependencies: ModuleDependencies {
+                        dependencies: manifest.dependencies.clone(),
+                        capabilities: manifest.capabilities.values().cloned().collect(),
+                    },
+                    source: code,
+                };
+                let binary = manager.compile(&source).await?;
+                vec![
+                    Artifacts::Module(Module::Source(source)),
+                    Artifacts::Module(Module::Binary(binary)),
+                ]
             }
             Manifest::Capability(manifest) => {
                 tracing::info!("Packaging capability: {:?}", self.root);
@@ -284,15 +291,20 @@ impl Environment {
                     None
                 };
 
-                Artifacts::Capability(Capability {
-                    manifest: manifest.clone(),
-                    libs: vec![lib],
-                    cargo_toml,
-                    cargo_lock,
-                    src_lib_rs,
-                    interface_json,
-                    config_json,
-                })
+                vec![
+                    Artifacts::CapabilitySource(CapabilitySource {
+                        manifest: manifest.clone(),
+                        cargo_toml,
+                        cargo_lock,
+                        src_lib_rs,
+                    }),
+                    Artifacts::CapabilityBinary(CapabilityBinary {
+                        libs: vec![lib],
+                        manifest: manifest.clone(),
+                        interface_json,
+                        config_json,
+                    }),
+                ]
             }
             Manifest::Interface(manifest) => {
                 tracing::info!("Packaging interface: {:?}", self.root);
@@ -318,12 +330,12 @@ impl Environment {
                     None
                 };
 
-                Artifacts::Interface(Interface {
+                vec![Artifacts::Interface(Interface {
                     manifest: manifest.clone(),
                     src_lib_rs,
                     interface_json,
                     config_json,
-                })
+                })]
             }
         };
 

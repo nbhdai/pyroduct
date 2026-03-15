@@ -39,11 +39,31 @@ impl OutputFormat {
     }
 }
 
+#[derive(serde::Deserialize)]
+struct RawModuleConfig {
+    path: Option<std::path::PathBuf>,
+    #[serde(default)]
+    dependencies: Option<BTreeMap<String, Dependency>>,
+    #[serde(default)]
+    capabilities: Option<Vec<ResolvedCapability>>,
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    libraries: Vec<std::path::PathBuf>,
+    #[serde(default)]
+    configurations: std::collections::HashMap<String, Option<serde_json::Value>>,
+}
+
+#[derive(serde::Deserialize)]
+struct RawPipelineConfig {
+    pipeline: indexmap::IndexMap<String, RawModuleConfig>,
+}
+
 /// Helper to load config and resolve paths
 pub fn load_config(config_path: &Path) -> Result<PipelineConfig> {
     tracing::info!("Loading config from {:?}", config_path);
     let config_str = fs::read_to_string(config_path)?;
-    let mut config: PipelineConfig = match config_path.extension().map(|s| s.as_encoded_bytes()) {
+    let raw: RawPipelineConfig = match config_path.extension().map(|s| s.as_encoded_bytes()) {
         Some(b"toml") => toml::from_str(&config_str).context("Failed to parse pipeline TOML")?,
         Some(b"yaml") => {
             serde_yaml::from_str(&config_str).context("Failed to parse pipeline yaml")?
@@ -55,6 +75,81 @@ pub fn load_config(config_path: &Path) -> Result<PipelineConfig> {
     };
 
     let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+
+    let mut pipeline = indexmap::IndexMap::new();
+
+    for (name, raw_mod) in raw.pipeline {
+        let mut source = raw_mod.source.unwrap_or_default();
+        let mut dependencies = raw_mod.dependencies.unwrap_or_default();
+        let mut capabilities = raw_mod.capabilities.unwrap_or_default();
+
+        if let Some(path) = &raw_mod.path {
+            let path = if path.is_relative() {
+                config_dir.join(path)
+            } else {
+                path.clone()
+            };
+
+            // Read source if missing
+            if source.is_empty() {
+                let src_path = path.join("src/lib.rs");
+                source = fs::read_to_string(&src_path)
+                    .with_context(|| format!("Failed to read source for module '{}'", name))?;
+            }
+
+            // Read dependencies if missing
+            if dependencies.is_empty() {
+                let mod_toml_path = path.join("Module.toml");
+                if mod_toml_path.exists() {
+                    let toml_content = fs::read_to_string(&mod_toml_path)?;
+                    let manifest: ModuleManifest = toml::from_str(&toml_content)
+                        .with_context(|| format!("Failed to parse Module.toml for '{}'", name))?;
+                    dependencies = manifest.dependencies;
+                    
+                    // Also resolve capabilities from Module.toml if they are there
+                    if capabilities.is_empty() {
+                        for cap in manifest.capabilities.values() {
+                            capabilities.push(cap.clone());
+                        }
+                    }
+                }
+            }
+
+            // If capabilities are still empty, try to resolve from library paths (old behavior)
+            if capabilities.is_empty() {
+                for lib_path in &raw_mod.libraries {
+                    let lib_path = if lib_path.is_relative() {
+                        config_dir.join(lib_path)
+                    } else {
+                        lib_path.clone()
+                    };
+                    let cap_toml_path = lib_path.join("Capability.toml");
+                    if cap_toml_path.exists() {
+                        let toml_content = fs::read_to_string(&cap_toml_path)?;
+                        let manifest: CapabilityManifest = toml::from_str(&toml_content)
+                            .with_context(|| {
+                                format!("Failed to parse Capability.toml at {:?}", cap_toml_path)
+                            })?;
+                        capabilities.push(ResolvedCapability {
+                            author: manifest.capability.author.clone(),
+                            package: manifest.capability.name.clone(),
+                            version: manifest.capability.version.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        pipeline.insert(name, pyroduct::module::ModuleConfig {
+            dependencies,
+            capabilities,
+            source,
+            libraries: raw_mod.libraries,
+            configurations: raw_mod.configurations,
+        });
+    }
+
+    let mut config = PipelineConfig { pipeline };
     config.repair_relative(config_dir);
 
     Ok(config)
@@ -62,66 +157,43 @@ pub fn load_config(config_path: &Path) -> Result<PipelineConfig> {
 
 /// Build a `Pipeline` by compiling each module via the cache and loading
 /// capability libraries from the cache.
-async fn build_pipeline_from_cache(
+pub async fn build_pipeline(
     config: &PipelineConfig,
     cache: &CacheManager,
+    source_overrides: Option<&std::collections::HashMap<String, String>>,
 ) -> Result<Pipeline> {
     let mut cloned_config = config.clone();
+    let mut wasm_binaries = std::collections::HashMap::new();
 
     for (name, mod_conf) in &mut cloned_config.pipeline {
-        // 1. Read source code
-        let src_path = mod_conf.path.join("src/lib.rs");
-        let source_code = fs::read_to_string(&src_path)
-            .with_context(|| format!("Failed to read source for module '{}'", name))?;
+        // 1. Get source code (with override support)
+        let source_code = if let Some(overrides) = source_overrides {
+            overrides.get(name).cloned().unwrap_or_else(|| mod_conf.source.clone())
+        } else {
+            mod_conf.source.clone()
+        };
 
-        // 2. Read dependencies from Module.toml
-        let mut dependencies = BTreeMap::new();
-        let mod_toml_path = mod_conf.path.join("Module.toml");
-        if mod_toml_path.exists() {
-            let toml_content = fs::read_to_string(&mod_toml_path)?;
-            let manifest: ModuleManifest = toml::from_str(&toml_content)
-                .with_context(|| format!("Failed to parse Module.toml for '{}'", name))?;
-            dependencies = manifest.dependencies;
-        }
-
-        // 3. Resolve capabilities from Capability.toml files
-        let mut capabilities: Vec<ResolvedCapability> = Vec::new();
-        for lib_path in &mod_conf.libraries {
-            let cap_toml_path = lib_path.join("Capability.toml");
-            if cap_toml_path.exists() {
-                let toml_content = fs::read_to_string(&cap_toml_path)?;
-                let manifest: CapabilityManifest =
-                    toml::from_str(&toml_content).with_context(|| {
-                        format!("Failed to parse Capability.toml at {:?}", cap_toml_path)
-                    })?;
-                capabilities.push(ResolvedCapability {
-                    author: manifest.capability.author.clone(),
-                    package: manifest.capability.name.clone(),
-                    version: manifest.capability.version.clone(),
-                });
-            }
-        }
-
-        // 4. Compile via cache
+        // 2. Compile via cache
         tracing::info!("Compiling module '{}' via cache...", name);
         let artifact = cache
-            .compile_anon(&dependencies, &capabilities, &source_code)
+            .compile_anon(&mod_conf.dependencies, &mod_conf.capabilities, &source_code)
             .await
             .with_context(|| format!("Compilation failed for module '{}'", name))?;
 
-        // 5. Update paths in the config to point to the cache
-        mod_conf.path = cache.root.join("anon").join(artifact.hash());
+        // 3. Store the compiled WASM
+        wasm_binaries.insert(name.clone(), artifact.wasm.clone());
 
+        // 4. Update paths in the config to point to the cache for libraries
         let mut cached_lib_paths = Vec::new();
-        for cap in &capabilities {
+        for cap in &mod_conf.capabilities {
             let cap_dir = cache.capabilities_dir(&cap.author, &cap.package, &cap.version);
             cached_lib_paths.push(cap_dir);
         }
         mod_conf.libraries = cached_lib_paths;
     }
 
-    // 6. Build using PipelineFactory
-    let mut factory = PipelineFactory::load(&cloned_config)
+    // 5. Build using PipelineFactory
+    let mut factory = PipelineFactory::load(&cloned_config, &wasm_binaries)
         .await
         .map_err(|e| anyhow!("Failed to load pipeline: {}", e))?;
     let pipeline = factory
@@ -136,7 +208,7 @@ async fn build_pipeline_from_cache(
 pub async fn run(config_path: &Path, input_json: &str) -> Result<()> {
     let config = load_config(config_path)?;
     let cache = CacheManager::from_env().await?;
-    let mut pipeline = build_pipeline_from_cache(&config, &cache).await?;
+    let mut pipeline = build_pipeline(&config, &cache, None).await?;
 
     tracing::debug!("Parsing input JSON directly to PyroRow");
     let input_row: PyroRow<'static> =
@@ -216,7 +288,7 @@ pub async fn run_batch(
 ) -> Result<()> {
     let config = load_config(config_path)?;
     let cache = CacheManager::from_env().await?;
-    let pipeline = build_pipeline_from_cache(&config, &cache).await?;
+    let pipeline = build_pipeline(&config, &cache, None).await?;
     let pool = PipelinePool::new(vec![pipeline]);
 
     tracing::info!("Reading input file: {:?}", input_file);

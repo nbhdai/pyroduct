@@ -11,27 +11,31 @@ use std::{
 use arrow::array::RecordBatch;
 use arrow::datatypes::Schema;
 
-use anyhow::{Context, Result};
-use cargo_toml::Dependency;
+use crate::run::load_config;
+use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers}, execute, terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode}
+    event::{self, Event, KeyCode, KeyModifiers},
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use pyroduct::pipeline::wasm_execute::{Pipeline, PipelineExecution};
+use pyroduct::pipeline::{PipelineConfig, PipelineFactory};
 use ratatui::{
-    prelude::*,
     Frame, Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Rect}, style::Style,
+    layout::{Constraint, Direction, Layout, Rect},
+    prelude::*,
+    style::Style,
 };
 use ratatui_code_editor::{editor::Editor, theme::vesper};
 use serde::{Deserialize, Serialize};
 
 use artifacts::{
     artifacts::Module,
+    build::CommandError,
     cache::CacheManager,
     cargo::{CapabilityManifest, ModuleManifest, ResolvedCapability},
     environment::dylib_extension,
-    build::CommandError,
 };
 use pyroduct::module::{PyroFactory, PyroModule, capability::CapabilityLibrary};
 
@@ -49,68 +53,30 @@ use keys::{Hotkey, HotkeyProvider};
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CompleteModule {
     pub name: String,
-    pub path: PathBuf,
-    pub source_code: String,
-    pub dependencies: BTreeMap<String, Dependency>,
-    pub capabilities: Vec<ResolvedCapability>,
-
-    pub configurations: HashMap<String, Option<serde_json::Value>>,
-    pub artifact: Option<Module>,
+    pub config: pyroduct::module::ModuleConfig,
+    pub artifact: Option<artifacts::artifacts::Module>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TuiPipeline {
+    pub config: PipelineConfig,
     pub modules: Vec<CompleteModule>,
 }
 
 impl TuiPipeline {
     pub async fn from_config(yaml_path: &Path) -> Result<Self> {
-        let config = crate::run::load_config(yaml_path)?;
+        let config = load_config(yaml_path)?;
         let mut modules = Vec::new();
 
-        for (name, mod_conf) in config.pipeline {
-            let src_path = mod_conf.path.join("src/lib.rs");
-            let source_code = fs::read_to_string(&src_path)
-                .unwrap_or_else(|_| "// No source found\n".to_string());
-
-            let mut dependencies = BTreeMap::new();
-            let mod_toml_path = mod_conf.path.join("Module.toml");
-            if mod_toml_path.exists() {
-                let toml_content = fs::read_to_string(&mod_toml_path)?;
-                let manifest: ModuleManifest = toml::from_str(&toml_content)?;
-                dependencies = manifest.dependencies;
-            }
-
-            let mut capabilities = Vec::new();
-            for lib_path in &mod_conf.libraries {
-                let cap_toml_path = lib_path.join("Capability.toml");
-                if cap_toml_path.exists() {
-                    let toml_content = fs::read_to_string(&cap_toml_path)?;
-                    let manifest: CapabilityManifest = toml::from_str(&toml_content)?;
-                    let author = manifest.capability.author.clone();
-                    let package = manifest.capability.name.clone();
-                    let version = manifest.capability.version.clone();
-
-                    capabilities.push(ResolvedCapability {
-                        author,
-                        package,
-                        version,
-                    });
-                }
-            }
-
+        for (name, mod_conf) in &config.pipeline {
             modules.push(CompleteModule {
-                name,
-                path: mod_conf.path,
-                source_code,
-                dependencies,
-                capabilities,
-                configurations: mod_conf.configurations,
+                name: name.clone(),
+                config: mod_conf.clone(),
                 artifact: None,
             });
         }
 
-        Ok(TuiPipeline { modules })
+        Ok(TuiPipeline { config, modules })
     }
 
     pub fn from_json(json_path: &Path) -> Result<Self> {
@@ -160,13 +126,14 @@ impl App {
         let initial_code = tui_pipeline
             .modules
             .first()
-            .map(|m| m.source_code.clone())
+            .map(|m| m.config.source.clone())
             .unwrap_or_default();
         let initial_caps: Vec<(String, String)> = tui_pipeline
             .modules
             .first()
             .map(|m| {
-                m.configurations
+                m.config
+                    .configurations
                     .iter()
                     .map(|(k, v)| (k.clone(), serde_yaml::to_string(v).unwrap_or_default()))
                     .collect()
@@ -215,21 +182,14 @@ impl App {
         if let ViewState::Module(mv) = &mut self.view {
             let step_idx = mv.selected_step();
             let mut module = self.pipeline.tui.modules[step_idx].clone();
-            module.source_code = mv.code.editor.get_content();
-
-            // Compile the module ephemerally
-            let dependencies: BTreeMap<String, Dependency> = module
-                .dependencies
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
+            module.config.source = mv.code.editor.get_content();
 
             match self
                 .cache
                 .compile_anon(
-                    &dependencies,
-                    &module.capabilities,
-                    &module.source_code,
+                    &module.config.dependencies,
+                    &module.config.capabilities,
+                    &module.config.source,
                 )
                 .await
             {
@@ -255,88 +215,15 @@ impl App {
     }
 
     async fn run_pipeline_inner(&mut self) -> Result<()> {
-        let mut steps = Vec::new();
-
-        let mut config = wasmtime::Config::new();
-        config.async_support(true);
-        let engine = wasmtime::Engine::new(&config)
-            .map_err(|e| anyhow::anyhow!("Failed to create wasmtime engine: {}", e))?;
-
-        for (i, module) in self.pipeline.tui.modules.iter_mut().enumerate() {
-            // 1. Ensure module is compiled
-            if module.artifact.is_none() {
-                let dependencies: BTreeMap<String, Dependency> = module
-                    .dependencies
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect();
-
-                match self
-                    .cache
-                    .compile_anon(
-                        &dependencies,
-                        &module.capabilities,
-                        &module.source_code,
-                    )
-                    .await
-                {
-                    Ok(artifact) => {
-                        module.artifact = Some(artifact);
-                    }
-                    Err(e) => {
-                        match &e {
-                            artifacts::cache::BuildError::Command(CommandError::Cargo { stderr, .. }) => {
-                                if let ViewState::Module(mv) = &mut self.view {
-                                    mv.logs = logs::LogsView::from_stderr(&stderr);
-                                    mv.bottom_tab = module::BottomTab::Logs;
-                                }
-                            },
-                            _ => {},
-                        };
-                        anyhow::bail!("Module {} is not compiled: {:?}", i, e)
-                    }
-                }
+        let mut config = self.pipeline.tui.config.clone();
+        for module in &self.pipeline.tui.modules {
+            if let Some(mod_conf) = config.pipeline.get_mut(&module.name) {
+                mod_conf.source = module.config.source.clone();
+                mod_conf.configurations = module.config.configurations.clone();
             }
-
-            let artifact = module.artifact.as_ref().unwrap();
-
-            // 2. Load capabilities from cache
-            let mut libs = Vec::new();
-            let lib_file = format!("lib.{}", dylib_extension());
-
-            for cap in &module.capabilities {
-                let cap_dir = self
-                    .cache
-                    .capabilities_dir(&cap.author, &cap.package, &cap.version);
-                let artifact_path = cap_dir.join(&lib_file);
-
-                let library = CapabilityLibrary::load(cap.package.clone(), &artifact_path)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Failed to load capability library from cache: {}",
-                            artifact_path.display()
-                        )
-                    })?;
-                libs.push(library);
-            }
-
-            // 3. Create PyroFactory and instantiate
-            let wasmtime_module = wasmtime::Module::from_binary(&engine, &artifact.wasm)
-                .map_err(|e| anyhow::anyhow!("Failed to compile WASM: {}", e))?;
-            let pyro_module = PyroModule::new(wasmtime_module)?;
-
-            let mut factory = PyroFactory::new(libs, module.configurations.clone(), pyro_module)
-                .map_err(|e| anyhow::anyhow!("Failed to create PyroFactory: {}", e))?;
-
-            let instance = factory
-                .instantiate()
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to instantiate module: {}", e))?;
-            steps.push(instance);
         }
 
-        let pipeline = Pipeline { steps };
+        let pipeline = crate::run::build_pipeline(&config, &self.cache, None).await?;
         let pool = pyroduct::pipeline::PipelinePool::new(vec![pipeline]);
 
         let (successes, failures) = pool.process_batch(&self.pipeline.input).await?;
@@ -385,7 +272,7 @@ impl App {
 
         // Sync old code text to domain before navigating away
         if let ViewState::Module(mv) = &self.view {
-            self.pipeline.tui.modules[mv.selected_step()].source_code =
+            self.pipeline.tui.modules[mv.selected_step()].config.source =
                 mv.code.editor.get_content();
         }
 
@@ -400,11 +287,12 @@ impl App {
                 let code_state = wasm::CodeState {
                     editing: false,
                     area: Rect::default(),
-                    editor: Editor::new("rust", &module.source_code, vesper()),
+                    editor: Editor::new("rust", &module.config.source, vesper()),
                     selected_step: stage_idx,
                 };
 
                 let initial_caps: Vec<(String, String)> = module
+                    .config
                     .configurations
                     .iter()
                     .map(|(k, v)| (k.clone(), serde_yaml::to_string(v).unwrap_or_default()))
@@ -496,9 +384,8 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
         } else {
             Style::default().fg(Color::Green)
         };
-        let status = ratatui::widgets::Paragraph::new(
-            ratatui::text::Span::styled(&app.status_msg, style),
-        );
+        let status =
+            ratatui::widgets::Paragraph::new(ratatui::text::Span::styled(&app.status_msg, style));
         f.render_widget(status, chunks[0]);
 
         let hk = app.hotkeys();

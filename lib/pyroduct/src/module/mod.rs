@@ -13,13 +13,15 @@
 //!
 
 use std::collections::HashMap;
-#[allow(unused_imports)]
-use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use serde::Deserialize;
-use wasmtime::{Caller, Engine, FuncType, Instance, Linker, Memory, Store, TypedFunc, Val, ValType};
+use artifacts::artifacts::Module;
+use artifacts::cache::CacheManager;
+use serde::{Deserialize, Serialize};
+use wasmtime::{
+    Caller, Engine, FuncType, Instance, Linker, Memory, Store, TypedFunc, Val, ValType,
+};
 
 use crate::ffi::ForeignObject;
 use crate::format::{
@@ -163,26 +165,45 @@ impl PyroFactory {
                 if let Some(ext) = linker.get(&mut store, class_name, &method_name) {
                     if let Some(func) = ext.into_func() {
                         let ty = func.ty(&store);
-                        
+
                         // Print the actual signature Wasmtime is about to use
-                        tracing::debug!("LINKER CHECK: {}::{} -> {:?}", class_name, method_name, ty);
-                        
+                        tracing::debug!(
+                            "LINKER CHECK: {}::{} -> {:?}",
+                            class_name,
+                            method_name,
+                            ty
+                        );
+
                         // Catch the ghost 4-parameter signature
                         if ty.params().len() != 2 {
-                            tracing::error!(class_name, method_name, ?ty,
+                            tracing::error!(
+                                class_name,
+                                method_name,
+                                ?ty,
                                 "Incorrectly registered in the linker. Need 2 parameters right before instantiation! ",
                             );
                         }
                         if ty.results().len() != 1 {
-                            tracing::error!(class_name, method_name, ?ty,
+                            tracing::error!(
+                                class_name,
+                                method_name,
+                                ?ty,
                                 "Incorrectly registered in the linker. Need 1 result right before instantiation! ",
                             );
                         }
                     } else {
-                        tracing::error!("LINKER CHECK: {}::{} is registered, but it's NOT a function!", class_name, method_name);
+                        tracing::error!(
+                            "LINKER CHECK: {}::{} is registered, but it's NOT a function!",
+                            class_name,
+                            method_name
+                        );
                     }
                 } else {
-                    tracing::error!("LINKER CHECK: {}::{} is completely MISSING from the linker!", class_name, method_name);
+                    tracing::error!(
+                        "LINKER CHECK: {}::{} is completely MISSING from the linker!",
+                        class_name,
+                        method_name
+                    );
                 }
                 tracing::debug!("LINKER CHECK: {}::{} PASSED", class_name, method_name);
             }
@@ -267,13 +288,14 @@ impl PyroFactory {
                                     fn_name,
                                     "Calling function"
                                 );
-                                
+
                                 let mut io = PyroCallIo::from_caller(caller)?;
 
                                 let client_view = io.borrow_argument(client_ptr).await?;
                                 let input_view = io.borrow_argument(input_ptr).await?;
 
-                                let output_vec = object.call(&fn_name, client_view, input_view).await?;
+                                let output_vec =
+                                    object.call(&fn_name, client_view, input_view).await?;
                                 output_vec.parse_as_error()?;
 
                                 let output_view = PyroView::from(&output_vec);
@@ -296,11 +318,7 @@ impl PyroFactory {
 
             let class_name = class_name.clone();
             let object = object.clone();
-            let ty = FuncType::new(
-                linker.engine(),
-                [ValType::I32],
-                [ValType::I32],
-            );
+            let ty = FuncType::new(linker.engine(), [ValType::I32], [ValType::I32]);
             linker
                 .func_new_async(
                     &class_name,
@@ -333,7 +351,6 @@ impl PyroFactory {
         }
         Ok(())
     }
-
 }
 
 pub struct PyroInstance {
@@ -469,11 +486,10 @@ fn classify_error(error: anyhow::Error) -> WasmError {
     WasmError::Unknown(error)
 }
 
-/// A single wasm module in the pipeline.
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+/// A single wasm module in the pipeline intent.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ModuleConfig {
-    /// Path to the module directory.
-    pub path: PathBuf,
+    pub module: Module,
     pub libraries: Vec<PathBuf>,
     /// Per-class capability configuration. Keys are class names.
     #[serde(default)]
@@ -481,21 +497,17 @@ pub struct ModuleConfig {
 }
 
 impl ModuleConfig {
-    pub async fn load_factory(&self) -> Result<PyroFactory, WasmError> {
-        let mut config = wasmtime::Config::new();
-        config.async_support(true);
-        let engine = Engine::new(&config).map_err(|e| WasmError::EngineError(e.to_string()))?;
+    pub async fn load_factory(&mut self, engine: &Engine) -> Result<PyroFactory, WasmError> {
+        let wasm_binary = match &self.module {
+            Module::Source(source) => {
+                let cache = CacheManager::from_env().await?;
+                let binary = cache.compile(source).await?;
+                self.module = Module::Binary(binary);
+            }
+            Module::Binary(binary) => binary.wasm.as_slice(),
+        };
 
-        let wasm_path = self.path.join("mod.wasm");
-        let binary = std::fs::read(&wasm_path).map_err(|e| {
-            WasmError::InstantiationFailed(format!(
-                "Failed to read WASM at {}: {}",
-                wasm_path.display(),
-                e
-            ))
-        })?;
-
-        let wasmtime_module = wasmtime::Module::from_binary(&engine, &binary).map_err(|e| {
+        let wasmtime_module = wasmtime::Module::from_binary(&engine, wasm_binary).map_err(|e| {
             WasmError::InstantiationFailed(format!("Failed to compile WASM: {}", e))
         })?;
         let pyro_module = PyroModule::new(wasmtime_module)?;

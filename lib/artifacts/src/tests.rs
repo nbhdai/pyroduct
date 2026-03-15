@@ -5,7 +5,7 @@
 //! These tests invoke `cargo build` under the hood so they are slow — mark
 //! them #[ignore] if you only want fast unit tests in CI.
 
-use crate::artifacts::{Artifact, Artifacts};
+use crate::artifacts::{Artifact, Artifacts, Module, ModuleDependencies, ModuleSource};
 use crate::cache::{CacheManager, PyroductConfig};
 use crate::cargo::ResolvedCapability;
 use crate::environment::Environment;
@@ -99,7 +99,9 @@ async fn ship_httpc_capability_to_cache() {
 
     // 2. Build and ship the capability binary
     let cap_artifacts = env.package(true).await.unwrap();
-    cache.write_artifacts(&cap_artifacts).await.unwrap();
+    for artifact in &cap_artifacts {
+        cache.write_artifacts(artifact).await.unwrap();
+    }
 
     let cap_dir = cache.capabilities_dir("nbhdai", "httpc", "0.1.0");
     assert!(cap_dir.join("Capability.toml").exists());
@@ -135,15 +137,20 @@ async fn ship_basic_module_to_cache() {
     );
 
     let module_artifacts = env.package(true).await.unwrap();
-    cache.write_artifacts(&module_artifacts).await.unwrap();
+    for artifact in &module_artifacts {
+        cache.write_artifacts(artifact).await.unwrap();
+    }
 
-    let module = match &module_artifacts {
-        Artifacts::Module(m) => m,
-        _ => panic!("Expected Module artifact"),
-    };
+    let source = module_artifacts
+        .iter()
+        .find_map(|a| match a {
+            Artifacts::Module(Module::Source(s)) => Some(s),
+            _ => None,
+        })
+        .expect("Expected ModuleSource artifact");
 
     // Modules are ephemeral and are placed in anon/{hash}
-    let hash = module.hash();
+    let hash = source.hash();
 
     let mod_dir = cache.root.join("anon").join(&hash);
 
@@ -177,7 +184,9 @@ async fn test_anon_compile_with_interface() {
 
     // Write the interface manually to the capabilities directory to satisfy the `ResolvedCapability::interface_dir`
     cache.write_artifacts(&interface.into()).await.unwrap();
-    cache.write_artifacts(&capability).await.unwrap();
+    for artifact in &capability {
+        cache.write_artifacts(artifact).await.unwrap();
+    }
 
     let cap = ResolvedCapability {
         author: "nbhdai".to_string(),
@@ -195,11 +204,14 @@ async fn test_anon_compile_with_interface() {
             Ok(response)
         }
     "#;
-    let caps = vec![cap];
-    let anon = cache
-        .compile_anon(&BTreeMap::new(), &caps, code)
-        .await
-        .unwrap();
+    let mod_source = ModuleSource {
+        dependencies: ModuleDependencies {
+            dependencies: BTreeMap::new(),
+            capabilities: vec![cap],
+        },
+        source: code.to_string(),
+    };
+    let anon = cache.compile(&mod_source).await.unwrap();
 
     assert!(!anon.wasm.is_empty());
     assert!(
@@ -212,10 +224,7 @@ async fn test_anon_compile_with_interface() {
     let hash = format!("{:x}", sha2::Digest::finalize(hasher));
 
     // 2. Test debug_module
-    let debug_mod = cache
-        .debug_module(&BTreeMap::new(), &caps, code)
-        .await
-        .unwrap();
+    let debug_mod = cache.debug_module(&mod_source.hash()).await.unwrap();
     let mod_dir = cache.root.join("anon").join(&hash);
     assert!(mod_dir.join("mod.wat").exists());
     assert!(mod_dir.join("cap.rs").exists());
@@ -247,17 +256,32 @@ async fn test_module_wasm_exact_match() {
     let module_artifacts = env.package(true).await.unwrap();
 
     // Extract original WASM bytes
-    let (original_wasm, source) = match &module_artifacts {
-        Artifacts::Module(m) => (m.wasm.clone(), m.source.clone()),
-        _ => panic!("Expected Module artifact"),
-    };
+    let source = module_artifacts
+        .iter()
+        .find_map(|a| match a {
+            Artifacts::Module(Module::Source(s)) => Some(s),
+            _ => None,
+        })
+        .expect("Expected ModuleSource artifact");
+    let binary = module_artifacts
+        .iter()
+        .find_map(|a| match a {
+            Artifacts::Module(Module::Binary(b)) => Some(b),
+            _ => None,
+        })
+        .expect("Expected ModuleBinary artifact");
+
+    let original_wasm = binary.wasm.clone();
+    let source_code = source.source.clone();
 
     // Write to disk
-    cache.write_artifacts(&module_artifacts).await.unwrap();
+    for artifact in &module_artifacts {
+        cache.write_artifacts(artifact).await.unwrap();
+    }
 
     // Resolve the ephemeral anon/ directory
     let mut hasher = sha2::Sha256::new();
-    sha2::Digest::update(&mut hasher, &source);
+    sha2::Digest::update(&mut hasher, &source_code);
     let hash = format!("{:x}", sha2::Digest::finalize(hasher));
     let mod_dir = cache.root.join("anon").join(&hash);
 
@@ -271,8 +295,8 @@ async fn test_module_wasm_exact_match() {
     // 2. Verify exact match after Artifacts::from_dir read
     let loaded_artifact = Artifacts::from_dir(&mod_dir).await.unwrap();
     let loaded_wasm = match loaded_artifact {
-        Artifacts::Module(m) => m.wasm,
-        _ => panic!("Expected reconstructed artifact to be a Module"),
+        Artifacts::Module(Module::Binary(m)) => m.wasm,
+        _ => panic!("Expected reconstructed artifact to be a ModuleBinary"),
     };
     assert_eq!(
         original_wasm, loaded_wasm,
@@ -291,26 +315,28 @@ async fn test_capability_lib_exact_match() {
     let cap_artifacts = env.package(true).await.unwrap();
 
     // Extract original shared library bytes
-    let original_lib_bytes = match &cap_artifacts {
-        Artifacts::Capability(c) => {
-            assert!(!c.libs.is_empty(), "Capability has no compiled libraries");
-            c.libs[0].to_vec() // Derefs to &[u8]
-        }
-        _ => panic!("Expected Capability artifact"),
-    };
+    let original_lib_bytes = cap_artifacts
+        .iter()
+        .find_map(|a| match a {
+            Artifacts::CapabilityBinary(c) => Some(c.libs[0].to_vec()),
+            _ => None,
+        })
+        .expect("Expected CapabilityBinary artifact");
 
     // Write to disk
-    cache.write_artifacts(&cap_artifacts).await.unwrap();
+    for artifact in &cap_artifacts {
+        cache.write_artifacts(artifact).await.unwrap();
+    }
     let cap_dir = cache.capabilities_dir("nbhdai", "httpc", "0.1.0");
 
     // Verify exact match after Artifacts::from_dir read
     let loaded_artifact = Artifacts::from_dir(&cap_dir).await.unwrap();
     let loaded_lib_bytes = match loaded_artifact {
-        Artifacts::Capability(c) => {
+        Artifacts::CapabilityBinary(c) => {
             assert!(!c.libs.is_empty(), "Loaded capability has no libraries");
             c.libs[0].to_vec()
         }
-        _ => panic!("Expected reconstructed artifact to be a Capability"),
+        _ => panic!("Expected reconstructed artifact to be a CapabilityBinary"),
     };
 
     assert_eq!(
@@ -327,7 +353,12 @@ async fn test_artifact_tarball_roundtrips() {
     let module_artifacts = env.package(true).await.unwrap();
 
     // Serialize to .tar.gz buffer
-    let tarball_bytes = module_artifacts
+    // Pick one to test tarball
+    let source_artifact = module_artifacts
+        .iter()
+        .find(|a| matches!(a, Artifacts::Module(Module::Source(_))))
+        .unwrap();
+    let tarball_bytes = source_artifact
         .to_tarball()
         .expect("Failed to create tarball");
 
@@ -335,16 +366,16 @@ async fn test_artifact_tarball_roundtrips() {
     let unpacked = Artifacts::from_tarball(&tarball_bytes).expect("Failed to unpack tarball");
 
     match unpacked {
-        Artifacts::Module(m) => {
-            let original_wasm = match &module_artifacts {
-                Artifacts::Module(orig) => &orig.wasm,
+        Artifacts::Module(Module::Source(m)) => {
+            let original_source = match source_artifact {
+                Artifacts::Module(Module::Source(orig)) => &orig.source,
                 _ => unreachable!(),
             };
             assert_eq!(
-                &m.wasm, original_wasm,
-                "WASM bytes corrupted after tarball extraction"
+                &m.source, original_source,
+                "Source code corrupted after tarball extraction"
             );
         }
-        _ => panic!("Expected unpacked tarball to be a Module"),
+        _ => panic!("Expected unpacked tarball to be a ModuleSource"),
     }
 }

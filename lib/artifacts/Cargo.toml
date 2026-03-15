@@ -5,11 +5,12 @@ authors.workspace = true
 edition.workspace = true
 
 [dependencies]
+spec.workspace = true
+
 cargo_toml.workspace = true
 flate2.workspace = true
 prettyplease.workspace = true
 pyro-core.workspace = true
-pyroduct.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

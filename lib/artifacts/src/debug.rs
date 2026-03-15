@@ -3,7 +3,7 @@
 use std::{borrow::Cow, collections::HashMap};
 
 use crate::artifacts::append_file;
-use crate::artifacts::{Artifact, Capability, Module};
+use crate::artifacts::{Artifact, CapabilityBinary, ModuleBinary};
 use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
@@ -13,7 +13,7 @@ use std::path::Path;
 use tar::Builder;
 use tokio::fs;
 
-pub fn wat(module: &Module) -> Result<String, String> {
+pub fn wat(module: &ModuleBinary) -> Result<String, String> {
     wasmprinter::print_bytes(&module.wasm)
         .map_err(|e| format!("Failed to convert WASM to WAT: {}", e))
 }
@@ -231,7 +231,7 @@ impl Artifact for ModuleDebug {
 }
 
 /// Scans a dynamic library and uses DWARF debug info to reconstruct signatures
-pub fn symbols(capability: &Capability) -> Vec<Result<CapSymbols, String>> {
+pub fn symbols(capability: &CapabilityBinary) -> Vec<Result<CapSymbols, String>> {
     let mut results = Vec::new();
 
     for (index, bin) in capability.libs.iter().enumerate() {

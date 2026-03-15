@@ -1,9 +1,9 @@
 //! Conversions between our manifest and Cargo's
 
+pub use cargo_toml::Dependency;
 use cargo_toml::{
-    Badges, Dependency, DependencyDetail, DepsSet, Edition, FeatureSet, Inheritable,
-    InheritedDependencyDetail, LintGroups, Manifest, Package, PatchSet, Product, Profiles,
-    TargetDepsSet, Workspace,
+    Badges, DependencyDetail, DepsSet, Edition, FeatureSet, Inheritable, InheritedDependencyDetail,
+    LintGroups, Manifest, Package, PatchSet, Product, Profiles, TargetDepsSet, Workspace,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path};

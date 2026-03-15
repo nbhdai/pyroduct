@@ -1,5 +1,9 @@
 use anyhow::{Context, Result};
-use artifacts::{artifacts::Artifact, debug::CapSymbols, environment::Environment};
+use artifacts::{
+    artifacts::{Artifact, Module},
+    debug::CapSymbols,
+    environment::Environment,
+};
 use fs_err as fs;
 use pyro_core::{ffi::generate_capability, module::generate_module};
 use std::path::Path;
@@ -78,51 +82,68 @@ pub async fn expand_single(path: &Path) -> Result<bool> {
             .await?;
     }
     let artifacts = env.package(false).await?;
-    artifacts.write_to_directory(&output_dir).await?;
-    match &artifacts {
-        artifacts::artifacts::Artifacts::Capability(capability) => {
-            let symbols = artifacts::debug::symbols(capability);
-            for sym in symbols {
-                let (name, content) = match sym {
-                    Ok(CapSymbols::Elf(sym)) => ("elf.json", sym),
-                    Ok(CapSymbols::MachO(sym)) => ("macho.json", sym),
-                    Ok(CapSymbols::Pe(sym)) => ("pe.json", sym),
-                    Ok(CapSymbols::Unknown(sym)) => ("Unknown.json", sym),
-                    Err(error) => {
-                        tracing::error!(error, "Unable to get one set of symbols");
-                        continue;
-                    },
-                };
-                match serde_json::to_string_pretty(&content) {
-                    Ok(content) => fs::write(output_dir.join(name), content)?,
-                    Err(error) => {
-                        tracing::error!(?error, "Unable to serialize symbols");
-                        continue;
-                    },
+    for artifact in &artifacts {
+        artifact.write_to_directory(&output_dir).await?;
+    }
+
+    for artifact in &artifacts {
+        match artifact {
+            artifacts::artifacts::Artifacts::CapabilityBinary(binary) => {
+                let source = artifacts
+                    .iter()
+                    .find_map(|a| match a {
+                        artifacts::artifacts::Artifacts::CapabilitySource(s) => Some(s),
+                        _ => None,
+                    })
+                    .context("Missing CapabilitySource for CapabilityBinary")?;
+
+                let symbols = artifacts::debug::symbols(binary);
+                for sym in symbols {
+                    let (name, content) = match sym {
+                        Ok(CapSymbols::Elf(sym)) => ("elf.json", sym),
+                        Ok(CapSymbols::MachO(sym)) => ("macho.json", sym),
+                        Ok(CapSymbols::Pe(sym)) => ("pe.json", sym),
+                        Ok(CapSymbols::Unknown(sym)) => ("Unknown.json", sym),
+                        Err(error) => {
+                            tracing::error!(error, "Unable to get one set of symbols");
+                            continue;
+                        }
+                    };
+                    match serde_json::to_string_pretty(&content) {
+                        Ok(content) => fs::write(output_dir.join(name), content)?,
+                        Err(error) => {
+                            tracing::error!(?error, "Unable to serialize symbols");
+                            continue;
+                        }
+                    }
                 }
-                
-            }
 
-            let code = generate_capability(&capability.src_lib_rs, &capability.manifest.capability.name, &capability.manifest.capability.version).context("Capability code")?;
-            let code = prettyplease::unparse(&code);
-            fs::create_dir_all(&output_dir)?;
-            fs::write(output_dir.join("cap.rs"), code)?;
-        },
-        artifacts::artifacts::Artifacts::Interface(_) => {},
-        artifacts::artifacts::Artifacts::Module(module) => {
-            match artifacts::debug::wat(module) {
-            
-                Ok(wat) => fs::write(output_dir.join("mod.wat"), wat)?,
-                Err(error) => {
-                    tracing::error!(error, "Unable to create wat");
-                },
+                let code = generate_capability(
+                    &source.src_lib_rs,
+                    &source.manifest.capability.name,
+                    &source.manifest.capability.version,
+                )
+                .context("Capability code")?;
+                let code = prettyplease::unparse(&code);
+                fs::create_dir_all(&output_dir)?;
+                fs::write(output_dir.join("cap.rs"), code)?;
             }
-
-            let code = generate_module(&module.source).context("Module code")?;
-            let code = prettyplease::unparse(&code);
-            fs::create_dir_all(&output_dir)?;
-            fs::write(output_dir.join("cap.rs"), code)?;
-        },
+            artifacts::artifacts::Artifacts::Module(Module::Source(source)) => {
+                let code = generate_module(&source.source).context("Module code")?;
+                let code = prettyplease::unparse(&code);
+                fs::create_dir_all(&output_dir)?;
+                fs::write(output_dir.join("cap.rs"), code)?;
+            }
+            artifacts::artifacts::Artifacts::Module(Module::Binary(binary)) => {
+                match artifacts::debug::wat(binary) {
+                    Ok(wat) => fs::write(output_dir.join("mod.wat"), wat)?,
+                    Err(error) => {
+                        tracing::error!(error, "Unable to create wat");
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     Ok(true)

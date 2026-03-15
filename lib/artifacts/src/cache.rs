@@ -1,13 +1,13 @@
-use crate::artifacts::{Artifact, Artifacts, Capability, Module, ModuleDependencies};
+use crate::artifacts::{
+    Artifact, Artifacts, CapabilityBinary, CapabilitySource, Module, ModuleBinary, ModuleSource,
+};
 use crate::build::{CommandError, format_syn_error, run_command};
-use crate::cargo::ResolvedCapability;
 use crate::debug::{self, CapabilityDebug, ModuleDebug};
 use cargo_toml::Dependency;
 use pyro_core::{
     ffi::generate_capability,
     module::{generate_module, generate_module_spec},
 };
-use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use tokio::fs;
@@ -69,7 +69,7 @@ pub struct CacheManager {
 }
 
 impl CacheManager {
-pub async fn new(root: &Path, mut config: PyroductConfig) -> Result<Self, CacheError> {
+    pub async fn new(root: &Path, mut config: PyroductConfig) -> Result<Self, CacheError> {
         fs::create_dir_all(&root).await.map_err(|e| CacheError {
             context: "Failed to create cache root".to_string(),
             error: e,
@@ -110,7 +110,7 @@ pub async fn new(root: &Path, mut config: PyroductConfig) -> Result<Self, CacheE
                     .unwrap_or_else(|_| PathBuf::from("."));
                 home.join(".pyroduct")
             });
-        
+
         let config_path = root.join("config.toml");
         let content = fs::read_to_string(&config_path)
             .await
@@ -118,11 +118,10 @@ pub async fn new(root: &Path, mut config: PyroductConfig) -> Result<Self, CacheE
                 context: format!("Failed to read the configuration"),
                 error,
             })?;
-        let config =
-            toml::from_str::<PyroductConfig>(&content).map_err(|error| CacheError {
-                context: format!("Failed to parse the configuration"),
-                error: io::Error::new(io::ErrorKind::InvalidData, error),
-            })?;
+        let config = toml::from_str::<PyroductConfig>(&content).map_err(|error| CacheError {
+            context: format!("Failed to parse the configuration"),
+            error: io::Error::new(io::ErrorKind::InvalidData, error),
+        })?;
 
         Self::new(&root, config).await
     }
@@ -237,16 +236,20 @@ pub async fn new(root: &Path, mut config: PyroductConfig) -> Result<Self, CacheE
         version: &str,
     ) -> Result<CapabilityDebug, BuildError> {
         let path = self.capabilities_dir(author, name, version);
-        let capability = Capability::from_dir(&path)
-            .await
-            .map_err(|error| BuildError::io("failed to load capability from cache", error))?;
+        let binary = CapabilityBinary::from_dir(&path).await.map_err(|error| {
+            BuildError::io("failed to load capability binary from cache", error)
+        })?;
 
-        let symbols = debug::symbols(&capability);
+        let symbols = debug::symbols(&binary);
+
+        let source = CapabilitySource::from_dir(&path).await.map_err(|error| {
+            BuildError::io("failed to load capability source from cache", error)
+        })?;
 
         let code = generate_capability(
-            &capability.src_lib_rs,
-            &capability.manifest.capability.name,
-            &capability.manifest.capability.version,
+            &source.src_lib_rs,
+            &source.manifest.capability.name,
+            &source.manifest.capability.version,
         )
         .map_err(|e| {
             BuildError::Documentation(format!("Capability code generation error: {}", e))
@@ -259,19 +262,16 @@ pub async fn new(root: &Path, mut config: PyroductConfig) -> Result<Self, CacheE
         Ok(debug)
     }
 
-    pub async fn debug_module(
-        &self,
-        dependencies: &BTreeMap<String, Dependency>,
-        capabilities: &Vec<ResolvedCapability>,
-        code: &str,
-    ) -> Result<ModuleDebug, BuildError> {
-        let hash = Module::compute_hash(code, dependencies, capabilities);
+    pub async fn debug_module(&self, hash: &str) -> Result<ModuleDebug, BuildError> {
         let path = self.root.join("anon").join(hash);
-        let module = Module::from_dir(&path)
+        let source = ModuleSource::from_dir(&path)
             .await
-            .map_err(|error| BuildError::io("failed to load module from cache", error))?;
+            .map_err(|error| BuildError::io("failed to load module source from cache", error))?;
+        let binary = ModuleBinary::from_dir(&path)
+            .await
+            .map_err(|error| BuildError::io("failed to load module binary from cache", error))?;
 
-        let wat = match debug::wat(&module) {
+        let wat = match debug::wat(&binary) {
             Ok(wat) => Some(wat),
             Err(error) => {
                 tracing::error!(error, "Unable to create wat");
@@ -279,7 +279,7 @@ pub async fn new(root: &Path, mut config: PyroductConfig) -> Result<Self, CacheE
             }
         };
 
-        let generated_code = generate_module(&module.source).map_err(|e| {
+        let generated_code = generate_module(&source.source).map_err(|e| {
             BuildError::Documentation(format!("Module code generation error: {}", e))
         })?;
         let cap_rs = Some(prettyplease::unparse(&generated_code));
@@ -313,37 +313,11 @@ pub async fn new(root: &Path, mut config: PyroductConfig) -> Result<Self, CacheE
         }
     }
 
-    pub async fn add_anon_module(&self, hash: &str, wasm: &[u8]) -> Result<(), CacheError> {
-        // Updated to match the new directory structure: anon/{hash}/mod.wasm
-        let module_dir = self.root.join("anon").join(hash);
-        fs::create_dir_all(&module_dir)
-            .await
-            .map_err(|error| CacheError {
-                context: "Failed to create anon module dir".to_string(),
-                error,
-            })?;
-
-        let module_path = module_dir.join("mod.wasm");
-        fs::write(module_path, wasm)
-            .await
-            .map_err(|error| CacheError {
-                context: "Failed to write module".to_string(),
-                error,
-            })?;
-        Ok(())
-    }
-
-    pub async fn get_anon(
-        &self,
-        dependencies: &BTreeMap<String, Dependency>,
-        capabilities: &Vec<ResolvedCapability>,
-        code: &str,
-    ) -> Result<Option<Module>, BuildError> {
-        let hash = Module::compute_hash(code, dependencies, capabilities);
+    pub async fn get_binary(&self, hash: &str) -> Result<Option<ModuleBinary>, BuildError> {
         let path = self.root.join("anon").join(hash);
         if path.exists() {
-            let module = Module::from_dir(&path).await?;
-            Ok(Some(module))
+            let binary = ModuleBinary::from_dir(&path).await?;
+            Ok(Some(binary))
         } else {
             Ok(None)
         }
@@ -351,14 +325,10 @@ pub async fn new(root: &Path, mut config: PyroductConfig) -> Result<Self, CacheE
 
     /// Compile the module written by `set_build` and store the wasm as an anon
     /// artifact. Returns the hex SHA-256 hash that identifies it in the cache.
-    pub async fn compile_anon(
-        &self,
-        dependencies: &BTreeMap<String, Dependency>,
-        capabilities: &Vec<ResolvedCapability>,
-        code: &str,
-    ) -> Result<Module, BuildError> {
-        if let Some(module) = self.get_anon(&dependencies, &capabilities, code).await? {
-            return Ok(module);
+    pub async fn compile(&self, source: &ModuleSource) -> Result<ModuleBinary, BuildError> {
+        let hash = source.hash();
+        if let Some(binary) = self.get_binary(&hash).await? {
+            return Ok(binary);
         }
 
         let build_dir = self.root.join("build");
@@ -366,7 +336,7 @@ pub async fn new(root: &Path, mut config: PyroductConfig) -> Result<Self, CacheE
         fs::create_dir_all(&src_dir)
             .await
             .map_err(|e| BuildError::io("create src dir", e))?;
-        fs::write(src_dir.join("lib.rs"), code)
+        fs::write(src_dir.join("lib.rs"), &source.source)
             .await
             .map_err(|e| BuildError::io("write lib.rs", e))?;
 
@@ -389,10 +359,10 @@ edition = "2024"
         manifest
             .dependencies
             .insert("pyroduct".to_string(), pyro_dep);
-        for (dep_name, dep) in dependencies.iter() {
+        for (dep_name, dep) in source.dependencies.dependencies.iter() {
             manifest.dependencies.insert(dep_name.clone(), dep.clone());
         }
-        for cap in capabilities.iter() {
+        for cap in source.dependencies.capabilities.iter() {
             let path = Path::new("../")
                 .join(self.interface_dir(&cap.author, &cap.package, &cap.version))
                 .to_string_lossy()
@@ -427,7 +397,7 @@ edition = "2024"
             .await
             .map_err(|e| BuildError::io("read compiled wasm", e))?;
 
-        let spec = generate_module_spec(code)
+        let spec = generate_module_spec(&source.source)
             .map_err(|s| {
                 BuildError::Documentation(format_syn_error("Cannot generate docstring", s))
             })?
@@ -435,24 +405,31 @@ edition = "2024"
                 "Module main functions is missing".to_string(),
             ))?;
 
-        let dependencies = ModuleDependencies {
-            dependencies: dependencies.clone(),
-            capabilities: capabilities.clone(),
-        };
+        let binary = ModuleBinary { hash, wasm, spec };
 
-        let module = Module {
-            source: code.to_string(),
-            wasm,
-            spec,
-            dependencies,
-        };
-        let _ = self.write_artifacts(&module.clone().into()).await;
-        Ok(module)
+        let _ = self.write_artifacts(&source.clone().into()).await;
+        let _ = self.write_artifacts(&binary.clone().into()).await;
+
+        Ok(binary)
     }
 
     pub async fn write_artifacts(&self, artifacts: &Artifacts) -> Result<(), CacheError> {
         match &artifacts {
-            Artifacts::Capability(capability) => {
+            Artifacts::CapabilityBinary(capability) => {
+                let path = self.capabilities_dir(
+                    &capability.manifest.capability.author,
+                    &capability.manifest.capability.name,
+                    &capability.manifest.capability.version,
+                );
+                capability
+                    .write_to_directory(&path)
+                    .await
+                    .map_err(|e| CacheError {
+                        context: format!("Failed to write artifacts to {}", path.display()),
+                        error: e,
+                    })
+            }
+            Artifacts::CapabilitySource(capability) => {
                 let path = self.capabilities_dir(
                     &capability.manifest.capability.author,
                     &capability.manifest.capability.name,
@@ -498,10 +475,21 @@ edition = "2024"
                         error: e,
                     })
             }
-            Artifacts::Module(anon) => {
-                let hash = anon.hash();
+            Artifacts::Module(Module::Binary(binary)) => {
+                let path = self.root.join("anon").join(&binary.hash);
+                binary
+                    .write_to_directory(&path)
+                    .await
+                    .map_err(|e| CacheError {
+                        context: format!("Failed to write artifacts to {}", path.display()),
+                        error: e,
+                    })
+            }
+            Artifacts::Module(Module::Source(source)) => {
+                let hash = source.hash();
                 let path = self.root.join("anon").join(hash);
-                anon.write_to_directory(&path)
+                source
+                    .write_to_directory(&path)
                     .await
                     .map_err(|e| CacheError {
                         context: format!("Failed to write artifacts to {}", path.display()),
@@ -530,4 +518,3 @@ fn resolve_dependency_path(dep: &mut Dependency, base: &std::path::Path) {
         }
     }
 }
-

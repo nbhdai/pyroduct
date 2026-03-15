@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use indexmap::IndexMap;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     module::{ModuleConfig, PyroFactory},
@@ -14,7 +14,7 @@ use super::PipelineError;
 // Config (deserialized from TOML / JSON)
 // =============================================================================
 
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct PipelineConfig {
     pub pipeline: IndexMap<String, ModuleConfig>,
 }
@@ -27,9 +27,6 @@ impl PipelineConfig {
                 if path.is_relative() {
                     *path = config_dir.join(&path);
                 }
-            }
-            if module.path.is_relative() {
-                module.path = config_dir.join(&module.path);
             }
         }
     }
@@ -50,16 +47,17 @@ pub struct PipelineFactory {
 // =============================================================================
 
 impl PipelineFactory {
-    /// Loads and resolves a full pipeline from its configuration.
-    ///
-    /// 1. Loads each shared library once.
-    /// 2. For each module, instantiates its own capability instances from the
-    ///    referenced libraries with the module-specific configuration.
-    /// 3. Returns the ordered pipeline steps with capabilities attached.
-    pub async fn load(config: &PipelineConfig) -> Result<Self, PipelineError> {
+    /// Loads and resolves a full pipeline from its configuration and corresponding WASm binaries.
+    pub async fn load(
+        config: &PipelineConfig,
+        wasm_binaries: &std::collections::HashMap<String, Vec<u8>>,
+    ) -> Result<Self, PipelineError> {
         let mut pipeline = Vec::new();
-        for module in config.pipeline.values() {
-            let module_factory = module.load_factory().await?;
+        for (name, module) in &config.pipeline {
+            let wasm = wasm_binaries.get(name).ok_or_else(|| {
+                PipelineError::Config(format!("Missing WASM binary for module '{}'", name))
+            })?;
+            let module_factory = module.load_factory(wasm).await?;
             pipeline.push(module_factory);
         }
 
