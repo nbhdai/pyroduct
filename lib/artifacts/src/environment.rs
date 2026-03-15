@@ -277,20 +277,6 @@ impl Environment {
                     String::new()
                 };
 
-                let spec_path = self.root.join("interface.json");
-                let interface_json = if spec_path.exists() {
-                    fs::read_to_string(&spec_path).await?
-                } else {
-                    String::new()
-                };
-
-                let config_path = self.root.join("config.json");
-                let config_json = if config_path.exists() {
-                    Some(fs::read_to_string(&config_path).await?)
-                } else {
-                    None
-                };
-
                 vec![
                     Artifacts::CapabilitySource(CapabilitySource {
                         manifest: manifest.clone(),
@@ -301,8 +287,6 @@ impl Environment {
                     Artifacts::CapabilityBinary(CapabilityBinary {
                         libs: vec![lib],
                         manifest: manifest.clone(),
-                        interface_json,
-                        config_json,
                     }),
                 ]
             }
@@ -318,23 +302,16 @@ impl Environment {
 
                 let spec_path = self.root.join("interface.json");
                 let interface_json = if spec_path.exists() {
-                    fs::read_to_string(&spec_path).await?
+                    fs::read(&spec_path).await?
                 } else {
-                    String::new()
+                    return Err(EnvironmentError::InterfaceGeneration("Missing".to_string()));
                 };
-
-                let config_path = self.root.join("config.json");
-                let config_json = if config_path.exists() {
-                    Some(fs::read_to_string(&config_path).await?)
-                } else {
-                    None
-                };
+                let interface = serde_json::from_slice(&interface_json)?;
 
                 vec![Artifacts::Interface(Interface {
                     manifest: manifest.clone(),
                     src_lib_rs,
-                    interface_json,
-                    config_json,
+                    interface,
                 })]
             }
         };
@@ -359,22 +336,17 @@ impl Environment {
 
         let original_source = fs::read_to_string(&source_path).await?;
 
-        let (lib_rs_file, spec_res, config_res) =
+        let (lib_rs_file, interface) =
             pyro_core::ffi::generate_interface(&original_source, &cap_name, &cap_version).map_err(
                 |r| EnvironmentError::InterfaceGeneration(format_syn_error(&original_source, r)),
             )?;
 
         let lib_rs_content = prettyplease::unparse(&lib_rs_file);
-        let spec = spec_res.map_err(|e| EnvironmentError::Serde(e.to_string()))?;
-        let config = config_res
-            .transpose()
-            .map_err(|e| EnvironmentError::Serde(e.to_string()))?;
 
         Ok(Some(Interface {
             manifest: manifest.clone(),
             src_lib_rs: lib_rs_content,
-            interface_json: spec,
-            config_json: config,
+            interface,
         }))
     }
 

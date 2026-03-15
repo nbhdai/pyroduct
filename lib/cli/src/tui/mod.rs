@@ -148,7 +148,9 @@ impl App {
                         }
                     }
                 }
-                pyroduct::module::Module::Hash(_) | pyroduct::module::Module::Path(_) => unreachable!(),
+                pyroduct::module::Module::Hash(_) | pyroduct::module::Module::Path(_) => {
+                    unreachable!()
+                }
             };
 
             // Persistence
@@ -278,7 +280,7 @@ fn ui(f: &mut Frame, app: &mut App) {
 
     match &mut app.view {
         ViewState::Module(mv) => {
-            mv.render(f, &app.pipeline, main_area);
+            mv.render(f, &app.pipeline, &app.cache, main_area);
         }
         ViewState::InputTable(table_view) => {
             table_view.render(f, main_area, "Input Table");

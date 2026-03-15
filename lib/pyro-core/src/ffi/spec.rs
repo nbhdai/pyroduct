@@ -6,200 +6,113 @@
 //! types expand into proper `Group(fields)`.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
 
-use serde::Serialize;
-use spec::{PyroField, PyroSchema, PyroType};
+use spec::{CapabilityFunc, ClassSpec, InterfaceSpec, PyroField, PyroSchema, PyroType};
 use syn::{Attribute, Expr, Lit, Meta};
 
-use crate::format::documentation::MagmaDocumentation;
+use crate::ffi::has_attr;
 
 use super::capability::CapabilityImpl;
-use super::config::CapConfig;
 use crate::struct_doc::SchemaBuilder;
-
-// =============================================================================
-// Spec types — backed by PyroSchema / PyroField / PyroType
-// =============================================================================
-
-/// The root specification object.
-#[derive(Serialize)]
-pub struct InterfaceSpec {
-    pub capability: String,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client: Option<NamedSchema>,
-
-    pub methods: Vec<MethodSpec>,
-
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub items: HashMap<String, PyroSchema<'static>>,
-}
-
-/// A named schema — wraps a name with a `PyroSchema`.
-#[derive(Serialize)]
-pub struct NamedSchema {
-    pub name: String,
-    #[serde(flatten)]
-    pub schema: PyroSchema<'static>,
-}
-
-#[derive(Serialize)]
-pub struct MethodSpec {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub parameters: PyroSchema<'static>,
-    pub return_type: PyroType<'static>,
-}
-
-/// The root specification object for a Config.
-#[derive(Serialize)]
-pub struct ConfigSpec {
-    pub name: String,
-    #[serde(flatten)]
-    pub schema: PyroSchema<'static>,
-}
 
 // =============================================================================
 // SpecBuilder
 // =============================================================================
 
-pub struct SpecBuilder<'b> {
-    spec: InterfaceSpec,
-    target_client_name: String,
+pub fn build_class_spec<'b>(
+    cap: &CapabilityImpl,
     builder: &'b SchemaBuilder,
+) -> ClassSpec<'static> {
+    let capability = cap.ident.state_tn.to_string();
+    let description = extract_doc_string(&cap.attrs);
+
+    let methods = cap
+        .methods
+        .iter()
+        .map(|m| {
+            let name = m.name.to_string().into();
+            let description = extract_doc_string(&m.attrs).map(|s| s.into());
+            let output = fn_output_to_pyro_type(&m.output, builder);
+
+            let fields: Vec<PyroField<'static>> = m
+                .inputs
+                .iter()
+                .map(|(ident, ty)| {
+                    let data_type = builder.resolve_type(ty);
+                    let nullable = SchemaBuilder::is_option(ty);
+                    PyroField::new(Cow::Owned(ident.to_string()), data_type, nullable)
+                })
+                .collect();
+
+            let input = PyroSchema {
+                documentation: None,
+                fields: fields.into(),
+            };
+
+            CapabilityFunc {
+                name,
+                description,
+                input,
+                output,
+            }
+        })
+        .collect();
+
+    let client = builder.schema_for(&cap.ident.client_tn.to_string());
+    let config = if let Some(config_tn) = &cap.ident.config_tn {
+        builder.schema_for(&config_tn.to_string())
+    } else {
+        None
+    };
+
+    ClassSpec {
+        name: capability.into(),
+        description: description.map(|s| s.into()),
+        client,
+        config,
+        methods,
+    }
 }
 
-impl<'b> SpecBuilder<'b> {
-    pub fn new(cap: &CapabilityImpl, builder: &'b SchemaBuilder) -> Self {
-        let capability = cap.ident.state_tn.to_string();
-        let target_client_name = cap.ident.client_tn.to_string();
-        let description = extract_doc_string(&cap.attrs);
+    pub fn build_spec(file: &syn::File) -> InterfaceSpec<'static> {
+        // Pass 1: collect all MagmaDocumentation from structs in the file.
+        let builder = SchemaBuilder::from_file(file);
 
-        let methods = cap
-            .methods
-            .iter()
-            .map(|m| {
-                let name = m.name.to_string();
-                let description = extract_doc_string(&m.attrs);
-                let return_type = fn_output_to_pyro_type(&m.output, builder);
+        let mut classes: Vec<ClassSpec<'static>> = Vec::new();
+        let mut covered_items = Vec::new();
 
-                let param_fields: Vec<PyroField<'static>> = m
-                    .inputs
-                    .iter()
-                    .map(|(ident, ty)| {
-                        let data_type = builder.resolve_type(ty);
-                        let nullable = SchemaBuilder::is_option(ty);
-                        PyroField::new(Cow::Owned(ident.to_string()), data_type, nullable)
-                    })
-                    .collect();
-
-                MethodSpec {
-                    name,
-                    description,
-                    parameters: PyroSchema::new(param_fields),
-                    return_type,
+        for item in &file.items {
+            if let syn::Item::Impl(item_impl) = item {
+                if !has_attr(&item_impl.attrs, "capability") {
+                    continue;
                 }
-            })
-            .collect();
+                let Ok(cap) = CapabilityImpl::new(item_impl.clone(), false, "", "") else {
+                    continue;
+                };
+                classes.push(build_class_spec(&cap, &builder));
 
-        Self {
-            spec: InterfaceSpec {
+                covered_items.push(cap.ident.client_tn.to_string());
+                if let Some(config_tn) = &cap.ident.config_tn {
+                    covered_items.push(config_tn.to_string())
+                }
+            }
+        }
+
+        let (capability, description) = classes
+            .first()
+            .map(|c| (c.name.clone(), c.description.clone()))
+            .unwrap_or_else(|| (Cow::Borrowed(""), None));
+
+        InterfaceSpec {
                 capability,
                 description,
-                client: None,
-                methods,
-                items: HashMap::new(),
-            },
-            target_client_name,
-            builder,
-        }
-    }
-
-    pub fn append(&mut self, doc: &MagmaDocumentation) {
-        let name = doc.ident.to_string();
-        let schema = self
-            .builder
-            .schema_for(&name)
-            .unwrap_or_else(|| PyroSchema::empty());
-
-        if name == self.target_client_name {
-            self.spec.client = Some(NamedSchema { name, schema });
-        } else {
-            self.spec.items.insert(name, schema);
-        }
-    }
-
-    pub fn build(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(&self.spec)
-    }
-}
-
-// =============================================================================
-// ConfigSpecBuilder
-// =============================================================================
-
-pub struct ConfigSpecBuilder;
-
-impl ConfigSpecBuilder {
-    pub fn build(config: &CapConfig, builder: &SchemaBuilder) -> Result<String, serde_json::Error> {
-        let name = config.input.ident.to_string();
-        let schema = builder.schema_for(&name).unwrap_or_else(|| {
-            // Fallback: build from the struct fields directly
-            let description = extract_doc_string(&config.input.attrs);
-            let fields = parse_struct_fields_to_pyro(&config.input.fields, builder);
-            let mut s = PyroSchema::new(fields);
-            if let Some(d) = &description {
-                s = s.add_docstring(Cow::Owned(d.clone()));
+                classes,
             }
-            s
-        });
-
-        let spec = ConfigSpec { name, schema };
-        serde_json::to_string_pretty(&spec)
     }
-}
 
 // =============================================================================
 // Helpers
 // =============================================================================
-
-fn parse_struct_fields_to_pyro(
-    fields: &syn::Fields,
-    builder: &SchemaBuilder,
-) -> Vec<PyroField<'static>> {
-    let mut result = Vec::new();
-    if let syn::Fields::Named(named) = fields {
-        for f in &named.named {
-            if let Some(ident) = &f.ident {
-                let data_type = builder.resolve_type(&f.ty);
-                let nullable = SchemaBuilder::is_option(&f.ty);
-                let doc = extract_doc_string(&f.attrs);
-                let mut field = PyroField::new(Cow::Owned(ident.to_string()), data_type, nullable);
-                if let Some(d) = doc {
-                    field = field.add_docstring(Cow::Owned(d));
-                }
-                result.push(field);
-            }
-        }
-    }
-    result
-}
-
-fn fn_output_to_pyro_type(
-    output: &super::paths::FnOutput,
-    builder: &SchemaBuilder,
-) -> PyroType<'static> {
-    match output {
-        super::paths::FnOutput::None => PyroType::Null,
-        super::paths::FnOutput::Single(ty) => builder.resolve_type(ty),
-        super::paths::FnOutput::Result(ok_ty, _err_ty) => builder.resolve_type(ok_ty),
-    }
-}
 
 fn extract_doc_string(attrs: &[Attribute]) -> Option<String> {
     let mut lines = Vec::new();
@@ -221,16 +134,22 @@ fn extract_doc_string(attrs: &[Attribute]) -> Option<String> {
     }
 }
 
+fn fn_output_to_pyro_type(
+    output: &super::paths::FnOutput,
+    builder: &SchemaBuilder,
+) -> PyroType<'static> {
+    match output {
+        super::paths::FnOutput::None => PyroType::Null,
+        super::paths::FnOutput::Single(ty) => builder.resolve_type(ty),
+        super::paths::FnOutput::Result(ok_ty, _err_ty) => builder.resolve_type(ok_ty),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::format::bridgeable::DocRec;
-
     use super::*;
     use quote::quote;
     use serde_json::Value;
-    use syn::parse2;
-
-    use super::super::capability::CapabilityImpl;
 
     fn assert_json_eq(actual_str: &str, expected_str: &str) {
         let actual: Value = serde_json::from_str(actual_str).expect("Generated JSON was invalid");
@@ -250,66 +169,46 @@ mod tests {
         }
     }
 
-    /// Helper: build a SchemaBuilder from token streams by assembling a file.
-    fn schema_builder_from(structs: &[proc_macro2::TokenStream]) -> SchemaBuilder {
-        let combined = quote! { #(#structs)* };
-        let file: syn::File = syn::parse2(combined).unwrap();
-        SchemaBuilder::from_file(&file)
-    }
-
     #[test]
     fn test_spec_generation_full() {
-        let client_tokens = quote! {
-            /// The Client State
-            #[interface]
-            pub struct MyClient {
-                /// The id
-                pub id: u32,
-                pub name: String,
+        let file: syn::File = syn::parse2(quote! {
+        /// The Client State
+        #[interface]
+        pub struct MyClient {
+            /// The id
+            pub id: u32,
+            pub name: String,
+        }
+
+        #[interface]
+        pub struct InputStruct {
+            pub foo: Bytes,
+        }
+
+        /// The Server Implementation
+        #[capability]
+        impl MyServer {
+            type Client = MyClient;
+
+            fn new() -> Self { Self }
+            fn reset(&mut self) {}
+            fn register(&self, c: &MyClient) {}
+
+            /// Calculates a value
+            fn calculate(&self, c: &MyClient, input: f32) -> f32 {
+                input * 2.0
             }
-        };
 
-        let other_tokens = quote! {
-            #[interface]
-            pub struct InputStruct {
-                pub foo: Bytes,
+            /// Processes the data
+            fn process(&self, c: &MyClient, data: Option<Vec<u8>>) -> Result<InputStruct, MyError> {
+                Ok(0)
             }
-        };
+        }
+    }).unwrap();
 
-        let impl_tokens = quote! {
-            /// The Server Implementation
-            #[capability]
-            impl MyServer {
-                type Client = MyClient;
 
-                fn new() -> Self { Self }
-                fn reset(&mut self) {}
-                fn register(&self, c: &MyClient) {}
-
-                /// Calculates a value
-                fn calculate(&self, c: &MyClient, input: f32) -> f32 {
-                    input * 2.0
-                }
-
-                /// Processes the data
-                fn process(&self, c: &MyClient, data: Option<Vec<u8>>) -> Result<InputStruct, MyError> {
-                    Ok(0)
-                }
-            }
-        };
-
-        let builder = schema_builder_from(&[client_tokens.clone(), other_tokens.clone()]);
-
-        let cap_impl =
-            CapabilityImpl::new(parse2(impl_tokens).unwrap(), true, "cap_name", "0.1.0").unwrap();
-        let client_item =
-            MagmaDocumentation::from_item(&parse2(client_tokens).unwrap(), DocRec::NoReq).unwrap();
-        let input_item =
-            MagmaDocumentation::from_item(&parse2(other_tokens).unwrap(), DocRec::NoReq).unwrap();
-        let mut spec_builder = SpecBuilder::new(&cap_impl, &builder);
-        spec_builder.append(&client_item);
-        spec_builder.append(&input_item);
-        let output = spec_builder.build().unwrap();
+        let interface = build_spec(&file);
+        let output = serde_json::to_string_pretty(&interface).unwrap();
 
         let expected = serde_json::json!({
             "capability": "MyServer",
@@ -395,7 +294,7 @@ mod tests {
 
     #[test]
     fn test_nested_struct_in_return_type() {
-        let structs = quote! {
+        let file: syn::File = syn::parse2(quote! {
             struct Inner {
                 value: i64,
             }
@@ -403,9 +302,7 @@ mod tests {
                 inner: Inner,
                 count: u32,
             }
-        };
 
-        let impl_tokens = quote! {
             /// A capability
             #[capability]
             impl MySvc {
@@ -420,26 +317,11 @@ mod tests {
                     todo!()
                 }
             }
-        };
-
-        let file: syn::File = syn::parse2(quote! { #structs #impl_tokens }).unwrap();
-        let builder = SchemaBuilder::from_file(&file);
-
-        let cap_impl =
-            CapabilityImpl::new(parse2(impl_tokens).unwrap(), true, "cap_name", "0.1.0").unwrap();
-        let outer_doc = MagmaDocumentation::from_item(
-            &parse2(quote! {
-                struct Outer { inner: Inner, count: u32 }
-            })
-            .unwrap(),
-            DocRec::NoReq,
-        )
+        })
         .unwrap();
 
-        let mut spec_builder = SpecBuilder::new(&cap_impl, &builder);
-        spec_builder.append(&outer_doc);
-        let output = spec_builder.build().unwrap();
-        let parsed: Value = serde_json::from_str(&output).unwrap();
+        let interface = build_spec(&file);
+        let parsed = serde_json::to_value(&interface).unwrap();
 
         // Return type should be a resolved Group with Inner's field
         let ret = &parsed["methods"][0]["return_type"];

@@ -18,7 +18,7 @@ use std::rc::Rc;
 use heck::AsSnakeCase;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Error, Ident, ImplItem, ItemImpl, Type};
+use syn::{Error, Ident, ImplItem, ItemImpl, Type, parse_quote};
 
 use crate::{
     ffi::{
@@ -80,7 +80,7 @@ impl CapabilityImpl {
 
         // 3. First pass: collect types
         let mut client_tn: Option<Ident> = None;
-        let mut config_tn: Option<Type> = None;
+        let mut config_tn: Option<Ident> = None;
         let mut error_tn: Option<Type> = None;
 
         let mut init_fn: Option<InitFn> = None;
@@ -95,7 +95,7 @@ impl CapabilityImpl {
                     if ty.ident == "Client" {
                         client_tn = Some(extract_ident_from_type(&ty.ty)?);
                     } else if ty.ident == "Config" {
-                        config_tn = Some(ty.ty.clone());
+                        config_tn = Some(extract_ident_from_type(&ty.ty)?);
                     } else if ty.ident == "Error" {
                         error_tn = Some(ty.ty.clone());
                     }
@@ -125,7 +125,8 @@ impl CapabilityImpl {
                     let name = f.sig.ident.to_string();
                     match name.as_str() {
                         "new" => {
-                            init_fn = Some(InitFn::parse(ident.config_tn.clone(), f)?);
+                            let conf = ident.config_tn.clone().map(|t| parse_quote! { #t });
+                            init_fn = Some(InitFn::parse(conf, f)?);
                         }
                         "reset" => {
                             reset_fn = Some(ResetFn::parse(f)?);

@@ -18,6 +18,7 @@ use std::collections::HashMap;
 
 use spec::{PrimitiveDataType, PyroField, PyroSchema, PyroType};
 use syn::{Attribute, Expr, Fields, Lit, Meta};
+use crate::utils::has_attr;
 
 // =============================================================================
 // SchemaBuilder
@@ -54,6 +55,9 @@ impl SchemaBuilder {
         let mut structs = HashMap::new();
         for item in &file.items {
             if let syn::Item::Struct(s) = item {
+                if !(has_attr(&s.attrs, "config") || has_attr(&s.attrs, "magma")) {
+                    continue;
+                }
                 let name = s.ident.to_string();
                 let doc = extract_doc_string(&s.attrs);
                 let fields = Self::collect_fields(&s.fields);

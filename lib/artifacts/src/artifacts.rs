@@ -2,7 +2,7 @@ use cargo_toml::Dependency;
 use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use spec::ModuleFunc;
+use spec::{InterfaceSpec, ModuleFunc};
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::io::{self, Read, Write};
@@ -34,8 +34,6 @@ impl Deref for CapBinary {
 pub struct CapabilityBinary {
     pub manifest: CapabilityManifest,
     pub libs: Vec<CapBinary>,
-    pub interface_json: String,
-    pub config_json: Option<String>,
 }
 
 pub struct CapabilitySource {
@@ -48,8 +46,7 @@ pub struct CapabilitySource {
 pub struct Interface {
     pub manifest: CapabilityManifest,
     pub src_lib_rs: String,
-    pub interface_json: String,
-    pub config_json: Option<String>,
+    pub interface: InterfaceSpec<'static>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
@@ -225,10 +222,6 @@ impl Artifact for CapabilityBinary {
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
         )
         .await?;
-        fs::write(path.join("interface.json"), self.interface_json.as_bytes()).await?;
-        if let Some(config) = &self.config_json {
-            fs::write(path.join("config.json"), config.as_bytes()).await?;
-        }
         Ok(())
     }
 
@@ -250,10 +243,6 @@ impl Artifact for CapabilityBinary {
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
                 .as_bytes(),
         )?;
-        append_file(&mut tar, "interface.json", self.interface_json.as_bytes())?;
-        if let Some(config) = &self.config_json {
-            append_file(&mut tar, "config.json", config.as_bytes())?;
-        }
 
         tar.into_inner()?.finish()
     }
@@ -264,8 +253,6 @@ impl Artifact for CapabilityBinary {
 
         let mut libs = Vec::new();
         let mut manifest = None;
-        let mut interface_json = None;
-        let mut config_json = None;
 
         for file in archive.entries()? {
             let mut file = file?;
@@ -285,8 +272,6 @@ impl Artifact for CapabilityBinary {
                         )
                     })?;
                 }
-                "interface.json" => interface_json = String::from_utf8(content).ok(),
-                "config.json" => config_json = String::from_utf8(content).ok(),
                 _ => {}
             }
         }
@@ -300,10 +285,6 @@ impl Artifact for CapabilityBinary {
             manifest: manifest.ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidData, "Missing Capability.toml")
             })?,
-            interface_json: interface_json.ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "Missing interface.json")
-            })?,
-            config_json: config_json,
         })
     }
 
@@ -337,8 +318,6 @@ impl Artifact for CapabilityBinary {
         Ok(CapabilityBinary {
             libs,
             manifest,
-            interface_json: fs::read_to_string(path.join("interface.json")).await?,
-            config_json: fs::read_to_string(path.join("config.json")).await.ok(),
         })
     }
 }
@@ -452,11 +431,13 @@ impl Artifact for Interface {
         })?;
         fs::create_dir_all(path).await?;
         fs::write(path.join("Capability.toml"), &manifest).await?;
-        fs::write(path.join("interface.json"), &self.interface_json).await?;
-
-        if let Some(config) = &self.config_json {
-            fs::write(path.join("config.json"), config).await?;
-        }
+        let interface_str = serde_json::to_string_pretty(&self.interface).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unable to serialize manifest: {}", e),
+            )
+        })?;
+        fs::write(path.join("interface.json"), &interface_str).await?;
 
         let src_dir = path.join("src");
         fs::create_dir_all(&src_dir).await?;
@@ -473,13 +454,16 @@ impl Artifact for Interface {
                 format!("Unable to serialize manifest: {}", e),
             )
         })?;
+        let interface = serde_json::to_string_pretty(&self.interface).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unable to serialize interface: {}", e),
+            )
+        })?;
 
         append_file(&mut tar, "Capability.toml", manifest.as_bytes())?;
+        append_file(&mut tar, "interface.json", interface.as_bytes())?;
         append_file(&mut tar, "src/lib.rs", self.src_lib_rs.as_bytes())?;
-        append_file(&mut tar, "interface.json", self.interface_json.as_bytes())?;
-        if let Some(config) = &self.config_json {
-            append_file(&mut tar, "config.json", config.as_bytes())?;
-        }
 
         tar.into_inner()?.finish()
     }
@@ -490,8 +474,7 @@ impl Artifact for Interface {
 
         let mut manifest = None;
         let mut src_lib_rs = None;
-        let mut interface_json = None;
-        let mut config_json = None;
+        let mut interface = None;
 
         for file in archive.entries()? {
             let mut file = file?;
@@ -508,9 +491,15 @@ impl Artifact for Interface {
                         )
                     })?;
                 }
+                "interface.json" => {
+                    interface = serde_json::from_slice(&content).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Unable to deserialize interface: {}", e),
+                        )
+                    })?;
+                }
                 "src/lib.rs" => src_lib_rs = String::from_utf8(content).ok(),
-                "interface.json" => interface_json = String::from_utf8(content).ok(),
-                "config.json" => config_json = String::from_utf8(content).ok(),
                 _ => {}
             }
         }
@@ -521,10 +510,9 @@ impl Artifact for Interface {
             })?,
             src_lib_rs: src_lib_rs
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing src/lib.rs"))?,
-            interface_json: interface_json.ok_or_else(|| {
+            interface: interface.ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidData, "Missing interface.json")
             })?,
-            config_json,
         })
     }
 
@@ -536,11 +524,19 @@ impl Artifact for Interface {
                 format!("Unable to deserialize manifest: {}", e),
             )
         })?;
+
+        let interface_string = fs::read(path.join("interface.json")).await?;
+        let interface = toml::from_slice(&interface_string).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unable to deserialize interface: {}", e),
+            )
+        })?;
+
         Ok(Interface {
             manifest,
             src_lib_rs: fs::read_to_string(path.join("src").join("lib.rs")).await?,
-            interface_json: fs::read_to_string(path.join("interface.json")).await?,
-            config_json: fs::read_to_string(path.join("config.json")).await.ok(),
+            interface,
         })
     }
 }

@@ -266,6 +266,68 @@ impl CacheManager {
         Ok(())
     }
 
+    pub async fn list_available_capabilities(&self) -> Result<Vec<(String, String, String)>, CacheError> {
+        let base = self.capabilities_base_dir();
+        if !base.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut results = Vec::new();
+        let mut authors = fs::read_dir(&base).await.map_err(|e| CacheError {
+            context: "Failed to read capabilities base dir".to_string(),
+            error: e,
+        })?;
+
+        while let Some(author_entry) = authors.next_entry().await.map_err(|e| CacheError {
+            context: "Failed to read author entry".to_string(),
+            error: e,
+        })? {
+            let author_path = author_entry.path();
+            if !author_path.is_dir() {
+                continue;
+            }
+            let author_name = author_entry.file_name().to_string_lossy().to_string();
+
+            let mut names = fs::read_dir(&author_path).await.map_err(|e| CacheError {
+                context: format!("Failed to read author dir: {}", author_path.display()),
+                error: e,
+            })?;
+
+            while let Some(name_entry) = names.next_entry().await.map_err(|e| CacheError {
+                context: "Failed to read name entry".to_string(),
+                error: e,
+            })? {
+                let name_path = name_entry.path();
+                if !name_path.is_dir() {
+                    continue;
+                }
+                let cap_name = name_entry.file_name().to_string_lossy().to_string();
+
+                let mut versions = fs::read_dir(&name_path).await.map_err(|e| CacheError {
+                    context: format!("Failed to read name dir: {}", name_path.display()),
+                    error: e,
+                })?;
+
+                while let Some(version_entry) = versions.next_entry().await.map_err(|e| CacheError {
+                    context: "Failed to read version entry".to_string(),
+                    error: e,
+                })? {
+                    let version_path = version_entry.path();
+                    if !version_path.is_dir() {
+                        continue;
+                    }
+                    let version = version_entry.file_name().to_string_lossy().to_string();
+
+                    if version_path.join("interface.json").exists() {
+                        results.push((author_name.clone(), cap_name.clone(), version));
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
     pub fn capabilities_base_dir(&self) -> PathBuf {
         self.root.join("capabilities")
     }

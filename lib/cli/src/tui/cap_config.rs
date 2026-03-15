@@ -1,13 +1,16 @@
 use super::keys::{Hotkey, HotkeyProvider};
+use artifacts::cache::CacheManager;
 use crossterm::event::{KeyCode, KeyEvent};
+use pyroduct::format::value::InterfaceSpec;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Color, Modifier, Style},
-    text::Line,
-    widgets::{Block, Borders, Paragraph, Tabs},
+    text::{Line, Span},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs, Wrap},
 };
 use ratatui_code_editor::{editor::Editor, theme::vesper};
+use std::collections::HashMap;
 
 pub struct CapConfigState {
     pub editing: bool,
@@ -15,20 +18,21 @@ pub struct CapConfigState {
     pub area: Rect,
     pub editors: Vec<(String, Editor)>,
     pub selected_tab: usize,
+    pub available_caps: Vec<(String, String, String)>,
+    pub add_list_state: ListState,
+    pub interfaces: HashMap<String, InterfaceSpec<'static>>,
 }
 
 impl CapConfigState {
     pub fn new(configs: Vec<(String, String)>) -> Self {
         let mut editors = Vec::new();
         for (name, yaml) in configs {
-            editors.push((name, Editor::new("yaml", &yaml, vesper())));
-        }
-
-        if editors.is_empty() {
-            editors.push((
-                "DefaultCapability".to_string(),
-                Editor::new("yaml", "", vesper()),
-            ));
+            let yaml_str = if yaml.trim().is_empty() {
+                String::new()
+            } else {
+                serde_yaml::to_string(&yaml).unwrap_or(yaml)
+            };
+            editors.push((name, Editor::new("yaml", &yaml_str, vesper())));
         }
 
         Self {
@@ -37,6 +41,41 @@ impl CapConfigState {
             area: Rect::default(),
             editors,
             selected_tab: 0,
+            available_caps: Vec::new(),
+            add_list_state: ListState::default(),
+            interfaces: HashMap::new(),
+        }
+    }
+
+    pub async fn refresh_available_caps(&mut self, cache: &CacheManager) {
+        if let Ok(caps) = cache.list_available_capabilities().await {
+            self.available_caps = caps;
+            if self.add_list_state.selected().is_none() && !self.available_caps.is_empty() {
+                self.add_list_state.select(Some(0));
+            }
+        }
+    }
+
+    pub async fn load_interface(&mut self, cache: &CacheManager, name: &str) {
+        if self.interfaces.contains_key(name) {
+            return;
+        }
+
+        // Search for this name in available_caps to get author and version
+        if let Some((author, cap_name, version)) = self
+            .available_caps
+            .iter()
+            .find(|(_, n, _)| n == name)
+            .cloned()
+        {
+            if let Ok(json) = cache
+                .capability_interface_spec(&author, &cap_name, &version)
+                .await
+            {
+                if let Ok(spec) = serde_json::from_str::<InterfaceSpec>(&json) {
+                    self.interfaces.insert(name.to_string(), spec);
+                }
+            }
         }
     }
 
@@ -55,12 +94,30 @@ impl CapConfigState {
                         self.selected_tab += 1;
                     }
                 }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if self.selected_tab == self.editors.len() {
+                        let i = self.add_list_state.selected().unwrap_or(0);
+                        if i > 0 {
+                            self.add_list_state.select(Some(i - 1));
+                        }
+                    }
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if self.selected_tab == self.editors.len() {
+                        let i = self.add_list_state.selected().unwrap_or(0);
+                        if i + 1 < self.available_caps.len() {
+                            self.add_list_state.select(Some(i + 1));
+                        }
+                    }
+                }
                 KeyCode::Enter | KeyCode::Char('i') => {
                     if self.selected_tab == self.editors.len() {
-                        let new_name = format!("NewCapability{}", self.editors.len() + 1);
-                        self.editors
-                            .push((new_name, Editor::new("yaml", "", vesper())));
-                        self.selected_tab = self.editors.len() - 1;
+                        if let Some(i) = self.add_list_state.selected() {
+                            let (_, name, _) = &self.available_caps[i];
+                            self.editors
+                                .push((name.clone(), Editor::new("yaml", "", vesper())));
+                            self.selected_tab = self.editors.len() - 1;
+                        }
                     } else {
                         self.editing = true;
                     }
@@ -98,7 +155,7 @@ impl CapConfigState {
             .iter()
             .map(|(name, _)| Line::from(name.as_str()))
             .collect();
-        tab_titles.push(Line::from("+"));
+        tab_titles.push(Line::from("+ Add"));
 
         let tabs = Tabs::new(tab_titles)
             .select(self.selected_tab)
@@ -112,7 +169,12 @@ impl CapConfigState {
         f.render_widget(tabs, chunks[0]);
 
         if self.selected_tab < self.editors.len() {
-            let editor_area = chunks[1];
+            let main_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(chunks[1]);
+
+            let editor_area = main_chunks[0];
             self.area = editor_area;
             f.render_widget(&self.editors[self.selected_tab].1, editor_area);
 
@@ -124,18 +186,133 @@ impl CapConfigState {
                     f.set_cursor_position(Position::new(x, y));
                 }
             }
+
+            // Render documentation on the right
+            let cap_name = &self.editors[self.selected_tab].0;
+            let doc_text = if let Some(spec) = self.interfaces.get(cap_name) {
+                render_pseudo_rust(spec)
+            } else {
+                vec![Line::from(Span::styled(
+                    "No documentation available for this capability.",
+                    Style::default().fg(Color::DarkGray),
+                ))]
+            };
+
+            let doc_para = Paragraph::new(doc_text)
+                .block(
+                    Block::default()
+                        .borders(Borders::LEFT)
+                        .border_style(Style::default().fg(Color::DarkGray))
+                        .title(" Documentation "),
+                )
+                .wrap(Wrap { trim: false });
+            f.render_widget(doc_para, main_chunks[1]);
         } else {
-            let add_msg = Paragraph::new("Press Enter to add a new capability config")
-                .style(Style::default().fg(Color::DarkGray));
-            f.render_widget(add_msg, chunks[1]);
+            let add_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(1), Constraint::Min(0)])
+                .split(chunks[1]);
+
+            f.render_widget(
+                Paragraph::new("Select a capability to add:")
+                    .style(Style::default().fg(Color::Gray)),
+                add_chunks[0],
+            );
+
+            let items: Vec<ListItem> = self
+                .available_caps
+                .iter()
+                .map(|(author, name, version)| {
+                    ListItem::new(Line::from(vec![
+                        Span::styled(name, Style::default().fg(Color::Cyan)),
+                        Span::raw(" "),
+                        Span::styled(
+                            format!("v{}", version),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                        Span::raw(" by "),
+                        Span::styled(author, Style::default().fg(Color::Gray)),
+                    ]))
+                })
+                .collect();
+
+            let list = List::new(items)
+                .highlight_style(
+                    Style::default()
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .highlight_symbol(">> ");
+
+            f.render_stateful_widget(list, add_chunks[1], &mut self.add_list_state);
         }
     }
+}
+
+fn render_pseudo_rust(spec: &InterfaceSpec) -> Vec<Line> {
+    let mut lines = Vec::new();
+
+    if let Some(desc) = &spec.description {
+        for line in desc.lines() {
+            lines.push(Line::from(vec![Span::styled(
+                format!("/// {}", line),
+                Style::default().fg(Color::Green),
+            )]));
+        }
+    }
+
+    lines.push(Line::from(vec![
+        Span::styled("pub struct ", Style::default().fg(Color::Magenta)),
+        Span::styled(&spec.capability, Style::default().fg(Color::Yellow)),
+        Span::raw(" {"),
+    ]));
+
+    for method in &spec.methods {
+        lines.push(Line::from(""));
+        if let Some(desc) = &method.description {
+            for line in desc.lines() {
+                lines.push(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled(format!("/// {}", line), Style::default().fg(Color::Green)),
+                ]));
+            }
+        }
+
+        let mut method_line = vec![
+            Span::raw("    "),
+            Span::styled("fn ", Style::default().fg(Color::Magenta)),
+            Span::styled(&method.name, Style::default().fg(Color::Cyan)),
+            Span::raw("("),
+        ];
+
+        // This is a simplification, InterfaceSpec doesn't have full rust type info here
+        // but it has PyroSchema which we could potentially detail more.
+        method_line.push(Span::raw("..."));
+        method_line.push(Span::raw(") -> "));
+        method_line.push(Span::styled(
+            format!("{}", method.return_type),
+            Style::default().fg(Color::Yellow),
+        ));
+        method_line.push(Span::raw(";"));
+
+        lines.push(Line::from(method_line));
+    }
+
+    lines.push(Line::from("}"));
+
+    lines
 }
 
 impl HotkeyProvider for CapConfigState {
     fn hotkeys(&self) -> Vec<Hotkey> {
         if self.editing {
             vec![Hotkey::new("Esc", "Stop editing")]
+        } else if self.selected_tab == self.editors.len() {
+            vec![
+                Hotkey::new("←/→", "Switch tab"),
+                Hotkey::new("↑/↓", "Select cap"),
+                Hotkey::new("Enter", "Add"),
+            ]
         } else {
             vec![
                 Hotkey::new("←/→", "Switch tab"),

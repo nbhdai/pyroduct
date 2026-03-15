@@ -1,3 +1,4 @@
+use artifacts::cache::CacheManager;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
@@ -52,7 +53,13 @@ impl ModuleView {
         self.code.selected_step
     }
 
-    pub fn render(&mut self, f: &mut Frame, pipeline: &PipelineState, area: Rect) {
+    pub fn render(
+        &mut self,
+        f: &mut Frame,
+        pipeline: &PipelineState,
+        cache: &CacheManager,
+        area: Rect,
+    ) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
@@ -88,11 +95,21 @@ impl ModuleView {
 
         match self.bottom_tab {
             BottomTab::Config => {
+                // Proactively refresh capability list and interface doc
+                self.cap_config.refresh_available_caps(&cache);
+                if self.cap_config.selected_tab < self.cap_config.editors.len() {
+                    let name = self.cap_config.editors[self.cap_config.selected_tab]
+                        .0
+                        .clone();
+                    self.cap_config.load_interface(&cache, &name);
+                }
+
                 self.cap_config.active = is_bottom_focused;
                 self.cap_config.render(f, bottom_chunks[1], "Cap Config");
             }
             BottomTab::Logs => {
-                self.logs.render(f, bottom_chunks[1], "Compiler Output", is_bottom_focused);
+                self.logs
+                    .render(f, bottom_chunks[1], "Compiler Output", is_bottom_focused);
             }
         }
     }
@@ -133,26 +150,22 @@ impl ModuleView {
                 }
             }
             (ActivePane::Code, _) => wasm::handle_event(&mut self.code, key)?,
-            (ActivePane::Bottom, KeyCode::Esc) => {
-                match self.bottom_tab {
-                    BottomTab::Config => {
-                        if self.cap_config.editing {
-                            self.cap_config.editing = false;
-                        } else {
-                            self.focused = false;
-                        }
-                    }
-                    BottomTab::Logs => {
+            (ActivePane::Bottom, KeyCode::Esc) => match self.bottom_tab {
+                BottomTab::Config => {
+                    if self.cap_config.editing {
+                        self.cap_config.editing = false;
+                    } else {
                         self.focused = false;
                     }
                 }
-            }
-            (ActivePane::Bottom, _) => {
-                match self.bottom_tab {
-                    BottomTab::Config => self.cap_config.handle_event(key)?,
-                    BottomTab::Logs => self.logs.handle_event(key),
+                BottomTab::Logs => {
+                    self.focused = false;
                 }
-            }
+            },
+            (ActivePane::Bottom, _) => match self.bottom_tab {
+                BottomTab::Config => self.cap_config.handle_event(key)?,
+                BottomTab::Logs => self.logs.handle_event(key),
+            },
         }
         Ok(())
     }

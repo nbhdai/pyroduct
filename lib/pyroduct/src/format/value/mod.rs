@@ -13,7 +13,7 @@ mod bridgeable;
 mod schema;
 pub use repair::ScalarRepairError;
 pub use schema::ValueSchemaInferenceError;
-pub use spec::{CapabilityFunc, ModuleFunc, PrimitiveDataType, PyroField, PyroSchema, PyroType};
+pub use spec::{CapabilityFunc, ModuleFunc, PrimitiveDataType, InterfaceSpec, ClassSpec, PyroField, PyroSchema, PyroType};
 pub use typeable::{Typeable, TypeableRow};
 
 #[cfg(feature = "host")]

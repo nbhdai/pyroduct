@@ -12,9 +12,9 @@
 #[cfg(feature = "arrow")]
 mod arrow;
 
-use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt;
+use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 
@@ -27,14 +27,34 @@ pub struct ModuleFunc<'a> {
     pub output: PyroSchema<'a>,
 }
 
+/// The root specification object.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InterfaceSpec<'a> {
+    pub capability: Cow<'a, str>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<Cow<'a, str>>,
+
+    pub classes: Vec<ClassSpec<'a>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClassSpec<'a> {
+    pub name: Cow<'a, str>,
+    pub description: Option<Cow<'a, str>>,
+    pub methods: Vec<CapabilityFunc<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client: Option<PyroSchema<'a>>,
+    pub config: Option<PyroSchema<'a>>,
+}
+
 /// Documentation for a capability function
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CapabilityFunc<'a> {
     pub name: Cow<'a, str>,
     pub description: Option<Cow<'a, str>>,
-    pub client: Option<String>,
     pub input: PyroSchema<'a>,
-    pub output: PyroSchema<'a>,
+    pub output: PyroType<'a>,
 }
 
 // =============================================================================

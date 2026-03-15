@@ -22,7 +22,7 @@ pub struct CapabilityIdent {
     /// The client type identifier (e.g., "MyClient")
     pub client_tn: Ident,
     /// The config type identifier (e.g., "MyConfig")
-    pub config_tn: Option<Type>,
+    pub config_tn: Option<Ident>,
     /// The error type, if present (e.g., "MyError")
     pub error_tn: Option<Type>,
 }
