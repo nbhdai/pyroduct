@@ -22,12 +22,13 @@ host = [
     "dep:libloading",
     "dep:pin-project",
     "dep:object",
+    "dep:artifacts",
     "spec/arrow",
 ]
 module = []
 
 [dependencies]
-artifacts.workspace = true
+artifacts = { workspace = true, optional = true }
 spec.workspace = true
 pyro-derive.workspace = true
 rkyv.workspace = true

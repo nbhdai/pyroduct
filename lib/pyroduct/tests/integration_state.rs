@@ -1,10 +1,11 @@
+use artifacts::{cache::CacheManager, environment::Environment};
 use indexmap::IndexMap;
 use pyroduct::{
     PyroRow,
     module::ModuleConfig,
     pipeline::{PipelineConfig, PipelineFactory},
 };
-use std::{collections::HashMap, path::Path};
+use std::collections::HashMap;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Test that capability state is preserved across multiple calls to the same module instance.
@@ -18,15 +19,23 @@ async fn test_capability_state_preservation() {
         .with(fmt::layer().with_target(true).pretty())
         .with(filter)
         .init();
-    // Use the counter capability from tests/cap_config
-    let cap_path = Path::new("../../capabilities/state/artifacts/");
+    let cache = CacheManager::from_env().await.unwrap();
+
+    let env = Environment::new("../../modules/cap_state/".into()).await.unwrap();
+    let artifacts = env.package(false).await.unwrap();
+    for artifact in &artifacts {
+        cache.write_artifacts(artifact).await.unwrap();
+    }
+    let hash = match &artifacts[0] {
+        artifacts::artifacts::Artifacts::Module(module) => module.hash(),
+        _ => panic!("Not a module!"),
+    };
 
     let config = PipelineConfig {
         pipeline: IndexMap::from([(
             "step".to_string(),
             ModuleConfig {
-                path: Path::new("../../modules/cap_state/artifacts/").to_path_buf(),
-                libraries: vec![cap_path.to_path_buf()],
+                module: pyroduct::module::Module::Hash(hash),
                 configurations: HashMap::from([("state".to_string(), None)]),
             },
         )]),

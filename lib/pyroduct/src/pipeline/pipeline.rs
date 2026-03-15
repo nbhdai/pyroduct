@@ -1,10 +1,10 @@
-use std::path::Path;
-
+use artifacts::cache::{CacheError, CacheManager};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use wasmtime::Engine;
 
 use crate::{
-    module::{ModuleConfig, PyroFactory},
+    module::{Module, ModuleConfig, PyroFactory, WasmError},
     pipeline::Pipeline,
 };
 
@@ -20,15 +20,14 @@ pub struct PipelineConfig {
 }
 
 impl PipelineConfig {
-    pub fn repair_relative(&mut self, config_dir: &Path) {
-        // Resolve relative paths
-        for module in self.pipeline.values_mut() {
-            for path in module.libraries.iter_mut() {
-                if path.is_relative() {
-                    *path = config_dir.join(&path);
-                }
+    pub async fn load_sources(&mut self, cache: &CacheManager) -> Result<(), CacheError> {
+        for step in self.pipeline.values_mut() {
+            if let Module::Hash(hash) = &step.module {
+                let source = cache.get_source(hash).await?;
+                step.module = Module::Source(source);
             }
         }
+        Ok(())
     }
 }
 
@@ -48,16 +47,13 @@ pub struct PipelineFactory {
 
 impl PipelineFactory {
     /// Loads and resolves a full pipeline from its configuration and corresponding WASm binaries.
-    pub async fn load(
-        config: &PipelineConfig,
-        wasm_binaries: &std::collections::HashMap<String, Vec<u8>>,
-    ) -> Result<Self, PipelineError> {
+    pub async fn load(config: &PipelineConfig) -> Result<Self, PipelineError> {
+        let mut wasm_config = wasmtime::Config::new();
+        wasm_config.async_support(true);
+        let engine = Engine::new(&wasm_config).map_err(|e| WasmError::EngineError(e.to_string()))?;
         let mut pipeline = Vec::new();
-        for (name, module) in &config.pipeline {
-            let wasm = wasm_binaries.get(name).ok_or_else(|| {
-                PipelineError::Config(format!("Missing WASM binary for module '{}'", name))
-            })?;
-            let module_factory = module.load_factory(wasm).await?;
+        for module in config.pipeline.values() {
+            let module_factory = module.load_factory(&engine).await?;
             pipeline.push(module_factory);
         }
 

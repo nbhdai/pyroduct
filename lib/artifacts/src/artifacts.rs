@@ -65,10 +65,16 @@ pub struct ModuleSource {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+pub struct ModuleSpec {
+    pub func: ModuleFunc<'static>,
+    pub capabilities: Vec<ResolvedCapability>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct ModuleBinary {
     pub hash: String,
     pub wasm: Vec<u8>,
-    pub spec: ModuleFunc<'static>,
+    pub spec: ModuleSpec,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]

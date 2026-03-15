@@ -17,10 +17,10 @@ pub struct CodeState {
 }
 
 pub fn render(f: &mut Frame, pipeline: &PipelineState, state: &mut CodeState, area: Rect) {
-    let step = &pipeline.tui.modules[state.selected_step];
-
-    let src_path = step.path.join("src/lib.rs");
-    let src_label = src_path.file_name().unwrap_or_default().to_string_lossy();
+    let name = &pipeline
+        .tui
+        .pipeline
+        .keys()[state.selected_step];
 
     let border_color = if state.editing {
         Color::Green
@@ -30,7 +30,7 @@ pub fn render(f: &mut Frame, pipeline: &PipelineState, state: &mut CodeState, ar
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" Code: {} ─ {} ", step.name, src_label))
+        .title(format!(" Code: {}", name))
         .border_style(Style::default().fg(border_color));
 
     let inner = block.inner(area);

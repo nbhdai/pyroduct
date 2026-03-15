@@ -1,3 +1,4 @@
+use artifacts::{cache::CacheManager, environment::Environment};
 use indexmap::IndexMap;
 use pyroduct::{
     PyroRow,
@@ -5,7 +6,7 @@ use pyroduct::{
     pipeline::{PipelineConfig, PipelineFactory},
 };
 use serde_json::json;
-use std::{collections::HashMap, path::Path};
+use std::collections::HashMap;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Test that capability configurations (passed via PipelineDef) are correctly respected by the server.
@@ -19,15 +20,23 @@ async fn test_capability_configuration_respect() {
         .with(fmt::layer().with_target(true).pretty())
         .with(filter)
         .init();
+    let cache = CacheManager::from_env().await.unwrap();
 
-    let cap_path = Path::new("../../capabilities/config/artifacts/");
+    let env = Environment::new("../../modules/cap_config/".into()).await.unwrap();
+    let artifacts = env.package(false).await.unwrap();
+    for artifact in &artifacts {
+        cache.write_artifacts(artifact).await.unwrap();
+    }
+    let hash = match &artifacts[0] {
+        artifacts::artifacts::Artifacts::Module(module) => module.hash(),
+        _ => panic!("Not a module!"),
+    };
 
     let config = PipelineConfig {
         pipeline: IndexMap::from([(
             "config".to_string(),
             ModuleConfig {
-                path: Path::new("../../modules/cap_config/artifacts/").to_path_buf(),
-                libraries: vec![cap_path.to_path_buf()],
+                module: pyroduct::module::Module::Hash(hash),
                 configurations: HashMap::from([(
                     "config".to_string(),
                     Some(json!({
@@ -38,7 +47,6 @@ async fn test_capability_configuration_respect() {
             },
         )]),
     };
-
     let mut factory = PipelineFactory::load(&config).await.unwrap();
     let mut pipeline = factory.build().await.unwrap();
 

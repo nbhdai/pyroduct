@@ -1,6 +1,5 @@
 // lib/cli/src/tui/mod.rs
 use std::{
-    collections::{BTreeMap, HashMap},
     fs,
     io::stdout,
     path::{Path, PathBuf},
@@ -13,13 +12,14 @@ use arrow::datatypes::Schema;
 
 use crate::run::load_config;
 use anyhow::Result;
+use artifacts::cache::CacheManager;
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use pyroduct::pipeline::wasm_execute::{Pipeline, PipelineExecution};
 use pyroduct::pipeline::{PipelineConfig, PipelineFactory};
+use pyroduct::pipeline::{PipelinePool, wasm_execute::PipelineExecution};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
@@ -28,16 +28,6 @@ use ratatui::{
     style::Style,
 };
 use ratatui_code_editor::{editor::Editor, theme::vesper};
-use serde::{Deserialize, Serialize};
-
-use artifacts::{
-    artifacts::Module,
-    build::CommandError,
-    cache::CacheManager,
-    cargo::{CapabilityManifest, ModuleManifest, ResolvedCapability},
-    environment::dylib_extension,
-};
-use pyroduct::module::{PyroFactory, PyroModule, capability::CapabilityLibrary};
 
 pub mod cap_config;
 pub mod keys;
@@ -50,51 +40,9 @@ pub mod wasm;
 
 use keys::{Hotkey, HotkeyProvider};
 
-#[derive(Serialize, Deserialize, Clone)]
-pub struct CompleteModule {
-    pub name: String,
-    pub config: pyroduct::module::ModuleConfig,
-    pub artifact: Option<artifacts::artifacts::Module>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct TuiPipeline {
-    pub config: PipelineConfig,
-    pub modules: Vec<CompleteModule>,
-}
-
-impl TuiPipeline {
-    pub async fn from_config(yaml_path: &Path) -> Result<Self> {
-        let config = load_config(yaml_path)?;
-        let mut modules = Vec::new();
-
-        for (name, mod_conf) in &config.pipeline {
-            modules.push(CompleteModule {
-                name: name.clone(),
-                config: mod_conf.clone(),
-                artifact: None,
-            });
-        }
-
-        Ok(TuiPipeline { config, modules })
-    }
-
-    pub fn from_json(json_path: &Path) -> Result<Self> {
-        let content = fs::read_to_string(json_path)?;
-        let pipeline = serde_json::from_str::<TuiPipeline>(&content)?;
-        Ok(pipeline)
-    }
-
-    pub fn save(&self, json_path: &Path) -> Result<()> {
-        let json = serde_json::to_string_pretty(self)?;
-        fs::write(json_path, json)?;
-        Ok(())
-    }
-}
-
 pub struct PipelineState {
     pub yaml_path: PathBuf,
-    pub tui: TuiPipeline,
+    pub tui: PipelineConfig,
     pub input: RecordBatch,
     pub execution: Vec<PipelineExecution>,
 }
@@ -116,31 +64,27 @@ pub struct App {
 impl App {
     pub async fn load(yaml_path: &Path, input_path: &Path) -> Result<Self> {
         let cache = CacheManager::from_env().await?;
-        let tui_path = yaml_path.with_extension("tui.json");
-        let tui_pipeline = if tui_path.exists() {
-            TuiPipeline::from_json(&tui_path)?
-        } else {
-            TuiPipeline::from_config(yaml_path).await?
-        };
-
-        let initial_code = tui_pipeline
-            .modules
-            .first()
-            .map(|m| m.config.source.clone())
-            .unwrap_or_default();
-        let initial_caps: Vec<(String, String)> = tui_pipeline
-            .modules
-            .first()
-            .map(|m| {
-                m.config
-                    .configurations
-                    .iter()
-                    .map(|(k, v)| (k.clone(), serde_yaml::to_string(v).unwrap_or_default()))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let mut pipeline_config = load_config(yaml_path).await?;
+        pipeline_config.load_sources(&cache).await?;
 
         let input_batch = Self::load_input(input_path).await?;
+
+        // Get initial state from the first module if it exists
+        let (initial_code, initial_caps) =
+            if let Some((_, module)) = pipeline_config.pipeline.get_index(0) {
+                let code = match &module.module {
+                    pyroduct::module::Module::Source(s) => s.source.clone(),
+                    _ => String::new(),
+                };
+                let caps: Vec<(String, String)> = module
+                    .configurations
+                    .iter()
+                    .map(|(k, v)| (k.clone(), serde_json::to_string(v).unwrap_or_default()))
+                    .collect();
+                (code, caps)
+            } else {
+                (String::new(), Vec::new())
+            };
 
         let code_state = wasm::CodeState {
             editing: false,
@@ -154,7 +98,7 @@ impl App {
             cache,
             pipeline: PipelineState {
                 yaml_path: yaml_path.to_path_buf(),
-                tui: tui_pipeline,
+                tui: pipeline_config,
                 input: input_batch,
                 execution: Vec::new(),
             },
@@ -181,32 +125,36 @@ impl App {
     pub async fn save(&mut self) {
         if let ViewState::Module(mv) = &mut self.view {
             let step_idx = mv.selected_step();
-            let mut module = self.pipeline.tui.modules[step_idx].clone();
-            module.config.source = mv.code.editor.get_content();
+            let Some((name, module)) = self.pipeline.tui.pipeline.get_index_mut(step_idx) else {
+                self.status_msg = "Error: selected module not found".into();
+                return;
+            };
 
-            match self
-                .cache
-                .compile_anon(
-                    &module.config.dependencies,
-                    &module.config.capabilities,
-                    &module.config.source,
-                )
-                .await
-            {
-                Ok(artifact) => {
-                    module.artifact = Some(artifact);
-                    self.status_msg = format!("Compiled {}", module.name);
-                }
-                Err(e) => {
-                    self.status_msg = format!("Compilation failed: {}", e);
-                }
+            if let pyroduct::module::Module::Source(s) = &mut module.module {
+                s.source = mv.code.editor.get_content();
             }
 
-            self.pipeline.tui.modules[step_idx] = module;
+            // We need a way to compile from ModuleConfig directly or similar.
+            // For now, let's keep the logic of extracting bits.
+            match &module.module {
+                pyroduct::module::Module::Source(source) => {
+                    match self.cache.compile(&source).await {
+                        Ok(_) => {
+                            // module.artifact = Some(artifact); // ModuleConfig doesn't have artifact field now
+                            self.status_msg = format!("Compiled {}", name);
+                        }
+                        Err(e) => {
+                            self.status_msg = format!("Compilation failed: {}", e);
+                        }
+                    }
+                }
+                pyroduct::module::Module::Hash(_) => unreachable!(),
+            };
 
-            // Persist the entire TUI pipeline to JSON
+            // Persistence
             let tui_path = self.pipeline.yaml_path.with_extension("tui.json");
-            if let Err(e) = self.pipeline.tui.save(&tui_path) {
+            let json = serde_json::to_string_pretty(&self.pipeline.tui).unwrap_or_default();
+            if let Err(e) = std::fs::write(&tui_path, json) {
                 self.status_msg = format!("Failed to save TUI state: {}", e);
             }
         } else {
@@ -215,16 +163,9 @@ impl App {
     }
 
     async fn run_pipeline_inner(&mut self) -> Result<()> {
-        let mut config = self.pipeline.tui.config.clone();
-        for module in &self.pipeline.tui.modules {
-            if let Some(mod_conf) = config.pipeline.get_mut(&module.name) {
-                mod_conf.source = module.config.source.clone();
-                mod_conf.configurations = module.config.configurations.clone();
-            }
-        }
-
-        let pipeline = crate::run::build_pipeline(&config, &self.cache, None).await?;
-        let pool = pyroduct::pipeline::PipelinePool::new(vec![pipeline]);
+        let mut factory = PipelineFactory::load(&self.pipeline.tui).await?;
+        let pipeline = factory.build().await?;
+        let pool = PipelinePool::new(vec![pipeline]);
 
         let (successes, failures) = pool.process_batch(&self.pipeline.input).await?;
 
@@ -260,20 +201,24 @@ impl App {
         match &self.view {
             ViewState::InputTable(_) => 0,
             ViewState::Module(mv) => (mv.selected_step() * 2) + 1,
-            ViewState::OutputTable(_) => self.pipeline.tui.modules.len() + 1,
+            ViewState::OutputTable(_) => self.pipeline.tui.pipeline.len() + 1,
         }
     }
 
     pub fn nav_to(&mut self, new_idx: usize) {
-        let max_idx = self.pipeline.tui.modules.len() + 1;
+        let max_idx = self.pipeline.tui.pipeline.len() + 1;
         if new_idx > max_idx {
             return;
         }
 
         // Sync old code text to domain before navigating away
         if let ViewState::Module(mv) = &self.view {
-            self.pipeline.tui.modules[mv.selected_step()].config.source =
-                mv.code.editor.get_content();
+            let step_idx = mv.selected_step();
+            if let Some((_, module)) = self.pipeline.tui.pipeline.get_index_mut(step_idx) {
+                if let pyroduct::module::Module::Source(s) = &mut module.module {
+                    s.source = mv.code.editor.get_content();
+                }
+            }
         }
 
         // Hydrate the new view from the domain state
@@ -283,19 +228,24 @@ impl App {
             let stage_idx = (new_idx - 1) / 2;
             let is_code = new_idx % 2 == 1;
             if is_code {
-                let module = &self.pipeline.tui.modules[stage_idx];
+                let Some((_, module)) = self.pipeline.tui.pipeline.get_index(stage_idx) else {
+                    return;
+                };
+                let source = match &module.module {
+                    pyroduct::module::Module::Source(s) => s.source.clone(),
+                    _ => String::new(),
+                };
                 let code_state = wasm::CodeState {
                     editing: false,
                     area: Rect::default(),
-                    editor: Editor::new("rust", &module.config.source, vesper()),
+                    editor: Editor::new("rust", &source, vesper()),
                     selected_step: stage_idx,
                 };
 
                 let initial_caps: Vec<(String, String)> = module
-                    .config
                     .configurations
                     .iter()
-                    .map(|(k, v)| (k.clone(), serde_yaml::to_string(v).unwrap_or_default()))
+                    .map(|(k, v)| (k.clone(), serde_json::to_string(v).unwrap_or_default()))
                     .collect();
 
                 let cap_state = cap_config::CapConfigState::new(initial_caps);

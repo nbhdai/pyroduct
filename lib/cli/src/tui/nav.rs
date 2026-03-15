@@ -22,9 +22,9 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
     items.extend(
         app.pipeline
             .tui
-            .modules
+            .pipeline
             .iter()
-            .map(|s| ListItem::new(format!("Step: {}", s.name))),
+            .map(|(name, _)| ListItem::new(format!("Step: {}", name))),
     );
     items.push(ListItem::new("Output Table"));
 

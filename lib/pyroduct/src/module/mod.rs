@@ -13,10 +13,9 @@
 //!
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use artifacts::artifacts::Module;
+use artifacts::artifacts::ModuleSource;
 use artifacts::cache::CacheManager;
 use serde::{Deserialize, Serialize};
 use wasmtime::{
@@ -47,6 +46,12 @@ use thiserror::Error;
 pub enum WasmError {
     #[error("Pyro Error: {0}")]
     Pyro(#[from] PyroError),
+
+    #[error("Cache Error: {0}")]
+    CacheError(String),
+
+    #[error("Build Error: {0}")]
+    BuildError(String),
 
     #[error("Wasm module is missing required export: '{0}'")]
     MissingExport(String),
@@ -486,49 +491,57 @@ fn classify_error(error: anyhow::Error) -> WasmError {
     WasmError::Unknown(error)
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+pub enum Module {
+    Source(ModuleSource),
+    Hash(String),
+}
+
 /// A single wasm module in the pipeline intent.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ModuleConfig {
     pub module: Module,
-    pub libraries: Vec<PathBuf>,
     /// Per-class capability configuration. Keys are class names.
     #[serde(default)]
     pub configurations: HashMap<String, Option<serde_json::Value>>,
 }
 
 impl ModuleConfig {
-    pub async fn load_factory(&mut self, engine: &Engine) -> Result<PyroFactory, WasmError> {
-        let wasm_binary = match &self.module {
+    pub async fn load_factory(&self, engine: &Engine) -> Result<PyroFactory, WasmError> {
+        let cache = CacheManager::from_env()
+            .await
+            .map_err(|e| WasmError::CacheError(e.to_string()))?;
+
+        // 2. Safely extract the slice now that we guarantee it's a Binary
+        let binary = match &self.module {
+            Module::Hash(hash) => {
+                cache
+                .get_binary(hash)
+                .await
+                .map_err(|e| WasmError::BuildError(e.to_string()))?
+            },
             Module::Source(source) => {
-                let cache = CacheManager::from_env().await?;
-                let binary = cache.compile(source).await?;
-                self.module = Module::Binary(binary);
-            }
-            Module::Binary(binary) => binary.wasm.as_slice(),
+                cache
+                .compile(source)
+                .await
+                .map_err(|e| WasmError::BuildError(e.to_string()))?
+            },
         };
 
-        let wasmtime_module = wasmtime::Module::from_binary(&engine, wasm_binary).map_err(|e| {
+        let wasmtime_module = wasmtime::Module::from_binary(&engine, &binary.wasm).map_err(|e| {
             WasmError::InstantiationFailed(format!("Failed to compile WASM: {}", e))
         })?;
         let pyro_module = PyroModule::new(wasmtime_module)?;
 
         let mut libs = Vec::new();
-        #[cfg(target_os = "linux")]
-        let lib_file = "lib.so";
-        #[cfg(target_os = "macos")]
-        let lib_file = "lib.dylib";
-        #[cfg(target_os = "windows")]
-        let lib_file = "lib.dll";
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-        let lib_file = "lib.so";
 
-        for lib_path in &self.libraries {
-            let artifact_path = lib_path.join(lib_file);
-            let lib_name = lib_path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
+        for cap in &binary.spec.capabilities {
+            let artifact_path = cache
+                .capability_binary_path(&cap.author, &cap.package, &cap.version)
+                .await
+                .map_err(|e| WasmError::CacheError(e.to_string()))?;
+
+            let lib_name = cap.package.clone();
 
             let library = CapabilityLibrary::load(lib_name, &artifact_path)
                 .await
@@ -543,7 +556,7 @@ impl ModuleConfig {
         }
 
         Ok(PyroFactory {
-            engine,
+            engine: engine.clone(), // Ensure this matches your existing struct needs
             libraries: libs,
             configurations: self.configurations.clone(),
             module: pyro_module,

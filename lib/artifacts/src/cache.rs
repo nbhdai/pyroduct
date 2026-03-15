@@ -1,5 +1,6 @@
 use crate::artifacts::{
     Artifact, Artifacts, CapabilityBinary, CapabilitySource, Module, ModuleBinary, ModuleSource,
+    ModuleSpec,
 };
 use crate::build::{CommandError, format_syn_error, run_command};
 use crate::debug::{self, CapabilityDebug, ModuleDebug};
@@ -229,6 +230,34 @@ impl CacheManager {
         })
     }
 
+    pub async fn capability_binary_path(
+        &self,
+        author: &str,
+        name: &str,
+        version: &str,
+    ) -> Result<PathBuf, CacheError> {
+        let base_dir = self.capabilities_dir(author, name, version);
+
+        #[cfg(target_os = "linux")]
+        let lib_file = "lib.so";
+        #[cfg(target_os = "macos")]
+        let lib_file = "lib.dylib";
+        #[cfg(target_os = "windows")]
+        let lib_file = "lib.dll";
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+        let lib_file = "lib.so";
+
+        let path = base_dir.join(lib_file);
+        if !path.exists() {
+            Err(CacheError {
+                context: format!("Missing {} binary for this system", path.display()),
+                error: io::Error::new(io::ErrorKind::NotFound, "Not Found"),
+            })
+        } else {
+            Ok(path)
+        }
+    }
+
     pub async fn debug_capabilities(
         &self,
         author: &str,
@@ -313,13 +342,39 @@ impl CacheManager {
         }
     }
 
-    pub async fn get_binary(&self, hash: &str) -> Result<Option<ModuleBinary>, BuildError> {
+    pub async fn get_binary(&self, hash: &str) -> Result<ModuleBinary, CacheError> {
         let path = self.root.join("anon").join(hash);
         if path.exists() {
-            let binary = ModuleBinary::from_dir(&path).await?;
-            Ok(Some(binary))
+            let binary = ModuleBinary::from_dir(&path)
+                .await
+                .map_err(|error| CacheError {
+                    context: "Unable to load binary".to_string(),
+                    error,
+                })?;
+            Ok(binary)
         } else {
-            Ok(None)
+            Err(CacheError {
+                context: format!("Missing {} binary", path.display()),
+                error: io::Error::new(io::ErrorKind::NotFound, "Not Found"),
+            })
+        }
+    }
+
+    pub async fn get_source(&self, hash: &str) -> Result<ModuleSource, CacheError> {
+        let path = self.root.join("anon").join(hash);
+        if path.exists() {
+            let source = ModuleSource::from_dir(&path)
+                .await
+                .map_err(|error| CacheError {
+                    context: "Unable to load source".to_string(),
+                    error,
+                })?;
+            Ok(source)
+        } else {
+            Err(CacheError {
+                context: format!("Missing {} source", path.display()),
+                error: io::Error::new(io::ErrorKind::NotFound, "Not Found"),
+            })
         }
     }
 
@@ -327,7 +382,7 @@ impl CacheManager {
     /// artifact. Returns the hex SHA-256 hash that identifies it in the cache.
     pub async fn compile(&self, source: &ModuleSource) -> Result<ModuleBinary, BuildError> {
         let hash = source.hash();
-        if let Some(binary) = self.get_binary(&hash).await? {
+        if let Ok(binary) = self.get_binary(&hash).await {
             return Ok(binary);
         }
 
@@ -397,13 +452,17 @@ edition = "2024"
             .await
             .map_err(|e| BuildError::io("read compiled wasm", e))?;
 
-        let spec = generate_module_spec(&source.source)
+        let func = generate_module_spec(&source.source)
             .map_err(|s| {
                 BuildError::Documentation(format_syn_error("Cannot generate docstring", s))
             })?
             .ok_or(BuildError::Documentation(
                 "Module main functions is missing".to_string(),
             ))?;
+        let spec = ModuleSpec {
+            func,
+            capabilities: source.dependencies.capabilities.clone(),
+        };
 
         let binary = ModuleBinary { hash, wasm, spec };
 
