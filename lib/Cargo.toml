@@ -4,7 +4,7 @@ members = [
     "pyro-core",
     "pyro-derive",
     "cli",
-    "arrow-file", "spec", "artifacts",
+    "arrow-file", "spec", "artifacts", "sockets",
 ]
 
 default-members = [
