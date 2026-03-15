@@ -262,7 +262,7 @@ impl App {
     }
 }
 
-fn ui(f: &mut Frame, app: &mut App) {
+fn ui(f: &mut Frame<'_>, app: &mut App) {
     let status_height = if app.status_msg.is_empty() { 1 } else { 2 };
 
     let vertical_chunks = Layout::default()
@@ -280,7 +280,7 @@ fn ui(f: &mut Frame, app: &mut App) {
 
     match &mut app.view {
         ViewState::Module(mv) => {
-            mv.render(f, &app.pipeline, &app.cache, main_area);
+            mv.render(f, &app.pipeline, main_area);
         }
         ViewState::InputTable(table_view) => {
             table_view.render(f, main_area, "Input Table");
@@ -390,6 +390,16 @@ async fn handle_event(app: &mut App) -> Result<()> {
                         if mv.active_pane == module::ActivePane::Code {
                             mv.code.editing = true;
                         }
+
+                        // Proactively refresh config if that tab is visible
+                        if mv.bottom_tab == module::BottomTab::Config {
+                            mv.cap_config.refresh_available_caps(&app.cache).await;
+                            if mv.cap_config.selected_tab < mv.cap_config.editors.len() {
+                                let name =
+                                    mv.cap_config.editors[mv.cap_config.selected_tab].0.clone();
+                                mv.cap_config.load_interface(&app.cache, &name).await;
+                            }
+                        }
                     }
                     ViewState::InputTable(s) => s.focused = true,
                     ViewState::OutputTable(s) => s.focused = true,
@@ -412,7 +422,7 @@ async fn handle_event(app: &mut App) -> Result<()> {
         // Forward event to currently active widget
         match &mut app.view {
             ViewState::Module(mv) => {
-                mv.handle_event(key)?;
+                mv.handle_event(key, &app.cache).await?;
             }
             ViewState::InputTable(t) => t.handle_event(key),
             ViewState::OutputTable(t) => t.handle_event(key),

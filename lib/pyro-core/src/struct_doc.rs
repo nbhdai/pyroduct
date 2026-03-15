@@ -368,10 +368,12 @@ mod tests {
     #[test]
     fn test_resolve_nested_struct() {
         let builder = builder_from_tokens(quote! {
+            #[config]
             struct Foo {
                 woobie: String,
             }
 
+            #[config]
             struct Bar {
                 doobie: Foo,
             }
@@ -409,13 +411,16 @@ mod tests {
     #[test]
     fn test_resolve_deeply_nested() {
         let builder = builder_from_tokens(quote! {
+            #[config]
             struct A {
                 x: i32,
             }
+            #[config]
             struct B {
                 a: A,
                 name: String,
             }
+            #[config]
             struct C {
                 b: B,
                 flag: bool,
@@ -463,9 +468,11 @@ mod tests {
     #[test]
     fn test_resolve_vec_of_struct() {
         let builder = builder_from_tokens(quote! {
+            #[config]
             struct Item {
                 value: f32,
             }
+            #[config]
             struct Container {
                 items: Vec<Item>,
             }
@@ -500,6 +507,7 @@ mod tests {
     fn test_doc_strings_preserved() {
         let builder = builder_from_tokens(quote! {
             /// This is Foo
+            #[config]
             struct Foo {
                 /// The id
                 id: u32,
@@ -519,6 +527,7 @@ mod tests {
     #[test]
     fn test_unknown_struct_empty_group() {
         let builder = builder_from_tokens(quote! {
+            #[config]
             struct Wrapper {
                 inner: SomeExternalThing,
             }
@@ -535,6 +544,7 @@ mod tests {
     fn test_cycle_guard() {
         // Contrived: struct A has field of type A. Should not stack overflow.
         let builder = builder_from_tokens(quote! {
+            #[config]
             struct A {
                 next: A,
             }
@@ -566,9 +576,11 @@ mod tests {
     #[test]
     fn test_resolve_map_of_struct() {
         let builder = builder_from_tokens(quote! {
+            #[config]
             struct Config {
                 key: String,
             }
+            #[config]
             struct Registry {
                 entries: HashMap<String, Config>,
             }

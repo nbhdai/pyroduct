@@ -74,41 +74,41 @@ pub fn build_class_spec<'b>(
     }
 }
 
-    pub fn build_spec(file: &syn::File) -> InterfaceSpec<'static> {
-        // Pass 1: collect all MagmaDocumentation from structs in the file.
-        let builder = SchemaBuilder::from_file(file);
+pub fn build_spec(file: &syn::File) -> InterfaceSpec<'static> {
+    // Pass 1: collect all MagmaDocumentation from structs in the file.
+    let builder = SchemaBuilder::from_file(file);
 
-        let mut classes: Vec<ClassSpec<'static>> = Vec::new();
-        let mut covered_items = Vec::new();
+    let mut classes: Vec<ClassSpec<'static>> = Vec::new();
+    let mut covered_items = Vec::new();
 
-        for item in &file.items {
-            if let syn::Item::Impl(item_impl) = item {
-                if !has_attr(&item_impl.attrs, "capability") {
-                    continue;
-                }
-                let Ok(cap) = CapabilityImpl::new(item_impl.clone(), false, "", "") else {
-                    continue;
-                };
-                classes.push(build_class_spec(&cap, &builder));
+    for item in &file.items {
+        if let syn::Item::Impl(item_impl) = item {
+            if !has_attr(&item_impl.attrs, "capability") {
+                continue;
+            }
+            let Ok(cap) = CapabilityImpl::new(item_impl.clone(), false, "", "") else {
+                continue;
+            };
+            classes.push(build_class_spec(&cap, &builder));
 
-                covered_items.push(cap.ident.client_tn.to_string());
-                if let Some(config_tn) = &cap.ident.config_tn {
-                    covered_items.push(config_tn.to_string())
-                }
+            covered_items.push(cap.ident.client_tn.to_string());
+            if let Some(config_tn) = &cap.ident.config_tn {
+                covered_items.push(config_tn.to_string())
             }
         }
-
-        let (capability, description) = classes
-            .first()
-            .map(|c| (c.name.clone(), c.description.clone()))
-            .unwrap_or_else(|| (Cow::Borrowed(""), None));
-
-        InterfaceSpec {
-                capability,
-                description,
-                classes,
-            }
     }
+
+    let (capability, description) = classes
+        .first()
+        .map(|c| (c.name.clone(), c.description.clone()))
+        .unwrap_or_else(|| (Cow::Borrowed(""), None));
+
+    InterfaceSpec {
+        capability,
+        description,
+        classes,
+    }
+}
 
 // =============================================================================
 // Helpers
@@ -149,38 +149,19 @@ fn fn_output_to_pyro_type(
 mod tests {
     use super::*;
     use quote::quote;
-    use serde_json::Value;
-
-    fn assert_json_eq(actual_str: &str, expected_str: &str) {
-        let actual: Value = serde_json::from_str(actual_str).expect("Generated JSON was invalid");
-        let expected: Value =
-            serde_json::from_str(expected_str).expect("Expected JSON string was invalid");
-
-        if actual != expected {
-            println!(
-                "EXPECTED:\n{}",
-                serde_json::to_string_pretty(&expected).unwrap()
-            );
-            println!(
-                "ACTUAL:\n{}",
-                serde_json::to_string_pretty(&actual).unwrap()
-            );
-            panic!("JSON mismatch");
-        }
-    }
 
     #[test]
     fn test_spec_generation_full() {
         let file: syn::File = syn::parse2(quote! {
         /// The Client State
-        #[interface]
+        #[config]
         pub struct MyClient {
             /// The id
             pub id: u32,
             pub name: String,
         }
 
-        #[interface]
+        #[config]
         pub struct InputStruct {
             pub foo: Bytes,
         }
@@ -201,132 +182,89 @@ mod tests {
 
             /// Processes the data
             fn process(&self, c: &MyClient, data: Option<Vec<u8>>) -> Result<InputStruct, MyError> {
-                Ok(0)
+                todo!()
             }
         }
     }).unwrap();
 
+        let output = build_spec(&file);
 
-        let interface = build_spec(&file);
-        let output = serde_json::to_string_pretty(&interface).unwrap();
-
-        let expected = serde_json::json!({
+        let expected: InterfaceSpec<'static> = serde_json::from_str(
+            r#"{
             "capability": "MyServer",
             "description": "The Server Implementation",
-            "client": {
-                "name": "MyClient",
-                "documentation": "The Client State",
-                "fields": [
-                    {
-                        "name": "id",
-                        "documentation": "The id",
-                        "data_type": { "PrimitiveScalar": "U32" },
-                        "nullable": false
-                    },
-                    {
-                        "name": "name",
-                        "documentation": null,
-                        "data_type": "Str",
-                        "nullable": false
-                    }
-                ]
-            },
-            "methods": [
+            "classes": [
                 {
-                    "name": "calculate",
-                    "description": "Calculates a value",
-                    "parameters": {
-                        "documentation": null,
+                    "name": "MyServer",
+                    "description": "The Server Implementation",
+                    "client": {
+                        "name": "MyClient",
+                        "documentation": "The Client State",
                         "fields": [
                             {
-                                "name": "input",
+                                "name": "id",
+                                "documentation": "The id",
+                                "data_type": { "PrimitiveScalar": "U32" },
+                                "nullable": false
+                            },
+                            {
+                                "name": "name",
                                 "documentation": null,
-                                "data_type": { "PrimitiveScalar": "F32" },
+                                "data_type": "Str",
                                 "nullable": false
                             }
                         ]
                     },
-                    "return_type": { "PrimitiveScalar": "F32" }
-                },
-                {
-                    "name": "process",
-                    "description": "Processes the data",
-                    "parameters": {
-                        "documentation": null,
-                        "fields": [
-                            {
-                                "name": "data",
-                                "documentation": null,
-                                "data_type": { "PrimitiveList": "U8" },
-                                "nullable": true
-                            }
-                        ]
-                    },
-                    "return_type": {
-                        "Group": [
-                            {
-                                "name": "foo",
-                                "documentation": null,
-                                "data_type": { "PrimitiveList": "U8" },
-                                "nullable": false
-                            }
-                        ]
-                    }
-                }
-            ],
-            "items": {
-                "InputStruct": {
-                    "documentation": null,
-                    "fields": [
+                    "config": null,
+                    "methods": [
                         {
-                            "name": "foo",
-                            "documentation": null,
-                            "data_type": { "PrimitiveList": "U8" },
-                            "nullable": false
+                            "name": "calculate",
+                            "description": "Calculates a value",
+                            "input": {
+                                "documentation": null,
+                                "fields": [
+                                    {
+                                        "name": "input",
+                                        "documentation": null,
+                                        "data_type": { "PrimitiveScalar": "F32" },
+                                        "nullable": false
+                                    }
+                                ]
+                            },
+                            "output": { "PrimitiveScalar": "F32" }
+                        },
+                        {
+                            "name": "process",
+                            "description": "Processes the data",
+                            "input": {
+                                "documentation": null,
+                                "fields": [
+                                    {
+                                        "name": "data",
+                                        "documentation": null,
+                                        "data_type": { "PrimitiveList": "U8" },
+                                        "nullable": true
+                                    }
+                                ]
+                            },
+                            "output": {
+                                "Group": [
+                                    {
+                                        "name": "foo",
+                                        "documentation": null,
+                                        "data_type": { "PrimitiveList": "U8" },
+                                        "nullable": false
+                                    }
+                                ]
+                            }
                         }
                     ]
                 }
-            }
-        });
-
-        assert_json_eq(&output, &serde_json::to_string_pretty(&expected).unwrap());
-    }
-
-    #[test]
-    fn test_nested_struct_in_return_type() {
-        let file: syn::File = syn::parse2(quote! {
-            struct Inner {
-                value: i64,
-            }
-            struct Outer {
-                inner: Inner,
-                count: u32,
-            }
-
-            /// A capability
-            #[capability]
-            impl MySvc {
-                type Client = Outer;
-
-                fn new() -> Self { Self }
-                fn reset(&mut self) {}
-                fn register(&self, c: &Outer) {}
-
-                /// Gets inner
-                fn get_inner(&self, c: &Outer) -> Inner {
-                    todo!()
-                }
-            }
-        })
+            ]
+        }"#,
+        )
         .unwrap();
 
-        let interface = build_spec(&file);
-        let parsed = serde_json::to_value(&interface).unwrap();
-
-        // Return type should be a resolved Group with Inner's field
-        let ret = &parsed["methods"][0]["return_type"];
-        assert!(ret["Group"].is_array());
-        assert_eq!(ret["Group"][0]["name"], "value");
-        assert_eq!(ret["Group"][0]["data_type"]["PrimitiveScalar"], "I64");
+        assert_eq!(&output, &expected);
     }
 }

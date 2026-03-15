@@ -320,6 +320,7 @@ mod tests {
     #[test]
     fn test_struct_output() {
         let src = r#"
+            #[config]
             struct Output {
                 embedding: Vec<f32>,
                 tokens: u32,

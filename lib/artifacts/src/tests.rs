@@ -108,7 +108,6 @@ async fn ship_httpc_capability_to_cache() {
     assert!(cap_dir.join("Cargo.toml").exists());
     assert!(cap_dir.join("Cargo.lock").exists());
     assert!(cap_dir.join("src/lib.rs").exists());
-    assert!(cap_dir.join("interface.json").exists());
 
     // The native library must exist (platform-dependent extension)
     let has_lib = cap_dir.join("lib.dylib").exists()

@@ -53,13 +53,7 @@ impl ModuleView {
         self.code.selected_step
     }
 
-    pub fn render(
-        &mut self,
-        f: &mut Frame,
-        pipeline: &PipelineState,
-        cache: &CacheManager,
-        area: Rect,
-    ) {
+    pub fn render(&mut self, f: &mut Frame<'_>, pipeline: &PipelineState, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
@@ -95,15 +89,6 @@ impl ModuleView {
 
         match self.bottom_tab {
             BottomTab::Config => {
-                // Proactively refresh capability list and interface doc
-                self.cap_config.refresh_available_caps(&cache);
-                if self.cap_config.selected_tab < self.cap_config.editors.len() {
-                    let name = self.cap_config.editors[self.cap_config.selected_tab]
-                        .0
-                        .clone();
-                    self.cap_config.load_interface(&cache, &name);
-                }
-
                 self.cap_config.active = is_bottom_focused;
                 self.cap_config.render(f, bottom_chunks[1], "Cap Config");
             }
@@ -114,7 +99,11 @@ impl ModuleView {
         }
     }
 
-    pub fn handle_event(&mut self, key: KeyEvent) -> anyhow::Result<()> {
+    pub async fn handle_event(
+        &mut self,
+        key: KeyEvent,
+        cache: &CacheManager,
+    ) -> anyhow::Result<()> {
         // Tab switches between code and bottom pane
         if key.code == KeyCode::Tab {
             match self.active_pane {
@@ -136,7 +125,17 @@ impl ModuleView {
             self.cap_config.editing = false;
             self.bottom_tab = match self.bottom_tab {
                 BottomTab::Config => BottomTab::Logs,
-                BottomTab::Logs => BottomTab::Config,
+                BottomTab::Logs => {
+                    // Switching TO Config
+                    self.cap_config.refresh_available_caps(cache).await;
+                    if self.cap_config.selected_tab < self.cap_config.editors.len() {
+                        let name = self.cap_config.editors[self.cap_config.selected_tab]
+                            .0
+                            .clone();
+                        self.cap_config.load_interface(cache, &name).await;
+                    }
+                    BottomTab::Config
+                }
             };
             return Ok(());
         }
@@ -163,7 +162,7 @@ impl ModuleView {
                 }
             },
             (ActivePane::Bottom, _) => match self.bottom_tab {
-                BottomTab::Config => self.cap_config.handle_event(key)?,
+                BottomTab::Config => self.cap_config.handle_event(key, cache).await?,
                 BottomTab::Logs => self.logs.handle_event(key),
             },
         }

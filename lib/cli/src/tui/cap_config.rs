@@ -79,7 +79,11 @@ impl CapConfigState {
         }
     }
 
-    pub fn handle_event(&mut self, key: KeyEvent) -> anyhow::Result<()> {
+    pub async fn handle_event(
+        &mut self,
+        key: KeyEvent,
+        cache: &CacheManager,
+    ) -> anyhow::Result<()> {
         if self.editing {
             self.editors[self.selected_tab].1.input(key, &self.area)?;
         } else {
@@ -87,11 +91,22 @@ impl CapConfigState {
                 KeyCode::Left | KeyCode::Char('h') => {
                     if self.selected_tab > 0 {
                         self.selected_tab -= 1;
+                        if self.selected_tab < self.editors.len() {
+                            let name = self.editors[self.selected_tab].0.clone();
+                            self.load_interface(cache, &name).await;
+                        }
                     }
                 }
                 KeyCode::Right | KeyCode::Char('l') => {
                     if self.selected_tab < self.editors.len() {
                         self.selected_tab += 1;
+                        if self.selected_tab < self.editors.len() {
+                            let name = self.editors[self.selected_tab].0.clone();
+                            self.load_interface(cache, &name).await;
+                        } else {
+                            // Switched to "Add" tab
+                            self.refresh_available_caps(cache).await;
+                        }
                     }
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
@@ -113,10 +128,11 @@ impl CapConfigState {
                 KeyCode::Enter | KeyCode::Char('i') => {
                     if self.selected_tab == self.editors.len() {
                         if let Some(i) = self.add_list_state.selected() {
-                            let (_, name, _) = &self.available_caps[i];
+                            let name = self.available_caps[i].1.clone();
                             self.editors
                                 .push((name.clone(), Editor::new("yaml", "", vesper())));
                             self.selected_tab = self.editors.len() - 1;
+                            self.load_interface(cache, &name).await;
                         }
                     } else {
                         self.editing = true;
@@ -249,7 +265,7 @@ impl CapConfigState {
     }
 }
 
-fn render_pseudo_rust(spec: &InterfaceSpec) -> Vec<Line> {
+fn render_pseudo_rust<'a>(spec: &InterfaceSpec<'a>) -> Vec<Line<'a>> {
     let mut lines = Vec::new();
 
     if let Some(desc) = &spec.description {
@@ -263,39 +279,41 @@ fn render_pseudo_rust(spec: &InterfaceSpec) -> Vec<Line> {
 
     lines.push(Line::from(vec![
         Span::styled("pub struct ", Style::default().fg(Color::Magenta)),
-        Span::styled(&spec.capability, Style::default().fg(Color::Yellow)),
+        Span::styled(spec.capability.clone(), Style::default().fg(Color::Yellow)),
         Span::raw(" {"),
     ]));
 
-    for method in &spec.methods {
-        lines.push(Line::from(""));
-        if let Some(desc) = &method.description {
-            for line in desc.lines() {
-                lines.push(Line::from(vec![
-                    Span::raw("    "),
-                    Span::styled(format!("/// {}", line), Style::default().fg(Color::Green)),
-                ]));
+    if let Some(class) = spec.classes.first() {
+        for method in &class.methods {
+            lines.push(Line::from(""));
+            if let Some(desc) = &method.description {
+                for line in desc.lines() {
+                    lines.push(Line::from(vec![
+                        Span::raw("    "),
+                        Span::styled(format!("/// {}", line), Style::default().fg(Color::Green)),
+                    ]));
+                }
             }
+
+            let mut method_line = vec![
+                Span::raw("    "),
+                Span::styled("fn ", Style::default().fg(Color::Magenta)),
+                Span::styled(method.name.clone(), Style::default().fg(Color::Cyan)),
+                Span::raw("("),
+            ];
+
+            // This is a simplification, InterfaceSpec doesn't have full rust type info here
+            // but it has PyroSchema which we could potentially detail more.
+            method_line.push(Span::raw("..."));
+            method_line.push(Span::raw(") -> "));
+            method_line.push(Span::styled(
+                format!("{}", method.output),
+                Style::default().fg(Color::Yellow),
+            ));
+            method_line.push(Span::raw(";"));
+
+            lines.push(Line::from(method_line));
         }
-
-        let mut method_line = vec![
-            Span::raw("    "),
-            Span::styled("fn ", Style::default().fg(Color::Magenta)),
-            Span::styled(&method.name, Style::default().fg(Color::Cyan)),
-            Span::raw("("),
-        ];
-
-        // This is a simplification, InterfaceSpec doesn't have full rust type info here
-        // but it has PyroSchema which we could potentially detail more.
-        method_line.push(Span::raw("..."));
-        method_line.push(Span::raw(") -> "));
-        method_line.push(Span::styled(
-            format!("{}", method.return_type),
-            Style::default().fg(Color::Yellow),
-        ));
-        method_line.push(Span::raw(";"));
-
-        lines.push(Line::from(method_line));
     }
 
     lines.push(Line::from("}"));
