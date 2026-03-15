@@ -1,7 +1,6 @@
 pipeline:
   gemma:
-    path: ../../modules/chat/
-    libraries: ["../../capabilities/ollama/"]
+    module: ../../modules/chat/
     configurations:
       ollama:
         base_url: "http://devserver3:11434"

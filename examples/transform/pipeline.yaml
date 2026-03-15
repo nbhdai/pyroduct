@@ -1,7 +1,6 @@
 pipeline:
   prefix:
-    path: ../../modules/cap_config/
-    libraries: ["../../capabilities/config/"]
+    module: ../../modules/cap_config/
     configurations:
       config:
         uppercase: true

@@ -148,7 +148,7 @@ impl App {
                         }
                     }
                 }
-                pyroduct::module::Module::Hash(_) => unreachable!(),
+                pyroduct::module::Module::Hash(_) | pyroduct::module::Module::Path(_) => unreachable!(),
             };
 
             // Persistence

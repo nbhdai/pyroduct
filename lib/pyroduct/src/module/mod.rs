@@ -12,11 +12,13 @@
 //! get zero-copy access to the archived data in wasm linear memory.
 //!
 
-use std::collections::HashMap;
+use std::io;
+use std::{collections::HashMap, path::PathBuf};
 use std::sync::Arc;
 
-use artifacts::artifacts::ModuleSource;
-use artifacts::cache::CacheManager;
+use artifacts::cache::{BuildError, CacheError};
+use artifacts::environment::EnvironmentError;
+use artifacts::{artifacts::{ModuleSource, Module as ArtifactModule}, cache::CacheManager, environment::Environment};
 use serde::{Deserialize, Serialize};
 use wasmtime::{
     Caller, Engine, FuncType, Instance, Linker, Memory, Store, TypedFunc, Val, ValType,
@@ -48,10 +50,13 @@ pub enum WasmError {
     Pyro(#[from] PyroError),
 
     #[error("Cache Error: {0}")]
-    CacheError(String),
+    Cache(#[from] CacheError),
 
     #[error("Build Error: {0}")]
-    BuildError(String),
+    Build(#[from] BuildError),
+
+    #[error("Build Error: {0}")]
+    Environment(#[from] EnvironmentError),
 
     #[error("Wasm module is missing required export: '{0}'")]
     MissingExport(String),
@@ -491,10 +496,26 @@ fn classify_error(error: anyhow::Error) -> WasmError {
     WasmError::Unknown(error)
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(untagged)]
 pub enum Module {
     Source(ModuleSource),
+    #[serde(deserialize_with = "validate_hash")]
     Hash(String),
+    Path(PathBuf),
+}
+
+fn validate_hash<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    // Example: Only accept 64-char hex strings as Hashes
+    if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        Ok(s)
+    } else {
+        Err(serde::de::Error::custom("not a valid hash"))
+    }
 }
 
 /// A single wasm module in the pipeline intent.
@@ -509,22 +530,37 @@ pub struct ModuleConfig {
 impl ModuleConfig {
     pub async fn load_factory(&self, engine: &Engine) -> Result<PyroFactory, WasmError> {
         let cache = CacheManager::from_env()
-            .await
-            .map_err(|e| WasmError::CacheError(e.to_string()))?;
+            .await?;
 
         // 2. Safely extract the slice now that we guarantee it's a Binary
         let binary = match &self.module {
             Module::Hash(hash) => {
                 cache
                 .get_binary(hash)
-                .await
-                .map_err(|e| WasmError::BuildError(e.to_string()))?
+                .await?
             },
             Module::Source(source) => {
                 cache
                 .compile(source)
-                .await
-                .map_err(|e| WasmError::BuildError(e.to_string()))?
+                .await?
+            },
+            Module::Path(path) => {
+                let env = Environment::new(path.clone()).await?;
+                let package = env.package(true).await?;
+                for a in package.iter() {
+                    cache.write_artifacts(a).await?;
+                }
+                let mut binary = None;
+                for artifact in package {
+                    match artifact {
+                        artifacts::artifacts::Artifacts::Module(ArtifactModule::Binary(b)) => binary = Some(b),
+                        _ => {}
+                    }
+                }
+                binary.ok_or(CacheError {
+                    context: "Binary was not constructed".to_string(),
+                    error: io::Error::new(io::ErrorKind::NotFound, "Not Found"),
+                })?
             },
         };
 
@@ -538,8 +574,7 @@ impl ModuleConfig {
         for cap in &binary.spec.capabilities {
             let artifact_path = cache
                 .capability_binary_path(&cap.author, &cap.package, &cap.version)
-                .await
-                .map_err(|e| WasmError::CacheError(e.to_string()))?;
+                .await?;
 
             let lib_name = cap.package.clone();
 

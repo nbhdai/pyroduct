@@ -1,4 +1,6 @@
-use artifacts::cache::{CacheError, CacheManager};
+use std::io;
+
+use artifacts::{artifacts::{Artifacts, Module as ArtifactModule}, cache::{CacheError, CacheManager}, environment::Environment};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use wasmtime::Engine;
@@ -20,11 +22,33 @@ pub struct PipelineConfig {
 }
 
 impl PipelineConfig {
-    pub async fn load_sources(&mut self, cache: &CacheManager) -> Result<(), CacheError> {
+    pub async fn load_sources(&mut self, cache: &CacheManager) -> Result<(), WasmError> {
         for step in self.pipeline.values_mut() {
-            if let Module::Hash(hash) = &step.module {
-                let source = cache.get_source(hash).await?;
-                step.module = Module::Source(source);
+            match &step.module {
+                Module::Source(_) => {},
+                Module::Hash(hash) => {
+                    let source = cache.get_source(hash).await?;
+                    step.module = Module::Source(source);
+                },
+                Module::Path(path) => {
+                    let env = Environment::new(path.clone()).await?;
+                    let package = env.package(true).await?;
+                    for a in package.iter() {
+                        cache.write_artifacts(a).await?;
+                    }
+                    let mut source = None;
+                    for artifact in package {
+                        match artifact {
+                            Artifacts::Module(ArtifactModule::Source(b)) => source = Some(b),
+                            _ => {}
+                        }
+                    }
+                    let source = source.ok_or(CacheError {
+                        context: "Binary was not constructed".to_string(),
+                        error: io::Error::new(io::ErrorKind::NotFound, "Not Found"),
+                    })?;
+                    step.module = Module::Source(source);
+                },
             }
         }
         Ok(())
