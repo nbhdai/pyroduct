@@ -5,12 +5,11 @@
 //! These tests invoke `cargo build` under the hood so they are slow — mark
 //! them #[ignore] if you only want fast unit tests in CI.
 
-use crate::artifacts::{Artifact, Artifacts, Module, ModuleDependencies, ModuleSource};
+use crate::artifacts::{Artifact, Artifacts, CapabilityBinary, Module, ModuleBinary, ModuleDependencies, ModuleSource};
 use crate::cache::{CacheManager, PyroductConfig};
 use crate::cargo::ResolvedCapability;
 use crate::environment::Environment;
 use cargo_toml::Dependency;
-use sha2::Digest;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -66,6 +65,7 @@ pub fn test_config() -> PyroductConfig {
         author: None,
         target: Some(target_dir), // Set the target to the absolute path found via cargo
         pyroduct: config.pyroduct,
+        build_slots: Some(4),
     }
 }
 
@@ -219,9 +219,7 @@ async fn test_anon_compile_with_interface() {
         "Compiled output should be a valid WASM binary"
     );
 
-    let mut hasher = sha2::Sha256::new();
-    sha2::Digest::update(&mut hasher, code);
-    let hash = format!("{:x}", sha2::Digest::finalize(hasher));
+    let hash = mod_source.hash();
 
     // 2. Test debug_module
     let debug_mod = cache.debug_module(&mod_source.hash()).await.unwrap();
@@ -272,17 +270,13 @@ async fn test_module_wasm_exact_match() {
         .expect("Expected ModuleBinary artifact");
 
     let original_wasm = binary.wasm.clone();
-    let source_code = source.source.clone();
 
     // Write to disk
     for artifact in &module_artifacts {
         cache.write_artifacts(artifact).await.unwrap();
     }
 
-    // Resolve the ephemeral anon/ directory
-    let mut hasher = sha2::Sha256::new();
-    sha2::Digest::update(&mut hasher, &source_code);
-    let hash = format!("{:x}", sha2::Digest::finalize(hasher));
+    let hash = source.hash();
     let mod_dir = cache.root.join("anon").join(&hash);
 
     // 1. Verify exact match against file on disk
@@ -293,13 +287,10 @@ async fn test_module_wasm_exact_match() {
     );
 
     // 2. Verify exact match after Artifacts::from_dir read
-    let loaded_artifact = Artifacts::from_dir(&mod_dir).await.unwrap();
-    let loaded_wasm = match loaded_artifact {
-        Artifacts::Module(Module::Binary(m)) => m.wasm,
-        _ => panic!("Expected reconstructed artifact to be a ModuleBinary"),
-    };
+    let loaded_artifact = ModuleBinary::from_dir(&mod_dir).await.unwrap();
+
     assert_eq!(
-        original_wasm, loaded_wasm,
+        original_wasm, loaded_artifact.wasm,
         "WASM reloaded from dir does not match original"
     );
 }
@@ -330,17 +321,10 @@ async fn test_capability_lib_exact_match() {
     let cap_dir = cache.capabilities_dir("nbhdai", "httpc", "0.1.0");
 
     // Verify exact match after Artifacts::from_dir read
-    let loaded_artifact = Artifacts::from_dir(&cap_dir).await.unwrap();
-    let loaded_lib_bytes = match loaded_artifact {
-        Artifacts::CapabilityBinary(c) => {
-            assert!(!c.libs.is_empty(), "Loaded capability has no libraries");
-            c.libs[0].to_vec()
-        }
-        _ => panic!("Expected reconstructed artifact to be a CapabilityBinary"),
-    };
+    let loaded_artifact = CapabilityBinary::from_dir(&cap_dir).await.unwrap();
 
     assert_eq!(
-        original_lib_bytes, loaded_lib_bytes,
+        original_lib_bytes, loaded_artifact.libs[0].to_vec(),
         "Capability library bytes do not match after roundtrip to disk"
     );
 }

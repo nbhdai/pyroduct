@@ -777,14 +777,6 @@ impl Artifact for Module {
     }
 }
 
-// ==========================================
-// Trait Implementation for the Enum (Switch)
-// ==========================================
-
-// ==========================================
-// Trait Implementation for the Enum (Switch)
-// ==========================================
-
 impl Artifact for Artifacts {
     async fn write_to_directory(&self, path: &Path) -> io::Result<()> {
         match self {

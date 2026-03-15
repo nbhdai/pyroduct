@@ -38,6 +38,9 @@ pub enum BuildError {
 
     #[error("Documentation error: {0}")]
     Documentation(String),
+
+    #[error("No build slot available: {0}")]
+    NoSlot(String),
 }
 
 impl From<std::io::Error> for BuildError {
@@ -60,13 +63,77 @@ pub struct PyroductConfig {
     pub author: Option<String>,
     pub target: Option<PathBuf>,
     pub pyroduct: Option<Dependency>,
+    /// Number of parallel build slots (directories). Defaults to 4.
+    pub build_slots: Option<usize>,
 }
+
+/// A file-lock guard for a build slot. Releasing this (via Drop) unlocks the slot.
+pub struct BuildSlot {
+    pub index: usize,
+    pub dir: PathBuf,
+    _lock_file: std::fs::File,
+}
+
+impl BuildSlot {
+    /// Try to acquire a specific slot without blocking.
+    /// Returns `None` if the slot is already held.
+    fn try_acquire(build_base: &Path, index: usize) -> io::Result<Option<Self>> {
+        use fs2::FileExt;
+
+        let slot_dir = build_base.join(index.to_string());
+        std::fs::create_dir_all(&slot_dir)?;
+
+        let lock_path = slot_dir.join(".lock");
+        let lock_file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)?;
+
+        if lock_file.try_lock_exclusive().is_ok() {
+            Ok(Some(BuildSlot {
+                index,
+                dir: slot_dir,
+                _lock_file: lock_file,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Block until any slot in [0, slot_count) becomes available.
+    /// Polls with a short sleep to avoid busy-waiting.
+    async fn acquire_any(build_base: &Path, slot_count: usize) -> Result<Self, BuildError> {
+        loop {
+            for i in 0..slot_count {
+                match Self::try_acquire(build_base, i) {
+                    Ok(Some(slot)) => {
+                        tracing::info!(slot = i, "Acquired build slot");
+                        return Ok(slot);
+                    }
+                    Ok(None) => continue,
+                    Err(e) => {
+                        return Err(BuildError::NoSlot(format!(
+                            "Failed to probe slot {}: {}",
+                            i, e
+                        )));
+                    }
+                }
+            }
+            // All slots busy — yield and retry
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+}
+
+// The lock file is automatically unlocked when `_lock_file` is dropped (fs2 behavior).
 
 pub struct CacheManager {
     pub root: PathBuf,
     pub target_dir: PathBuf,
     pub pyroduct_dep: Dependency,
     pub config: PyroductConfig,
+    pub build_slots: usize,
 }
 
 impl CacheManager {
@@ -89,18 +156,19 @@ impl CacheManager {
         } else {
             root.join("target")
         };
+        let build_slots = config.build_slots.unwrap_or(4).max(1);
         let manager = Self {
             root: root.to_path_buf(),
             target_dir,
             pyroduct_dep,
             config,
+            build_slots,
         };
 
         manager.init().await?;
         Ok(manager)
     }
 
-    /// The previous new() logic, now moved to from_env()
     pub async fn from_env() -> Result<Self, CacheError> {
         let root = std::env::var("PYRODUCT")
             .map(PathBuf::from)
@@ -127,7 +195,10 @@ impl CacheManager {
         Self::new(&root, config).await
     }
 
-    /// The folder instantiator
+    fn build_base_dir(&self) -> PathBuf {
+        self.root.join("build")
+    }
+
     pub async fn init(&self) -> Result<(), CacheError> {
         fs::create_dir_all(self.capabilities_base_dir())
             .await
@@ -162,13 +233,17 @@ impl CacheManager {
                 error,
             })?;
 
-        let build_dir = self.root.join("build");
-        fs::create_dir_all(build_dir)
-            .await
-            .map_err(|error| CacheError {
-                context: "Failed to create build dir".to_string(),
-                error,
-            })?;
+        // Create all build slot directories
+        let build_base = self.build_base_dir();
+        for i in 0..self.build_slots {
+            let slot_dir = build_base.join(i.to_string());
+            fs::create_dir_all(&slot_dir)
+                .await
+                .map_err(|error| CacheError {
+                    context: format!("Failed to create build slot dir {}", i),
+                    error,
+                })?;
+        }
 
         let cargo_dir = self.root.join(".cargo");
         fs::create_dir_all(&cargo_dir)
@@ -202,7 +277,6 @@ impl CacheManager {
             .join(version)
     }
 
-    /// Returns the path to the interface crate inside a capability's cache directory.
     pub fn interface_dir(&self, author: &str, name: &str, version: &str) -> PathBuf {
         self.interfaces_base_dir()
             .join(author)
@@ -214,7 +288,6 @@ impl CacheManager {
         self.root.join("interfaces")
     }
 
-    /// Returns the interface documentation (interface.json) for a shipped capability.
     pub async fn capability_interface_spec(
         &self,
         author: &str,
@@ -319,7 +392,6 @@ impl CacheManager {
         Ok(debug)
     }
 
-    /// Returns the config documentation (config.json) for a shipped capability, if it exists.
     pub async fn capability_config_spec(
         &self,
         author: &str,
@@ -378,15 +450,20 @@ impl CacheManager {
         }
     }
 
-    /// Compile the module written by `set_build` and store the wasm as an anon
-    /// artifact. Returns the hex SHA-256 hash that identifies it in the cache.
+    /// Compile the module and store the wasm as an anon artifact.
+    /// Acquires a build slot (file-locked directory) so multiple compiles
+    /// can run in parallel up to `self.build_slots`.
     pub async fn compile(&self, source: &ModuleSource) -> Result<ModuleBinary, BuildError> {
         let hash = source.hash();
         if let Ok(binary) = self.get_binary(&hash).await {
             return Ok(binary);
         }
 
-        let build_dir = self.root.join("build");
+        // Acquire a file-locked build slot
+        let slot = BuildSlot::acquire_any(&self.build_base_dir(), self.build_slots).await?;
+        tracing::info!(slot = slot.index, hash = %hash, "Compiling in build slot");
+
+        let build_dir = &slot.dir;
         let src_dir = build_dir.join("src");
         fs::create_dir_all(&src_dir)
             .await
@@ -395,19 +472,27 @@ impl CacheManager {
             .await
             .map_err(|e| BuildError::io("write lib.rs", e))?;
 
-        let basic_toml = r#"
+        // Each slot gets its own unique crate name so cargo doesn't collide
+        // on the shared target-dir's build artifacts.
+        let crate_name = format!("mod_slot{}", slot.index);
+        let basic_toml = format!(
+            r#"
 [package]
-name = "mod"
+name = "{crate_name}"
 version = "0.1.0"
 author = "anon"
 edition = "2024"
 
 [workspace]
 
-[dependencies]
-"#;
+[lib]
+name = "mod_slot"
 
-        let mut manifest: cargo_toml::Manifest = toml::from_str(basic_toml)
+[dependencies]
+"#
+        );
+
+        let mut manifest: cargo_toml::Manifest = toml::from_str(&basic_toml)
             .map_err(|e| BuildError::Manifest(format!("Couldn't build base manifest: {}", e)))?;
         let mut pyro_dep = self.pyroduct_dep.clone();
         pyro_dep.detail_mut().features.push("module".to_string());
@@ -437,20 +522,24 @@ edition = "2024"
             .map_err(|e| BuildError::io("write Cargo.toml", e))?;
 
         run_command(
-            &build_dir,
+            build_dir,
             &["build", "--release", "--target", "wasm32-unknown-unknown"],
             true,
         )
         .await?;
+
         let wasm_path = self
             .target_dir
             .join("wasm32-unknown-unknown")
             .join("release")
-            .join("mod.wasm");
+            .join("mod_slot.wasm");
 
         let wasm: Vec<u8> = tokio::fs::read(wasm_path)
             .await
             .map_err(|e| BuildError::io("read compiled wasm", e))?;
+
+        // Slot is released here when `slot` is dropped (file lock released)
+        drop(slot);
 
         let func = generate_module_spec(&source.source)
             .map_err(|s| {
@@ -559,15 +648,12 @@ edition = "2024"
     }
 }
 
-/// If a `Dependency` has a relative path, resolve it to absolute
-/// with respect to the given `base` directory.
 fn resolve_dependency_path(dep: &mut Dependency, base: &std::path::Path) {
     if let Dependency::Detailed(detail) = dep {
         if let Some(ref mut p) = detail.path {
             let path = std::path::Path::new(p.as_str());
             if path.is_relative() {
                 let absolute = base.join(&path);
-                // Canonicalize if it exists on disk, otherwise just use the joined path.
                 *p = absolute
                     .canonicalize()
                     .unwrap_or(absolute)

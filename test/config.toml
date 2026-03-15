@@ -1,3 +1,4 @@
 target = "../target"
 
 pyroduct.path = "../lib/pyroduct"
+build_slots = 4
