@@ -55,9 +55,9 @@ pub async fn load_config(config_path: &Path) -> Result<PipelineConfig> {
                     let base = config_path.parent().unwrap_or(Path::new("."));
                     *path = base.join(&path);
                 }
-                tracing::info!(step = name, path = ?path, "Resolved module path");
+                tracing::debug!(step = name, path = ?path, "Resolved module path");
             }
-            _ => {},
+            _ => {}
         }
     }
     Ok(pipeline)
