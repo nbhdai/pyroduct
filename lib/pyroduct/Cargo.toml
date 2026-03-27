@@ -23,13 +23,13 @@ host = [
     "dep:pin-project",
     "dep:object",
     "dep:pyro-artifacts",
-    "spec/arrow",
+    "pyro-spec/arrow",
 ]
 module = []
 
 [dependencies]
 pyro-artifacts = { workspace = true, optional = true }
-spec.workspace = true
+pyro-spec.workspace = true
 pyro-derive.workspace = true
 rkyv.workspace = true
 tracing.workspace = true

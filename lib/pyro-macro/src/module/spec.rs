@@ -23,7 +23,7 @@
 
 use std::borrow::Cow;
 
-use spec::{ModuleFunc, PyroField, PyroSchema};
+use pyro_spec::{ModuleFunc, PyroField, PyroSchema};
 use syn::{Attribute, Expr, FnArg, ItemFn, Lit, Meta, Pat, ReturnType, Type};
 
 use crate::struct_doc::SchemaBuilder;

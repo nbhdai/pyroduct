@@ -13,7 +13,7 @@ serde_json.workspace = true
 heck.workspace = true
 prettyplease.workspace = true
 serde.workspace = true
-spec.workspace = true
+pyro-spec.workspace = true
 
 [dev-dependencies]
 similar = "2.7"

@@ -7,7 +7,7 @@
 
 use std::borrow::Cow;
 
-use spec::{CapabilityFunc, ClassSpec, InterfaceSpec, PyroField, PyroSchema, PyroType};
+use pyro_spec::{CapabilityFunc, ClassSpec, InterfaceSpec, PyroField, PyroSchema, PyroType};
 use syn::{Attribute, Expr, Lit, Meta};
 
 use crate::ffi::has_attr;

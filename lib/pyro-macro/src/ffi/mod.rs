@@ -1,5 +1,5 @@
 //! This crate provides proc macros to generate FFI boilerplate for capabilities.
-use ::spec::InterfaceSpec;
+use ::pyro_spec::InterfaceSpec;
 use syn::parse_file;
 
 use crate::{

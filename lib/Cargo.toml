@@ -26,7 +26,7 @@ pyro-macro = { path = "pyro-macro", version = "0.1.0" }
 pyro-derive = { path = "pyro-derive", version = "0.1.0" }
 pyroduct = { path = "pyroduct", version = "0.1.0" }
 pyro-arrow-file = { path = "arrow-file", version = "0.1.0" }
-spec = { path = "spec", version = "0.1.0" }
+pyro-spec = { path = "spec", version = "0.1.0" }
 pyro-artifacts = { path = "artifacts", version = "0.1.0" }
 
 # Errors and reporting

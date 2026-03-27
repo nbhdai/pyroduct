@@ -16,7 +16,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use spec::{PrimitiveDataType, PyroField, PyroSchema, PyroType};
+use pyro_spec::{PrimitiveDataType, PyroField, PyroSchema, PyroType};
 use syn::{Attribute, Expr, Fields, Lit, Meta};
 use crate::utils::has_attr;
 
