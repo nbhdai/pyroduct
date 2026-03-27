@@ -3,16 +3,17 @@ members = [
     "pyroduct",
     "pyro-macro",
     "pyro-derive",
-    "cli",
-    "arrow-file", "spec", "artifacts",
+    "arrow-file",
+    "spec",
+    "artifacts",
 ]
 
 default-members = [
     "pyroduct",
     "pyro-macro",
-    "cli",
     "arrow-file",
-     "spec", "artifacts",
+    "spec",
+    "artifacts",
 ]
 resolver = "2"
 
