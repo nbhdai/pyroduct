@@ -1,4 +1,4 @@
-use artifacts::{cache::CacheManager, environment::Environment};
+use pyro_artifacts::{artifacts::Artifacts, cache::CacheManager, environment::Environment};
 use indexmap::IndexMap;
 use pyroduct::{
     PyroRow,
@@ -28,7 +28,7 @@ async fn test_capability_configuration_respect() {
         cache.write_artifacts(artifact).await.unwrap();
     }
     let hash = match &artifacts[0] {
-        artifacts::artifacts::Artifacts::Module(module) => module.hash(),
+        Artifacts::Module(module) => module.hash(),
         _ => panic!("Not a module!"),
     };
 

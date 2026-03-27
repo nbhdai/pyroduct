@@ -22,12 +22,12 @@ authors = ["Sven Cattell"]
 edition = "2024"
 
 [workspace.dependencies]
-pyro-core = { path = "pyro-core" }
-pyro-derive = { path = "pyro-derive" }
-pyroduct = { path = "pyroduct" }
-arrow-file = { path = "arrow-file" }
-spec = { path = "spec" }
-artifacts = { path = "artifacts" }
+pyro-core = { path = "pyro-core", version = "0.1.0" }
+pyro-derive = { path = "pyro-derive", version = "0.1.0" }
+pyroduct = { path = "pyroduct", version = "0.1.0" }
+pyro-arrow-file = { path = "arrow-file", version = "0.1.0" }
+spec = { path = "spec", version = "0.1.0" }
+pyro-artifacts = { path = "artifacts", version = "0.1.0" }
 
 # Errors and reporting
 anyhow = "1.0.100"

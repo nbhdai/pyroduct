@@ -1,5 +1,5 @@
 use super::keys::{Hotkey, HotkeyProvider};
-use artifacts::cache::CacheManager;
+use pyro_artifacts::cache::CacheManager;
 use crossterm::event::{KeyCode, KeyEvent};
 use pyroduct::format::value::InterfaceSpec;
 use ratatui::{

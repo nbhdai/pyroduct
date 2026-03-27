@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use artifacts::{
-    artifacts::{Artifact, Module},
+use pyro_artifacts::{
+    artifacts::{Artifact, Artifacts, Module},
     debug::CapSymbols,
     environment::Environment,
 };
@@ -88,16 +88,16 @@ pub async fn expand_single(path: &Path) -> Result<bool> {
 
     for artifact in &artifacts {
         match artifact {
-            artifacts::artifacts::Artifacts::CapabilityBinary(binary) => {
+            Artifacts::CapabilityBinary(binary) => {
                 let source = artifacts
                     .iter()
                     .find_map(|a| match a {
-                        artifacts::artifacts::Artifacts::CapabilitySource(s) => Some(s),
+                        Artifacts::CapabilitySource(s) => Some(s),
                         _ => None,
                     })
                     .context("Missing CapabilitySource for CapabilityBinary")?;
 
-                let symbols = artifacts::debug::symbols(binary);
+                let symbols = pyro_artifacts::debug::symbols(binary);
                 for sym in symbols {
                     let (name, content) = match sym {
                         Ok(CapSymbols::Elf(sym)) => ("elf.json", sym),
@@ -128,14 +128,14 @@ pub async fn expand_single(path: &Path) -> Result<bool> {
                 fs::create_dir_all(&output_dir)?;
                 fs::write(output_dir.join("cap.rs"), code)?;
             }
-            artifacts::artifacts::Artifacts::Module(Module::Source(source)) => {
+            Artifacts::Module(Module::Source(source)) => {
                 let code = generate_module(&source.source).context("Module code")?;
                 let code = prettyplease::unparse(&code);
                 fs::create_dir_all(&output_dir)?;
                 fs::write(output_dir.join("cap.rs"), code)?;
             }
-            artifacts::artifacts::Artifacts::Module(Module::Binary(binary)) => {
-                match artifacts::debug::wat(binary) {
+            Artifacts::Module(Module::Binary(binary)) => {
+                match pyro_artifacts::debug::wat(binary) {
                     Ok(wat) => fs::write(output_dir.join("mod.wat"), wat)?,
                     Err(error) => {
                         tracing::error!(error, "Unable to create wat");

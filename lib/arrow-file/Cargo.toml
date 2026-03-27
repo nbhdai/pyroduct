@@ -1,5 +1,5 @@
 [package]
-name = "arrow-file"
+name = "pyro-arrow-file"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

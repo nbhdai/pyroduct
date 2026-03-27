@@ -1,6 +1,6 @@
 use std::io;
 
-use artifacts::{artifacts::{Artifacts, Module as ArtifactModule}, cache::{CacheError, CacheManager}, environment::Environment};
+use pyro_artifacts::{artifacts::{Artifacts, Module as ArtifactModule}, cache::{CacheError, CacheManager}, environment::Environment};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use wasmtime::Engine;

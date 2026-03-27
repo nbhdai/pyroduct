@@ -1,4 +1,4 @@
-use artifacts::cache::CacheManager;
+use pyro_artifacts::cache::CacheManager;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,

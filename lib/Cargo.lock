@@ -264,21 +264,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arrow-file"
-version = "0.1.0"
-dependencies = [
- "arrow",
- "bytes",
- "memmap2",
- "parquet",
- "sha2",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "arrow-ipc"
 version = "57.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -377,31 +362,6 @@ dependencies = [
  "num-traits",
  "regex",
  "regex-syntax",
-]
-
-[[package]]
-name = "artifacts"
-version = "0.1.0"
-dependencies = [
- "cargo_toml",
- "flate2",
- "fs2",
- "gimli 0.33.0",
- "object 0.38.1",
- "prettyplease",
- "pyro-core",
- "serde",
- "serde_json",
- "sha2",
- "spec",
- "syn",
- "tar",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
- "wasmprinter 0.244.0",
 ]
 
 [[package]]
@@ -2264,6 +2224,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "pyro-arrow-file"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "bytes",
+ "memmap2",
+ "parquet",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "pyro-artifacts"
+version = "0.1.0"
+dependencies = [
+ "cargo_toml",
+ "flate2",
+ "fs2",
+ "gimli 0.33.0",
+ "object 0.38.1",
+ "prettyplease",
+ "pyro-core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "spec",
+ "syn",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+ "wasmprinter 0.244.0",
+]
+
+[[package]]
 name = "pyro-core"
 version = "0.1.0"
 dependencies = [
@@ -2293,7 +2293,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrow",
- "artifacts",
  "async-ffi",
  "chrono",
  "dashmap",
@@ -2306,6 +2305,7 @@ dependencies = [
  "parquet",
  "paste",
  "pin-project",
+ "pyro-artifacts",
  "pyro-derive",
  "rkyv",
  "serde",
@@ -2326,8 +2326,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrow",
- "arrow-file",
- "artifacts",
  "cargo_toml",
  "clap",
  "crossterm 0.29.0",
@@ -2335,6 +2333,8 @@ dependencies = [
  "fs-err",
  "heck",
  "prettyplease",
+ "pyro-arrow-file",
+ "pyro-artifacts",
  "pyro-core",
  "pyroduct",
  "ratatui",

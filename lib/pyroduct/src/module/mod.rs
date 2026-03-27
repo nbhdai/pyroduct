@@ -16,9 +16,9 @@ use std::io;
 use std::sync::Arc;
 use std::{collections::HashMap, path::PathBuf};
 
-use artifacts::cache::{BuildError, CacheError};
-use artifacts::environment::EnvironmentError;
-use artifacts::{
+use pyro_artifacts::cache::{BuildError, CacheError};
+use pyro_artifacts::environment::EnvironmentError;
+use pyro_artifacts::{
     artifacts::{Module as ArtifactModule, ModuleSource},
     cache::CacheManager,
     environment::Environment,
@@ -555,7 +555,7 @@ impl ModuleConfig {
                 let mut binary = None;
                 for artifact in package {
                     match artifact {
-                        artifacts::artifacts::Artifacts::Module(ArtifactModule::Binary(b)) => {
+                        pyro_artifacts::artifacts::Artifacts::Module(ArtifactModule::Binary(b)) => {
                             binary = Some(b)
                         }
                         _ => {}

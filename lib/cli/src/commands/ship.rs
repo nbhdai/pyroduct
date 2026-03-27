@@ -1,5 +1,5 @@
 use anyhow::{Result, bail};
-use artifacts::{artifacts::Module, cache::CacheManager, environment::Environment};
+use pyro_artifacts::{artifacts::{Artifacts, Module}, cache::CacheManager, environment::Environment};
 use fs_err as fs;
 use std::path::Path;
 
@@ -16,7 +16,7 @@ pub async fn ship_single(cache: &CacheManager, path: &Path, debug: bool) -> Resu
     if debug {
         for artifact in &artifacts {
             match artifact {
-                artifacts::artifacts::Artifacts::CapabilitySource(capability) => {
+                Artifacts::CapabilitySource(capability) => {
                     let _ = cache
                         .debug_capabilities(
                             &capability.manifest.capability.author,
@@ -25,7 +25,7 @@ pub async fn ship_single(cache: &CacheManager, path: &Path, debug: bool) -> Resu
                         )
                         .await;
                 }
-                artifacts::artifacts::Artifacts::Module(Module::Source(source)) => {
+                Artifacts::Module(Module::Source(source)) => {
                     let _ = cache.debug_module(&source.hash()).await;
                 }
                 _ => {}

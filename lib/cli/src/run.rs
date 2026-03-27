@@ -11,7 +11,7 @@ use pyroduct::{
     pipeline::{PipelineConfig, PipelineFactory, PipelinePool},
 };
 
-use arrow_file::{
+use pyro_arrow_file::{
     parse_data_to_batch, record_batch_to_bytes, write_csv, write_jsonl, write_parquet,
 };
 
