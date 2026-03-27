@@ -1,8 +1,14 @@
 [package]
 name = "pyroduct"
-version.workspace = true
-authors.workspace = true
-edition.workspace = true
+version = { workspace = true }
+description = "Dual trust computation framework"
+homepage = { workspace = true }
+repository = { workspace = true }
+authors = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
 
 [features]
 capability = [

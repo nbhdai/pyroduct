@@ -2,7 +2,7 @@ use cargo_toml::Dependency;
 use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use spec::{InterfaceSpec, ModuleFunc};
+use pyro_spec::{InterfaceSpec, ModuleFunc};
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::io::{self, Read, Write};

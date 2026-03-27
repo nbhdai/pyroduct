@@ -1,6 +1,4 @@
 pub mod commands;
-pub mod init;
-pub mod run;
 pub mod tui;
 
 use anyhow::Result;
@@ -95,7 +93,7 @@ async fn main() -> Result<()> {
     }
 
     match args.command {
-        Commands::Init { path, cap } => init::init(path, cap),
+        Commands::Init { path, cap } => commands::init::init(path, cap),
         Commands::Expand { path } => commands::expand::expand(&path).await,
         Commands::Ship { path, debug } => commands::ship::ship(&path, debug).await,
         Commands::Clean { path } => commands::clean::clean(&path),
@@ -108,9 +106,9 @@ async fn main() -> Result<()> {
             let input_path = Path::new(&input);
 
             if input_path.exists() && input_path.is_file() {
-                run::run_batch(&config, input_path, &output_dir, format).await
+                commands::run::run_batch(&config, input_path, &output_dir, format).await
             } else {
-                run::run(&config, &input).await
+                commands::run::run(&config, &input).await
             }
         }
         Commands::Tui { config, input } => tui::run_tui(&config, &input).await,

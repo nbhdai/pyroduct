@@ -1,8 +1,14 @@
 [package]
 name = "pyro-spec"
-version.workspace = true
-authors.workspace = true
-edition.workspace = true
+version = { workspace = true }
+description = "Schema and specs for functions and rows in pyroduct"
+homepage = { workspace = true }
+repository = { workspace = true }
+authors = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
 
 [features]
 arrow = ["dep:arrow-schema", "dep:tracing"]

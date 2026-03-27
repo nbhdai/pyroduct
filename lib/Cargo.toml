@@ -18,8 +18,14 @@ resolver = "2"
 
 [workspace.package]
 version = "0.1.0"
-authors = ["Sven Cattell"]
+authors = ["nbhd ai"]
+license = "GPL3"
+keywords = ["wasm", "machine-learning"]
+repository = "github.com/nbhdai/pyroduct"
 edition = "2024"
+rust-version = "1.90"
+homepage = "nbhd.ai"
+
 
 [workspace.dependencies]
 pyro-macro = { path = "pyro-macro", version = "0.1.0" }
