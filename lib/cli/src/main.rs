@@ -58,8 +58,8 @@ enum Commands {
         output_dir: PathBuf,
 
         /// Output format (only used for batch processing).
-        #[arg(long, value_enum, default_value_t = run::OutputFormat::Json)]
-        format: run::OutputFormat,
+        #[arg(long, value_enum, default_value_t = commands::run::OutputFormat::Json)]
+        format: commands::run::OutputFormat,
     },
     Tui {
         /// Path to the pipeline config YAML file

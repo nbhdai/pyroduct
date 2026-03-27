@@ -5,7 +5,7 @@ use half::f16;
 
 use crate::format::value::PyroSchema;
 
-use spec::{PrimitiveDataType, PyroType};
+use pyro_spec::{PrimitiveDataType, PyroType};
 
 /// A trait for Rust types that can statically report their corresponding [`PyroType`].
 pub trait TypeableRow {

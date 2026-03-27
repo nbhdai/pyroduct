@@ -3,7 +3,7 @@ use std::fmt;
 
 use crate::format::value::time::Time;
 
-use spec::{PyroField, PyroType};
+use pyro_spec::{PyroField, PyroType};
 
 use super::{ValueError, ValueResult};
 use half::f16;

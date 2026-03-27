@@ -5,7 +5,7 @@ use half::f16;
 
 use super::repair::ScalarRepairError;
 use super::{PrimitiveValueList, PyroRow, PyroValue, ToRow};
-use spec::{PrimitiveDataType, PyroSchema, PyroType};
+use pyro_spec::{PrimitiveDataType, PyroSchema, PyroType};
 
 // =============================================================================
 // Sealed trait pattern
@@ -638,7 +638,7 @@ impl<T: ToRow> CoerceToSchema for T {
 
 #[cfg(test)]
 mod tests {
-    use spec::PyroField;
+    use pyro_spec::PyroField;
 
     use super::*;
 

@@ -10,7 +10,7 @@ use std::{
 use arrow::array::RecordBatch;
 use arrow::datatypes::Schema;
 
-use crate::run::load_config;
+use crate::commands::run::load_config;
 use anyhow::Result;
 use pyro_artifacts::cache::CacheManager;
 use crossterm::{

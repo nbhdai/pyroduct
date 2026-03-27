@@ -5,7 +5,7 @@ use pyro_artifacts::{
     environment::Environment,
 };
 use fs_err as fs;
-use pyro_core::{ffi::generate_capability, module::generate_module};
+use pyro_macro::{ffi::generate_capability, module::generate_module};
 use std::path::Path;
 
 pub async fn expand(path: &Path) -> Result<()> {

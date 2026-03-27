@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::convert::TryInto;
 
-use spec::{PrimitiveDataType, PyroField, PyroType};
+use pyro_spec::{PrimitiveDataType, PyroField, PyroType};
 use thiserror::Error;
 
 use super::{PrimitiveValueList, PyroRow, PyroValue, RowItem};

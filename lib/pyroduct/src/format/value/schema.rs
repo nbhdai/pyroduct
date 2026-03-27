@@ -13,7 +13,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 
 use super::{PrimitiveValueList, PyroRow, PyroValue};
-use spec::{PrimitiveDataType, PyroField, PyroSchema, PyroType, coerce_pyro_types};
+use pyro_spec::{PrimitiveDataType, PyroField, PyroSchema, PyroType, coerce_pyro_types};
 use thiserror::Error;
 
 // =============================================================================
