@@ -1,5 +1,5 @@
 [package]
-name = "pyro-core"
+name = "pyro-macro"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

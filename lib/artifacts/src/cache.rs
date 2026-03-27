@@ -5,7 +5,7 @@ use crate::artifacts::{
 use crate::build::{CommandError, format_syn_error, run_command};
 use crate::debug::{self, CapabilityDebug, ModuleDebug};
 use cargo_toml::Dependency;
-use pyro_core::{
+use pyro_macro::{
     ffi::generate_capability,
     module::{generate_module, generate_module_spec},
 };

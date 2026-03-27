@@ -2248,7 +2248,7 @@ dependencies = [
  "gimli 0.33.0",
  "object 0.38.1",
  "prettyplease",
- "pyro-core",
+ "pyro-macro",
  "serde",
  "serde_json",
  "sha2",
@@ -2264,7 +2264,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyro-core"
+name = "pyro-derive"
+version = "0.1.0"
+dependencies = [
+ "pyro-macro",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "pyro-macro"
 version = "0.1.0"
 dependencies = [
  "heck",
@@ -2275,15 +2284,6 @@ dependencies = [
  "serde_json",
  "similar",
  "spec",
- "syn",
-]
-
-[[package]]
-name = "pyro-derive"
-version = "0.1.0"
-dependencies = [
- "pyro-core",
- "quote",
  "syn",
 ]
 
@@ -2335,7 +2335,7 @@ dependencies = [
  "prettyplease",
  "pyro-arrow-file",
  "pyro-artifacts",
- "pyro-core",
+ "pyro-macro",
  "pyroduct",
  "ratatui",
  "ratatui-code-editor",

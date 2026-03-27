@@ -338,7 +338,7 @@ impl Environment {
         let original_source = fs::read_to_string(&source_path).await?;
 
         let (lib_rs_file, interface) =
-            pyro_core::ffi::generate_interface(&original_source, &cap_name, &cap_version).map_err(
+            pyro_macro::ffi::generate_interface(&original_source, &cap_name, &cap_version).map_err(
                 |r| EnvironmentError::InterfaceGeneration(format_syn_error(&original_source, r)),
             )?;
 

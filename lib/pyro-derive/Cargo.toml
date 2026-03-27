@@ -8,6 +8,6 @@ edition.workspace = true
 proc-macro = true
 
 [dependencies]
-pyro-core.workspace = true
+pyro-macro.workspace = true
 syn.workspace = true
 quote.workspace = true

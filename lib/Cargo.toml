@@ -1,7 +1,7 @@
 [workspace]
 members = [ 
     "pyroduct",
-    "pyro-core",
+    "pyro-macro",
     "pyro-derive",
     "cli",
     "arrow-file", "spec", "artifacts",
@@ -9,7 +9,7 @@ members = [
 
 default-members = [
     "pyroduct",
-    "pyro-core",
+    "pyro-macro",
     "cli",
     "arrow-file",
      "spec", "artifacts",
@@ -22,7 +22,7 @@ authors = ["Sven Cattell"]
 edition = "2024"
 
 [workspace.dependencies]
-pyro-core = { path = "pyro-core", version = "0.1.0" }
+pyro-macro = { path = "pyro-macro", version = "0.1.0" }
 pyro-derive = { path = "pyro-derive", version = "0.1.0" }
 pyroduct = { path = "pyroduct", version = "0.1.0" }
 pyro-arrow-file = { path = "arrow-file", version = "0.1.0" }
