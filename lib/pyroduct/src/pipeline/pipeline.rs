@@ -1,12 +1,12 @@
 use std::io;
 
-use pyro_artifacts::{artifacts::{Artifacts, Module as ArtifactModule}, cache::{CacheError, CacheManager}, environment::Environment};
+use pyro_artifacts::{artifacts::{Artifacts, Module as ArtifactModule, Playbook}, cache::{CacheError, CacheManager}, environment::Environment};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use wasmtime::Engine;
 
 use crate::{
-    module::{Module, ModuleConfig, PyroFactory, WasmError},
+    module::{PyroFactory, WasmError},
     pipeline::Pipeline,
 };
 
@@ -18,7 +18,7 @@ use super::PipelineError;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct PipelineConfig {
-    pub pipeline: IndexMap<String, ModuleConfig>,
+    pub pipeline: IndexMap<String, Playbook>,
 }
 
 impl PipelineConfig {

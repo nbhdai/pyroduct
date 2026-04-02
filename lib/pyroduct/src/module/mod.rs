@@ -16,6 +16,7 @@ use std::io;
 use std::sync::Arc;
 use std::{collections::HashMap, path::PathBuf};
 
+use pyro_artifacts::artifacts::Playbook;
 use pyro_artifacts::cache::{BuildError, CacheError};
 use pyro_artifacts::environment::EnvironmentError;
 use pyro_artifacts::{
@@ -148,6 +149,48 @@ impl PyroFactory {
             libraries,
             configurations,
             module,
+        })
+    }
+
+    pub async fn from_playbook(playbook: &Playbook,  engine: &Engine)  -> Result<Self, WasmError> { 
+        let cache = CacheManager::from_env().await?;
+
+        // 2. Safely extract the slice now that we guarantee it's a Binary
+        tracing::debug!("Loading module from hash: {}", playbook.hash);
+        let binary = cache.get_binary(&playbook.hash).await?;
+
+        let wasmtime_module =
+            wasmtime::Module::from_binary(&engine, &binary.wasm).map_err(|e| {
+                WasmError::InstantiationFailed(format!("Failed to compile WASM: {}", e))
+            })?;
+        let pyro_module = PyroModule::new(wasmtime_module)?;
+
+        let mut libs = Vec::new();
+
+        for cap in &binary.spec.capabilities {
+            let artifact_path = cache
+                .capability_binary_path(&cap.author, &cap.package, &cap.version)
+                .await?;
+
+            let lib_name = cap.package.clone();
+
+            let library = CapabilityLibrary::load(lib_name, &artifact_path)
+                .await
+                .map_err(|e| {
+                    WasmError::InstantiationFailed(format!(
+                        "Failed to load capability library at {}: {}",
+                        artifact_path.display(),
+                        e
+                    ))
+                })?;
+            libs.push(library);
+        }
+
+        Ok(PyroFactory {
+            engine: engine.clone(), // Ensure this matches your existing struct needs
+            libraries: libs,
+            configurations: playbook.configurations.clone(),
+            module: pyro_module,
         })
     }
 
@@ -498,108 +541,4 @@ fn classify_error(error: anyhow::Error) -> WasmError {
         return WasmError::Pyro(error.downcast().unwrap());
     }
     WasmError::Unknown(error)
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(untagged)]
-pub enum Module {
-    Source(ModuleSource),
-    #[serde(deserialize_with = "validate_hash")]
-    Hash(String),
-    Path(PathBuf),
-}
-
-fn validate_hash<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    // Example: Only accept 64-char hex strings as Hashes
-    if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
-        Ok(s)
-    } else {
-        Err(serde::de::Error::custom("not a valid hash"))
-    }
-}
-
-/// A single wasm module in the pipeline intent.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct ModuleConfig {
-    pub module: Module,
-    /// Per-class capability configuration. Keys are class names.
-    #[serde(default)]
-    pub configurations: HashMap<String, Option<serde_json::Value>>,
-}
-
-impl ModuleConfig {
-    pub async fn load_factory(&self, engine: &Engine) -> Result<PyroFactory, WasmError> {
-        let cache = CacheManager::from_env().await?;
-
-        // 2. Safely extract the slice now that we guarantee it's a Binary
-        let binary = match &self.module {
-            Module::Hash(hash) => {
-                tracing::debug!("Loading module from hash: {}", hash);
-                cache.get_binary(hash).await?
-            }
-            Module::Source(source) => {
-                tracing::debug!("Loading module from source: {}", source.hash());
-                cache.compile(source).await?
-            }
-            Module::Path(path) => {
-                tracing::info!("Loading module from path: {}", path.display());
-                let env = Environment::new(path.clone()).await?;
-                let package = env.package(true).await?;
-                for a in package.iter() {
-                    cache.write_artifacts(a).await?;
-                }
-                let mut binary = None;
-                for artifact in package {
-                    match artifact {
-                        pyro_artifacts::artifacts::Artifacts::Module(ArtifactModule::Binary(b)) => {
-                            binary = Some(b)
-                        }
-                        _ => {}
-                    }
-                }
-                binary.ok_or(CacheError {
-                    context: "Binary was not constructed".to_string(),
-                    error: io::Error::new(io::ErrorKind::NotFound, "Not Found"),
-                })?
-            }
-        };
-
-        let wasmtime_module =
-            wasmtime::Module::from_binary(&engine, &binary.wasm).map_err(|e| {
-                WasmError::InstantiationFailed(format!("Failed to compile WASM: {}", e))
-            })?;
-        let pyro_module = PyroModule::new(wasmtime_module)?;
-
-        let mut libs = Vec::new();
-
-        for cap in &binary.spec.capabilities {
-            let artifact_path = cache
-                .capability_binary_path(&cap.author, &cap.package, &cap.version)
-                .await?;
-
-            let lib_name = cap.package.clone();
-
-            let library = CapabilityLibrary::load(lib_name, &artifact_path)
-                .await
-                .map_err(|e| {
-                    WasmError::InstantiationFailed(format!(
-                        "Failed to load capability library at {}: {}",
-                        artifact_path.display(),
-                        e
-                    ))
-                })?;
-            libs.push(library);
-        }
-
-        Ok(PyroFactory {
-            engine: engine.clone(), // Ensure this matches your existing struct needs
-            libraries: libs,
-            configurations: self.configurations.clone(),
-            module: pyro_module,
-        })
-    }
 }

@@ -83,31 +83,10 @@ pub enum Module {
 }
 
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
-#[serde(untagged)]
-pub enum ModuleRef {
-    Source(ModuleSource),
-    #[serde(deserialize_with = "validate_hash")]
-    Hash(String),
-}
-
-fn validate_hash<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    // Example: Only accept 64-char hex strings as Hashes
-    if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
-        Ok(s)
-    } else {
-        Err(serde::de::Error::custom("not a valid hash"))
-    }
-}
-
 /// A single wasm module in the pipeline intent.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
-pub struct ModuleConfig {
-    pub module: ModuleRef,
+pub struct Playbook {
+    pub hash: String,
     /// Per-class capability configuration. Keys are class names.
     #[serde(default)]
     pub configurations: HashMap<String, Option<serde_json::Value>>,
