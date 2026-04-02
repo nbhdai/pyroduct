@@ -75,12 +75,6 @@ pub async fn expand_single(path: &Path) -> Result<bool> {
     let output_dir = path.join("artifacts");
 
     let env = Environment::new(path.to_path_buf()).await?;
-    if let Some(interface_artifact) = env.create_interface().await? {
-        let interface_dir = output_dir.join("interface");
-        interface_artifact
-            .write_to_directory(&interface_dir)
-            .await?;
-    }
     let artifacts = env.package(false).await?;
     for artifact in &artifacts {
         artifact.write_to_directory(&output_dir).await?;

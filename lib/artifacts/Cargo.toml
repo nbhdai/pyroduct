@@ -10,6 +10,10 @@ keywords = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
 
+[features]
+default = ["compiler"]
+compiler = []
+
 [dependencies]
 pyro-spec.workspace = true
 

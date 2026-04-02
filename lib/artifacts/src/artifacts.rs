@@ -3,15 +3,17 @@ use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use pyro_spec::{InterfaceSpec, ModuleFunc};
-use std::collections::BTreeMap;
+use serde::Deserialize as _;
+use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::io::{self, Read, Write};
 use std::ops::Deref;
 use std::path::Path;
 use tar::{Builder, Header};
 use tokio::fs;
+use sha2::{Digest, Sha256};
 
-use crate::cargo::{CapabilityManifest, ResolvedCapability};
+use crate::cargo::{CapabilityManifest, ResolvedCapability, CapabilityIdent};
 
 pub enum CapBinary {
     Pe(Vec<u8>),
@@ -32,7 +34,7 @@ impl Deref for CapBinary {
 }
 
 pub struct CapabilityBinary {
-    pub manifest: CapabilityManifest,
+    pub ident: CapabilityIdent,
     pub libs: Vec<CapBinary>,
 }
 
@@ -80,7 +82,37 @@ pub enum Module {
     Binary(ModuleBinary),
 }
 
-use sha2::{Digest, Sha256};
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+#[serde(untagged)]
+pub enum ModuleRef {
+    Source(ModuleSource),
+    #[serde(deserialize_with = "validate_hash")]
+    Hash(String),
+}
+
+fn validate_hash<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    // Example: Only accept 64-char hex strings as Hashes
+    if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        Ok(s)
+    } else {
+        Err(serde::de::Error::custom("not a valid hash"))
+    }
+}
+
+/// A single wasm module in the pipeline intent.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+pub struct ModuleConfig {
+    pub module: ModuleRef,
+    /// Per-class capability configuration. Keys are class names.
+    #[serde(default)]
+    pub configurations: HashMap<String, Option<serde_json::Value>>,
+}
+
 
 impl ModuleSource {
     /// Computes a deterministic hash of the module's source and dependencies.
@@ -217,8 +249,8 @@ impl Artifact for CapabilityBinary {
             }
         }
         fs::write(
-            path.join("Capability.toml"),
-            toml::to_string_pretty(&self.manifest)
+            path.join("ident.json"),
+            serde_json::to_string(&self.ident)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
         )
         .await?;
@@ -238,8 +270,8 @@ impl Artifact for CapabilityBinary {
         }
         append_file(
             &mut tar,
-            "Capability.toml",
-            toml::to_string_pretty(&self.manifest)
+            "ident.json",
+            serde_json::to_string(&self.ident)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
                 .as_bytes(),
         )?;
@@ -252,7 +284,7 @@ impl Artifact for CapabilityBinary {
         let mut archive = tar::Archive::new(tar);
 
         let mut libs = Vec::new();
-        let mut manifest = None;
+        let mut ident = None;
 
         for file in archive.entries()? {
             let mut file = file?;
@@ -264,8 +296,8 @@ impl Artifact for CapabilityBinary {
                 "lib.dll" => libs.push(CapBinary::Pe(content)),
                 "lib.dylib" => libs.push(CapBinary::MachO(content)),
                 "lib.so" => libs.push(CapBinary::Elf(content)),
-                "Capability.toml" => {
-                    manifest = toml::from_slice(&content).map_err(|e| {
+                "ident.json" => {
+                    ident = serde_json::from_slice(&content).map_err(|e| {
                         io::Error::new(
                             io::ErrorKind::InvalidData,
                             format!("Unable to deserialize manifest: {}", e),
@@ -280,11 +312,10 @@ impl Artifact for CapabilityBinary {
             return Err(io::Error::new(io::ErrorKind::NotFound, "Missing library"));
         }
 
+
         Ok(CapabilityBinary {
+            ident: ident.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing ident.json"))?,
             libs,
-            manifest: manifest.ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "Missing Capability.toml")
-            })?,
         })
     }
 
@@ -307,17 +338,17 @@ impl Artifact for CapabilityBinary {
             ));
         }
 
-        let manifest_string = fs::read(path.join("Capability.toml")).await?;
-        let manifest = toml::from_slice(&manifest_string).map_err(|e| {
+        let ident_string = fs::read(path.join("ident.json")).await?;
+        let ident = serde_json::from_slice(&ident_string).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Unable to deserialize manifest: {}", e),
+                format!("Unable to deserialize ident: {}", e),
             )
         })?;
 
         Ok(CapabilityBinary {
             libs,
-            manifest,
+            ident,
         })
     }
 }

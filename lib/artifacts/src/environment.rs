@@ -1,10 +1,9 @@
 use crate::artifacts::{
-    Artifact, Artifacts, CapBinary, CapabilityBinary, CapabilitySource, Interface, Module,
-    ModuleDependencies, ModuleSource,
+    Artifacts, CapBinary, CapabilityBinary, CapabilitySource, Interface,
 };
 use crate::build::{CommandError, format_syn_error, run_command};
-use crate::cache::{BuildError, CacheError, CacheManager};
-use crate::cargo::{CapabilityManifest, ModuleManifest};
+use crate::cache::{BuildError, CacheError};
+use crate::cargo::{CapabilityIdent, CapabilityManifest};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use tokio::fs;
@@ -57,17 +56,12 @@ impl From<serde_json::Error> for EnvironmentError {
 
 pub type EnvResult<T> = std::result::Result<T, EnvironmentError>;
 
-pub enum Manifest {
-    Module(ModuleManifest),
-    Capability(CapabilityManifest),
-    Interface(CapabilityManifest),
-}
 
 /// Central context to manage cargo compilation environment
 pub struct Environment {
     pub root: PathBuf,
     pub target_dir: PathBuf,
-    pub manifest: Manifest,
+    pub manifest: CapabilityManifest,
 }
 
 impl Environment {
@@ -84,70 +78,39 @@ impl Environment {
     }
 
     /// Write Cargo.toml from Module.toml or Capability.toml if it doesn't exist
-    async fn ensure_cargo_toml(root: &Path, manifest: &Manifest) -> EnvResult<()> {
+    async fn ensure_cargo_toml(root: &Path, manifest: &CapabilityManifest) -> EnvResult<()> {
         let cargo_toml_path = root.join("Cargo.toml");
         if cargo_toml_path.exists() {
             return Ok(());
         }
-        let cargo_manifest = match manifest {
-            Manifest::Module(m) => m.clone().to_cargo(),
-            Manifest::Capability(m) => m.clone().to_capability_manifest(),
-            Manifest::Interface(m) => m.clone().to_capability_manifest(),
-        };
+        let cargo_manifest = manifest.clone().to_capability_manifest();
         let contents = toml::to_string_pretty(&cargo_manifest)
             .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
         fs::write(&cargo_toml_path, contents).await?;
         Ok(())
     }
 
-    pub fn is_capability(&self) -> bool {
-        match self.manifest {
-            Manifest::Capability(_) => true,
-            _ => false,
-        }
+    pub fn name(&self) -> String {
+        self.manifest.capability.name.clone()
     }
 
-    pub fn name(&self) -> Option<String> {
-        match &self.manifest {
-            Manifest::Module(m) => Some(m.module.name.clone()),
-            Manifest::Capability(m) => Some(m.capability.name.clone()),
-            Manifest::Interface(_) => None,
-        }
+    pub fn version(&self) -> String {
+        self.manifest.capability.version.clone()
     }
 
-    pub fn version(&self) -> Option<String> {
-        match &self.manifest {
-            Manifest::Module(m) => Some(m.module.version.clone()),
-            Manifest::Capability(m) => Some(m.capability.version.clone()),
-            Manifest::Interface(_) => None,
-        }
+    pub fn author(&self) -> String {
+        self.manifest.capability.author.clone()
     }
 
-    pub fn author(&self) -> Option<String> {
-        match &self.manifest {
-            Manifest::Module(m) => Some(m.module.author.clone()),
-            Manifest::Capability(m) => Some(m.capability.author.clone()),
-            Manifest::Interface(_) => None,
-        }
-    }
-
-    /// Detect Module.toml, Capability.toml, or Cargo.toml to extract name and version
-    async fn load_manifest(root: &Path) -> EnvResult<Manifest> {
+    /// Detect Capability.toml to extract name and version
+    async fn load_manifest(root: &Path) -> EnvResult<CapabilityManifest> {
         tracing::debug!("Loading manifest from {:?}", root);
-        let module_toml = root.join("Module.toml");
-        if module_toml.exists() {
-            let content = tokio::fs::read_to_string(&module_toml).await?;
-            let manifest: ModuleManifest = toml::from_str(&content)
-                .map_err(|e| EnvironmentError::ParseManifest(format!("Module.toml: {}", e)))?;
-            return Ok(Manifest::Module(manifest));
-        }
-
         let capability_toml = root.join("Capability.toml");
         if capability_toml.exists() {
             let content = tokio::fs::read_to_string(&capability_toml).await?;
             let manifest: CapabilityManifest = toml::from_str(&content)
                 .map_err(|e| EnvironmentError::ParseManifest(format!("Capability.toml: {}", e)))?;
-            return Ok(Manifest::Capability(manifest));
+            return Ok(manifest);
         }
 
         // Default for anon compilations or when no package section is found
@@ -227,133 +190,64 @@ impl Environment {
     }
 
     pub async fn package(&self, capture: bool) -> EnvResult<Vec<Artifacts>> {
-        let name = self.name().ok_or_else(|| {
-            EnvironmentError::ParseManifest("Missing name in manifest".to_string())
-        })?;
+        let name = self.name();
+        let version = self.version();
+        let author = self.author();
 
-        let artifacts = match &self.manifest {
-            Manifest::Module(manifest) => {
-                let src_path = self.root.join("src").join("lib.rs");
-                if !src_path.exists() {
-                    return Err(EnvironmentError::SourceNotFound(src_path));
-                }
-                let code = fs::read_to_string(&src_path).await?;
-                let manager = CacheManager::from_env().await?;
-                let source = ModuleSource {
-                    dependencies: ModuleDependencies {
-                        dependencies: manifest.dependencies.clone(),
-                        capabilities: manifest.capabilities.values().cloned().collect(),
-                    },
-                    source: code,
-                };
-                let binary = manager.compile(&source).await?;
-                vec![
-                    Artifacts::Module(Module::Source(source)),
-                    Artifacts::Module(Module::Binary(binary)),
-                ]
-            }
-            Manifest::Capability(manifest) => {
-                tracing::info!("Packaging capability: {:?}", self.root);
+        tracing::info!("Packaging capability: {:?}", self.root);
 
-                let cargo_toml = toml::to_string_pretty(&manifest.clone().to_capability_manifest())
-                    .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
+        let cargo_toml = toml::to_string_pretty(&self.manifest.clone().to_capability_manifest())
+            .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
 
-                tracing::info!("Compiling capability binary...");
-                self.compile(&["--features", "capability", "-p", &name], capture)
-                    .await?;
+        tracing::info!("Compiling capability binary...");
+        self.compile(&["--features", "capability", "-p", &name], capture)
+            .await?;
 
-                let lib = self.get_library_artifact(&name).await?;
+        let lib = self.get_library_artifact(&name).await?;
 
-                let lock_path = self.root.join("Cargo.lock");
-                let cargo_lock = if lock_path.exists() {
-                    fs::read_to_string(&lock_path).await?
-                } else {
-                    String::new()
-                };
-
-                let src_path = self.root.join("src").join("lib.rs");
-                let src_lib_rs = if src_path.exists() {
-                    fs::read_to_string(&src_path).await?
-                } else {
-                    String::new()
-                };
-
-                vec![
-                    Artifacts::CapabilitySource(CapabilitySource {
-                        manifest: manifest.clone(),
-                        cargo_toml,
-                        cargo_lock,
-                        src_lib_rs,
-                    }),
-                    Artifacts::CapabilityBinary(CapabilityBinary {
-                        libs: vec![lib],
-                        manifest: manifest.clone(),
-                    }),
-                ]
-            }
-            Manifest::Interface(manifest) => {
-                tracing::info!("Packaging interface: {:?}", self.root);
-
-                let src_path = self.root.join("src").join("lib.rs");
-                let src_lib_rs = if src_path.exists() {
-                    fs::read_to_string(&src_path).await?
-                } else {
-                    String::new()
-                };
-
-                let spec_path = self.root.join("interface.json");
-                let interface_json = if spec_path.exists() {
-                    fs::read(&spec_path).await?
-                } else {
-                    return Err(EnvironmentError::InterfaceGeneration("Missing".to_string()));
-                };
-                let interface = serde_json::from_slice(&interface_json)?;
-
-                vec![Artifacts::Interface(Interface {
-                    manifest: manifest.clone(),
-                    src_lib_rs,
-                    interface,
-                })]
-            }
+        let lock_path = self.root.join("Cargo.lock");
+        let cargo_lock = if lock_path.exists() {
+            fs::read_to_string(&lock_path).await?
+        } else {
+            String::new()
         };
 
-        Ok(artifacts)
-    }
-
-    /// Creates an interface environment from a capability environment in the directory specified.
-    pub async fn create_interface(&self) -> EnvResult<Option<Interface>> {
-        let manifest = match &self.manifest {
-            Manifest::Capability(capability_manifest) => capability_manifest,
-            _ => return Ok(None),
+        let src_path = self.root.join("src").join("lib.rs");
+        let src_lib_rs = if src_path.exists() {
+            fs::read_to_string(&src_path).await?
+        } else {
+            String::new()
         };
 
-        let cap_name = manifest.capability.name.clone();
-        let cap_version = manifest.capability.version.clone();
 
-        let source_path = self.root.join("src").join("lib.rs");
-        if !source_path.exists() {
-            return Err(EnvironmentError::SourceNotFound(source_path));
-        }
-
-        let original_source = fs::read_to_string(&source_path).await?;
-
-        let (lib_rs_file, interface) =
-            pyro_macro::ffi::generate_interface(&original_source, &cap_name, &cap_version).map_err(
-                |r| EnvironmentError::InterfaceGeneration(format_syn_error(&original_source, r)),
+        let (interface_rs, interface) =
+            pyro_macro::ffi::generate_interface(&src_lib_rs, &name, &version).map_err(
+                |r| EnvironmentError::InterfaceGeneration(format_syn_error(&src_lib_rs, r)),
             )?;
 
-        let lib_rs_content = prettyplease::unparse(&lib_rs_file);
+        let interface_rs = prettyplease::unparse(&interface_rs);
 
-        Ok(Some(Interface {
-            manifest: manifest.clone(),
-            src_lib_rs: lib_rs_content,
-            interface,
-        }))
-    }
-
-    pub async fn new_interface(root: PathBuf, interface: Interface) -> EnvResult<Self> {
-        interface.write_to_directory(&root).await?;
-        Self::new(root).await
+        Ok(vec![
+            Artifacts::CapabilitySource(CapabilitySource {
+                manifest: self.manifest.clone(),
+                cargo_toml,
+                cargo_lock,
+                src_lib_rs,
+            }),
+            Artifacts::CapabilityBinary(CapabilityBinary {
+                ident: CapabilityIdent {
+                    name,
+                    version,
+                    author,
+                },
+                libs: vec![lib],
+            }),
+            Artifacts::Interface(Interface {
+                manifest: self.manifest.clone(),
+                src_lib_rs: interface_rs,
+                interface,
+            })
+        ])
     }
 }
 

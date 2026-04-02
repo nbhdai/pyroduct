@@ -10,13 +10,13 @@ use std::{collections::BTreeMap, path::Path};
 use toml::Value;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PyroPackage {
+pub struct CapabilityIdent {
     pub name: String,
     pub version: String,
     pub author: String,
 }
 
-impl PyroPackage {
+impl CapabilityIdent {
     pub fn to_package(self) -> Package<Value> {
         let mut package = Package::new(self.name, self.version);
         package.authors = Inheritable::Set(vec![self.author]);
@@ -28,7 +28,7 @@ impl PyroPackage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct CapabilityManifest<Metadata = Value> {
-    pub capability: PyroPackage,
+    pub capability: CapabilityIdent,
     pub workspace: Option<Workspace<Metadata>>,
     #[serde(default = "default_pyroduct")]
     pub pyroduct: Dependency,
@@ -82,7 +82,7 @@ pub struct ResolvedCapability {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct ModuleManifest<Metadata = Value> {
-    pub module: PyroPackage,
+    pub module: CapabilityIdent,
     pub workspace: Option<Workspace<Metadata>>,
     #[serde(default = "default_pyroduct")]
     pub pyroduct: Dependency,

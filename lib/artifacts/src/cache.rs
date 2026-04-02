@@ -2,7 +2,10 @@ use crate::artifacts::{
     Artifact, Artifacts, CapabilityBinary, CapabilitySource, Module, ModuleBinary, ModuleSource,
     ModuleSpec,
 };
+
+#[cfg(feature = "compiler")]
 use crate::build::{CommandError, format_syn_error, run_command};
+
 use crate::debug::{self, CapabilityDebug, ModuleDebug};
 use cargo_toml::Dependency;
 use pyro_macro::{
@@ -515,6 +518,7 @@ impl CacheManager {
     /// Compile the module and store the wasm as an anon artifact.
     /// Acquires a build slot (file-locked directory) so multiple compiles
     /// can run in parallel up to `self.build_slots`.
+    #[cfg(feature = "compiler")]
     pub async fn compile(&self, source: &ModuleSource) -> Result<ModuleBinary, BuildError> {
         let hash = source.hash();
         if let Ok(binary) = self.get_binary(&hash).await {
@@ -627,9 +631,9 @@ name = "mod_slot"
         match &artifacts {
             Artifacts::CapabilityBinary(capability) => {
                 let path = self.capabilities_dir(
-                    &capability.manifest.capability.author,
-                    &capability.manifest.capability.name,
-                    &capability.manifest.capability.version,
+                    &capability.ident.author,
+                    &capability.ident.name,
+                    &capability.ident.version,
                 );
                 capability
                     .write_to_directory(&path)

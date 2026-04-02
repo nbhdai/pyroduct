@@ -107,6 +107,7 @@ required-features = ["cli"]
 trybuild.workspace = true
 macrotest = "1.0"
 tracing-test.workspace = true
+tempfile.workspace = true
 
 [[test]]
 name = "derive_tests"
