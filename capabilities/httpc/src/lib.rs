@@ -22,6 +22,7 @@ pub struct HttpConfig {
 #[pyroduct::magma]
 pub struct HttpClient;
 
+
 /// The internal state of the HTTP Server capability.
 pub struct HttpServer {
     _timeout: std::time::Duration,

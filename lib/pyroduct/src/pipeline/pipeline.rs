@@ -1,7 +1,11 @@
 use std::io;
 
-use pyro_artifacts::{artifacts::{Artifacts, Module as ArtifactModule, Playbook}, cache::{CacheError, CacheManager}, environment::Environment};
 use indexmap::IndexMap;
+use pyro_artifacts::{
+    artifacts::{Artifacts, Module as ArtifactModule, Playbook},
+    cache::{CacheError, CacheManager},
+    environment::Environment,
+};
 use serde::{Deserialize, Serialize};
 use wasmtime::Engine;
 
@@ -25,11 +29,11 @@ impl PipelineConfig {
     pub async fn load_sources(&mut self, cache: &CacheManager) -> Result<(), WasmError> {
         for step in self.pipeline.values_mut() {
             match &step.module {
-                Module::Source(_) => {},
+                Module::Source(_) => {}
                 Module::Hash(hash) => {
                     let source = cache.get_source(hash).await?;
                     step.module = Module::Source(source);
-                },
+                }
                 Module::Path(path) => {
                     let env = Environment::new(path.clone()).await?;
                     let package = env.package(true).await?;
@@ -48,7 +52,7 @@ impl PipelineConfig {
                         error: io::Error::new(io::ErrorKind::NotFound, "Not Found"),
                     })?;
                     step.module = Module::Source(source);
-                },
+                }
             }
         }
         Ok(())
@@ -74,7 +78,8 @@ impl PipelineFactory {
     pub async fn load(config: &PipelineConfig) -> Result<Self, PipelineError> {
         let mut wasm_config = wasmtime::Config::new();
         wasm_config.async_support(true);
-        let engine = Engine::new(&wasm_config).map_err(|e| WasmError::EngineError(e.to_string()))?;
+        let engine =
+            Engine::new(&wasm_config).map_err(|e| WasmError::EngineError(e.to_string()))?;
         let mut pipeline = Vec::new();
         for module in config.pipeline.values() {
             let module_factory = module.load_factory(&engine).await?;

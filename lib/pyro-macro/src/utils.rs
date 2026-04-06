@@ -45,7 +45,6 @@ pub fn extract_ident_from_type(ty: &Type) -> Result<Ident> {
     }
 }
 
-
 pub fn has_attr(attrs: &[syn::Attribute], name: &str) -> bool {
     attrs.iter().any(|a| {
         if a.path().is_ident(name) {

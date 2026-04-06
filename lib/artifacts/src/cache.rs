@@ -269,7 +269,9 @@ impl CacheManager {
         Ok(())
     }
 
-    pub async fn list_available_capabilities(&self) -> Result<Vec<(String, String, String)>, CacheError> {
+    pub async fn list_available_capabilities(
+        &self,
+    ) -> Result<Vec<(String, String, String)>, CacheError> {
         let base = self.capabilities_base_dir();
         if !base.exists() {
             return Ok(Vec::new());
@@ -311,10 +313,12 @@ impl CacheManager {
                     error: e,
                 })?;
 
-                while let Some(version_entry) = versions.next_entry().await.map_err(|e| CacheError {
-                    context: "Failed to read version entry".to_string(),
-                    error: e,
-                })? {
+                while let Some(version_entry) =
+                    versions.next_entry().await.map_err(|e| CacheError {
+                        context: "Failed to read version entry".to_string(),
+                        error: e,
+                    })?
+                {
                     let version_path = version_entry.path();
                     if !version_path.is_dir() {
                         continue;

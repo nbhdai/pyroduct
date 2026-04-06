@@ -12,12 +12,12 @@ use arrow::datatypes::Schema;
 
 use crate::commands::run::load_config;
 use anyhow::Result;
-use pyro_artifacts::cache::CacheManager;
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use pyro_artifacts::cache::CacheManager;
 use pyroduct::pipeline::{PipelineConfig, PipelineFactory};
 use pyroduct::pipeline::{PipelinePool, wasm_execute::PipelineExecution};
 use ratatui::{

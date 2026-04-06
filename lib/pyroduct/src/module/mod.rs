@@ -29,7 +29,7 @@ use wasmtime::{
     Caller, Engine, FuncType, Instance, Linker, Memory, Store, TypedFunc, Val, ValType,
 };
 
-use crate::ffi::ForeignObject;
+use crate::ffi::host::ForeignObject;
 use crate::format::{
     Bridgeable, ParseError, PyroRow, PyroView, Receiver,
     header::{DataStatus, PyroData, PyroHeader},
@@ -152,7 +152,7 @@ impl PyroFactory {
         })
     }
 
-    pub async fn from_playbook(playbook: &Playbook,  engine: &Engine)  -> Result<Self, WasmError> { 
+    pub async fn from_playbook(playbook: &Playbook, engine: &Engine) -> Result<Self, WasmError> {
         let cache = CacheManager::from_env().await?;
 
         // 2. Safely extract the slice now that we guarantee it's a Binary

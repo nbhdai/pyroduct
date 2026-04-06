@@ -17,10 +17,7 @@ pub struct CodeState {
 }
 
 pub fn render(f: &mut Frame, pipeline: &PipelineState, state: &mut CodeState, area: Rect) {
-    let name = &pipeline
-        .tui
-        .pipeline
-        .keys()[state.selected_step];
+    let name = &pipeline.tui.pipeline.keys()[state.selected_step];
 
     let border_color = if state.editing {
         Color::Green

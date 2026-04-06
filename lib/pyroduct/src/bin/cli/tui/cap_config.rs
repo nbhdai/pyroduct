@@ -1,6 +1,6 @@
 use super::keys::{Hotkey, HotkeyProvider};
-use pyro_artifacts::cache::CacheManager;
 use crossterm::event::{KeyCode, KeyEvent};
+use pyro_artifacts::cache::CacheManager;
 use pyroduct::format::value::InterfaceSpec;
 use ratatui::{
     Frame,

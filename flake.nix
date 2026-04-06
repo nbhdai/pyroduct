@@ -13,26 +13,21 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, fenix, crane, ... }:
+  outputs = { nixpkgs, flake-utils, fenix, crane, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
         lib = pkgs.lib;
 
         # Toolchains
-        nativeToolchain = fenix.packages.${system}.stable.minimalToolchain;
+        nativeToolchain = fenix.packages.${system}.stable.toolchain;
         wasmToolchain = with fenix.packages.${system}; combine [
-          stable.minimalToolchain
+          stable.toolchain
           targets.wasm32-unknown-unknown.stable.rust-std
-        ];
-        nightlyToolchain = with fenix.packages.${system}; combine [
-          latest.toolchain
-          targets.wasm32-unknown-unknown.latest.rust-std
         ];
 
         craneLibNative = (crane.mkLib pkgs).overrideToolchain nativeToolchain;
         craneLibWasm = (crane.mkLib pkgs).overrideToolchain wasmToolchain;
-        craneLibNightly = (crane.mkLib pkgs).overrideToolchain nightlyToolchain;
 
         wasmEnv = {
           nativeBuildInputs = [
@@ -69,9 +64,6 @@
           doCheck = false;
           cargoExtraArgs = "-p pyroduct --features cli";
         });
-
-        # Shared Library Extension
-        libExt = if pkgs.stdenv.isDarwin then "dylib" else "so";
 
         ROOT_DIR = (builtins.getEnv "ROOT_DIR");
       in {
@@ -110,14 +102,14 @@
           };
         });
 
-        devShells.default = craneLibNightly.devShell (wasmEnv // {
+        devShells.default = craneLibWasm.devShell (wasmEnv // {
           packages = [ 
-            nightlyToolchain
+            wasmToolchain
             pyroduct
           ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.valgrind ];
-          RUST_SRC_PATH = "${nightlyToolchain}/lib/rustlib/src/rust/library";
-          CARGO = "${nightlyToolchain}/bin/cargo";
-          RUSTUP_TOOLCHAIN = "${nightlyToolchain}";
+          RUST_SRC_PATH = "${wasmToolchain}/lib/rustlib/src/rust/library";
+          CARGO = "${wasmToolchain}/bin/cargo";
+          RUSTUP_TOOLCHAIN = "${wasmToolchain}";
           PYRODUCT = ROOT_DIR + "/test";
           
           shellHook = ''

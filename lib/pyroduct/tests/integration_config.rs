@@ -1,5 +1,5 @@
-use pyro_artifacts::{artifacts::Artifacts, cache::CacheManager, environment::Environment};
 use indexmap::IndexMap;
+use pyro_artifacts::{artifacts::Artifacts, cache::CacheManager, environment::Environment};
 use pyroduct::{
     PyroRow,
     module::ModuleConfig,
@@ -22,7 +22,9 @@ async fn test_capability_configuration_respect() {
         .init();
     let cache = CacheManager::from_env().await.unwrap();
 
-    let env = Environment::new("../../modules/cap_config/".into()).await.unwrap();
+    let env = Environment::new("../../modules/cap_config/".into())
+        .await
+        .unwrap();
     let artifacts = env.package(false).await.unwrap();
     for artifact in &artifacts {
         cache.write_artifacts(artifact).await.unwrap();

@@ -13,7 +13,10 @@ use libloading::{Library, Symbol};
 use object::{Object, ObjectSymbol, SymbolKind};
 use thiserror::Error;
 
-use crate::ffi::{CapabilityRegisterFn, ClassExport, ForeignClass, ForeignObject};
+use crate::ffi::{
+    CapabilityRegisterFn, ClassExport,
+    host::{ForeignClass, ForeignObject},
+};
 use crate::format::{
     PyroVec,
     format::{PyroFormat, Writer},

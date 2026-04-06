@@ -29,8 +29,12 @@ pub fn magma(args: TokenStream, input: TokenStream) -> TokenStream {
 pub fn library(input: TokenStream) -> TokenStream {
     let args = parse_macro_input!(input as pyro_macro::format::library::LibraryArgs);
 
-    pyro_macro::format::library::create_ident(syn::parse_quote!(::pyroduct), &args.meta, args.no_ffi)
-        .into()
+    pyro_macro::format::library::create_ident(
+        syn::parse_quote!(::pyroduct),
+        &args.meta,
+        args.no_ffi,
+    )
+    .into()
 }
 
 #[proc_macro_derive(Document)]

@@ -4,6 +4,7 @@ use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use pyro_spec::{InterfaceSpec, ModuleFunc};
 use serde::Deserialize as _;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::io::{self, Read, Write};
@@ -11,9 +12,8 @@ use std::ops::Deref;
 use std::path::Path;
 use tar::{Builder, Header};
 use tokio::fs;
-use sha2::{Digest, Sha256};
 
-use crate::cargo::{CapabilityManifest, ResolvedCapability, CapabilityIdent};
+use crate::cargo::{CapabilityIdent, CapabilityManifest, ResolvedCapability};
 
 pub enum CapBinary {
     Pe(Vec<u8>),
@@ -82,7 +82,6 @@ pub enum Module {
     Binary(ModuleBinary),
 }
 
-
 /// A single wasm module in the pipeline intent.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct Playbook {
@@ -91,7 +90,6 @@ pub struct Playbook {
     #[serde(default)]
     pub configurations: HashMap<String, Option<serde_json::Value>>,
 }
-
 
 impl ModuleSource {
     /// Computes a deterministic hash of the module's source and dependencies.
@@ -291,9 +289,9 @@ impl Artifact for CapabilityBinary {
             return Err(io::Error::new(io::ErrorKind::NotFound, "Missing library"));
         }
 
-
         Ok(CapabilityBinary {
-            ident: ident.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing ident.json"))?,
+            ident: ident
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing ident.json"))?,
             libs,
         })
     }
@@ -325,10 +323,7 @@ impl Artifact for CapabilityBinary {
             )
         })?;
 
-        Ok(CapabilityBinary {
-            libs,
-            ident,
-        })
+        Ok(CapabilityBinary { libs, ident })
     }
 }
 

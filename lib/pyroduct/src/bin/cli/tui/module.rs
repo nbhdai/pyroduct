@@ -1,5 +1,5 @@
-use pyro_artifacts::cache::CacheManager;
 use crossterm::event::{KeyCode, KeyEvent};
+use pyro_artifacts::cache::CacheManager;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
