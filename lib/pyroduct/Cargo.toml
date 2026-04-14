@@ -44,6 +44,7 @@ cli = [
     "dep:toml",
     "dep:pyro-macro",
     "dep:prettyplease",
+    "dep:rustpython-parser",
     "host", # The CLI needs the host feature to execute pipelines
     "dep:pyro-arrow-file"
 ]
@@ -97,6 +98,7 @@ fs-err = { workspace = true, optional = true }
 toml = { workspace = true, optional = true }
 pyro-macro = { workspace = true, optional = true }
 prettyplease = { workspace = true, optional = true }
+rustpython-parser = { version = "0.3.1", optional = true }
 
 [[bin]]
 name = "pyroduct"

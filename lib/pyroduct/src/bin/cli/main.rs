@@ -29,13 +29,15 @@ enum Commands {
         #[arg(value_name = "DIRECTORY")]
         path: PathBuf,
     },
-    /// Places package artifacts into the local cache repository
-    Ship {
-        #[arg(value_name = "DIRECTORY")]
-        path: PathBuf,
+    /// Generate Rust capability interfaces from Python code
+    Py2Rs {
+        /// Path to Python file containing @rust_interface decorated classes
+        #[arg(value_name = "PYTHON_FILE")]
+        python_file: PathBuf,
 
+        /// Output path for generated Rust file (default: stdout)
         #[arg(short, long)]
-        debug: bool,
+        output: Option<PathBuf>,
     },
     /// Cleans generated artifacts (Cargo.toml, artifacts/, interface/, target/)
     Clean {
@@ -95,7 +97,7 @@ async fn main() -> Result<()> {
     match args.command {
         Commands::Init { path, cap } => commands::init::init(path, cap),
         Commands::Expand { path } => commands::expand::expand(&path).await,
-        Commands::Ship { path, debug } => commands::ship::ship(&path, debug).await,
+        Commands::Py2Rs { python_file, output } => commands::py2rs::py2rs(&python_file, output.as_deref()).await,
         Commands::Clean { path } => commands::clean::clean(&path),
         Commands::Run {
             config,
