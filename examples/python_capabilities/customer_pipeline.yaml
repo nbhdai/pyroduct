@@ -1,0 +1,25 @@
+# Real ETL Pipeline Example using Pyroduct
+# 
+# This pipeline demonstrates how to combine multiple modules with capabilities
+# for an end-to-end ETL workflow on customer data.
+
+pipeline:
+  # Step 1: Validate and parse incoming customer data
+  validate_customers:
+    module: examples/modules/customer_etl/
+    # input from pipeline invocation
+    configurations:
+      validation:
+        strict_mode: true
+        max_errors: 100
+        collect_errors: true
+      csv_transform:
+        delimiter: ","
+        has_header: true
+        encoding: "utf-8"
+
+# Example input data (customer_data.jsonl):
+# {"csv_data":"customer_id,name,email,purchase_count\nC001,Alice Johnson,alice@example.com,5\nC002,Bob Smith,bob@example.com,12\nC003,Alice Johnson,alice@example.com,3"}
+#
+# Expected output:
+# {"success":true,"record_count":2,"error_count":0,"records":[{"customer_id":"C001","name":"Alice Johnson","email":"alice@example.com","purchase_count":5},{"customer_id":"C002","name":"Bob Smith","email":"bob@example.com","purchase_count":12}],"errors":[]}
