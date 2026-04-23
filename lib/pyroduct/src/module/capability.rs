@@ -188,7 +188,7 @@ pub struct CapabilityLibrary {
 }
 
 impl CapabilityLibrary {
-    pub async fn load(name: String, path: &Path) -> Result<Arc<Self>, CapabilityError> {
+    pub fn load(name: String, path: &Path) -> Result<Arc<Self>, CapabilityError> {
         LOADED_LIBRARIES.clear_poison();
         let mut libraries = LOADED_LIBRARIES.lock().unwrap();
         if let Some(lib) = libraries.get(&name).map(|w| w.upgrade()).flatten() {

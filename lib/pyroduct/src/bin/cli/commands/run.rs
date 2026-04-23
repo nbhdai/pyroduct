@@ -5,10 +5,12 @@ use anyhow::{Context, Result, anyhow};
 use clap::ValueEnum;
 use fs_err as fs;
 
+use pyro_artifacts::cache::CacheManager;
+use pyroduct::pipeline::pipeline::LoadedPipelineConfig;
 use pyroduct::{
     PyroRow,
     format::value::arrow::PreBatch,
-    pipeline::{PipelineConfig, PipelineFactory, PipelinePool},
+    pipeline::{PipelineConfig, PipelinePool},
 };
 
 use pyro_arrow_file::{
@@ -35,10 +37,10 @@ impl OutputFormat {
 }
 
 /// Helper to load config and resolve paths
-pub async fn load_config(config_path: &Path) -> Result<PipelineConfig> {
+async fn load_config(config_path: &Path) -> Result<LoadedPipelineConfig> {
     tracing::info!("Loading config from {:?}", config_path);
     let config_str = fs::read_to_string(config_path)?;
-    let mut pipeline: PipelineConfig = match config_path.extension().map(|s| s.as_encoded_bytes()) {
+    let pipeline: PipelineConfig = match config_path.extension().map(|s| s.as_encoded_bytes()) {
         Some(b"toml") => toml::from_str(&config_str).context("Failed to parse pipeline TOML")?,
         Some(b"yaml") => {
             serde_yaml::from_str(&config_str).context("Failed to parse pipeline yaml")?
@@ -48,25 +50,14 @@ pub async fn load_config(config_path: &Path) -> Result<PipelineConfig> {
         }
         _ => anyhow::bail!("Unknown extension, supports toml, yaml and json"),
     };
-    for (name, value) in pipeline.pipeline.iter_mut() {
-        match &mut value.module {
-            pyroduct::module::Module::Path(path) => {
-                if path.is_relative() {
-                    let base = config_path.parent().unwrap_or(Path::new("."));
-                    *path = base.join(&path);
-                }
-                tracing::debug!(step = name, path = ?path, "Resolved module path");
-            }
-            _ => {}
-        }
-    }
-    Ok(pipeline)
+    let cache = CacheManager::from_env().await?;
+    Ok(pipeline.load(&cache).await?)
 }
 
 /// Processes a single row from a JSON string and prints the result to stdout.
 pub async fn run(config_path: &Path, input_json: &str) -> Result<()> {
-    let config = load_config(config_path).await?;
-    let mut factory = PipelineFactory::load(&config).await?;
+    let loaded = load_config(config_path).await?;
+    let factory = loaded.factory()?;
     let mut pipeline = factory.build().await?;
 
     tracing::debug!("Parsing input JSON directly to PyroRow");
@@ -146,7 +137,7 @@ pub async fn run_batch(
     format: OutputFormat,
 ) -> Result<()> {
     let config = load_config(config_path).await?;
-    let mut factory = PipelineFactory::load(&config).await?;
+    let factory = config.factory()?;
     let pipeline = factory.build().await?;
     let pool = PipelinePool::new(vec![pipeline]);
 

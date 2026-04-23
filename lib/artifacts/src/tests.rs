@@ -6,13 +6,13 @@
 //! them #[ignore] if you only want fast unit tests in CI.
 
 use crate::artifacts::{
-    Artifact, Artifacts, CapabilityBinary, Module, ModuleBinary, ModuleDependencies, ModuleSource,
+    Artifact, Artifacts, CapabilityBinary, ModuleDependencies, ModuleSource, Playbook,
 };
 use crate::cache::{CacheManager, PyroductConfig};
 use crate::cargo::ResolvedCapability;
 use crate::environment::Environment;
 use cargo_toml::Dependency;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -246,4 +246,53 @@ async fn test_capability_lib_exact_match() {
         loaded_artifact.libs[0].to_vec(),
         "Capability library bytes do not match after roundtrip to disk"
     );
+}
+
+#[tokio::test]
+async fn test_load_playbook() {
+    let dir = TempDir::new().unwrap();
+    let cache = CacheManager::new(dir.path(), test_config()).await.unwrap();
+
+    // 1. Setup a module with a capability
+    let httpc_path = repo_root().join("capabilities/httpc");
+    let env = Environment::new(httpc_path).await.unwrap();
+    let capability = env.package(true).await.unwrap();
+    for artifact in &capability {
+        cache.write_artifacts(artifact).await.unwrap();
+    }
+
+    let cap = ResolvedCapability {
+        author: "nbhdai".to_string(),
+        package: "httpc".to_string(),
+        version: "0.1.0".to_string(),
+    };
+
+    let mod_source = ModuleSource {
+        dependencies: ModuleDependencies {
+            dependencies: BTreeMap::new(),
+            capabilities: vec![cap],
+        },
+        source: HTTPC_MODULE.to_string(),
+    };
+    let binary = cache.compile(&mod_source).await.unwrap();
+
+    // 2. Create a Playbook
+    let playbook = Playbook {
+        hash: binary.hash.clone(),
+        configurations: HashMap::from([(
+            "httpc".to_string(),
+            Some(serde_json::json!({"timeout": 30})),
+        )]),
+    };
+
+    // 3. Load the Playbook
+    let loaded = cache.load_playbook(playbook.clone()).await.unwrap();
+
+    // 4. Verify
+    assert_eq!(loaded.binary.hash, binary.hash);
+    assert_eq!(loaded.configurations, playbook.configurations);
+    assert!(loaded.paths.contains_key("httpc"));
+    let cap_path = loaded.paths.get("httpc").unwrap();
+    assert!(cap_path.exists());
+    assert!(cap_path.to_string_lossy().contains("httpc"));
 }

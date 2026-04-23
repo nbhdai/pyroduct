@@ -1,6 +1,6 @@
 use crate::artifacts::{
     Artifact, Artifacts, CapabilityBinary, CapabilitySource, Module, ModuleBinary, ModuleSource,
-    ModuleSpec,
+    ModuleSpec, Playbook,
 };
 
 #[cfg(feature = "compiler")]
@@ -12,8 +12,8 @@ use pyro_macro::{
     ffi::generate_capability,
     module::{generate_module, generate_module_spec},
 };
-use std::io;
 use std::path::{Path, PathBuf};
+use std::{collections::HashMap, io};
 use tokio::fs;
 
 #[derive(Debug, thiserror::Error)]
@@ -127,6 +127,17 @@ impl BuildSlot {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
     }
+}
+
+/// A loaded playbook where all the libraries are on disk and the binary is loaded
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+pub struct LoadedPlaybook {
+    pub binary: ModuleBinary,
+    /// Per-class capability configuration. Keys are class names.
+    #[serde(default)]
+    pub configurations: HashMap<String, Option<serde_json::Value>>,
+    #[serde(default)]
+    pub paths: HashMap<String, PathBuf>,
 }
 
 // The lock file is automatically unlocked when `_lock_file` is dropped (fs2 behavior).
@@ -715,6 +726,24 @@ name = "mod_slot"
                     })
             }
         }
+    }
+
+    pub async fn load_playbook(&self, playbook: Playbook) -> Result<LoadedPlaybook, CacheError> {
+        let binary = self.get_binary(&playbook.hash).await?;
+        let mut paths = HashMap::new();
+
+        for cap in &binary.spec.capabilities {
+            let path = self
+                .capability_binary_path(&cap.author, &cap.package, &cap.version)
+                .await?;
+            paths.insert(cap.package.clone(), path);
+        }
+
+        Ok(LoadedPlaybook {
+            binary,
+            configurations: playbook.configurations,
+            paths,
+        })
     }
 }
 

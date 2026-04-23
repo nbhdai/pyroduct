@@ -12,19 +12,10 @@
 //! get zero-copy access to the archived data in wasm linear memory.
 //!
 
-use std::io;
-use std::sync::Arc;
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, sync::Arc};
 
-use pyro_artifacts::artifacts::Playbook;
-use pyro_artifacts::cache::{BuildError, CacheError};
+use pyro_artifacts::cache::{BuildError, CacheError, LoadedPlaybook};
 use pyro_artifacts::environment::EnvironmentError;
-use pyro_artifacts::{
-    artifacts::{Module as ArtifactModule, ModuleSource},
-    cache::CacheManager,
-    environment::Environment,
-};
-use serde::{Deserialize, Serialize};
 use wasmtime::{
     Caller, Engine, FuncType, Instance, Linker, Memory, Store, TypedFunc, Val, ValType,
 };
@@ -48,6 +39,16 @@ use capability::CapabilityLibrary;
 pub use state::{PyroModule, PyroState};
 
 use thiserror::Error;
+
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref DEFAULT_ENGINE: Engine = {
+        let mut config = wasmtime::Config::new();
+        config.async_support(true);
+        Engine::new(&config).unwrap()
+    };
+}
 
 #[derive(Error, Debug)]
 pub enum WasmError {
@@ -127,7 +128,6 @@ pub struct PyroFailure {
 /// Host functions registered through `define_async` / `define_sync` receive
 /// a clean `(&T, PyroView)` signature — all wasm memory plumbing is hidden.
 pub struct PyroFactory {
-    engine: Engine,
     configurations: HashMap<String, Option<serde_json::Value>>,
     libraries: Vec<Arc<CapabilityLibrary>>,
     module: PyroModule,
@@ -142,58 +142,43 @@ impl PyroFactory {
     ) -> Result<Self, WasmError> {
         let mut config = wasmtime::Config::new();
         config.async_support(true);
-        let engine = Engine::new(&config).map_err(|e| WasmError::EngineError(e.to_string()))?;
 
         Ok(Self {
-            engine,
             libraries,
             configurations,
             module,
         })
     }
 
-    pub async fn from_playbook(playbook: &Playbook, engine: &Engine) -> Result<Self, WasmError> {
-        let cache = CacheManager::from_env().await?;
-
-        // 2. Safely extract the slice now that we guarantee it's a Binary
-        tracing::debug!("Loading module from hash: {}", playbook.hash);
-        let binary = cache.get_binary(&playbook.hash).await?;
-
-        let wasmtime_module =
-            wasmtime::Module::from_binary(&engine, &binary.wasm).map_err(|e| {
+    pub fn from_playbook(playbook: &LoadedPlaybook) -> Result<Self, WasmError> {
+        tracing::debug!("Loading module from hash: {}", playbook.binary.hash);
+        let wasmtime_module = wasmtime::Module::from_binary(&DEFAULT_ENGINE, &playbook.binary.wasm)
+            .map_err(|e| {
                 WasmError::InstantiationFailed(format!("Failed to compile WASM: {}", e))
             })?;
         let pyro_module = PyroModule::new(wasmtime_module)?;
 
         let mut libs = Vec::new();
 
-        for cap in &binary.spec.capabilities {
-            let artifact_path = cache
-                .capability_binary_path(&cap.author, &cap.package, &cap.version)
-                .await?;
-
-            let lib_name = cap.package.clone();
-
-            let library = CapabilityLibrary::load(lib_name, &artifact_path)
-                .await
-                .map_err(|e| {
-                    WasmError::InstantiationFailed(format!(
-                        "Failed to load capability library at {}: {}",
-                        artifact_path.display(),
-                        e
-                    ))
-                })?;
+        for (name, path) in playbook.paths.iter() {
+            let library = CapabilityLibrary::load(name.clone(), path).map_err(|e| {
+                WasmError::InstantiationFailed(format!(
+                    "Failed to load capability library at {}: {}",
+                    path.display(),
+                    e
+                ))
+            })?;
             libs.push(library);
         }
 
         Ok(PyroFactory {
-            engine: engine.clone(), // Ensure this matches your existing struct needs
             libraries: libs,
             configurations: playbook.configurations.clone(),
             module: pyro_module,
         })
     }
 
+    // Todo: make this more robust.
     async fn create_capabilities(&self) -> Result<HashMap<String, ForeignObject>, WasmError> {
         let mut objects = HashMap::new();
         for (class, config) in &self.configurations {
@@ -207,11 +192,11 @@ impl PyroFactory {
         Ok(objects)
     }
 
-    pub async fn instantiate(&mut self) -> Result<PyroInstance, WasmError> {
+    pub async fn instantiate(&self) -> Result<PyroInstance, WasmError> {
         let pyro_state = PyroState::new();
-        let mut store = Store::new(&self.engine, pyro_state);
+        let mut store = Store::new(&DEFAULT_ENGINE, pyro_state);
         let objects = self.create_capabilities().await?;
-        let mut linker = Linker::new(&self.engine);
+        let mut linker = Linker::new(&DEFAULT_ENGINE);
 
         Self::link_logger(&mut linker)?;
         Self::link_capabilities(&mut linker, &objects)?;

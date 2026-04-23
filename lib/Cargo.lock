@@ -2313,6 +2313,7 @@ dependencies = [
  "half",
  "heck",
  "indexmap",
+ "lazy_static",
  "libloading",
  "macrotest",
  "object 0.38.1",

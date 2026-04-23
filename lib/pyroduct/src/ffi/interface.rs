@@ -1,15 +1,7 @@
-use libloading::Library;
 use std::ffi::c_void;
-use std::future::Future;
-use std::ops::DerefMut;
-use std::pin::Pin;
 use std::ptr::NonNull;
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
-use std::{fmt, slice};
-use tokio::sync::oneshot;
 
-use crate::format::{PyroVec, PyroVecPtr, PyroView, PyroViewPtr, header::PyroData};
+use crate::format::{PyroVec, PyroVecPtr, PyroViewPtr, header::PyroData};
 use crate::{CapturedError, PyroError};
 
 pub type LogCallback = unsafe extern "C" fn(i64, u64, *const u8, usize);
