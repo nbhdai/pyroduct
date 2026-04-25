@@ -81,64 +81,27 @@ pub fn deep_ref(
         }
     };
 
-    Ok(quote! {
-        #struct_def
-        #impl_owned
-    })
-}
-
-/// Specialized function for Rkyv.
-/// Generates the standard DeepRef stuff, PLUS an implementation for the Archived variant.
-pub fn deep_ref_rkyv(input: &ItemStruct, import_location: &Path) -> syn::Result<TokenStream> {
-    let struct_name = &input.ident;
-    // Standard rkyv naming convention: Archived + StructName
-    let archived_struct_name = format_ident!("Archived{}", struct_name);
-    let ref_struct_name = format_ident!("{}Ref", struct_name);
-
-    // 2. Generate the conversions for the Archived fields
-    // We iterate over the *original* fields to determine types, but generate logic
-    // that assumes we are operating on the *Archived* struct.
-    let fields = &input.fields;
-    let rkyv_field_conversions = fields.iter().map(|f| {
+    // 3. Generate FromDeepRef Implementation
+    let from_ref_conversions = fields.iter().map(|f| {
         let field_name = f.ident.as_ref().unwrap();
         let ty = &f.ty;
-        generate_rkyv_field_conversion(field_name, ty)
+        generate_from_ref_conversion(field_name, ty, import_location)
     });
 
-    // Determine if we need phantom data init (same logic as main function)
-    let mut lifetime_used = false;
-    for f in fields {
-        let (_, is_prim) = map_type_to_ref(&f.ty);
-        if !is_prim {
-            lifetime_used = true;
-            break;
-        }
-    }
-
-    let phantom_init = if !lifetime_used {
-        quote! { _phantom: std::marker::PhantomData }
-    } else {
-        quote! {}
-    };
-
-    // 3. Generate the DeepRef implementation for the Archived struct
-    let impl_archived = quote! {
-        #[cfg(target_endian = "little")]
-        impl #import_location::format::DeepRef for #archived_struct_name {
-            type Ref<'a> = #ref_struct_name<'a>;
-
-            fn as_deep_ref(&self) -> Self::Ref<'_> {
-                #ref_struct_name {
-                    #(#rkyv_field_conversions,)*
-                    #phantom_init
+    let impl_from_ref = quote! {
+        impl #import_location::format::FromDeepRef for #struct_name {
+            fn from_ref<'a>(reference: &Self::Ref<'a>) -> Self {
+                Self {
+                    #(#from_ref_conversions,)*
                 }
             }
         }
     };
 
-    // Combine base (Ref definition + Owned impl) with the new Archived impl
     Ok(quote! {
-        #impl_archived
+        #struct_def
+        #impl_owned
+        #impl_from_ref
     })
 }
 
@@ -298,47 +261,63 @@ fn generate_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream {
     }
 }
 
-// Generate the conversion logic for as_deep_ref (Archived -> Borrowed)
-// Handles rkyv specific types (ArchivedString, ArchivedVec, etc.)
-fn generate_rkyv_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream {
+// Generate the conversion logic for from_ref (Borrowed -> Owned)
+fn generate_from_ref_conversion(
+    field_name: &Ident,
+    ty: &Type,
+    import_location: &Path,
+) -> TokenStream {
     match ty {
         Type::Path(TypePath { path, .. }) => {
             let segment = path.segments.last().unwrap();
             let ident_str = segment.ident.to_string();
 
+            if is_string_like(ty) {
+                if ident_str == "String" {
+                    return quote! { #field_name: reference.#field_name.to_string() };
+                } else if ident_str == "Arc" {
+                    return quote! { #field_name: std::sync::Arc::from(reference.#field_name) };
+                } else if ident_str == "Box" {
+                    return quote! { #field_name: std::boxed::Box::from(reference.#field_name) };
+                } else if ident_str == "Cow" {
+                    return quote! { #field_name: std::borrow::Cow::Owned(reference.#field_name.to_string()) };
+                } else if ident_str == "Rc" {
+                    return quote! { #field_name: std::rc::Rc::from(reference.#field_name) };
+                }
+            }
+
             match ident_str.as_str() {
-                // 1. Single-byte or simple primitives (Usually Copy in Rkyv)
-                "bool" | "i8" | "u8" => {
-                    quote! { #field_name: self.#field_name }
+                "bool" | "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64"
+                | "usize" | "f16" | "f32" | "f64" => {
+                    quote! { #field_name: reference.#field_name }
                 }
-
-                // 2. Multi-byte Endian-Specific Primitives (Rkyv wrappers)
-                "i16" | "i16_le" | "i32" | "i32_le" | "i64" | "i64_le" | "isize" | "u16"
-                | "u16_le" | "u32" | "u32_le" | "u64" | "usize" | "u64_le" | "f16" | "f16_le"
-                | "f32" | "f32_le" | "f64" | "f64_le" => {
-                    quote! { #field_name: self.#field_name.to_native() as _ }
-                }
-
-                // 3. String: ArchivedString has .as_str()
-                "String" | "ArchivedString" => {
-                    quote! { #field_name: self.#field_name.as_str() }
-                }
-
-                // 4. Vec
-                "Vec" | "ArchivedVec" => {
+                "Vec" => {
                     if let PathArguments::AngleBracketed(args) = &segment.arguments {
                         if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
                             if is_primitive(inner_ty) {
-                                quote! { #field_name: unsafe { std::mem::transmute(self.#field_name.as_slice()) }}
+                                quote! { #field_name: reference.#field_name.to_vec() }
                             } else if is_string_like(inner_ty) {
-                                // ArchivedVec<ArchivedString>. Inner (in struct def) is String.
-                                // We iterate and get &ArchivedString. .as_str() works.
-                                quote! {
-                                    #field_name: self.#field_name.iter().map(|x| x.as_str()).collect()
+                                if is_string(inner_ty) {
+                                    quote! { #field_name: reference.#field_name.iter().map(|x| x.to_string()).collect() }
+                                } else {
+                                    let inner_ident = if let Type::Path(TypePath { path, .. }) = inner_ty {
+                                        path.segments.last().unwrap().ident.to_string()
+                                    } else {
+                                        "".to_string()
+                                    };
+                                    if inner_ident == "Arc" {
+                                        quote! { #field_name: reference.#field_name.iter().map(|x| std::sync::Arc::from(*x)).collect() }
+                                    } else if inner_ident == "Box" {
+                                        quote! { #field_name: reference.#field_name.iter().map(|x| std::boxed::Box::from(*x)).collect() }
+                                    } else if inner_ident == "Rc" {
+                                        quote! { #field_name: reference.#field_name.iter().map(|x| std::rc::Rc::from(*x)).collect() }
+                                    } else {
+                                        quote! { #field_name: reference.#field_name.iter().map(|x| std::sync::Arc::from(*x)).collect() }
+                                    }
                                 }
                             } else {
                                 quote! {
-                                    #field_name: self.#field_name.iter().map(|x| x.as_deep_ref()).collect()
+                                    #field_name: reference.#field_name.iter().map(|x| <#inner_ty as #import_location::format::FromDeepRef>::from_ref(x)).collect()
                                 }
                             }
                         } else {
@@ -348,29 +327,32 @@ fn generate_rkyv_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream 
                         quote! { #field_name: vec![] }
                     }
                 }
-
-                // 5. Option
-                "Option" | "ArchivedOption" => {
+                "Option" => {
                     if let PathArguments::AngleBracketed(args) = &segment.arguments {
                         if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
                             if is_primitive(inner_ty) {
-                                // ArchivedOption<ArchivedPrimitive> -> .as_ref() gives Option<&ArchivedPrimitive>
-                                // We need Option<Primitive>.
-                                // .to_native() converts &ArchivedPrimitive (Copy) to Primitive
-                                quote! {
-                                    #field_name: self.#field_name.as_ref().map(|x| x.to_native() as _)
-                                }
+                                quote! { #field_name: reference.#field_name }
                             } else if is_string_like(inner_ty) {
-                                // ArchivedOption<ArchivedString>.
-                                // We need Option<&str>.
-                                // as_ref() -> Option<&ArchivedString>
-                                // .map(|x| x.as_str()) -> Option<&str>
-                                quote! {
-                                    #field_name: self.#field_name.as_ref().map(|x| x.as_str())
+                                if is_string(inner_ty) {
+                                    quote! { #field_name: reference.#field_name.map(|x| x.to_string()) }
+                                } else {
+                                    let inner_ident = if let Type::Path(TypePath { path, .. }) = inner_ty {
+                                        path.segments.last().unwrap().ident.to_string()
+                                    } else {
+                                        "".to_string()
+                                    };
+                                    if inner_ident == "Arc" {
+                                        quote! { #field_name: reference.#field_name.map(|x| std::sync::Arc::from(x)) }
+                                    } else if inner_ident == "Box" {
+                                        quote! { #field_name: reference.#field_name.map(|x| std::boxed::Box::from(x)) }
+                                    } else if inner_ident == "Rc" {
+                                        quote! { #field_name: reference.#field_name.map(|x| std::rc::Rc::from(x)) }
+                                    } else {
+                                        quote! { #field_name: reference.#field_name.map(|x| std::sync::Arc::from(x)) }
+                                    }
                                 }
                             } else {
-                                // Standard nested struct
-                                quote! { #field_name: self.#field_name.as_ref().map(|x| x.as_deep_ref()) }
+                                quote! { #field_name: reference.#field_name.as_ref().map(|x| <#inner_ty as #import_location::format::FromDeepRef>::from_ref(x)) }
                             }
                         } else {
                             quote! { #field_name: None }
@@ -379,14 +361,12 @@ fn generate_rkyv_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream 
                         quote! { #field_name: None }
                     }
                 }
-
-                // Nested Structs
                 _ => {
-                    quote! { #field_name: self.#field_name.as_deep_ref() }
+                    quote! { #field_name: <#ty as #import_location::format::FromDeepRef>::from_ref(&reference.#field_name) }
                 }
             }
         }
-        _ => quote! { #field_name: self.#field_name.as_deep_ref() },
+        _ => quote! { #field_name: <#ty as #import_location::format::FromDeepRef>::from_ref(&reference.#field_name) },
     }
 }
 

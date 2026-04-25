@@ -1,4 +1,4 @@
-use crate::format::bridgeable::DocRec;
+use crate::format::DocRec;
 use quote::{format_ident, quote};
 use syn::{Fields, ItemStruct, Path, Type, parse_quote};
 

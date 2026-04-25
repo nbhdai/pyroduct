@@ -9,7 +9,7 @@ pub use value::*;
 pub mod coerce;
 mod repair;
 // mod bow;
-mod bridgeable;
+mod rkyv;
 mod schema;
 pub use pyro_spec::{
     CapabilityFunc, ClassSpec, InterfaceSpec, ModuleFunc, PrimitiveDataType, PyroField, PyroSchema,
@@ -23,13 +23,18 @@ pub use typeable::{Typeable, TypeableRow};
 pub mod arrow;
 
 pub mod deep_ref;
-pub use deep_ref::DeepRef;
+pub use deep_ref::{DeepRef, FromDeepRef};
 pub use time::{ArchivedTime, Time};
 
 pub trait ToRow {
     /// Convert a borrowed reference to a PyroRow with borrowed data.
     /// Field names are static strings from compile time.
     fn to_row(&self) -> PyroRow<'_>;
+}
+
+pub trait FromRow: Sized {
+    /// Convert a PyroRow with borrowed data to a PyroValue.
+    fn from_row(row: PyroRow<'_>) -> Result<Self, ValueError>;
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

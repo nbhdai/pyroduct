@@ -16,7 +16,7 @@ impl PyroError {
     pub fn encode(&self) -> PyroVec {
         match self {
             PyroError::IncorrectParse(_) => {
-                let mut err_vec=  CapturedError::new("Encoding a PyroError that is an unhandled user deserialization error, not a pyro error").with_location(Location::caller()).encode();
+                let mut err_vec = CapturedError::new("Encoding a PyroError that is an unhandled user deserialization error, not a pyro error").with_location(Location::caller()).encode();
                 err_vec.set_status(DataStatus::CodeError);
                 err_vec
             }

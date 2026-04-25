@@ -3,6 +3,10 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+/// A trait for types that can be converted into a "deep reference".
+/// This is used to create zero-copy views of data.
+///
+/// Makes small allocations for things like Vec<&str> for strings.
 pub trait DeepRef {
     // The associated type allows Foo to return FooRef, and Bar to return BarRef
     type Ref<'a>
@@ -10,6 +14,10 @@ pub trait DeepRef {
         Self: 'a;
 
     fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a>;
+}
+/// Undoes the deep ref, converting it back into an owned value.
+pub trait FromDeepRef: DeepRef {
+    fn from_ref<'a>(reference: &Self::Ref<'a>) -> Self;
 }
 
 impl DeepRef for Vec<String> {

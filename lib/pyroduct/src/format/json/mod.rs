@@ -49,6 +49,6 @@ pub use serialize::JsonWriter;
 pub struct JsonHeader;
 
 impl PyroHeaderValues for JsonHeader {
-    const OK_CODE: DataStatus = DataStatus::JsonValid;
-    const ERR_CODE: DataStatus = DataStatus::JsonError;
+    const OK_CODE: DataStatus = DataStatus::Json;
+    const ERR_CODE: DataStatus = DataStatus::Json;
 }

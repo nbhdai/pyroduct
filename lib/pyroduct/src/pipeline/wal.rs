@@ -47,12 +47,11 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use crate::CapturedError;
+use crate::format::PyroVec;
 use crate::format::PyroView;
 use crate::format::header::PyroParser;
-use crate::format::value::PyroRowOwned;
-use crate::format::{Bridgeable, PyroVec};
 use crate::module::{PyroFailure, PyroLogs, PyroSuccess};
+use crate::{CapturedError, PyroRow};
 
 use super::wasm_execute::PipelineExecution;
 
@@ -332,7 +331,7 @@ impl WalWriter {
             .iter()
             .map(|s| {
                 s.row
-                    .ship()
+                    .to_wire()
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
             })
             .collect::<io::Result<Vec<_>>>()?;
@@ -566,11 +565,7 @@ fn frame_to_execution(
     frame: WalFrame<'_>,
     log_index: &HashMap<usize, LogRecord>,
 ) -> Option<PipelineExecution> {
-    use crate::format::bridgeable::BridgeableZeroCopy;
-    use crate::format::format::Receiver;
-
     let log = log_index.get(&frame.meta.row_index);
-    let mut receiver = PyroRowOwned::receiver();
 
     let steps: Vec<PyroSuccess> = frame
         .packets
@@ -578,8 +573,7 @@ fn frame_to_execution(
         .enumerate()
         .filter_map(|(i, &pkt_slice)| {
             let view = PyroView::try_from(pkt_slice).ok()?;
-            let typed = PyroRowOwned::expose_view(view).ok()?;
-            let row = receiver.receive(&typed).ok()?;
+            let row = PyroRow::parse_wire(view).ok()?.to_static();
 
             let logs = log
                 .and_then(|l| l.step_logs.get(i))
@@ -864,14 +858,8 @@ mod tests {
             // This is the zero-copy path: packet slice -> PyroView -> expose_view
             let pkt = frame.packets[0];
             let view = PyroView::try_from(pkt).expect("valid PyroView from WAL packet");
-            let typed =
-                PyroRowOwned::expose_view(view).expect("expose_view should succeed on WAL packet");
+            let row = PyroRow::parse_wire(view).expect("expose_view should succeed on WAL packet");
 
-            // Deserialize to verify content
-            use crate::format::bridgeable::BridgeableZeroCopy;
-            use crate::format::format::Receiver;
-            let mut recv = PyroRowOwned::receiver();
-            let row = recv.receive(&typed).unwrap();
             assert_eq!(row.get("id"), Some(&PyroValue::from(i as i32)));
         }
     }

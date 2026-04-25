@@ -229,7 +229,6 @@ pub mod bridgeable;
 pub mod format;
 pub mod header;
 pub mod json;
-pub mod rkyv_8;
 pub mod value;
 pub mod vec_buf;
 mod view;
@@ -237,8 +236,7 @@ mod view;
 pub use bridgeable::{Bridgeable, BridgeableResult};
 pub use format::{HasReceiver, Receiver};
 pub use header::{MAGIC_VAL, ParseError};
-pub use rkyv_8::{Rkyv, RkyvParser, RkyvWriter, TypedBuf, TypedPyroView};
-pub use value::{DeepRef, PyroRow, PyroValue, ToRow};
+pub use value::{DeepRef, FromDeepRef, PyroRow, PyroValue, ToRow};
 pub use vec_buf::{PyroBuf, PyroBufPtr, PyroVec, PyroVecPtr};
 pub use view::{PyroMutView, PyroView, PyroViewPtr, get_view, get_view_mut};
 
@@ -276,22 +274,6 @@ pub use pyro_derive::{FromRow, RefFromRow};
 /// // impl AsDeepRef for Foo { type Ref<'a> = FooRef<'a>; ... }
 /// ```
 pub use pyro_derive::DeepRef;
-
-/// Derives `DeepRef` for the rkyv `Archived` counterpart of a struct.
-///
-/// Given a struct `Foo` that already has `FooRef<'a>` (from `#[derive(DeepRef)]`),
-/// this generates:
-///
-/// ```ignore
-/// impl DeepRef for ArchivedFoo {
-///     type Ref<'a> = FooRef<'a>;
-///     fn as_deep_ref(&self) -> Self::Ref<'_> { ... }
-/// }
-/// ```
-///
-/// This allows zero-copy access from archived data directly to the lightweight
-/// ref struct, without deserializing.
-pub use pyro_derive::DeepRefArchived;
 
 /// Derives the `ToRow` trait for converting structs into PyroRow/PyroValue.
 /// This is the opposite of `ArrowRef` which extracts references from PyroRow.

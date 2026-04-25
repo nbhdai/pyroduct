@@ -20,9 +20,9 @@ use tracing::Instrument;
 
 use crate::ffi::FuturePyroVec;
 use crate::ffi::guest::logger::object_span;
+use crate::format::value::deep_ref::FromDeepRef;
 use crate::format::{
-    Bridgeable, BridgeableResult, PyroVec, PyroVecPtr, PyroView, PyroViewPtr, Receiver,
-    bridgeable::BridgeableZeroCopy, format::PyroZeroCopyFormat,
+    Bridgeable, BridgeableResult, DeepRef, PyroVec, PyroVecPtr, PyroView, PyroViewPtr,
 };
 use crate::panic::{clear_last_panic, recover_panic_info, register_ffi_panic_hook};
 use crate::{CapturedError, PyroError};
@@ -54,18 +54,15 @@ where
 }
 
 /// Helper to deserialize input from a raw PyroVecPtr.
-pub fn deserialize_input<I: Bridgeable + BridgeableZeroCopy>(
-    data: PyroViewPtr,
-) -> Result<I, PyroError>
+pub fn deserialize_input<I: Bridgeable>(data: PyroViewPtr) -> Result<I, PyroError>
 where
-    <I as Bridgeable>::Format: PyroZeroCopyFormat<I>,
+    for<'a> <I as DeepRef>::Ref<'a>: FromDeepRef,
 {
     tracing::trace!(?data, "Deserializing view");
     let guard = panic::catch_unwind(AssertUnwindSafe(|| {
-        let vec = unsafe { PyroView::from_ptr(data) }?;
-        let typed = I::expose_view(vec)?;
-        let mut receiver = <I as BridgeableZeroCopy>::receiver();
-        receiver.receive(&typed)
+        let view = unsafe { PyroView::from_ptr(data) }?;
+        let typed = I::expose_view(view)?;
+        Ok(typed.extract())
     }));
 
     match guard {

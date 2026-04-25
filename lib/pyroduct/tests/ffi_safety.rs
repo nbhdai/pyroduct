@@ -44,7 +44,7 @@ fn test_execute_safe_success() {
         .unwrap()
     };
 
-    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+    assert_eq!(vec.status(), Ok(DataStatus::Valid));
     let typed = UserData::expose(vec).expect("Should parse as UserData");
     assert_eq!(typed.id, 101);
     assert_eq!(typed.payload.as_str(), "Success");
@@ -65,7 +65,7 @@ fn test_execute_safe_large_payload() {
         .unwrap()
     };
 
-    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+    assert_eq!(vec.status(), Ok(DataStatus::Valid));
     let typed = UserData::expose(vec).unwrap();
     assert_eq!(typed.id, u32::MAX);
     assert_eq!(typed.payload.len(), 10_000);
@@ -139,7 +139,7 @@ fn test_execute_safe_panic_then_success() {
         ))
         .unwrap()
     };
-    assert_eq!(r2.status(), Ok(DataStatus::RkyvValid));
+    assert_eq!(r2.status(), Ok(DataStatus::Valid));
     let typed = UserData::expose(r2).unwrap();
     assert_eq!(typed.id, 999);
 }
@@ -159,7 +159,7 @@ fn test_execute_safe_multiple_sequential() {
             ))
             .unwrap()
         };
-        assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+        assert_eq!(vec.status(), Ok(DataStatus::Valid));
         let typed = UserData::expose(vec).unwrap();
         assert_eq!(typed.id, i);
     }
@@ -175,7 +175,7 @@ fn test_serialize_output_struct() {
         id: 42,
         payload: "hello".into(),
     });
-    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+    assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
     let typed = UserData::expose(vec).unwrap();
     assert_eq!(typed.id, 42);
@@ -188,7 +188,7 @@ fn test_serialize_output_empty_string() {
         id: 0,
         payload: String::new(),
     });
-    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+    assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
     let typed = UserData::expose(vec).unwrap();
     assert_eq!(typed.id, 0);
@@ -198,7 +198,7 @@ fn test_serialize_output_empty_string() {
 #[test]
 fn test_serialize_output_primitive() {
     let vec = serialize_output(42u64);
-    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+    assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
     let typed = u64::expose(vec).expect("Should parse u64");
     assert_eq!(*typed, 42);
@@ -207,7 +207,7 @@ fn test_serialize_output_primitive() {
 #[test]
 fn test_serialize_output_vec() {
     let vec = serialize_output(vec![1u32, 2, 3, 4, 5]);
-    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+    assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
     let typed = Vec::<u32>::expose(vec).unwrap();
     let mut receiver = typed.receiver();
@@ -217,7 +217,7 @@ fn test_serialize_output_vec() {
 #[test]
 fn test_serialize_output_option_some() {
     let vec = serialize_output(Some("hello".to_string()));
-    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+    assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
     let typed = Option::<String>::expose(vec).unwrap();
     let mut receiver = typed.receiver();
@@ -227,7 +227,7 @@ fn test_serialize_output_option_some() {
 #[test]
 fn test_serialize_output_option_none() {
     let vec = serialize_output(Option::<String>::None);
-    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+    assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
     let typed = Option::<String>::expose(vec).unwrap();
     let mut receiver = typed.receiver();
@@ -244,7 +244,7 @@ fn test_serialize_result_ok() {
         id: 200,
         payload: "ok".into(),
     }));
-    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+    assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
     let typed = <Result<UserData, UserError>>::expose(vec).unwrap().unwrap();
     assert_eq!(typed.id, 200);
@@ -306,7 +306,7 @@ fn test_full_roundtrip_user_data() {
     let vec = unsafe {
         PyroVec::from_raw(execute_safe(|| serialize_output(original.clone()), 0)).unwrap()
     };
-    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+    assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
     let typed = UserData::expose(vec).unwrap();
     let mut receiver = typed.receiver();
@@ -324,7 +324,7 @@ fn test_full_roundtrip_user_error() {
     let vec = unsafe {
         PyroVec::from_raw(execute_safe(|| serialize_output(original.clone()), 0)).unwrap()
     };
-    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
+    assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
     let typed = UserError::expose(vec).unwrap();
     let mut receiver = typed.receiver();

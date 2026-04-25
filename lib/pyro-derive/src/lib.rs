@@ -1,22 +1,11 @@
 use proc_macro::TokenStream;
-use pyro_macro::format::bridgeable::DocRec;
+use pyro_macro::format::DocRec;
 use quote::quote;
 use syn::{ItemFn, ItemStruct, parse_macro_input, parse_quote, parse2};
 
 #[proc_macro_attribute]
-pub fn bridgeable(args: TokenStream, input: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(args as pyro_macro::format::bridgeable::BridgeableArgs);
-    let mut item = parse_macro_input!(input as ItemStruct);
-
-    match pyro_macro::format::bridgeable::bridgeable(&args, &mut item, &parse_quote!(::pyroduct)) {
-        Ok(v) => v.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
-
-#[proc_macro_attribute]
 pub fn magma(args: TokenStream, input: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(args as pyro_macro::format::bridgeable::BridgeableArgs);
+    let args = parse_macro_input!(args as pyro_macro::format::BridgeableArgs);
     let mut item = parse_macro_input!(input as ItemStruct);
 
     match pyro_macro::format::magma(args, &mut item, &parse_quote!(::pyroduct)) {
@@ -67,15 +56,6 @@ pub fn document_ref(input: TokenStream) -> TokenStream {
 pub fn derive_deep_ref(input: TokenStream) -> TokenStream {
     let item = parse_macro_input!(input as ItemStruct);
     match pyro_macro::format::deep_ref::deep_ref(&item, &parse_quote!(::pyroduct), &vec![]) {
-        Ok(v) => v.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
-
-#[proc_macro_derive(DeepRefArchived)]
-pub fn derive_deep_ref_archived(input: TokenStream) -> TokenStream {
-    let item = parse_macro_input!(input as ItemStruct);
-    match pyro_macro::format::deep_ref::deep_ref_rkyv(&item, &parse_quote!(::pyroduct)) {
         Ok(v) => v.into(),
         Err(error) => error.to_compile_error().into(),
     }

@@ -29,12 +29,16 @@ macro_rules! define_data_status {
 }
 
 define_data_status! {
+    // No data was provided. Empty success!
     Empty = 0,
-    CodeError = 1,
-    RkyvValid = 2,
-    RkyvError = 3,
-    JsonValid = 4,
-    JsonError = 5,
+    // Success
+    Valid = 1,
+    // A user error occurred
+    Error = 2,
+    // The code paniked and this was what was recovered
+    CodeError = 3,
+    // The message contains json
+    Json = 4,
 
     // A ffi pyro was unable to parse a header indicating a critical error.
     PyroFfiFail        = 99,
@@ -83,10 +87,8 @@ pub enum ParseError {
 
 // --- Sealing Module ---
 mod private {
-    use rkyv::Archive;
-
     use crate::format::{
-        PyroBuf, PyroVec, TypedBuf, TypedPyroView,
+        PyroBuf, PyroVec,
         view::{PyroMutView, PyroView},
     };
 
@@ -95,9 +97,7 @@ mod private {
     impl Sealed for [u8; 16] {}
     impl Sealed for PyroVec {}
     impl Sealed for PyroBuf {}
-    impl<T: Archive> Sealed for TypedBuf<T> {}
     impl Sealed for PyroView<'_> {}
-    impl<T: Archive> Sealed for TypedPyroView<'_, T> {}
     impl Sealed for PyroMutView<'_> {}
 }
 
@@ -253,10 +253,11 @@ pub trait PyroData: private::Sealed + Deref<Target = [u8]> + Sized {
         Err(
             match DataStatus::parse(self.header()[PyroParser::OFFSET_STATUS]) {
                 Ok(DataStatus::Empty)
-                | Ok(DataStatus::RkyvValid)
-                | Ok(DataStatus::RkyvError)
-                | Ok(DataStatus::JsonValid)
-                | Ok(DataStatus::JsonError) => return Ok(()),
+                | Ok(DataStatus::Valid)
+                | Ok(DataStatus::Error)
+                | Ok(DataStatus::Json) => {
+                    return Ok(());
+                }
                 Err(_) => return Ok(()),
 
                 // Remote errors (150-156, 3)

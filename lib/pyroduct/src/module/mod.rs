@@ -22,9 +22,8 @@ use wasmtime::{
 
 use crate::ffi::host::ForeignObject;
 use crate::format::{
-    Bridgeable, ParseError, PyroRow, PyroView, Receiver,
+    ParseError, PyroRow, PyroView,
     header::{DataStatus, PyroData, PyroHeader},
-    rkyv_8::RkyvReceiver,
 };
 use crate::module::call::PyroCallIo;
 use crate::{CapturedError, PyroError};
@@ -261,12 +260,10 @@ impl PyroFactory {
 
         // Link the PyroState methods to the instance exports
         PyroState::link(&mut store, &instance)?;
-        let receiver = RkyvReceiver::new();
         Ok(PyroInstance {
             store,
             instance,
             memory,
-            receiver,
             objects,
         })
     }
@@ -400,7 +397,6 @@ pub struct PyroInstance {
     instance: Instance,
     memory: Memory,
     objects: HashMap<String, ForeignObject>,
-    receiver: RkyvReceiver<PyroRow<'static>>,
 }
 
 impl PyroInstance {
@@ -408,7 +404,7 @@ impl PyroInstance {
         // Ship the input row via rkyv into a PyroVec
         let input_row_owned = input.to_static();
         let input_vec = input_row_owned
-            .ship()
+            .to_wire()
             .map_err(|err| self.pack_pyro_error(err))?;
         let input_view: PyroView<'_> = input_vec.view();
 
@@ -450,16 +446,12 @@ impl PyroInstance {
             .map_err(|err| self.pack_pyro_error(err))?;
 
         match result_view.status() {
-            Ok(DataStatus::RkyvValid) => {
+            Ok(DataStatus::Valid) => {
                 let row =
-                    PyroRow::expose_view(result_view).map_err(|err| self.pack_pyro_error(err))?;
-                let row = self
-                    .receiver
-                    .receive(&row)
-                    .map_err(|err| self.pack_pyro_error(err))?;
-                Ok(self.pack_success(row))
+                    PyroRow::parse_wire(result_view).map_err(|err| self.pack_pyro_error(err))?;
+                Ok(self.pack_success(row.to_static()))
             }
-            Ok(DataStatus::RkyvError) => match serde_json::from_slice(&result_view) {
+            Ok(DataStatus::Error) => match serde_json::from_slice(&result_view) {
                 Ok(error) => Err(self.pack_user_error(error)),
                 Err(error) => {
                     Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view)))

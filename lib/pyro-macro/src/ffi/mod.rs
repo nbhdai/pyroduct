@@ -4,10 +4,7 @@ use syn::parse_file;
 
 use crate::{
     ffi::{capability::CapabilityImpl, config::CapConfig, spec::build_spec},
-    format::{
-        bridgeable::{BridgeableArgs, DocRec},
-        magma,
-    },
+    format::{BridgeableArgs, DocRec, magma},
     utils::has_attr,
 };
 

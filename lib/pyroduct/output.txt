@@ -1,0 +1,437 @@
+warning: unused import: `value::ValueError`
+ --> pyroduct/src/error.rs:8:46
+  |
+8 |     format::{ParseError, header::DataStatus, value::ValueError},
+  |                                              ^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: `pyroduct` (lib) generated 1 warning (run `cargo fix --lib -p pyroduct` to apply 1 suggestion)
+   Compiling pyroduct v0.1.0 (/Users/svencattell/nbhd/pyroduct/lib/pyroduct)
+error[E0412]: cannot find type `ArchivedSimpleStruct` in this scope
+  --> pyroduct/tests/rpc_layout.rs:66:40
+   |
+66 |     let access_result = rkyv::access::<ArchivedSimpleStruct, rkyv::rancor::Error>(slice);
+   |                                        ^^^^^^^^^^^^^^^^^^^^ not found in this scope
+   |
+help: you might be missing a type parameter
+   |
+30 | fn test_simple_struct_matches_rkyv<ArchivedSimpleStruct>() {
+   |                                   ++++++++++++++++++++++
+
+error[E0412]: cannot find type `ArchivedWithVec` in this scope
+  --> pyroduct/tests/rpc_layout.rs:95:40
+   |
+95 |     let access_result = rkyv::access::<ArchivedWithVec, rkyv::rancor::Error>(slice);
+   |                                        ^^^^^^^^^^^^^^^ not found in this scope
+   |
+help: you might be missing a type parameter
+   |
+78 | fn test_with_vec_matches_rkyv<ArchivedWithVec>() {
+   |                              +++++++++++++++++
+
+error[E0412]: cannot find type `ArchivedNested` in this scope
+   --> pyroduct/tests/rpc_layout.rs:127:40
+    |
+127 |     let access_result = rkyv::access::<ArchivedNested, rkyv::rancor::Error>(slice);
+    |                                        ^^^^^^^^^^^^^^ not found in this scope
+    |
+help: you might be missing a type parameter
+    |
+107 | fn test_nested_matches_rkyv<ArchivedNested>() {
+    |                            ++++++++++++++++
+
+error[E0599]: the method `ship` exists for struct `SimpleStruct`, but its trait bounds were not satisfied
+  --> pyroduct/tests/rpc_layout.rs:37:19
+   |
+8  | #[magma]
+   | -------- doesn't satisfy `SimpleStructRef<'a>: FromRow`
+9  | #[derive(Debug, PartialEq)]
+10 | struct SimpleStruct {
+   | ------------------- method `ship` not found for this struct because it doesn't satisfy `SimpleStruct: Bridgeable`
+...
+37 |     let vec = val.ship().expect("Bridgable serialization failed");
+   |                   ^^^^ method cannot be called on `SimpleStruct` due to unsatisfied trait bounds
+   |
+   = note: the following trait bounds were not satisfied:
+           `SimpleStructRef<'a>: FromRow`
+           which is required by `SimpleStruct: Bridgeable`
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following traits define an item `ship`, perhaps you need to implement one of them:
+           candidate #1: `Bridgeable`
+           candidate #2: `BridgeableResult`
+           candidate #3: `PyroFormat`
+
+error[E0277]: the trait bound `SimpleStruct: Serialize<Strategy<Serializer<..., ..., ...>, ...>>` is not satisfied
+  --> pyroduct/tests/rpc_layout.rs:41:47
+   |
+41 |         rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
+   |         ------------------------------------- ^^^^ unsatisfied trait bound
+   |         |
+   |         required by a bound introduced by this call
+   |
+   = help: the trait `for<'a> rkyv::Serialize<Strategy<rkyv::ser::Serializer<AlignedVec, ArenaHandle<'a>, Share>, RancorError>>` is not implemented for `SimpleStruct`
+   = help: the following other types implement trait `rkyv::Serialize<S>`:
+             `()` implements `rkyv::Serialize<S>`
+             `(T0, T1)` implements `rkyv::Serialize<S>`
+             `(T0, T1, T2)` implements `rkyv::Serialize<S>`
+             `(T0, T1, T2, T3)` implements `rkyv::Serialize<S>`
+             `(T0, T1, T2, T3, T4)` implements `rkyv::Serialize<S>`
+             `(T0, T1, T2, T3, T4, T5)` implements `rkyv::Serialize<S>`
+             `(T0, T1, T2, T3, T4, T5, T6)` implements `rkyv::Serialize<S>`
+             `(T0, T1, T2, T3, T4, T5, T6, T7)` implements `rkyv::Serialize<S>`
+           and 115 others
+note: required by a bound in `to_bytes`
+  --> /Users/svencattell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rkyv-0.8.15/src/api/high/mod.rs:66:35
+   |
+63 |   pub fn to_bytes<E>(
+   |          -------- required by a bound in this function
+...
+66 |       #[rustfmt::skip] value: &impl for<'a> Serialize<
+   |  ___________________________________^
+67 | |         HighSerializer<AlignedVec, ArenaHandle<'a>, E>,
+68 | |     >,
+   | |_____^ required by this bound in `to_bytes`
+   = note: the full name for the type has been written to '/Users/svencattell/nbhd/pyroduct/target/debug/deps/rpc_layout-2bd91a5795028d8c.long-type-6511938868919255440.txt'
+   = note: consider using `--verbose` to print the full type name to the console
+
+error[E0599]: the method `ship` exists for struct `WithVec`, but its trait bounds were not satisfied
+  --> pyroduct/tests/rpc_layout.rs:84:19
+   |
+15 | #[magma]
+   | -------- doesn't satisfy `WithVecRef<'a>: FromRow`
+16 | #[derive(Debug, PartialEq)]
+17 | struct WithVec {
+   | -------------- method `ship` not found for this struct because it doesn't satisfy `WithVec: Bridgeable`
+...
+84 |     let vec = val.ship().expect("Bridgable serialization failed");
+   |                   ^^^^ method cannot be called on `WithVec` due to unsatisfied trait bounds
+   |
+   = note: the following trait bounds were not satisfied:
+           `WithVecRef<'a>: FromRow`
+           which is required by `WithVec: Bridgeable`
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following traits define an item `ship`, perhaps you need to implement one of them:
+           candidate #1: `Bridgeable`
+           candidate #2: `BridgeableResult`
+           candidate #3: `PyroFormat`
+
+error[E0277]: the trait bound `WithVec: Serialize<Strategy<Serializer<AlignedVec, ..., ...>, ...>>` is not satisfied
+  --> pyroduct/tests/rpc_layout.rs:86:47
+   |
+86 |         rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
+   |         ------------------------------------- ^^^^ unsatisfied trait bound
+   |         |
+   |         required by a bound introduced by this call
+   |
+   = help: the trait `for<'a> rkyv::Serialize<Strategy<rkyv::ser::Serializer<AlignedVec, ArenaHandle<'a>, Share>, RancorError>>` is not implemented for `WithVec`
+   = help: the following other types implement trait `rkyv::Serialize<S>`:
+             `()` implements `rkyv::Serialize<S>`
+             `(T0, T1)` implements `rkyv::Serialize<S>`
+             `(T0, T1, T2)` implements `rkyv::Serialize<S>`
+             `(T0, T1, T2, T3)` implements `rkyv::Serialize<S>`
+             `(T0, T1, T2, T3, T4)` implements `rkyv::Serialize<S>`
+             `(T0, T1, T2, T3, T4, T5)` implements `rkyv::Serialize<S>`
+             `(T0, T1, T2, T3, T4, T5, T6)` implements `rkyv::Serialize<S>`
+             `(T0, T1, T2, T3, T4, T5, T6, T7)` implements `rkyv::Serialize<S>`
+           and 115 others
+note: required by a bound in `to_bytes`
+  --> /Users/svencattell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rkyv-0.8.15/src/api/high/mod.rs:66:35
+   |
+63 |   pub fn to_bytes<E>(
+   |          -------- required by a bound in this function
+...
+66 |       #[rustfmt::skip] value: &impl for<'a> Serialize<
+   |  ___________________________________^
+67 | |         HighSerializer<AlignedVec, ArenaHandle<'a>, E>,
+68 | |     >,
+   | |_____^ required by this bound in `to_bytes`
+   = note: the full name for the type has been written to '/Users/svencattell/nbhd/pyroduct/target/debug/deps/rpc_layout-2bd91a5795028d8c.long-type-7354313909533149880.txt'
+   = note: consider using `--verbose` to print the full type name to the console
+
+error[E0599]: the method `ship` exists for struct `Nested`, but its trait bounds were not satisfied
+   --> pyroduct/tests/rpc_layout.rs:116:19
+    |
+22  | #[magma]
+    | -------- doesn't satisfy `NestedRef<'a>: FromRow`
+23  | #[derive(Debug, PartialEq)]
+24  | struct Nested {
+    | ------------- method `ship` not found for this struct because it doesn't satisfy `Nested: Bridgeable`
+...
+116 |     let vec = val.ship().expect("Bridgable serialization failed");
+    |                   ^^^^ method cannot be called on `Nested` due to unsatisfied trait bounds
+    |
+    = note: the following trait bounds were not satisfied:
+            `NestedRef<'a>: FromRow`
+            which is required by `Nested: Bridgeable`
+    = help: items from traits can only be used if the trait is implemented and in scope
+    = note: the following traits define an item `ship`, perhaps you need to implement one of them:
+            candidate #1: `Bridgeable`
+            candidate #2: `BridgeableResult`
+            candidate #3: `PyroFormat`
+
+error[E0277]: the trait bound `Nested: Serialize<Strategy<Serializer<AlignedVec, ..., ...>, ...>>` is not satisfied
+   --> pyroduct/tests/rpc_layout.rs:118:47
+    |
+118 |         rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
+    |         ------------------------------------- ^^^^ unsatisfied trait bound
+    |         |
+    |         required by a bound introduced by this call
+    |
+    = help: the trait `for<'a> rkyv::Serialize<Strategy<rkyv::ser::Serializer<AlignedVec, ArenaHandle<'a>, Share>, RancorError>>` is not implemented for `Nested`
+    = help: the following other types implement trait `rkyv::Serialize<S>`:
+              `()` implements `rkyv::Serialize<S>`
+              `(T0, T1)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3, T4)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3, T4, T5)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3, T4, T5, T6)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3, T4, T5, T6, T7)` implements `rkyv::Serialize<S>`
+            and 115 others
+note: required by a bound in `to_bytes`
+   --> /Users/svencattell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rkyv-0.8.15/src/api/high/mod.rs:66:35
+    |
+63  |   pub fn to_bytes<E>(
+    |          -------- required by a bound in this function
+...
+66  |       #[rustfmt::skip] value: &impl for<'a> Serialize<
+    |  ___________________________________^
+67  | |         HighSerializer<AlignedVec, ArenaHandle<'a>, E>,
+68  | |     >,
+    | |_____^ required by this bound in `to_bytes`
+    = note: the full name for the type has been written to '/Users/svencattell/nbhd/pyroduct/target/debug/deps/rpc_layout-2bd91a5795028d8c.long-type-11706758905461691542.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+
+error[E0599]: the method `ship` exists for struct `SimpleStruct`, but its trait bounds were not satisfied
+   --> pyroduct/tests/rpc_layout.rs:145:24
+    |
+8   | #[magma]
+    | -------- doesn't satisfy `SimpleStructRef<'a>: FromRow`
+9   | #[derive(Debug, PartialEq)]
+10  | struct SimpleStruct {
+    | ------------------- method `ship` not found for this struct because it doesn't satisfy `SimpleStruct: Bridgeable`
+...
+145 |     let vec = original.ship().expect("serialize failed");
+    |                        ^^^^ method cannot be called on `SimpleStruct` due to unsatisfied trait bounds
+    |
+    = note: the following trait bounds were not satisfied:
+            `SimpleStructRef<'a>: FromRow`
+            which is required by `SimpleStruct: Bridgeable`
+    = help: items from traits can only be used if the trait is implemented and in scope
+    = note: the following traits define an item `ship`, perhaps you need to implement one of them:
+            candidate #1: `Bridgeable`
+            candidate #2: `BridgeableResult`
+            candidate #3: `PyroFormat`
+
+error[E0599]: the function or associated item `expose` exists for struct `SimpleStruct`, but its trait bounds were not satisfied
+   --> pyroduct/tests/rpc_layout.rs:146:31
+    |
+8   | #[magma]
+    | -------- doesn't satisfy `SimpleStructRef<'a>: FromRow`
+9   | #[derive(Debug, PartialEq)]
+10  | struct SimpleStruct {
+    | ------------------- function or associated item `expose` not found for this struct because it doesn't satisfy `SimpleStruct: Bridgeable`
+...
+146 |     let typed = SimpleStruct::expose(vec).expect("parse failed");
+    |                               ^^^^^^ function or associated item cannot be called on `SimpleStruct` due to unsatisfied trait bounds
+    |
+    = note: the following trait bounds were not satisfied:
+            `SimpleStructRef<'a>: FromRow`
+            which is required by `SimpleStruct: Bridgeable`
+            `&SimpleStruct: DeepRef`
+            which is required by `&SimpleStruct: Bridgeable`
+            `&SimpleStruct: FromDeepRef`
+            which is required by `&SimpleStruct: Bridgeable`
+            `&SimpleStruct: ToRow`
+            which is required by `&SimpleStruct: Bridgeable`
+            `&mut SimpleStruct: DeepRef`
+            which is required by `&mut SimpleStruct: Bridgeable`
+            `&mut SimpleStruct: FromDeepRef`
+            which is required by `&mut SimpleStruct: Bridgeable`
+            `&mut SimpleStruct: ToRow`
+            which is required by `&mut SimpleStruct: Bridgeable`
+    = help: items from traits can only be used if the trait is implemented and in scope
+    = note: the following traits define an item `expose`, perhaps you need to implement one of them:
+            candidate #1: `Bridgeable`
+            candidate #2: `BridgeableResult`
+
+error[E0599]: no function or associated item named `receiver` found for struct `SimpleStruct` in the current scope
+   --> pyroduct/tests/rpc_layout.rs:147:38
+    |
+10  | struct SimpleStruct {
+    | ------------------- function or associated item `receiver` not found for this struct
+...
+147 |     let mut receiver = SimpleStruct::receiver();
+    |                                      ^^^^^^^^ function or associated item not found in `SimpleStruct`
+    |
+    = help: items from traits can only be used if the trait is implemented and in scope
+    = note: the following traits define an item `receiver`, perhaps you need to implement one of them:
+            candidate #1: `HasReceiver`
+            candidate #2: `PyroZeroCopyFormat`
+
+error[E0599]: the method `ship` exists for struct `WithVec`, but its trait bounds were not satisfied
+   --> pyroduct/tests/rpc_layout.rs:160:19
+    |
+15  | #[magma]
+    | -------- doesn't satisfy `WithVecRef<'a>: FromRow`
+16  | #[derive(Debug, PartialEq)]
+17  | struct WithVec {
+    | -------------- method `ship` not found for this struct because it doesn't satisfy `WithVec: Bridgeable`
+...
+160 |     let vec = val.ship().expect("Bridgable serialization failed");
+    |                   ^^^^ method cannot be called on `WithVec` due to unsatisfied trait bounds
+    |
+    = note: the following trait bounds were not satisfied:
+            `WithVecRef<'a>: FromRow`
+            which is required by `WithVec: Bridgeable`
+    = help: items from traits can only be used if the trait is implemented and in scope
+    = note: the following traits define an item `ship`, perhaps you need to implement one of them:
+            candidate #1: `Bridgeable`
+            candidate #2: `BridgeableResult`
+            candidate #3: `PyroFormat`
+
+error[E0277]: the trait bound `WithVec: Serialize<Strategy<Serializer<AlignedVec, ..., ...>, ...>>` is not satisfied
+   --> pyroduct/tests/rpc_layout.rs:162:47
+    |
+162 |         rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
+    |         ------------------------------------- ^^^^ unsatisfied trait bound
+    |         |
+    |         required by a bound introduced by this call
+    |
+    = help: the trait `for<'a> rkyv::Serialize<Strategy<rkyv::ser::Serializer<AlignedVec, ArenaHandle<'a>, Share>, RancorError>>` is not implemented for `WithVec`
+    = help: the following other types implement trait `rkyv::Serialize<S>`:
+              `()` implements `rkyv::Serialize<S>`
+              `(T0, T1)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3, T4)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3, T4, T5)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3, T4, T5, T6)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3, T4, T5, T6, T7)` implements `rkyv::Serialize<S>`
+            and 115 others
+note: required by a bound in `to_bytes`
+   --> /Users/svencattell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rkyv-0.8.15/src/api/high/mod.rs:66:35
+    |
+63  |   pub fn to_bytes<E>(
+    |          -------- required by a bound in this function
+...
+66  |       #[rustfmt::skip] value: &impl for<'a> Serialize<
+    |  ___________________________________^
+67  | |         HighSerializer<AlignedVec, ArenaHandle<'a>, E>,
+68  | |     >,
+    | |_____^ required by this bound in `to_bytes`
+    = note: the full name for the type has been written to '/Users/svencattell/nbhd/pyroduct/target/debug/deps/rpc_layout-2bd91a5795028d8c.long-type-7354313909533149880.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+
+error[E0599]: the method `ship` exists for struct `WithVec`, but its trait bounds were not satisfied
+   --> pyroduct/tests/rpc_layout.rs:178:19
+    |
+15  | #[magma]
+    | -------- doesn't satisfy `WithVecRef<'a>: FromRow`
+16  | #[derive(Debug, PartialEq)]
+17  | struct WithVec {
+    | -------------- method `ship` not found for this struct because it doesn't satisfy `WithVec: Bridgeable`
+...
+178 |     let vec = val.ship().expect("Bridgable serialization failed");
+    |                   ^^^^ method cannot be called on `WithVec` due to unsatisfied trait bounds
+    |
+    = note: the following trait bounds were not satisfied:
+            `WithVecRef<'a>: FromRow`
+            which is required by `WithVec: Bridgeable`
+    = help: items from traits can only be used if the trait is implemented and in scope
+    = note: the following traits define an item `ship`, perhaps you need to implement one of them:
+            candidate #1: `Bridgeable`
+            candidate #2: `BridgeableResult`
+            candidate #3: `PyroFormat`
+
+error[E0277]: the trait bound `WithVec: Serialize<Strategy<Serializer<AlignedVec, ..., ...>, ...>>` is not satisfied
+   --> pyroduct/tests/rpc_layout.rs:180:47
+    |
+180 |         rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
+    |         ------------------------------------- ^^^^ unsatisfied trait bound
+    |         |
+    |         required by a bound introduced by this call
+    |
+    = help: the trait `for<'a> rkyv::Serialize<Strategy<rkyv::ser::Serializer<AlignedVec, ArenaHandle<'a>, Share>, RancorError>>` is not implemented for `WithVec`
+    = help: the following other types implement trait `rkyv::Serialize<S>`:
+              `()` implements `rkyv::Serialize<S>`
+              `(T0, T1)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3, T4)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3, T4, T5)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3, T4, T5, T6)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3, T4, T5, T6, T7)` implements `rkyv::Serialize<S>`
+            and 115 others
+note: required by a bound in `to_bytes`
+   --> /Users/svencattell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rkyv-0.8.15/src/api/high/mod.rs:66:35
+    |
+63  |   pub fn to_bytes<E>(
+    |          -------- required by a bound in this function
+...
+66  |       #[rustfmt::skip] value: &impl for<'a> Serialize<
+    |  ___________________________________^
+67  | |         HighSerializer<AlignedVec, ArenaHandle<'a>, E>,
+68  | |     >,
+    | |_____^ required by this bound in `to_bytes`
+    = note: the full name for the type has been written to '/Users/svencattell/nbhd/pyroduct/target/debug/deps/rpc_layout-2bd91a5795028d8c.long-type-7354313909533149880.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+
+error[E0599]: the method `ship` exists for struct `SimpleStruct`, but its trait bounds were not satisfied
+   --> pyroduct/tests/rpc_layout.rs:196:19
+    |
+8   | #[magma]
+    | -------- doesn't satisfy `SimpleStructRef<'a>: FromRow`
+9   | #[derive(Debug, PartialEq)]
+10  | struct SimpleStruct {
+    | ------------------- method `ship` not found for this struct because it doesn't satisfy `SimpleStruct: Bridgeable`
+...
+196 |     let vec = val.ship().expect("Bridgable serialization failed");
+    |                   ^^^^ method cannot be called on `SimpleStruct` due to unsatisfied trait bounds
+    |
+    = note: the following trait bounds were not satisfied:
+            `SimpleStructRef<'a>: FromRow`
+            which is required by `SimpleStruct: Bridgeable`
+    = help: items from traits can only be used if the trait is implemented and in scope
+    = note: the following traits define an item `ship`, perhaps you need to implement one of them:
+            candidate #1: `Bridgeable`
+            candidate #2: `BridgeableResult`
+            candidate #3: `PyroFormat`
+
+error[E0277]: the trait bound `SimpleStruct: Serialize<Strategy<Serializer<..., ..., ...>, ...>>` is not satisfied
+   --> pyroduct/tests/rpc_layout.rs:198:47
+    |
+198 |         rkyv::to_bytes::<rkyv::rancor::Error>(&val).expect("rkyv serialization failed");
+    |         ------------------------------------- ^^^^ unsatisfied trait bound
+    |         |
+    |         required by a bound introduced by this call
+    |
+    = help: the trait `for<'a> rkyv::Serialize<Strategy<rkyv::ser::Serializer<AlignedVec, ArenaHandle<'a>, Share>, RancorError>>` is not implemented for `SimpleStruct`
+    = help: the following other types implement trait `rkyv::Serialize<S>`:
+              `()` implements `rkyv::Serialize<S>`
+              `(T0, T1)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3, T4)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3, T4, T5)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3, T4, T5, T6)` implements `rkyv::Serialize<S>`
+              `(T0, T1, T2, T3, T4, T5, T6, T7)` implements `rkyv::Serialize<S>`
+            and 115 others
+note: required by a bound in `to_bytes`
+   --> /Users/svencattell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rkyv-0.8.15/src/api/high/mod.rs:66:35
+    |
+63  |   pub fn to_bytes<E>(
+    |          -------- required by a bound in this function
+...
+66  |       #[rustfmt::skip] value: &impl for<'a> Serialize<
+    |  ___________________________________^
+67  | |         HighSerializer<AlignedVec, ArenaHandle<'a>, E>,
+68  | |     >,
+    | |_____^ required by this bound in `to_bytes`
+    = note: the full name for the type has been written to '/Users/svencattell/nbhd/pyroduct/target/debug/deps/rpc_layout-2bd91a5795028d8c.long-type-6511938868919255440.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+
+Some errors have detailed explanations: E0277, E0412, E0599.
+For more information about an error, try `rustc --explain E0277`.
+error: could not compile `pyroduct` (test "rpc_layout") due to 18 previous errors

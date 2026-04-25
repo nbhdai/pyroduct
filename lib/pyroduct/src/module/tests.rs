@@ -257,10 +257,7 @@ fn test_multiple_concurrent_registrations() {
 
 #[test]
 fn test_pyro_row_rkyv_view_roundtrip() {
-    use crate::format::{
-        Bridgeable,
-        value::{PyroRow, PyroRowOwned, PyroValue},
-    };
+    use crate::format::value::{PyroRow, PyroValue};
 
     let row = PyroRow::from([
         ("id", PyroValue::from(42i32)),
@@ -269,7 +266,7 @@ fn test_pyro_row_rkyv_view_roundtrip() {
     .into_owned();
 
     // Ship via rkyv into a PyroVec
-    let vec = row.ship().unwrap();
+    let vec = row.to_wire().unwrap();
     assert_eq!(vec.wire_format(), 1); // PROTOCOL_VERSION (rkyv)
 
     // Simulate writing into wasm memory and reading back as a view
@@ -286,9 +283,5 @@ fn test_pyro_row_rkyv_view_roundtrip() {
 
     // Zero-copy access via PyroView → expose_view
     let view = get_view(&mem, 0).unwrap();
-    let typed = PyroRowOwned::expose_view(view).expect("expose_view should succeed");
-
-    // The typed wrapper gives zero-copy access to ArchivedPyroRow.
-    // Verify it parsed without error.
-    let _ = &*typed;
+    let _ = PyroRow::parse_wire(view).expect("expose_view should succeed");
 }

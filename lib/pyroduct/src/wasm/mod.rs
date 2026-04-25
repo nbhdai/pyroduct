@@ -3,8 +3,6 @@ use std::{collections::HashMap, ops::Deref};
 
 use crate::format::{
     Bridgeable, BridgeableResult, PyroVec, ToRow,
-    bridgeable::BridgeableZeroCopy,
-    format::{PyroZeroCopyFormat, Receiver},
     header::PyroData,
     header::{DataStatus, PyroHeaderMut},
     value::PyroRow,
@@ -159,10 +157,10 @@ pub fn _test_reinsert_input(ptr: *mut u8, vec: PyroVec) {
 ///     wasm_row_main(ptr, main_fn)
 /// }
 /// ```
-pub fn wasm_row_main<'a, O, F>(input_ptr: *mut u8, func: F) -> *const u8
+pub fn wasm_row_main<O, F>(input_ptr: *mut u8, func: F) -> *const u8
 where
     O: ToRow,
-    F: Fn(PyroRow<'a>) -> Result<O, CapturedError>,
+    F: Fn(PyroRow<'_>) -> Result<O, CapturedError>,
 {
     logger::init_logging();
     let input_vec = match get_input(input_ptr) {
@@ -180,11 +178,11 @@ where
     if let Err(err) = input_vec.parse_as_error() {
         return to_output(err.encode());
     };
-    let input_row = match PyroRow::expose(input_vec) {
+    let input_view = input_vec.view();
+    let input_row = match PyroRow::parse_wire(input_view) {
         Ok(vec) => vec,
         Err(err) => return to_output(err.encode()),
     };
-    let input_row = PyroRow::from(&*input_row);
     let input = match input_row.try_into() {
         Ok(input) => input,
         Err(_) => {
@@ -194,7 +192,6 @@ where
     };
 
     let output = (func)(input);
-
     to_output(match output {
         Ok(o) => encode_result(Ok(o.to_row())),
         Err(err) => encode_result(Err(err)),
@@ -205,12 +202,12 @@ fn encode_result<'a>(result: Result<PyroRow<'a>, CapturedError>) -> PyroVec {
     let encoding = match result {
         Ok(success) => {
             let static_success = success.into_owned();
-            static_success.ship()
+            static_success.to_wire()
         }
         Err(err) => {
             let captured: CapturedError = err.into();
             let mut vec = captured.encode();
-            vec.set_status(DataStatus::RkyvError);
+            vec.set_status(DataStatus::Error);
             return vec;
         }
     };
@@ -300,8 +297,7 @@ impl<T> Client<T> {
     pub fn __call_from_wasm<I, O, F>(&self, input: Option<&I>, func: F) -> O
     where
         I: Bridgeable,
-        O: Bridgeable + BridgeableZeroCopy,
-        <O as Bridgeable>::Format: PyroZeroCopyFormat<O>,
+        O: Bridgeable + 'static,
         F: FnOnce(*const u8, *const u8) -> *mut u8,
     {
         let input = match input {
@@ -317,9 +313,9 @@ impl<T> Client<T> {
             Some(result_vec) => result_vec,
             None => panic!("Host registration failed with no returned"),
         };
-        let result = O::expose(result_vec).and_then(|r| O::receiver().receive(&r));
+        let result = O::expose(result_vec);
         match result {
-            Ok(result) => result,
+            Ok(result) => result.extract(),
             Err(err) => {
                 store_error(err);
                 panic!("Received an unhandled error from host")
@@ -330,10 +326,8 @@ impl<T> Client<T> {
     pub fn __call_result_from_wasm<I, O, E, F>(&self, input: Option<&I>, func: F) -> Result<O, E>
     where
         I: Bridgeable,
-        O: Bridgeable + BridgeableZeroCopy,
-        <O as Bridgeable>::Format: PyroZeroCopyFormat<O>,
-        E: Bridgeable + BridgeableZeroCopy,
-        <E as Bridgeable>::Format: PyroZeroCopyFormat<E>,
+        O: Bridgeable + 'static,
+        E: Bridgeable + 'static,
         F: FnOnce(*const u8, *const u8) -> *mut u8,
     {
         let input = match input {
@@ -351,8 +345,8 @@ impl<T> Client<T> {
         };
         let result = Result::<O, E>::expose(result_vec).and_then(|r| {
             let res = match r {
-                Ok(o) => Ok(O::receiver().receive(&o)?),
-                Err(e) => Err(E::receiver().receive(&e)?),
+                Ok(o) => Ok(o.extract()),
+                Err(e) => Err(e.extract()),
             };
             Ok(res)
         });
