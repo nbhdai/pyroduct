@@ -85,35 +85,25 @@ where
     src.read_exact(&mut header_buf).await?;
 
     // 2. Parse fields (Little Endian for multi-byte integers)
-    // 0x00 - 0x03: Magic
-    let magic = u32::from_le_bytes(header_buf[0..4].try_into().unwrap());
-
     // 0x04 - 0x07: Length
     let len = u32::from_le_bytes(header_buf[4..8].try_into().unwrap()) as usize;
 
-    // 0x08 - 0x0B: Capacity
-    let cap = u32::from_le_bytes(header_buf[8..12].try_into().unwrap()) as usize;
+    // 0x08: Wire Format
+    let wire_format = header_buf[8];
 
-    // 0x0C: Wire Format
-    let wire_format = header_buf[12];
+    // 0x09: Status
+    let status = header_buf[9];
 
-    // 0x0D: User Version
-    let version = header_buf[13];
+    // 0x0A: Class ID
+    let class_id = header_buf[10];
 
-    // 0x0E: Error Version
-    let error_version = header_buf[14];
+    // 0x0B: Function ID
+    let fn_id = header_buf[11];
 
-    // 0x0F: Status
-    let status = header_buf[15];
+    // 0x0C - 0x0F: Mux ID
+    let mux_id = u32::from_le_bytes(header_buf[12..16].try_into().unwrap());
 
-    if magic != crate::format::MAGIC_VAL {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
-            "Invalid PyroVec magic header",
-        ));
-    }
-
-    if cap > config.max_msg_size {
+    if len > config.max_msg_size {
         return Err(Error::new(
             ErrorKind::InvalidData,
             "Message size exceeds limit",
@@ -121,10 +111,11 @@ where
     }
 
     // 3. Allocate and set metadata
-    let mut vec = PyroVec::with_capacity(cap);
+    let mut vec = PyroVec::with_capacity(len);
     vec.set_wire_format(wire_format);
-    vec.set_version(version);
-    vec.set_error_version(error_version);
+    vec.set_class_id(class_id);
+    vec.set_fn_id(fn_id);
+    vec.set_mux_id(mux_id);
     vec.set_status_u8(status);
 
     // 4. Read Payload
@@ -159,8 +150,6 @@ where
         Some(c) => c,
         None => &DEFAULT_STREAM_SETTINGS,
     };
-    // 0x00: Magic
-    dest.write_u32_le(crate::format::MAGIC_VAL).await?;
 
     if vec.len() > config.max_msg_size {
         return Err(Error::new(
@@ -168,23 +157,30 @@ where
             "Message size exceeds limit",
         ));
     }
+
+    // 0x04: Client
+    dest.write_u32_le(vec.client_id()).await?;
+
+    // 0x04: Length
+    dest.write_u32_le(vec.client_id() as u32).await?;
+
     // 0x04: Length
     dest.write_u32_le(vec.len() as u32).await?;
 
-    // 0x08: Reserved
-    dest.write_u32_le(0 as u32).await?;
-
-    // 0x0C: Wire Format
+    // 0x08: Wire Format
     dest.write_u8(vec.wire_format()).await?;
 
-    // 0x0D: User Version
-    dest.write_u8(vec.version()).await?;
-
-    // 0x0E: Error Version
-    dest.write_u8(vec.error_version()).await?;
-
-    // 0x0F: Status
+    // 0x09: Status
     dest.write_u8(vec.status_u8()).await?;
+
+    // 0x0A: Class ID
+    dest.write_u8(vec.class_id()).await?;
+
+    // 0x0B: Function ID
+    dest.write_u8(vec.fn_id()).await?;
+
+    // 0x0C: Mux ID
+    dest.write_u32_le(vec.mux_id()).await?;
 
     // Payload
     dest.write_all(vec.as_slice()).await?;
@@ -209,8 +205,9 @@ mod tests {
 
         // Use distinct values for all byte fields
         original.set_wire_format(0xAA);
-        original.set_version(0xBB);
-        original.set_error_version(0xCC);
+        original.set_class_id(0xBB);
+        original.set_fn_id(0xCC);
+        original.set_mux_id(0x12345678);
         original.set_status(crate::format::header::DataStatus::LocalIo);
 
         let mut stream = Vec::new();
@@ -219,16 +216,6 @@ mod tests {
         write_to_stream(&mut stream, &original, None)
             .await
             .expect("Failed to write to stream");
-
-        // Step 2: Manually inspect the first 4 bytes (Magic)
-        // If this fails, the writer is using Big-Endian while the system is Little-Endian
-        let magic_bytes = &stream[0..4];
-        let magic_val = u32::from_ne_bytes(magic_bytes.try_into().unwrap());
-        assert_eq!(
-            magic_val,
-            crate::format::MAGIC_VAL,
-            "Magic value byte order mismatch in stream"
-        );
 
         // Step 3: Read back from stream using framing logic
         let mut reader = Cursor::new(stream);
@@ -239,8 +226,9 @@ mod tests {
         // Step 4: Validate integrity
         assert_eq!(recovered.as_slice(), b"endian-test-data");
         assert_eq!(recovered.wire_format(), 0xAA);
-        assert_eq!(recovered.version(), 0xBB);
-        assert_eq!(recovered.error_version(), 0xCC);
+        assert_eq!(recovered.class_id(), 0xBB);
+        assert_eq!(recovered.fn_id(), 0xCC);
+        assert_eq!(recovered.mux_id(), 0x12345678);
         assert_eq!(
             recovered.status(),
             Ok(crate::format::header::DataStatus::LocalIo)
@@ -251,7 +239,7 @@ mod tests {
     async fn test_read_empty_payload() {
         let mut original = PyroVec::with_capacity(0);
         original.set_status(crate::format::header::DataStatus::Empty);
-        original.set_error_version(5);
+        original.set_class_id(5);
 
         let mut stream = Vec::new();
         write_to_stream(&mut stream, &original, None).await.unwrap();
@@ -264,7 +252,7 @@ mod tests {
             recovered.status(),
             Ok(crate::format::header::DataStatus::Empty)
         );
-        assert_eq!(recovered.error_version(), 5);
+        assert_eq!(recovered.class_id(), 5);
     }
 
     #[tokio::test]

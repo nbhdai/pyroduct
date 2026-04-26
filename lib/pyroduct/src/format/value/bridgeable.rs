@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::panic::Location;
 
 use crate::format::bridgeable::{Decoder, Encoder};
+use crate::format::header::{DataStatus, PyroHeader};
 use crate::format::value::{PrimitiveValueList, PyroValue, Time};
 use crate::format::{Bridgeable, PyroVec, PyroView};
 use crate::{CapturedError, PyroError};
@@ -79,6 +80,24 @@ impl_bridgeable_scalar!(Time, Timestamp, TimestampEncoder, TimestampDecoder);
 
 // --- String ---
 
+pub struct StringEncoder;
+impl Default for StringEncoder {
+    fn default() -> Self {
+        Self
+    }
+}
+impl Encoder<&str> for StringEncoder {
+    fn encode(&mut self, value: &&str) -> Result<PyroVec, PyroError> {
+        PyroValue::Str(Cow::Borrowed(value)).to_wire()
+    }
+}
+
+impl Encoder<String> for StringEncoder {
+    fn encode(&mut self, value: &String) -> Result<PyroVec, PyroError> {
+        PyroValue::Str(Cow::Borrowed(value.as_str())).to_wire()
+    }
+}
+
 pub struct StringDecoder;
 impl Default for StringDecoder {
     fn default() -> Self {
@@ -123,24 +142,6 @@ impl Bridgeable for String {
     type Encoder = StringEncoder;
     type Decoder = StringDecoder;
     type Ref<'a> = &'a str;
-}
-
-pub struct StringEncoder;
-impl Default for StringEncoder {
-    fn default() -> Self {
-        Self
-    }
-}
-impl Encoder<&str> for StringEncoder {
-    fn encode(&mut self, value: &&str) -> Result<PyroVec, PyroError> {
-        PyroValue::Str(Cow::Borrowed(value)).to_wire()
-    }
-}
-
-impl Encoder<String> for StringEncoder {
-    fn encode(&mut self, value: &String) -> Result<PyroVec, PyroError> {
-        PyroValue::Str(Cow::Borrowed(value.as_str())).to_wire()
-    }
 }
 
 impl Bridgeable for &str {
@@ -217,3 +218,41 @@ impl_bridgeable_list!(u64, U64, U64ListEncoder, U64ListDecoder);
 impl_bridgeable_list!(half::f16, F16, F16ListEncoder, F16ListDecoder);
 impl_bridgeable_list!(f32, F32, F32ListEncoder, F32ListDecoder);
 impl_bridgeable_list!(f64, F64, F64ListEncoder, F64ListDecoder);
+
+pub struct EmptyEncoder;
+impl Default for EmptyEncoder {
+    fn default() -> Self {
+        Self
+    }
+}
+
+impl Encoder<()> for EmptyEncoder {
+    fn encode(&mut self, _value: &()) -> Result<PyroVec, PyroError> {
+        Ok(PyroVec::ok())
+    }
+}
+
+pub struct EmptyDecoder;
+impl Default for EmptyDecoder {
+    fn default() -> Self {
+        Self
+    }
+}
+impl<'a> Decoder<'a, ()> for EmptyDecoder {
+    fn decode(&mut self, view: PyroView<'a>) -> Result<(), PyroError> {
+        if matches!(view.status(), Ok(DataStatus::Empty)) {
+            Ok(())
+        } else {
+            Err(PyroError::deserialization(Box::new(
+                CapturedError::new(format!("Expected Ok, found {:?}", view))
+                    .with_location(Location::caller()),
+            )))
+        }
+    }
+}
+
+impl Bridgeable for () {
+    type Encoder = EmptyEncoder;
+    type Decoder = EmptyDecoder;
+    type Ref<'a> = ();
+}

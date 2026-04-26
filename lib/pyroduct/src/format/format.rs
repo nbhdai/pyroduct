@@ -5,9 +5,7 @@ use tracing::trace;
 use crate::error::ErrorKind;
 use crate::format::{
     PyroVec,
-    header::{
-        DataStatus, MAGIC_VAL, MutPyroData, PROTOCOL_VERSION, PyroData, PyroHeader, PyroHeaderMut,
-    },
+    header::{DataStatus, MutPyroData, PROTOCOL_VERSION, PyroData, PyroHeader, PyroHeaderMut},
     view::PyroView,
 };
 use crate::{PyroError, PyroResult};
@@ -117,7 +115,6 @@ where
     fn update_header(&mut self, len: u32, status: DataStatus) {
         trace!(len, ?status, "Writer::update_header setting header fields");
         let bd = self.data_mut();
-        bd.set_magic(MAGIC_VAL);
         bd.set_wire_format(PROTOCOL_VERSION);
         bd.set_status(status);
         trace!("Writer::update_header completed");

@@ -6,6 +6,9 @@ pub mod error;
 pub mod format;
 pub mod panic;
 
+#[cfg(feature = "transport")]
+pub mod transport;
+
 #[cfg(feature = "host")]
 pub mod module;
 

@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::io::{self, Read, Write};
 use std::ops::Deref;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tar::{Builder, Header};
 use tokio::fs;
 

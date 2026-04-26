@@ -183,12 +183,12 @@ fn test_view_from_vec_roundtrip() {
 
     let mut original = PyroVec::with_capacity(64);
     original.extend_from_slice(b"roundtrip data");
-    original.set_version(7);
+    original.set_fn_id(7);
     original.set_wire_format(2);
 
     let view: PyroView<'_> = (&original).into();
     assert_eq!(&*view, b"roundtrip data");
-    assert_eq!(view.version(), 7);
+    assert_eq!(view.fn_id(), 7);
     assert_eq!(view.wire_format(), 2);
 }
 
@@ -197,8 +197,8 @@ fn test_view_header_fields_preserved() {
     let mut vec = PyroVec::with_capacity(32);
     vec.extend_from_slice(b"data");
     vec.set_status_u8(42);
-    vec.set_version(3);
-    vec.set_error_version(5);
+    vec.set_fn_id(3);
+    vec.set_class_id(5);
     vec.set_wire_format(1);
 
     let mem = {
@@ -214,8 +214,8 @@ fn test_view_header_fields_preserved() {
 
     let view = get_view(&mem, 0).unwrap();
     assert_eq!(view.status_u8(), 42);
-    assert_eq!(view.version(), 3);
-    assert_eq!(view.error_version(), 5);
+    assert_eq!(view.fn_id(), 3);
+    assert_eq!(view.class_id(), 5);
     assert_eq!(view.wire_format(), 1);
     assert_eq!(&*view, b"data");
 }

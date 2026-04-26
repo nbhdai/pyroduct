@@ -1,4 +1,5 @@
 use dashmap::DashMap;
+use indexmap::IndexMap;
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::Weak;
@@ -18,7 +19,7 @@ use crate::ffi::{
     host::{ForeignClass, ForeignObject},
 };
 use crate::format::{
-    PyroVec,
+    PyroVec, PyroView,
     format::{PyroFormat, Writer},
     json::Json,
 };
@@ -184,7 +185,7 @@ static LOADED_LIBRARIES: LazyLock<Mutex<HashMap<String, Weak<CapabilityLibrary>>
 pub struct CapabilityLibrary {
     pub id: i64,
     pub name: String,
-    pub capabilities: HashMap<String, Arc<ForeignClass>>,
+    pub capabilities: IndexMap<String, Arc<ForeignClass>>,
 }
 
 impl CapabilityLibrary {
@@ -221,7 +222,7 @@ impl CapabilityLibrary {
         let id = NEXT_LIB_ID.fetch_add(1, Ordering::SeqCst);
 
         // 3. Register
-        let mut capabilities = HashMap::with_capacity(pyro_symbols.len());
+        let mut capabilities = IndexMap::with_capacity(pyro_symbols.len());
         for sym in &pyro_symbols {
             let sym_cstr = format!("{}\0", sym.name);
 
@@ -317,12 +318,11 @@ impl CapabilityLibrary {
         class: &str,
         config: Option<&serde_json::Value>,
     ) -> Result<ForeignObject, CapabilityError> {
-        let cap_class =
-            self.capabilities
-                .get(class)
-                .ok_or_else(|| CapabilityError::CapabilityNotFound {
-                    name: class.to_string(),
-                })?;
+        let cap_class = self.capabilities.get_index_of(class).ok_or_else(|| {
+            CapabilityError::CapabilityNotFound {
+                name: class.to_string(),
+            }
+        })?;
 
         let vec = if let Some(config_val) = config {
             let writer = Json::<serde_json::Value>::new_writer(PyroVec::with_capacity(300));
@@ -337,13 +337,26 @@ impl CapabilityLibrary {
             PyroVec::ok()
         };
 
-        // 2. Serialize the config value to a PyroVec using JSON format
+        self.instantiate_class_raw(cap_class as u8, vec.view())
+            .await
+    }
+
+    pub async fn instantiate_class_raw(
+        &self,
+        class: u8,
+        config: PyroView<'_>,
+    ) -> Result<ForeignObject, CapabilityError> {
+        let (_, cap_class) = self.capabilities.get_index(class as usize).ok_or_else(|| {
+            CapabilityError::CapabilityNotFound {
+                name: class.to_string(),
+            }
+        })?;
 
         let object_id = NEXT_OBJECT_ID.fetch_add(1, Ordering::SeqCst);
         let log_channel = create_log(self.id, object_id, 100);
-        // 3. Call create_instance on the ForeignClass
+
         let handle = cap_class
-            .create_instance(vec.view(), object_id, log_channel)
+            .create_instance(config, object_id, log_channel)
             .await
             .map_err(|e| CapabilityError::Instantiation {
                 class: class.to_string(),

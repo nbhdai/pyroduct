@@ -240,8 +240,9 @@ impl fmt::Debug for PyroBuf {
             .field("capacity", &self.capacity())
             .field("status", &self.status())
             .field("wire_fmt", &self.wire_format())
-            .field("usr_ver", &self.version())
-            .field("err_ver", &self.error_version())
+            .field("class_id", &self.class_id())
+            .field("fn_id", &self.fn_id())
+            .field("mux_id", &self.mux_id())
             .field("data", &self.as_slice())
             .finish()
     }
@@ -516,8 +517,9 @@ impl Clone for PyroVec {
         new_vec.extend_from_slice(self.as_slice());
         new_vec.set_status_u8(self.status_u8());
         new_vec.set_wire_format(self.wire_format());
-        new_vec.set_version(self.version());
-        new_vec.set_error_version(self.error_version());
+        new_vec.set_fn_id(self.fn_id());
+        new_vec.set_class_id(self.class_id());
+        new_vec.set_mux_id(self.mux_id());
         new_vec
     }
 }
@@ -529,8 +531,9 @@ impl fmt::Debug for PyroVec {
             .field("capacity", &self.capacity())
             .field("status", &self.status())
             .field("wire_fmt", &self.wire_format())
-            .field("usr_ver", &self.version())
-            .field("err_ver", &self.error_version())
+            .field("class_id", &self.class_id())
+            .field("fn_id", &self.fn_id())
+            .field("mux_id", &self.mux_id())
             .field("data", &self.as_slice())
             .finish()
     }

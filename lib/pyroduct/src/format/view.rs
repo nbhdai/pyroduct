@@ -98,6 +98,12 @@ impl PyroView<'_> {
         };
         raw
     }
+
+    pub fn clone_to_vec(&self) -> PyroVec {
+        let mut vec = PyroVec::clone_from_pyro(self);
+        vec.extend_from_slice(self.as_slice());
+        vec
+    }
 }
 
 impl<'a> From<&'a PyroVec> for PyroView<'a> {
@@ -131,8 +137,9 @@ impl fmt::Debug for PyroView<'_> {
             .field("capacity", &self.capacity())
             .field("status", &self.status())
             .field("wire_fmt", &self.wire_format())
-            .field("usr_ver", &self.version())
-            .field("err_ver", &self.error_version())
+            .field("class_id", &self.class_id())
+            .field("fn_id", &self.fn_id())
+            .field("mux_id", &self.mux_id())
             .finish()
     }
 }
@@ -216,8 +223,9 @@ impl fmt::Debug for PyroMutView<'_> {
             .field("capacity", &self.capacity())
             .field("status", &self.status())
             .field("wire_fmt", &self.wire_format())
-            .field("usr_ver", &self.version())
-            .field("err_ver", &self.error_version())
+            .field("class_id", &self.class_id())
+            .field("fn_id", &self.fn_id())
+            .field("mux_id", &self.mux_id())
             .finish()
     }
 }

@@ -31,6 +31,7 @@ host = [
     "dep:pyro-artifacts",
     "pyro-spec/arrow",
 ]
+transport = ["host"]
 module = []
 
 cli = [

@@ -249,6 +249,30 @@ impl ForeignObject {
             .find_method(method_name)
             .ok_or_else(|| PyroError::NotFound(format!("Object method {method_name} not found")))?;
 
+        self.call_method(method, client_data, input_data).await
+    }
+
+    pub async fn call_index(
+        &self,
+        method_index: usize,
+        client_data: PyroView<'_>,
+        input_data: PyroView<'_>,
+    ) -> Result<PyroVec, PyroError> {
+        let method = self
+            .class
+            .methods
+            .get(method_index)
+            .ok_or_else(|| PyroError::NotFound(format!("Method index {method_index} not found")))?;
+
+        self.call_method(method, client_data, input_data).await
+    }
+
+    async fn call_method(
+        &self,
+        method: &ForeignMethod,
+        client_data: PyroView<'_>,
+        input_data: PyroView<'_>,
+    ) -> Result<PyroVec, PyroError> {
         match method.pointer {
             Function::Sync(f) => unsafe {
                 PyroVec::from_raw((f)(self.obj.ref_ptr(), client_data.ptr(), input_data.ptr()))
