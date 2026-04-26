@@ -1,12 +1,11 @@
 //! Bridgeable trait and BridgeableResult extension.
 
+use std::fmt;
 use std::panic::Location;
 
 use tracing::trace;
 
 use crate::format::header::{DataStatus, PyroHeader, PyroHeaderMut};
-use crate::format::value::FromRow;
-use crate::format::value::deep_ref::FromDeepRef;
 use crate::format::view::PyroView;
 use crate::format::{DeepRef, ParseError, PyroVec, ToRow};
 use crate::{CapturedError, PyroError, PyroRow};
@@ -15,40 +14,57 @@ use crate::{CapturedError, PyroError, PyroRow};
 // =============================================================================
 
 /// A type-safe wrapper around a PyroVec containing an archived rkyv type.
-pub struct TypedBuf<T: DeepRef + 'static + ?Sized> {
+pub struct TypedBuf<T> {
     pub(super) vec: PyroVec,
-    pub(super) inner: T::Ref<'static>,
+    pub(super) inner: T,
 }
 
-/// A type-safe wrapper around a PyroVec containing an archived rkyv type.
-pub struct TypedView<'a, T: DeepRef + 'a + ?Sized> {
-    pub(super) view: PyroView<'a>,
-    pub(super) inner: T::Ref<'a>,
-}
+impl<T> TypedBuf<T> {
+    pub fn inner(&self) -> &T {
+        &self.inner
+    }
 
-impl<T: DeepRef + 'static> TypedBuf<T> {
     pub fn view(&self) -> PyroView<'_> {
         self.vec.view()
     }
 
-    pub fn extract(&self) -> T
+    pub fn extract_into<S>(self) -> S
     where
-        T: FromDeepRef,
+        T: Into<S>,
     {
-        T::from_ref(&self.inner)
+        self.inner.into()
+    }
+
+    pub fn extract_owned<S>(self) -> S
+    where
+        T: ToOwned<Owned = S>,
+    {
+        self.inner.to_owned()
     }
 }
 
-impl<'a, T: DeepRef + 'a> TypedView<'a, T> {
+impl<T: fmt::Debug> fmt::Debug for TypedBuf<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.inner.fmt(f)
+    }
+}
+
+/// A type-safe wrapper around a PyroVec containing an archived rkyv type.
+pub struct TypedView<'a, T: 'a> {
+    pub(super) view: PyroView<'a>,
+    pub(super) inner: T,
+}
+
+impl<'a, T> TypedView<'a, T> {
     pub fn view(&self) -> PyroView<'a> {
         self.view
     }
 
-    pub fn extract(&self) -> T
+    pub fn extract<S>(self) -> S
     where
-        T: FromDeepRef,
+        T: Into<S>,
     {
-        T::from_ref(&self.inner)
+        self.inner.into()
     }
 }
 
@@ -59,34 +75,37 @@ impl<'a, T: DeepRef + 'a> TypedView<'a, T> {
 ///
 /// For explicit format control, use [`Pyro<T, F>`](crate::pyro::Pyro)
 /// instead.
-pub trait Bridgeable: DeepRef + FromDeepRef {
+pub trait Bridgeable: Sized {
+    type Ref<'a>;
     /// Serialize into a `PyroVec` using the default format.
     fn ship(&self) -> Result<PyroVec, PyroError>;
 
     /// Parse an owned `PyroVec` using the default format.
-    fn expose(vec: PyroVec) -> Result<TypedBuf<Self>, PyroError>;
+    fn expose(vec: PyroVec) -> Result<TypedBuf<Self::Ref<'static>>, PyroError>;
 
     /// Parse a borrowed `PyroView` without taking ownership.
     /// Only available for zero-copy formats (rkyv, zerovec, …).
-    fn expose_view<'a>(vec: PyroView<'a>) -> Result<TypedView<'a, Self>, PyroError>;
+    fn expose_view<'a>(vec: PyroView<'a>) -> Result<TypedView<'a, Self::Ref<'a>>, PyroError>;
 }
 
-impl<T: DeepRef + FromDeepRef + ToRow> Bridgeable for T
+impl<T: DeepRef + ToRow + 'static> Bridgeable for T
 where
-    for<'a> T::Ref<'a>: FromRow,
+    for<'a> T::Ref<'a>: TryFrom<PyroRow<'a>, Error = PyroRow<'a>>,
 {
+    type Ref<'a> = T::Ref<'a>;
+
     fn ship(&self) -> Result<PyroVec, PyroError> {
         let row = self.to_row();
         row.to_wire()
     }
 
     #[track_caller]
-    fn expose(vec: PyroVec) -> Result<TypedBuf<Self>, PyroError> {
+    fn expose(vec: PyroVec) -> Result<TypedBuf<Self::Ref<'static>>, PyroError> {
         let view = vec.view();
         let row = PyroRow::parse_wire(view)?;
-        let value = <T::Ref<'_>>::from_row(row).map_err(|ve| {
+        let value = <T::Ref<'_>>::try_from(row).map_err(|ve| {
             PyroError::deserialization(Box::new(
-                CapturedError::new(ve.to_string()).with_location(Location::caller()),
+                CapturedError::new(format!("{ve}")).with_location(Location::caller()),
             ))
         })?;
         // SAFETY:
@@ -95,17 +114,14 @@ where
         Ok(TypedBuf { vec, inner: value })
     }
 
-    fn expose_view<'a>(vec: PyroView<'a>) -> Result<TypedView<'a, Self>, PyroError> {
-        let row = PyroRow::parse_wire(vec)?;
-        let value = <T::Ref<'a>>::from_row(row).map_err(|ve| {
+    fn expose_view<'a>(view: PyroView<'a>) -> Result<TypedView<'a, Self::Ref<'a>>, PyroError> {
+        let row = PyroRow::parse_wire(view)?;
+        let value = <T::Ref<'a>>::try_from(row).map_err(|ve| {
             PyroError::deserialization(Box::new(
-                CapturedError::new(ve.to_string()).with_location(Location::caller()),
+                CapturedError::new(format!("{ve}")).with_location(Location::caller()),
             ))
         })?;
-        Ok(TypedView {
-            view: vec,
-            inner: value,
-        })
+        Ok(TypedView { view, inner: value })
     }
 }
 
@@ -120,10 +136,12 @@ where
 {
     fn ship(&self) -> Result<PyroVec, PyroError>;
 
-    fn expose(vec: PyroVec) -> Result<Result<TypedBuf<T>, TypedBuf<E>>, PyroError>;
+    fn expose(
+        vec: PyroVec,
+    ) -> Result<Result<TypedBuf<T::Ref<'static>>, TypedBuf<E::Ref<'static>>>, PyroError>;
     fn expose_view<'a>(
-        vec: PyroView<'a>,
-    ) -> Result<Result<TypedView<'a, T>, TypedView<'a, E>>, PyroError>;
+        view: PyroView<'a>,
+    ) -> Result<Result<TypedView<'a, T::Ref<'a>>, TypedView<'a, E::Ref<'a>>>, PyroError>;
 }
 
 impl<T, E> BridgeableResult<T, E> for Result<T, E>
@@ -157,7 +175,9 @@ where
         }
     }
 
-    fn expose(vec: PyroVec) -> Result<Result<TypedBuf<T>, TypedBuf<E>>, PyroError> {
+    fn expose(
+        vec: PyroVec,
+    ) -> Result<Result<TypedBuf<T::Ref<'static>>, TypedBuf<E::Ref<'static>>>, PyroError> {
         let status = vec.status();
 
         trace!(
@@ -188,9 +208,9 @@ where
         }
     }
 
-    fn expose_view(
-        view: PyroView<'_>,
-    ) -> Result<Result<TypedView<'_, T>, TypedView<'_, E>>, PyroError> {
+    fn expose_view<'a>(
+        view: PyroView<'a>,
+    ) -> Result<Result<TypedView<'a, T::Ref<'a>>, TypedView<'a, E::Ref<'a>>>, PyroError> {
         let status = view.status();
 
         trace!(

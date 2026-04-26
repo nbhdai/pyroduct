@@ -297,7 +297,7 @@ impl<T> Client<T> {
     pub fn __call_from_wasm<I, O, F>(&self, input: Option<&I>, func: F) -> O
     where
         I: Bridgeable,
-        O: Bridgeable + 'static,
+        for<'a> O: Bridgeable + From<O::Ref<'a>> + 'static,
         F: FnOnce(*const u8, *const u8) -> *mut u8,
     {
         let input = match input {
@@ -315,7 +315,7 @@ impl<T> Client<T> {
         };
         let result = O::expose(result_vec);
         match result {
-            Ok(result) => result.extract(),
+            Ok(result) => result.extract_into(),
             Err(err) => {
                 store_error(err);
                 panic!("Received an unhandled error from host")
@@ -327,7 +327,9 @@ impl<T> Client<T> {
     where
         I: Bridgeable,
         O: Bridgeable + 'static,
+        for<'a> O: Bridgeable + From<O::Ref<'a>> + 'static,
         E: Bridgeable + 'static,
+        for<'a> E: Bridgeable + From<E::Ref<'a>> + 'static,
         F: FnOnce(*const u8, *const u8) -> *mut u8,
     {
         let input = match input {
@@ -345,8 +347,8 @@ impl<T> Client<T> {
         };
         let result = Result::<O, E>::expose(result_vec).and_then(|r| {
             let res = match r {
-                Ok(o) => Ok(o.extract()),
-                Err(e) => Err(e.extract()),
+                Ok(o) => Ok(o.extract_into()),
+                Err(e) => Err(e.extract_into()),
             };
             Ok(res)
         });

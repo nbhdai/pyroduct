@@ -36,7 +36,11 @@ use super::{PyroRow, PyroValue};
 impl<'a> PyroRow<'a> {
     /// Converts this into an rkyv formatted pyrovec.
     pub fn to_wire(&self) -> Result<PyroVec, PyroError> {
-        todo!()
+        let bytes = rkyv::to_bytes::<RancorError>(self)
+            .map_err(|e| PyroError::serialization(CapturedError::new(e)))?;
+        let mut vec = PyroVec::with_capacity(bytes.len());
+        vec.extend_from_slice(&bytes);
+        Ok(vec)
     }
 
     ///
@@ -51,7 +55,11 @@ impl<'a> PyroRow<'a> {
 impl<'a> PyroValue<'a> {
     /// Converts this into an rkyv formatted pyrovec.
     pub fn to_wire(&self) -> Result<PyroVec, PyroError> {
-        todo!()
+        let bytes = rkyv::to_bytes::<RancorError>(self)
+            .map_err(|e| PyroError::serialization(CapturedError::new(e)))?;
+        let mut vec = PyroVec::with_capacity(bytes.len());
+        vec.extend_from_slice(&bytes);
+        Ok(vec)
     }
 
     ///

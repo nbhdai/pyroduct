@@ -20,10 +20,7 @@ use tracing::Instrument;
 
 use crate::ffi::FuturePyroVec;
 use crate::ffi::guest::logger::object_span;
-use crate::format::value::deep_ref::FromDeepRef;
-use crate::format::{
-    Bridgeable, BridgeableResult, DeepRef, PyroVec, PyroVecPtr, PyroView, PyroViewPtr,
-};
+use crate::format::{Bridgeable, BridgeableResult, PyroVec, PyroVecPtr, PyroView, PyroViewPtr};
 use crate::panic::{clear_last_panic, recover_panic_info, register_ffi_panic_hook};
 use crate::{CapturedError, PyroError};
 
@@ -54,9 +51,9 @@ where
 }
 
 /// Helper to deserialize input from a raw PyroVecPtr.
-pub fn deserialize_input<I: Bridgeable>(data: PyroViewPtr) -> Result<I, PyroError>
+pub fn deserialize_input<I>(data: PyroViewPtr) -> Result<I, PyroError>
 where
-    for<'a> <I as DeepRef>::Ref<'a>: FromDeepRef,
+    for<'a> I: Bridgeable + From<I::Ref<'a>>,
 {
     tracing::trace!(?data, "Deserializing view");
     let guard = panic::catch_unwind(AssertUnwindSafe(|| {

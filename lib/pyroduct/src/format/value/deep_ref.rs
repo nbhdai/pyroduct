@@ -15,10 +15,6 @@ pub trait DeepRef {
 
     fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a>;
 }
-/// Undoes the deep ref, converting it back into an owned value.
-pub trait FromDeepRef: DeepRef {
-    fn from_ref<'a>(reference: &Self::Ref<'a>) -> Self;
-}
 
 impl DeepRef for Vec<String> {
     type Ref<'a> = Vec<&'a str>;
@@ -188,138 +184,6 @@ impl<'c, T: DeepRef + ToOwned + ?Sized> DeepRef for Cow<'c, T> {
 }
 
 // =========================================================================
-// 6. Rkyv Archived Implementations
-// =========================================================================
-
-use rkyv::boxed::ArchivedBox;
-use rkyv::option::ArchivedOption;
-use rkyv::string::ArchivedString;
-use rkyv::vec::ArchivedVec;
-
-// ArchivedString -> &str
-impl DeepRef for ArchivedVec<ArchivedString> {
-    type Ref<'a> = Vec<&'a str>;
-    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
-        self.iter().map(|s| s.as_str()).collect()
-    }
-}
-
-// -------------------------------------------------------------------------
-// Single-Byte / Endian-Neutral Primitives
-// -------------------------------------------------------------------------
-// For types where Archived<T> == T (u8, i8, bool, char).
-// We removed u16+, i16+, f32+ from here because they are handled
-// by the endian-specific macro below.
-
-macro_rules! impl_rkyv_vec_neutral {
-    ($($t:ty),*) => {
-        $(
-            impl DeepRef for ArchivedVec<$t> {
-                type Ref<'a> = &'a [$t];
-                fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
-                    self.as_slice()
-                }
-            }
-        )*
-    };
-}
-
-impl_rkyv_vec_neutral!(bool, char, u8, i8);
-
-// -------------------------------------------------------------------------
-// Multi-Byte Little Endian Primitives
-// -------------------------------------------------------------------------
-// This handles u32_le -> u32, ArchivedVec<u32_le> -> &[u32], etc.
-
-#[cfg(target_endian = "little")]
-mod little_endian_impls {
-    use super::{ArchivedVec, DeepRef};
-    // Import the Little Endian wrapper types used by rkyv
-    use rkyv::rend::{
-        f32_le, f64_le, i16_le, i32_le, i64_le, i128_le, u16_le, u32_le, u64_le, u128_le,
-    };
-
-    macro_rules! impl_rkyv_le_primitive {
-        ($($le:ty => $native:ty),*) => {
-            $(
-                // 2. Vector Implementation (e.g., ArchivedVec<i32_le> -> &[i32])
-                // We perform a zero-copy cast from &[i32_le] to &[i32].
-                impl DeepRef for ArchivedVec<$le> {
-                    type Ref<'a> = &'a [$native];
-
-                    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
-                        // SAFETY:
-                        // 1. We are protected by #[cfg(target_endian = "little")].
-                        // 2. The _le types are #[repr(transparent)] wrappers around the native types.
-                        // 3. The memory layout is identical on LE systems.
-                        #[cfg(target_endian = "little")]
-                        let slice = self.as_slice();
-                        unsafe {
-                            std::slice::from_raw_parts(
-                                slice.as_ptr() as *const $native,
-                                slice.len(),
-                            )
-                        }
-                    }
-                }
-            )*
-        }
-    }
-
-    impl_rkyv_le_primitive!(
-        u16_le => u16,
-        u32_le => u32,
-        u64_le => u64,
-        u128_le => u128,
-        i16_le => i16,
-        i32_le => i32,
-        i64_le => i64,
-        i128_le => i128,
-        f32_le => f32,
-        f64_le => f64
-    );
-}
-
-// ArchivedOption<T>
-impl<TA> DeepRef for ArchivedOption<TA>
-where
-    TA: DeepRef,
-{
-    type Ref<'a>
-        = Option<TA::Ref<'a>>
-    where
-        TA: 'a;
-
-    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
-        self.as_ref().map(|inner| inner.as_deep_ref())
-    }
-}
-
-// ArchivedBox<T>
-impl<TA: DeepRef> DeepRef for ArchivedBox<TA> {
-    type Ref<'a>
-        = TA::Ref<'a>
-    where
-        TA: 'a;
-
-    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
-        (**self).as_deep_ref()
-    }
-}
-
-// ArchivedBox<T>
-impl<TA: DeepRef> DeepRef for ArchivedVec<TA> {
-    type Ref<'a>
-        = Vec<TA::Ref<'a>>
-    where
-        TA: 'a;
-
-    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
-        (**self).as_deep_ref()
-    }
-}
-
-// =========================================================================
 // 7. PyroValue / PyroRow / PrimitiveValueList  (Normal types)
 // =========================================================================
 //
@@ -329,7 +193,6 @@ impl<TA: DeepRef> DeepRef for ArchivedVec<TA> {
 // where possible (primitives are copied, strings/slices are re-borrowed).
 
 use super::{PrimitiveValueList, PyroRow, PyroValue, Time};
-use half::f16;
 
 // --- Time ---
 // Time is Copy (i128 wrapper), so Ref is just Time.
@@ -433,22 +296,5 @@ impl<'v> DeepRef for PyroRow<'v> {
         // PyroRow already has a to_ref() method that does exactly this.
         // We delegate to it for consistency.
         self.clone()
-    }
-}
-
-// Also the Vec/slice variants for f16
-impl DeepRef for Vec<f16> {
-    type Ref<'a> = &'a [f16];
-
-    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
-        self.as_slice()
-    }
-}
-
-impl DeepRef for [f16] {
-    type Ref<'a> = &'a [f16];
-
-    fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
-        self
     }
 }

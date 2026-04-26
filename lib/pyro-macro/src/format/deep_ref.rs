@@ -89,8 +89,24 @@ pub fn deep_ref(
     });
 
     let impl_from_ref = quote! {
-        impl #import_location::format::FromDeepRef for #struct_name {
-            fn from_ref<'a>(reference: &Self::Ref<'a>) -> Self {
+        impl<'a> From<#ref_struct_name<'a>> for #struct_name {
+            fn from(reference: #ref_struct_name<'a>) -> Self {
+                Self {
+                    #(#from_ref_conversions,)*
+                }
+            }
+        }
+    };
+
+    let from_ref_conversions = fields.iter().map(|f| {
+        let field_name = f.ident.as_ref().unwrap();
+        let ty = &f.ty;
+        generate_from_ref_conversion(field_name, ty, import_location)
+    });
+
+    let impl_from_ref_ref = quote! {
+        impl<'a> From<&'a #ref_struct_name<'a>> for #struct_name {
+            fn from(reference: &'a #ref_struct_name<'a>) -> Self {
                 Self {
                     #(#from_ref_conversions,)*
                 }
@@ -102,6 +118,7 @@ pub fn deep_ref(
         #struct_def
         #impl_owned
         #impl_from_ref
+        #impl_from_ref_ref
     })
 }
 
@@ -270,7 +287,8 @@ fn generate_from_ref_conversion(
     match ty {
         Type::Path(TypePath { path, .. }) => {
             let segment = path.segments.last().unwrap();
-            let ident_str = segment.ident.to_string();
+            let ident = &segment.ident;
+            let ident_str = ident.to_string();
 
             if is_string_like(ty) {
                 if ident_str == "String" {
@@ -300,11 +318,12 @@ fn generate_from_ref_conversion(
                                 if is_string(inner_ty) {
                                     quote! { #field_name: reference.#field_name.iter().map(|x| x.to_string()).collect() }
                                 } else {
-                                    let inner_ident = if let Type::Path(TypePath { path, .. }) = inner_ty {
-                                        path.segments.last().unwrap().ident.to_string()
-                                    } else {
-                                        "".to_string()
-                                    };
+                                    let inner_ident =
+                                        if let Type::Path(TypePath { path, .. }) = inner_ty {
+                                            path.segments.last().unwrap().ident.to_string()
+                                        } else {
+                                            "".to_string()
+                                        };
                                     if inner_ident == "Arc" {
                                         quote! { #field_name: reference.#field_name.iter().map(|x| std::sync::Arc::from(*x)).collect() }
                                     } else if inner_ident == "Box" {
@@ -336,11 +355,12 @@ fn generate_from_ref_conversion(
                                 if is_string(inner_ty) {
                                     quote! { #field_name: reference.#field_name.map(|x| x.to_string()) }
                                 } else {
-                                    let inner_ident = if let Type::Path(TypePath { path, .. }) = inner_ty {
-                                        path.segments.last().unwrap().ident.to_string()
-                                    } else {
-                                        "".to_string()
-                                    };
+                                    let inner_ident =
+                                        if let Type::Path(TypePath { path, .. }) = inner_ty {
+                                            path.segments.last().unwrap().ident.to_string()
+                                        } else {
+                                            "".to_string()
+                                        };
                                     if inner_ident == "Arc" {
                                         quote! { #field_name: reference.#field_name.map(|x| std::sync::Arc::from(x)) }
                                     } else if inner_ident == "Box" {
@@ -352,7 +372,7 @@ fn generate_from_ref_conversion(
                                     }
                                 }
                             } else {
-                                quote! { #field_name: reference.#field_name.as_ref().map(|x| <#inner_ty as #import_location::format::FromDeepRef>::from_ref(x)) }
+                                quote! { #field_name: reference.#field_name.as_ref().map(|x| x.into()) }
                             }
                         } else {
                             quote! { #field_name: None }
@@ -362,11 +382,13 @@ fn generate_from_ref_conversion(
                     }
                 }
                 _ => {
-                    quote! { #field_name: <#ty as #import_location::format::FromDeepRef>::from_ref(&reference.#field_name) }
+                    quote! { #field_name: #ident::from(&reference.#field_name) }
                 }
             }
         }
-        _ => quote! { #field_name: <#ty as #import_location::format::FromDeepRef>::from_ref(&reference.#field_name) },
+        _ => {
+            quote! { #field_name: #ty::from(&reference.#field_name) }
+        }
     }
 }
 

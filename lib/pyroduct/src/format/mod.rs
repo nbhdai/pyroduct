@@ -236,7 +236,7 @@ mod view;
 pub use bridgeable::{Bridgeable, BridgeableResult};
 pub use format::{HasReceiver, Receiver};
 pub use header::{MAGIC_VAL, ParseError};
-pub use value::{DeepRef, FromDeepRef, PyroRow, PyroValue, ToRow};
+pub use value::{DeepRef, PyroRow, PyroValue, ToRow};
 pub use vec_buf::{PyroBuf, PyroBufPtr, PyroVec, PyroVecPtr};
 pub use view::{PyroMutView, PyroView, PyroViewPtr, get_view, get_view_mut};
 

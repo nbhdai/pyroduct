@@ -1,7 +1,4 @@
-use pyroduct::{
-    format::Bridgeable,
-    magma,
-};
+use pyroduct::{format::Bridgeable, magma};
 
 #[magma]
 #[derive(Debug, PartialEq)]
@@ -33,7 +30,7 @@ fn test_roundtrip_simple() {
 
     let vec = original.ship().expect("serialize failed");
     let typed = SimpleStruct::expose(vec).expect("parse failed");
-    let recovered = typed.extract();
+    let recovered = typed.extract_into();
 
     assert_eq!(original, recovered);
 }
@@ -47,7 +44,7 @@ fn test_roundtrip_with_vec() {
 
     let vec = original.ship().expect("serialize failed");
     let typed = WithVec::expose(vec).expect("parse failed");
-    let recovered = typed.extract();
+    let recovered = typed.extract_into();
 
     assert_eq!(original, recovered);
 }
@@ -64,7 +61,7 @@ fn test_roundtrip_nested() {
 
     let vec = original.ship().expect("serialize failed");
     let typed = Nested::expose(vec).expect("parse failed");
-    let recovered = typed.extract();
+    let recovered = typed.extract_into();
 
     assert_eq!(original, recovered);
 }
