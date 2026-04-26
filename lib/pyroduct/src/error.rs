@@ -5,7 +5,7 @@ use thiserror::Error;
 use crate::{
     CapturedError,
     captured::{LibraryInfo, library},
-    format::{ParseError, header::DataStatus, value::ValueError},
+    format::{ParseError, header::DataStatus},
 };
 
 mod encoding;

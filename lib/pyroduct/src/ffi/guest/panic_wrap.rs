@@ -20,7 +20,7 @@ use tracing::Instrument;
 
 use crate::ffi::FuturePyroVec;
 use crate::ffi::guest::logger::object_span;
-use crate::format::{Bridgeable, BridgeableResult, PyroVec, PyroVecPtr, PyroView, PyroViewPtr};
+use crate::format::{Bridgeable, PyroVec, PyroVecPtr, PyroView, PyroViewPtr};
 use crate::panic::{clear_last_panic, recover_panic_info, register_ffi_panic_hook};
 use crate::{CapturedError, PyroError};
 
@@ -59,7 +59,7 @@ where
     let guard = panic::catch_unwind(AssertUnwindSafe(|| {
         let view = unsafe { PyroView::from_ptr(data) }?;
         let typed = I::expose_view(view)?;
-        Ok(typed.extract())
+        Ok(typed.into())
     }));
 
     match guard {

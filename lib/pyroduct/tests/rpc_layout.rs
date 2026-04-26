@@ -30,7 +30,7 @@ fn test_roundtrip_simple() {
 
     let vec = original.ship().expect("serialize failed");
     let typed = SimpleStruct::expose(vec).expect("parse failed");
-    let recovered = typed.extract_into();
+    let recovered = typed.into();
 
     assert_eq!(original, recovered);
 }
@@ -44,7 +44,7 @@ fn test_roundtrip_with_vec() {
 
     let vec = original.ship().expect("serialize failed");
     let typed = WithVec::expose(vec).expect("parse failed");
-    let recovered = typed.extract_into();
+    let recovered = typed.into();
 
     assert_eq!(original, recovered);
 }
@@ -61,7 +61,7 @@ fn test_roundtrip_nested() {
 
     let vec = original.ship().expect("serialize failed");
     let typed = Nested::expose(vec).expect("parse failed");
-    let recovered = typed.extract_into();
+    let recovered = typed.into();
 
     assert_eq!(original, recovered);
 }

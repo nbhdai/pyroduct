@@ -1,14 +1,28 @@
 //! Bridgeable trait and BridgeableResult extension.
 
 use std::fmt;
-use std::panic::Location;
+use std::ops::Deref;
 
-use tracing::trace;
-
+use crate::PyroError;
 use crate::format::header::{DataStatus, PyroHeader, PyroHeaderMut};
 use crate::format::view::PyroView;
-use crate::format::{DeepRef, ParseError, PyroVec, ToRow};
-use crate::{CapturedError, PyroError, PyroRow};
+use crate::format::{ParseError, PyroVec};
+// =============================================================================
+// Encoder / Decoder Traits
+// =============================================================================
+
+pub trait Encoder<T> {
+    fn encode(&mut self, val: &T) -> Result<PyroVec, PyroError>;
+}
+
+pub trait Decoder<'a, T: 'a> {
+    fn decode(&mut self, vec: PyroView<'a>) -> Result<T, PyroError>;
+}
+
+pub trait Unpack<Packed>: Sized {
+    fn unpack(packed: Packed) -> Result<Self, PyroError>;
+}
+
 // =============================================================================
 // Bridgeable — default-format convenience (every format)
 // =============================================================================
@@ -28,18 +42,68 @@ impl<T> TypedBuf<T> {
         self.vec.view()
     }
 
-    pub fn extract_into<S>(self) -> S
+    pub fn into<S>(self) -> S
     where
-        T: Into<S>,
+        S: From<T>,
     {
         self.inner.into()
     }
 
-    pub fn extract_owned<S>(self) -> S
+    pub fn to_owned<S>(self) -> S
     where
-        T: ToOwned<Owned = S>,
+        T: ToOwned,
+        S: From<T::Owned>,
     {
-        self.inner.to_owned()
+        self.inner.to_owned().into()
+    }
+}
+
+impl<T, E> TypedBuf<Result<T, E>> {
+    pub fn into_result<S, U>(self) -> Result<S, U>
+    where
+        S: From<T>,
+        U: From<E>,
+    {
+        match self.inner {
+            Ok(ok) => Ok(ok.into()),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    pub fn to_owned_result<S, U>(self) -> Result<S, U>
+    where
+        T: ToOwned,
+        E: ToOwned,
+        S: From<T::Owned>,
+        U: From<E::Owned>,
+    {
+        match self.inner {
+            Ok(ok) => Ok(ok.to_owned().into()),
+            Err(err) => Err(err.to_owned().into()),
+        }
+    }
+}
+
+impl<T> TypedBuf<Option<T>> {
+    pub fn into_option<S>(self) -> Option<S>
+    where
+        S: From<T>,
+    {
+        match self.inner {
+            Some(ok) => Some(ok.into()),
+            None => None,
+        }
+    }
+
+    pub fn to_owned_option<S>(self) -> Option<S>
+    where
+        T: ToOwned,
+        S: From<T::Owned>,
+    {
+        match self.inner {
+            Some(ok) => Some(ok.to_owned().into()),
+            None => None,
+        }
     }
 }
 
@@ -55,16 +119,87 @@ pub struct TypedView<'a, T: 'a> {
     pub(super) inner: T,
 }
 
+impl<'a, T> Deref for TypedView<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
 impl<'a, T> TypedView<'a, T> {
     pub fn view(&self) -> PyroView<'a> {
         self.view
     }
 
-    pub fn extract<S>(self) -> S
+    pub fn into<S>(self) -> S
     where
-        T: Into<S>,
+        S: From<T>,
     {
         self.inner.into()
+    }
+
+    pub fn to_owned<S>(self) -> S
+    where
+        T: ToOwned,
+        S: From<T::Owned>,
+    {
+        self.inner.to_owned().into()
+    }
+}
+
+impl<'a, T: fmt::Debug> fmt::Debug for TypedView<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.inner.fmt(f)
+    }
+}
+
+impl<'a, T, E> TypedView<'a, Result<T, E>> {
+    pub fn into_result<S, U>(self) -> Result<S, U>
+    where
+        S: From<T>,
+        U: From<E>,
+    {
+        match self.inner {
+            Ok(ok) => Ok(ok.into()),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    pub fn to_owned_result<S, U>(self) -> Result<S, U>
+    where
+        T: ToOwned,
+        E: ToOwned,
+        S: From<T::Owned>,
+        U: From<E::Owned>,
+    {
+        match self.inner {
+            Ok(ok) => Ok(ok.to_owned().into()),
+            Err(err) => Err(err.to_owned().into()),
+        }
+    }
+}
+
+impl<'a, T> TypedView<'a, Option<T>> {
+    pub fn into_option<S>(self) -> Option<S>
+    where
+        S: From<T>,
+    {
+        match self.inner {
+            Some(ok) => Some(ok.into()),
+            None => None,
+        }
+    }
+
+    pub fn to_owned_option<S>(self) -> Option<S>
+    where
+        T: ToOwned,
+        S: From<T::Owned>,
+    {
+        match self.inner {
+            Some(ok) => Some(ok.to_owned().into()),
+            None => None,
+        }
     }
 }
 
@@ -76,52 +211,32 @@ impl<'a, T> TypedView<'a, T> {
 /// For explicit format control, use [`Pyro<T, F>`](crate::pyro::Pyro)
 /// instead.
 pub trait Bridgeable: Sized {
-    type Ref<'a>;
+    type Encoder: Encoder<Self> + Default;
+    type Decoder: for<'a> Decoder<'a, Self::Ref<'a>> + Default;
+    type Ref<'a>: 'a;
+
     /// Serialize into a `PyroVec` using the default format.
-    fn ship(&self) -> Result<PyroVec, PyroError>;
+    fn ship(&self) -> Result<PyroVec, PyroError> {
+        let mut encoder = Self::Encoder::default();
+        encoder.encode(self)
+    }
 
     /// Parse an owned `PyroVec` using the default format.
-    fn expose(vec: PyroVec) -> Result<TypedBuf<Self::Ref<'static>>, PyroError>;
+    fn expose(vec: PyroVec) -> Result<TypedBuf<Self::Ref<'static>>, PyroError> {
+        let mut decoder = Self::Decoder::default();
+        let inner = {
+            let inner = decoder.decode(vec.view())?;
+            unsafe { std::mem::transmute::<Self::Ref<'_>, Self::Ref<'static>>(inner) }
+        };
+        Ok(TypedBuf { inner, vec })
+    }
 
     /// Parse a borrowed `PyroView` without taking ownership.
     /// Only available for zero-copy formats (rkyv, zerovec, …).
-    fn expose_view<'a>(vec: PyroView<'a>) -> Result<TypedView<'a, Self::Ref<'a>>, PyroError>;
-}
-
-impl<T: DeepRef + ToRow + 'static> Bridgeable for T
-where
-    for<'a> T::Ref<'a>: TryFrom<PyroRow<'a>, Error = PyroRow<'a>>,
-{
-    type Ref<'a> = T::Ref<'a>;
-
-    fn ship(&self) -> Result<PyroVec, PyroError> {
-        let row = self.to_row();
-        row.to_wire()
-    }
-
-    #[track_caller]
-    fn expose(vec: PyroVec) -> Result<TypedBuf<Self::Ref<'static>>, PyroError> {
-        let view = vec.view();
-        let row = PyroRow::parse_wire(view)?;
-        let value = <T::Ref<'_>>::try_from(row).map_err(|ve| {
-            PyroError::deserialization(Box::new(
-                CapturedError::new(format!("{ve}")).with_location(Location::caller()),
-            ))
-        })?;
-        // SAFETY:
-        // T::Ref is borrowed from PyroVec::data, which this owns.
-        let value = unsafe { std::mem::transmute::<T::Ref<'_>, T::Ref<'static>>(value) };
-        Ok(TypedBuf { vec, inner: value })
-    }
-
     fn expose_view<'a>(view: PyroView<'a>) -> Result<TypedView<'a, Self::Ref<'a>>, PyroError> {
-        let row = PyroRow::parse_wire(view)?;
-        let value = <T::Ref<'a>>::try_from(row).map_err(|ve| {
-            PyroError::deserialization(Box::new(
-                CapturedError::new(format!("{ve}")).with_location(Location::caller()),
-            ))
-        })?;
-        Ok(TypedView { view, inner: value })
+        let mut decoder = Self::Decoder::default();
+        let inner = decoder.decode(view)?;
+        Ok(TypedView { inner, view })
     }
 }
 
@@ -129,115 +244,97 @@ where
 // BridgeableResult — Result<T, E> transport (unchanged, uses PyroFormat only)
 // =============================================================================
 
-pub trait BridgeableResult<T, E>
-where
-    T: Bridgeable,
-    E: Bridgeable,
-{
-    fn ship(&self) -> Result<PyroVec, PyroError>;
-
-    fn expose(
-        vec: PyroVec,
-    ) -> Result<Result<TypedBuf<T::Ref<'static>>, TypedBuf<E::Ref<'static>>>, PyroError>;
-    fn expose_view<'a>(
-        view: PyroView<'a>,
-    ) -> Result<Result<TypedView<'a, T::Ref<'a>>, TypedView<'a, E::Ref<'a>>>, PyroError>;
+#[derive(Default)]
+pub struct ResultEncoder<T, E> {
+    ok_encoder: T,
+    err_encoder: E,
 }
 
-impl<T, E> BridgeableResult<T, E> for Result<T, E>
-where
-    T: Bridgeable,
-    E: Bridgeable,
-{
-    fn ship(&self) -> Result<PyroVec, PyroError> {
-        match self {
+impl<T, TE: Encoder<T>, E, EE: Encoder<E>> Encoder<Result<T, E>> for ResultEncoder<TE, EE> {
+    fn encode(&mut self, val: &Result<T, E>) -> Result<PyroVec, PyroError> {
+        match val {
             Ok(value) => {
-                trace!(
-                    ok_type = std::any::type_name::<T>(),
-                    variant = "Ok",
-                    "shipping Result::Ok"
-                );
-
-                let mut vec = T::ship(value)?;
+                let mut vec = self.ok_encoder.encode(value)?;
                 vec.set_status(DataStatus::Valid);
                 Ok(vec)
             }
             Err(error) => {
-                trace!(
-                    err_type = std::any::type_name::<E>(),
-                    variant = "Err",
-                    "shipping Result::Err"
-                );
-                let mut vec = E::ship(error)?;
+                let mut vec = self.err_encoder.encode(error)?;
                 vec.set_status(DataStatus::Error);
                 Ok(vec)
             }
         }
     }
+}
 
-    fn expose(
-        vec: PyroVec,
-    ) -> Result<Result<TypedBuf<T::Ref<'static>>, TypedBuf<E::Ref<'static>>>, PyroError> {
-        let status = vec.status();
+#[derive(Default)]
+pub struct ResultDecoder<T, E> {
+    ok_decoder: T,
+    err_decoder: E,
+}
 
-        trace!(
-            ok_type = std::any::type_name::<T>(),
-            err_type = std::any::type_name::<E>(),
-            status = ?status,
-            "exposing Result from PyroVec"
-        );
+impl<'a, T: 'a, DT: Decoder<'a, T>, E: 'a, DE: Decoder<'a, E>> Decoder<'a, Result<T, E>>
+    for ResultDecoder<DT, DE>
+{
+    fn decode(&mut self, view: PyroView<'a>) -> Result<Result<T, E>, PyroError> {
+        let inner = match view.status() {
+            Ok(DataStatus::Valid) => Ok(self.ok_decoder.decode(view)?),
+            Ok(DataStatus::Error) => Err(self.err_decoder.decode(view)?),
+            // Todo: Properly decode the pyro errors.
+            Ok(other) => return Err(ParseError::UnknownStatus(other.into()).into()),
+            Err(other) => return Err(ParseError::UnknownStatus(other).into()),
+        };
+        Ok(inner)
+    }
+}
 
-        match status {
-            Ok(s) if s == DataStatus::Valid => {
-                trace!("Parser::parse_result matched OK_CODE, parsing as success type");
-                let buf = T::expose(vec)?;
-                Ok(Ok(buf))
+impl<T: Bridgeable, E: Bridgeable> Bridgeable for Result<T, E> {
+    type Encoder = ResultEncoder<T::Encoder, E::Encoder>;
+
+    type Decoder = ResultDecoder<T::Decoder, E::Decoder>;
+
+    type Ref<'a> = Result<T::Ref<'a>, E::Ref<'a>>;
+}
+
+#[derive(Default)]
+pub struct OptionEncoder<T> {
+    inner: T,
+}
+
+impl<T, TE: Encoder<T>> Encoder<Option<T>> for OptionEncoder<TE> {
+    fn encode(&mut self, val: &Option<T>) -> Result<PyroVec, PyroError> {
+        match val {
+            Some(value) => {
+                let mut vec = self.inner.encode(value)?;
+                vec.set_status(DataStatus::Valid);
+                Ok(vec)
             }
-            Ok(s) if s == DataStatus::Error => {
-                trace!("Parser::parse_result matched ERR_CODE, parsing as error type");
-                let buf = E::expose(vec)?;
-                Ok(Err(buf))
-            }
-            status => {
-                let s = match status {
-                    Ok(s) => s as u8,
-                    Err(u) => u,
-                };
-                Err(PyroError::Header(ParseError::UnknownStatus(s)))
-            }
+            None => Ok(PyroVec::ok()),
         }
     }
+}
 
-    fn expose_view<'a>(
-        view: PyroView<'a>,
-    ) -> Result<Result<TypedView<'a, T::Ref<'a>>, TypedView<'a, E::Ref<'a>>>, PyroError> {
-        let status = view.status();
+#[derive(Default)]
+pub struct OptionDecoder<T> {
+    decoder: T,
+}
 
-        trace!(
-            ok_type = std::any::type_name::<T>(),
-            err_type = std::any::type_name::<E>(),
-            status = ?status,
-            "exposing Result from PyroVec"
-        );
-
-        match status {
-            Ok(s) if s == DataStatus::Valid => {
-                trace!("Parser::parse_result matched OK_CODE, parsing as success type");
-                let buf = T::expose_view(view)?;
-                Ok(Ok(buf))
-            }
-            Ok(s) if s == DataStatus::Error => {
-                trace!("Parser::parse_result matched ERR_CODE, parsing as error type");
-                let buf = E::expose_view(view)?;
-                Ok(Err(buf))
-            }
-            status => {
-                let s = match status {
-                    Ok(s) => s as u8,
-                    Err(u) => u,
-                };
-                Err(PyroError::Header(ParseError::UnknownStatus(s)))
-            }
-        }
+impl<'a, T: 'a, DT: Decoder<'a, T>> Decoder<'a, Option<T>> for OptionDecoder<DT> {
+    fn decode(&mut self, view: PyroView<'a>) -> Result<Option<T>, PyroError> {
+        let inner = match view.status() {
+            Ok(DataStatus::Valid) => Some(self.decoder.decode(view)?),
+            Ok(DataStatus::Empty) => None,
+            Ok(other) => return Err(ParseError::UnknownStatus(other.into()).into()),
+            Err(other) => return Err(ParseError::UnknownStatus(other).into()),
+        };
+        Ok(inner)
     }
+}
+
+impl<T: Bridgeable> Bridgeable for Option<T> {
+    type Encoder = OptionEncoder<T::Encoder>;
+
+    type Decoder = OptionDecoder<T::Decoder>;
+
+    type Ref<'a> = Option<T::Ref<'a>>;
 }

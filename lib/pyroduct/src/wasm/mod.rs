@@ -2,7 +2,7 @@ use std::sync::Mutex;
 use std::{collections::HashMap, ops::Deref};
 
 use crate::format::{
-    Bridgeable, BridgeableResult, PyroVec, ToRow,
+    Bridgeable, PyroVec, ToRow,
     header::PyroData,
     header::{DataStatus, PyroHeaderMut},
     value::PyroRow,
@@ -315,7 +315,7 @@ impl<T> Client<T> {
         };
         let result = O::expose(result_vec);
         match result {
-            Ok(result) => result.extract_into(),
+            Ok(result) => result.into(),
             Err(err) => {
                 store_error(err);
                 panic!("Received an unhandled error from host")
@@ -346,10 +346,7 @@ impl<T> Client<T> {
             None => panic!("Host registration failed with no returned"),
         };
         let result = Result::<O, E>::expose(result_vec).and_then(|r| {
-            let res = match r {
-                Ok(o) => Ok(o.extract_into()),
-                Err(e) => Err(e.extract_into()),
-            };
+            let res = r.into_result();
             Ok(res)
         });
         match result {

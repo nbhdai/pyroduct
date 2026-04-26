@@ -25,6 +25,14 @@ macro_rules! define_data_status {
                 }
             }
         }
+
+        impl Into<u8> for DataStatus {
+            fn into(self) -> u8 {
+                match self {
+                    $( DataStatus::$name => $val, )*
+                }
+            }
+        }
     };
 }
 

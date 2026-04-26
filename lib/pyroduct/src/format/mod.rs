@@ -233,7 +233,7 @@ pub mod value;
 pub mod vec_buf;
 mod view;
 
-pub use bridgeable::{Bridgeable, BridgeableResult};
+pub use bridgeable::{Bridgeable, Decoder, Encoder};
 pub use format::{HasReceiver, Receiver};
 pub use header::{MAGIC_VAL, ParseError};
 pub use value::{DeepRef, PyroRow, PyroValue, ToRow};

@@ -2,7 +2,7 @@ use pyroduct::{
     CapturedError,
     ffi::guest::{deserialize_input, execute_safe, serialize_output, serialize_result},
     format::{
-        Bridgeable, BridgeableResult, PyroVec,
+        Bridgeable, PyroVec,
         header::{DataStatus, PyroHeader},
     },
     magma,
@@ -47,7 +47,7 @@ fn test_execute_safe_success() {
     assert_eq!(vec.status(), Ok(DataStatus::Valid));
     let typed = UserData::expose(vec)
         .expect("Should parse as UserData")
-        .extract_into::<UserData>();
+        .into::<UserData>();
     assert_eq!(typed.id, 101);
     assert_eq!(typed.payload.as_str(), "Success");
 }
@@ -68,7 +68,7 @@ fn test_execute_safe_large_payload() {
     };
 
     assert_eq!(vec.status(), Ok(DataStatus::Valid));
-    let typed = UserData::expose(vec).unwrap().extract_into::<UserData>();
+    let typed = UserData::expose(vec).unwrap().into::<UserData>();
     assert_eq!(typed.id, u32::MAX);
     assert_eq!(typed.payload.len(), 10_000);
 }
@@ -142,7 +142,7 @@ fn test_execute_safe_panic_then_success() {
         .unwrap()
     };
     assert_eq!(r2.status(), Ok(DataStatus::Valid));
-    let typed = UserData::expose(r2).unwrap().extract_into::<UserData>();
+    let typed = UserData::expose(r2).unwrap().into::<UserData>();
     assert_eq!(typed.id, 999);
 }
 
@@ -162,7 +162,7 @@ fn test_execute_safe_multiple_sequential() {
             .unwrap()
         };
         assert_eq!(vec.status(), Ok(DataStatus::Valid));
-        let typed = UserData::expose(vec).unwrap().extract_into::<UserData>();
+        let typed = UserData::expose(vec).unwrap().into::<UserData>();
         assert_eq!(typed.id, i);
     }
 }
@@ -179,7 +179,7 @@ fn test_serialize_output_struct() {
     });
     assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
-    let typed = UserData::expose(vec).unwrap().extract_into::<UserData>();
+    let typed = UserData::expose(vec).unwrap().into::<UserData>();
     assert_eq!(typed.id, 42);
     assert_eq!(typed.payload.as_str(), "hello");
 }
@@ -192,7 +192,7 @@ fn test_serialize_output_empty_string() {
     });
     assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
-    let typed = UserData::expose(vec).unwrap().extract_into::<UserData>();
+    let typed = UserData::expose(vec).unwrap().into::<UserData>();
     assert_eq!(typed.id, 0);
     assert!(typed.payload.is_empty());
 }
@@ -202,7 +202,7 @@ fn test_serialize_output_primitive() {
     let vec = serialize_output(42u64);
     assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
-    let restored: u64 = u64::expose(vec).expect("Should parse u64").extract_into();
+    let restored: u64 = u64::expose(vec).expect("Should parse u64").into();
     assert_eq!(restored, 42);
 }
 
@@ -211,7 +211,7 @@ fn test_serialize_output_vec() {
     let vec = serialize_output(vec![1u32, 2, 3, 4, 5]);
     assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
-    let restored = Vec::<u32>::expose(vec).unwrap().extract_into::<Vec<u32>>();
+    let restored = Vec::<u32>::expose(vec).unwrap().into::<Vec<u32>>();
     assert_eq!(restored, vec![1, 2, 3, 4, 5]);
 }
 
@@ -222,7 +222,7 @@ fn test_serialize_output_option_some() {
 
     let restored = Option::<String>::expose(vec)
         .unwrap()
-        .extract_owned::<Option<String>>();
+        .into_option::<String>();
     assert_eq!(restored, Some("hello".to_string()));
 }
 
@@ -233,7 +233,7 @@ fn test_serialize_output_option_none() {
 
     let restored = Option::<String>::expose(vec)
         .unwrap()
-        .extract_owned::<Option<String>>();
+        .into_option::<String>();
     assert_eq!(restored, None);
 }
 
@@ -251,8 +251,8 @@ fn test_serialize_result_ok() {
 
     let typed = <Result<UserData, UserError>>::expose(vec)
         .unwrap()
-        .unwrap()
-        .extract_into::<UserData>();
+        .into_result::<UserData, UserError>()
+        .unwrap();
     assert_eq!(typed.id, 200);
     assert_eq!(typed.payload.as_str(), "ok");
 }
@@ -267,8 +267,8 @@ fn test_serialize_result_err() {
 
     let typed = <Result<UserData, UserError>>::expose(vec)
         .unwrap()
-        .unwrap_err()
-        .extract_into::<UserError>();
+        .into_result::<UserData, UserError>()
+        .unwrap_err();
     assert_eq!(typed.code, 404);
     assert_eq!(typed.msg.as_str(), "not found");
 }
@@ -315,7 +315,7 @@ fn test_full_roundtrip_user_data() {
     };
     assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
-    let recovered = UserData::expose(vec).unwrap().extract_into();
+    let recovered = UserData::expose(vec).unwrap().into();
     assert_eq!(original, recovered);
 }
 
@@ -331,7 +331,7 @@ fn test_full_roundtrip_user_error() {
     };
     assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
-    let recovered = UserError::expose(vec).unwrap().extract_into();
+    let recovered = UserError::expose(vec).unwrap().into();
     assert_eq!(original, recovered);
 }
 

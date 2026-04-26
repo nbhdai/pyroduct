@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 use std::panic::Location;
 
-use crate::format::bridgeable::{TypedBuf, TypedView};
-use crate::format::value::{PrimitiveValueList, PyroRow, PyroValue, Time};
+use crate::format::bridgeable::{Decoder, Encoder};
+use crate::format::value::{PrimitiveValueList, PyroValue, Time};
 use crate::format::{Bridgeable, PyroVec, PyroView};
 use crate::{CapturedError, PyroError};
 
@@ -11,38 +11,37 @@ use crate::{CapturedError, PyroError};
 // =============================================================================
 
 macro_rules! impl_bridgeable_scalar {
-    ($t:ty, $variant:ident) => {
-        impl Bridgeable for $t {
-            type Ref<'a> = $t;
-
-            fn ship(&self) -> Result<PyroVec, PyroError> {
-                let val = PyroValue::from(*self);
-                val.to_wire()
+    ($t:ty, $variant:ident, $encoder:ident, $decoder:ident) => {
+        pub struct $encoder;
+        impl Default for $encoder {
+            fn default() -> Self {
+                Self
             }
+        }
 
-            #[track_caller]
-            fn expose(vec: PyroVec) -> Result<TypedBuf<Self::Ref<'static>>, PyroError> {
-                let val = PyroValue::parse_wire(vec.view())?;
-                if let PyroValue::$variant(inner) = val {
-                    Ok(TypedBuf { vec, inner })
-                } else {
-                    Err(PyroError::deserialization(Box::new(
-                        CapturedError::new(format!(
-                            "Expected {}, found {:?}",
-                            stringify!($variant),
-                            val
-                        ))
-                        .with_location(Location::caller()),
-                    )))
-                }
+        impl Encoder<$t> for $encoder {
+            fn encode(&mut self, value: &$t) -> Result<PyroVec, PyroError> {
+                PyroValue::$variant(*value).to_wire()
             }
+        }
 
-            fn expose_view<'a>(
-                view: PyroView<'a>,
-            ) -> Result<TypedView<'a, Self::Ref<'a>>, PyroError> {
+        impl Encoder<&$t> for $encoder {
+            fn encode(&mut self, value: &&$t) -> Result<PyroVec, PyroError> {
+                PyroValue::$variant(**value).to_wire()
+            }
+        }
+
+        pub struct $decoder;
+        impl Default for $decoder {
+            fn default() -> Self {
+                Self
+            }
+        }
+        impl<'a> Decoder<'a, $t> for $decoder {
+            fn decode(&mut self, view: PyroView<'a>) -> Result<$t, PyroError> {
                 let val = PyroValue::parse_wire(view)?;
                 if let PyroValue::$variant(inner) = val {
-                    Ok(TypedView { view, inner })
+                    Ok(inner)
                 } else {
                     Err(PyroError::deserialization(Box::new(
                         CapturedError::new(format!(
@@ -55,43 +54,44 @@ macro_rules! impl_bridgeable_scalar {
                 }
             }
         }
+
+        impl Bridgeable for $t {
+            type Encoder = $encoder;
+            type Decoder = $decoder;
+            type Ref<'a> = $t;
+        }
     };
 }
 
-impl_bridgeable_scalar!(bool, Bool);
-impl_bridgeable_scalar!(i8, I8);
-impl_bridgeable_scalar!(i16, I16);
-impl_bridgeable_scalar!(i32, I32);
-impl_bridgeable_scalar!(i64, I64);
-impl_bridgeable_scalar!(u8, U8);
-impl_bridgeable_scalar!(u16, U16);
-impl_bridgeable_scalar!(u32, U32);
-impl_bridgeable_scalar!(u64, U64);
-impl_bridgeable_scalar!(half::f16, F16);
-impl_bridgeable_scalar!(f32, F32);
-impl_bridgeable_scalar!(f64, F64);
-impl_bridgeable_scalar!(Time, Timestamp);
+impl_bridgeable_scalar!(bool, Bool, BoolEncoder, BoolDecoder);
+impl_bridgeable_scalar!(i8, I8, I8Encoder, I8Decoder);
+impl_bridgeable_scalar!(i16, I16, I16Encoder, I16Decoder);
+impl_bridgeable_scalar!(i32, I32, I32Encoder, I32Decoder);
+impl_bridgeable_scalar!(i64, I64, I64Encoder, I64Decoder);
+impl_bridgeable_scalar!(u8, U8, U8Encoder, U8Decoder);
+impl_bridgeable_scalar!(u16, U16, U16Encoder, U16Decoder);
+impl_bridgeable_scalar!(u32, U32, U32Encoder, U32Decoder);
+impl_bridgeable_scalar!(u64, U64, U64Encoder, U64Decoder);
+impl_bridgeable_scalar!(half::f16, F16, F16Encoder, F16Decoder);
+impl_bridgeable_scalar!(f32, F32, F32Encoder, F32Decoder);
+impl_bridgeable_scalar!(f64, F64, F64Encoder, F64Decoder);
+impl_bridgeable_scalar!(Time, Timestamp, TimestampEncoder, TimestampDecoder);
 
 // --- String ---
 
-impl Bridgeable for String {
-    type Ref<'a> = &'a str;
-
-    fn ship(&self) -> Result<PyroVec, PyroError> {
-        let val = PyroValue::from(self);
-        val.to_wire()
+pub struct StringDecoder;
+impl Default for StringDecoder {
+    fn default() -> Self {
+        Self
     }
-
-    #[track_caller]
-    fn expose(vec: PyroVec) -> Result<TypedBuf<Self::Ref<'static>>, PyroError> {
-        let val = PyroValue::parse_wire(vec.view())?;
+}
+impl<'a> Decoder<'a, &'a str> for StringDecoder {
+    fn decode(&mut self, view: PyroView<'a>) -> Result<&'a str, PyroError> {
+        let val = PyroValue::parse_wire(view)?;
         if let PyroValue::Str(cow) = val {
-            // SAFETY: We own the PyroVec, and the string borrows from it.
-            let s = cow.as_ref();
-            let extended = unsafe { std::mem::transmute::<&str, &'static str>(s) };
-            Ok(TypedBuf {
-                vec,
-                inner: extended,
+            Ok(match cow {
+                Cow::Borrowed(s) => s,
+                Cow::Owned(_) => unreachable!("rkyv parsing should return borrowed data"),
             })
         } else {
             Err(PyroError::deserialization(Box::new(
@@ -100,15 +100,16 @@ impl Bridgeable for String {
             )))
         }
     }
+}
 
-    fn expose_view<'a>(view: PyroView<'a>) -> Result<TypedView<'a, Self::Ref<'a>>, PyroError> {
+impl<'a> Decoder<'a, String> for StringDecoder {
+    fn decode(&mut self, view: PyroView<'a>) -> Result<String, PyroError> {
         let val = PyroValue::parse_wire(view)?;
         if let PyroValue::Str(cow) = val {
-            let s = match cow {
-                Cow::Borrowed(s) => s,
-                Cow::Owned(_) => unreachable!("rkyv parsing should return borrowed data"),
-            };
-            Ok(TypedView { view, inner: s })
+            Ok(match cow {
+                Cow::Borrowed(s) => s.to_owned(),
+                Cow::Owned(s) => s,
+            })
         } else {
             Err(PyroError::deserialization(Box::new(
                 CapturedError::new(format!("Expected Str, found {:?}", val))
@@ -118,249 +119,70 @@ impl Bridgeable for String {
     }
 }
 
-// --- Option ---
+impl Bridgeable for String {
+    type Encoder = StringEncoder;
+    type Decoder = StringDecoder;
+    type Ref<'a> = &'a str;
+}
 
-impl Bridgeable for Option<String> {
-    type Ref<'a> = Option<&'a str>;
-
-    fn ship(&self) -> Result<PyroVec, PyroError> {
-        let val = PyroValue::from(self);
-        val.to_wire()
+pub struct StringEncoder;
+impl Default for StringEncoder {
+    fn default() -> Self {
+        Self
     }
-
-    #[track_caller]
-    fn expose(vec: PyroVec) -> Result<TypedBuf<Self::Ref<'static>>, PyroError> {
-        let val = PyroValue::parse_wire(vec.view())?;
-        match val {
-            PyroValue::Str(cow) => {
-                let s = cow.as_ref();
-                let extended = unsafe { std::mem::transmute::<&str, &'static str>(s) };
-                Ok(TypedBuf {
-                    vec,
-                    inner: Some(extended),
-                })
-            }
-            PyroValue::Null => Ok(TypedBuf { vec, inner: None }),
-            _ => Err(PyroError::deserialization(Box::new(
-                CapturedError::new(format!("Expected Str or Null, found {:?}", val))
-                    .with_location(Location::caller()),
-            ))),
-        }
-    }
-
-    fn expose_view<'a>(view: PyroView<'a>) -> Result<TypedView<'a, Self::Ref<'a>>, PyroError> {
-        let val = PyroValue::parse_wire(view)?;
-        match val {
-            PyroValue::Str(cow) => {
-                let s = match cow {
-                    Cow::Borrowed(s) => s,
-                    Cow::Owned(_) => unreachable!("rkyv parsing should return borrowed data"),
-                };
-                Ok(TypedView {
-                    view,
-                    inner: Some(s),
-                })
-            }
-            PyroValue::Null => Ok(TypedView { view, inner: None }),
-            _ => Err(PyroError::deserialization(Box::new(
-                CapturedError::new(format!("Expected Str or Null, found {:?}", val))
-                    .with_location(Location::caller()),
-            ))),
-        }
+}
+impl Encoder<&str> for StringEncoder {
+    fn encode(&mut self, value: &&str) -> Result<PyroVec, PyroError> {
+        PyroValue::Str(Cow::Borrowed(value)).to_wire()
     }
 }
 
-macro_rules! impl_bridgeable_option_scalar {
-    ($t:ty, $variant:ident) => {
-        impl Bridgeable for Option<$t> {
-            type Ref<'a> = Option<$t>;
-
-            fn ship(&self) -> Result<PyroVec, PyroError> {
-                let val = PyroValue::from(*self);
-                val.to_wire()
-            }
-
-            #[track_caller]
-            fn expose(vec: PyroVec) -> Result<TypedBuf<Self::Ref<'static>>, PyroError> {
-                let val = PyroValue::parse_wire(vec.view())?;
-                match val {
-                    PyroValue::$variant(inner) => Ok(TypedBuf {
-                        vec,
-                        inner: Some(inner),
-                    }),
-                    PyroValue::Null => Ok(TypedBuf { vec, inner: None }),
-                    _ => Err(PyroError::deserialization(Box::new(
-                        CapturedError::new(format!(
-                            "Expected {} or Null, found {:?}",
-                            stringify!($variant),
-                            val
-                        ))
-                        .with_location(Location::caller()),
-                    ))),
-                }
-            }
-
-            fn expose_view<'a>(
-                view: PyroView<'a>,
-            ) -> Result<TypedView<'a, Self::Ref<'a>>, PyroError> {
-                let val = PyroValue::parse_wire(view)?;
-                match val {
-                    PyroValue::$variant(inner) => Ok(TypedView {
-                        view,
-                        inner: Some(inner),
-                    }),
-                    PyroValue::Null => Ok(TypedView { view, inner: None }),
-                    _ => Err(PyroError::deserialization(Box::new(
-                        CapturedError::new(format!(
-                            "Expected {} or Null, found {:?}",
-                            stringify!($variant),
-                            val
-                        ))
-                        .with_location(Location::caller()),
-                    ))),
-                }
-            }
-        }
-    };
+impl Encoder<String> for StringEncoder {
+    fn encode(&mut self, value: &String) -> Result<PyroVec, PyroError> {
+        PyroValue::Str(Cow::Borrowed(value.as_str())).to_wire()
+    }
 }
-
-impl_bridgeable_option_scalar!(bool, Bool);
-impl_bridgeable_option_scalar!(i8, I8);
-impl_bridgeable_option_scalar!(i16, I16);
-impl_bridgeable_option_scalar!(i32, I32);
-impl_bridgeable_option_scalar!(i64, I64);
-impl_bridgeable_option_scalar!(u8, U8);
-impl_bridgeable_option_scalar!(u16, U16);
-impl_bridgeable_option_scalar!(u32, U32);
-impl_bridgeable_option_scalar!(u64, U64);
-impl_bridgeable_option_scalar!(half::f16, F16);
-impl_bridgeable_option_scalar!(f32, F32);
-impl_bridgeable_option_scalar!(f64, F64);
-impl_bridgeable_option_scalar!(Time, Timestamp);
 
 impl Bridgeable for &str {
+    type Encoder = StringEncoder;
+    type Decoder = StringDecoder;
     type Ref<'a> = &'a str;
-
-    fn ship(&self) -> Result<PyroVec, PyroError> {
-        let val = PyroValue::from(*self);
-        val.to_wire()
-    }
-
-    #[track_caller]
-    fn expose(vec: PyroVec) -> Result<TypedBuf<Self::Ref<'static>>, PyroError> {
-        let val = PyroValue::parse_wire(vec.view())?;
-        if let PyroValue::Str(cow) = val {
-            let s = cow.as_ref();
-            let extended = unsafe { std::mem::transmute::<&str, &'static str>(s) };
-            Ok(TypedBuf {
-                vec,
-                inner: extended,
-            })
-        } else {
-            Err(PyroError::deserialization(Box::new(
-                CapturedError::new(format!("Expected Str, found {:?}", val))
-                    .with_location(Location::caller()),
-            )))
-        }
-    }
-
-    fn expose_view<'a>(view: PyroView<'a>) -> Result<TypedView<'a, Self::Ref<'a>>, PyroError> {
-        let val = PyroValue::parse_wire(view)?;
-        if let PyroValue::Str(cow) = val {
-            // cow is Cow<'a, str> because it was parsed from view which has lifetime 'a
-            // Wait, cow is actually Cow<'a, str> because parse_wire returns PyroValue<'a>.
-            // However, the 'a in PyroValue<'a> is the lifetime of the view.
-
-            // Let's check the signature of expose_view:
-            // fn expose_view<'a>(vec: PyroView<'a>) -> Result<TypedView<'a, Self::Ref<'a>>, PyroError>
-
-            // Self::Ref<'a> is &'a str.
-
-            let s = match cow {
-                Cow::Borrowed(s) => s,
-                Cow::Owned(_) => unreachable!("rkyv parsing should return borrowed data"),
-            };
-            Ok(TypedView { view, inner: s })
-        } else {
-            Err(PyroError::deserialization(Box::new(
-                CapturedError::new(format!("Expected Str, found {:?}", val))
-                    .with_location(Location::caller()),
-            )))
-        }
-    }
-}
-
-// --- PyroValue ---
-
-impl Bridgeable for PyroValue<'static> {
-    type Ref<'a> = PyroValue<'a>;
-
-    fn ship(&self) -> Result<PyroVec, PyroError> {
-        self.to_wire()
-    }
-
-    #[track_caller]
-    fn expose(vec: PyroVec) -> Result<TypedBuf<Self::Ref<'static>>, PyroError> {
-        let val = PyroValue::parse_wire(vec.view())?;
-        let extended = unsafe { std::mem::transmute::<PyroValue<'_>, PyroValue<'static>>(val) };
-        Ok(TypedBuf {
-            vec,
-            inner: extended,
-        })
-    }
-
-    fn expose_view<'a>(view: PyroView<'a>) -> Result<TypedView<'a, Self::Ref<'a>>, PyroError> {
-        let val = PyroValue::parse_wire(view)?;
-        Ok(TypedView { view, inner: val })
-    }
-}
-
-// --- PyroRow ---
-
-impl Bridgeable for PyroRow<'static> {
-    type Ref<'a> = PyroRow<'a>;
-
-    fn ship(&self) -> Result<PyroVec, PyroError> {
-        self.to_wire()
-    }
-
-    #[track_caller]
-    fn expose(vec: PyroVec) -> Result<TypedBuf<Self::Ref<'static>>, PyroError> {
-        let val = PyroRow::parse_wire(vec.view())?;
-        let extended = unsafe { std::mem::transmute::<PyroRow<'_>, PyroRow<'static>>(val) };
-        Ok(TypedBuf {
-            vec,
-            inner: extended,
-        })
-    }
-
-    fn expose_view<'a>(view: PyroView<'a>) -> Result<TypedView<'a, Self::Ref<'a>>, PyroError> {
-        let val = PyroRow::parse_wire(view)?;
-        Ok(TypedView { view, inner: val })
-    }
 }
 
 // --- Primitive Lists ---
 
 macro_rules! impl_bridgeable_list {
-    ($t:ty, $variant:ident) => {
-        impl Bridgeable for Vec<$t> {
-            type Ref<'a> = &'a [$t];
-
-            fn ship(&self) -> Result<PyroVec, PyroError> {
-                let val = PyroValue::from(self.as_slice());
-                val.to_wire()
+    ($t:ty, $variant:ident, $encoder:ident, $decoder:ident) => {
+        pub struct $encoder;
+        impl Default for $encoder {
+            fn default() -> Self {
+                Self
             }
+        }
+        impl Encoder<&[$t]> for $encoder {
+            fn encode(&mut self, value: &&[$t]) -> Result<PyroVec, PyroError> {
+                PyroValue::PrimitiveList(PrimitiveValueList::$variant(Cow::Borrowed(*value)))
+                    .to_wire()
+            }
+        }
+        impl Encoder<Vec<$t>> for $encoder {
+            fn encode(&mut self, value: &Vec<$t>) -> Result<PyroVec, PyroError> {
+                PyroValue::PrimitiveList(PrimitiveValueList::$variant(Cow::Borrowed(
+                    value.as_slice(),
+                )))
+                .to_wire()
+            }
+        }
 
-            #[track_caller]
-            fn expose(vec: PyroVec) -> Result<TypedBuf<Self::Ref<'static>>, PyroError> {
-                let val = PyroValue::parse_wire(vec.view())?;
+        #[derive(Default)]
+        pub struct $decoder;
+        impl<'a> Decoder<'a, &'a [$t]> for $decoder {
+            fn decode(&mut self, view: PyroView<'a>) -> Result<&'a [$t], PyroError> {
+                let val = PyroValue::parse_wire(view)?;
                 if let PyroValue::PrimitiveList(PrimitiveValueList::$variant(cow)) = val {
-                    let s = cow.as_ref();
-                    let extended = unsafe { std::mem::transmute::<&[$t], &'static [$t]>(s) };
-                    Ok(TypedBuf {
-                        vec,
-                        inner: extended,
+                    Ok(match cow {
+                        Cow::Borrowed(s) => s,
+                        Cow::Owned(_) => unreachable!("rkyv parsing should return borrowed data"),
                     })
                 } else {
                     Err(PyroError::deserialization(Box::new(
@@ -373,41 +195,25 @@ macro_rules! impl_bridgeable_list {
                     )))
                 }
             }
+        }
 
-            fn expose_view<'a>(
-                view: PyroView<'a>,
-            ) -> Result<TypedView<'a, Self::Ref<'a>>, PyroError> {
-                let val = PyroValue::parse_wire(view)?;
-                if let PyroValue::PrimitiveList(PrimitiveValueList::$variant(cow)) = val {
-                    let s = match cow {
-                        Cow::Borrowed(s) => s,
-                        Cow::Owned(_) => unreachable!("rkyv parsing should return borrowed data"),
-                    };
-                    Ok(TypedView { view, inner: s })
-                } else {
-                    Err(PyroError::deserialization(Box::new(
-                        CapturedError::new(format!(
-                            "Expected PrimitiveList({}), found {:?}",
-                            stringify!($variant),
-                            val
-                        ))
-                        .with_location(Location::caller()),
-                    )))
-                }
-            }
+        impl Bridgeable for Vec<$t> {
+            type Encoder = $encoder;
+            type Decoder = $decoder;
+            type Ref<'a> = &'a [$t];
         }
     };
 }
 
-impl_bridgeable_list!(bool, Bool);
-impl_bridgeable_list!(i8, I8);
-impl_bridgeable_list!(i16, I16);
-impl_bridgeable_list!(i32, I32);
-impl_bridgeable_list!(i64, I64);
-impl_bridgeable_list!(u8, U8);
-impl_bridgeable_list!(u16, U16);
-impl_bridgeable_list!(u32, U32);
-impl_bridgeable_list!(u64, U64);
-impl_bridgeable_list!(half::f16, F16);
-impl_bridgeable_list!(f32, F32);
-impl_bridgeable_list!(f64, F64);
+impl_bridgeable_list!(bool, Bool, BoolListEncoder, BoolListDecoder);
+impl_bridgeable_list!(i8, I8, I8ListEncoder, I8ListDecoder);
+impl_bridgeable_list!(i16, I16, I16ListEncoder, I16ListDecoder);
+impl_bridgeable_list!(i32, I32, I32ListEncoder, I32ListDecoder);
+impl_bridgeable_list!(i64, I64, I64ListEncoder, I64ListDecoder);
+impl_bridgeable_list!(u8, U8, U8ListEncoder, U8ListDecoder);
+impl_bridgeable_list!(u16, U16, U16ListEncoder, U16ListDecoder);
+impl_bridgeable_list!(u32, U32, U32ListEncoder, U32ListDecoder);
+impl_bridgeable_list!(u64, U64, U64ListEncoder, U64ListDecoder);
+impl_bridgeable_list!(half::f16, F16, F16ListEncoder, F16ListDecoder);
+impl_bridgeable_list!(f32, F32, F32ListEncoder, F32ListDecoder);
+impl_bridgeable_list!(f64, F64, F64ListEncoder, F64ListDecoder);

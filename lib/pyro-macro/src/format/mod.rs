@@ -116,6 +116,7 @@ impl Parse for BridgeableArgs {
 pub mod deep_ref;
 pub mod documentation;
 pub mod from_row;
+pub mod io;
 pub mod library;
 pub mod to_row;
 
@@ -140,6 +141,9 @@ pub fn magma(
     // 4. Generate ToRow
     let to_row = to_row::to_row(&item, import_location)?;
 
+    // 5. Generate Bridgeable
+    let bridgeable = io::bridgeable(&item, import_location)?;
+
     Ok(quote! {
         #item
         #documentation
@@ -148,5 +152,6 @@ pub fn magma(
         #from_row
         #ref_from_row
         #to_row
+        #bridgeable
     })
 }
