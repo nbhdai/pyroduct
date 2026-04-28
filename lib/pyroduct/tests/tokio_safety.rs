@@ -14,12 +14,13 @@ async fn test_stream_roundtrip() {
 
     let mut stream_buffer = Vec::new();
 
-    write_to_stream(&mut stream_buffer, &original, None)
+    write_to_stream(&mut stream_buffer, &original.view(), 0, None)
         .await
         .expect("Write failed");
 
     let mut cursor = Cursor::new(stream_buffer);
-    let recovered = read_from_stream(&mut cursor, None)
+    let mut recovered = PyroVec::with_capacity(0);
+    read_from_stream(&mut cursor, None, &mut recovered)
         .await
         .expect("Read failed");
 
@@ -41,12 +42,15 @@ async fn test_stream_preserves_header_fields() {
     original.set_fn_id(0x12);
 
     let mut stream_buffer = Vec::new();
-    write_to_stream(&mut stream_buffer, &original, None)
+    write_to_stream(&mut stream_buffer, &original.view(), 0, None)
         .await
         .unwrap();
 
     let mut cursor = Cursor::new(stream_buffer);
-    let recovered = read_from_stream(&mut cursor, None).await.unwrap();
+    let mut recovered = PyroVec::with_capacity(0);
+    read_from_stream(&mut cursor, None, &mut recovered)
+        .await
+        .unwrap();
 
     assert_eq!(recovered.status(), Ok(DataStatus::LocalSerialization));
     assert_eq!(recovered.fn_id(), 0x12);
@@ -63,7 +67,9 @@ async fn test_read_rejects_bad_magic() {
     bad_packet.extend_from_slice(&[0u8; 10]);
 
     let mut cursor = Cursor::new(bad_packet);
-    let result = read_from_stream(&mut cursor, None).await;
+    let mut recovered = PyroVec::with_capacity(0);
+
+    let result = read_from_stream(&mut cursor, None, &mut recovered).await;
 
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
@@ -75,7 +81,8 @@ async fn test_read_detects_header_eof() {
     let partial_header = vec![0u8; 10];
     let mut cursor = Cursor::new(partial_header);
 
-    let result = read_from_stream(&mut cursor, None).await;
+    let mut recovered = PyroVec::with_capacity(0);
+    let result = read_from_stream(&mut cursor, None, &mut recovered).await;
 
     assert!(result.is_err());
     assert_eq!(
@@ -98,7 +105,8 @@ async fn test_read_detects_body_eof() {
     packet.extend_from_slice(b"12345");
 
     let mut cursor = Cursor::new(packet);
-    let result = read_from_stream(&mut cursor, None).await;
+    let mut recovered = PyroVec::with_capacity(0);
+    let result = read_from_stream(&mut cursor, None, &mut recovered).await;
 
     assert!(result.is_err());
     // Should fail because it couldn't fill the buffer

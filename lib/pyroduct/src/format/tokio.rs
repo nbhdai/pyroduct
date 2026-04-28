@@ -6,6 +6,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+use crate::format::PyroView;
 use crate::format::{
     PyroVec,
     header::{PyroHeader, PyroHeaderMut},
@@ -70,7 +71,8 @@ impl AsyncWrite for PyroVec {
 pub async fn read_from_stream<R>(
     src: &mut R,
     config: Option<&PyroStreamSettings>,
-) -> io::Result<PyroVec>
+    vec: &mut PyroVec,
+) -> io::Result<()>
 where
     R: AsyncRead + Unpin,
 {
@@ -111,7 +113,6 @@ where
     }
 
     // 3. Allocate and set metadata
-    let mut vec = PyroVec::with_capacity(len);
     vec.set_wire_format(wire_format);
     vec.set_class_id(class_id);
     vec.set_fn_id(fn_id);
@@ -121,7 +122,7 @@ where
     // 4. Read Payload
     if len > 0 {
         let mut reader = src.take(len as u64);
-        let bytes_read = io::copy(&mut reader, &mut vec).await?;
+        let bytes_read = io::copy(&mut reader, vec).await?;
 
         if bytes_read != len as u64 {
             return Err(Error::new(
@@ -133,14 +134,15 @@ where
 
     debug_assert_eq!(len, vec.len());
 
-    Ok(vec)
+    Ok(())
 }
 
 /// Helper to write a PyroVec to an async stream.
 /// This writes the header (with version/status) followed by the data payload.
 pub async fn write_to_stream<W>(
     dest: &mut W,
-    vec: &PyroVec,
+    view: &PyroView<'_>,
+    mux_id: u32,
     config: Option<&PyroStreamSettings>,
 ) -> io::Result<()>
 where
@@ -151,7 +153,7 @@ where
         None => &DEFAULT_STREAM_SETTINGS,
     };
 
-    if vec.len() > config.max_msg_size {
+    if view.len() > config.max_msg_size {
         return Err(Error::new(
             ErrorKind::InvalidData,
             "Message size exceeds limit",
@@ -159,31 +161,28 @@ where
     }
 
     // 0x04: Client
-    dest.write_u32_le(vec.client_id()).await?;
+    dest.write_u32_le(view.client_id()).await?;
 
     // 0x04: Length
-    dest.write_u32_le(vec.client_id() as u32).await?;
-
-    // 0x04: Length
-    dest.write_u32_le(vec.len() as u32).await?;
+    dest.write_u32_le(view.len() as u32).await?;
 
     // 0x08: Wire Format
-    dest.write_u8(vec.wire_format()).await?;
+    dest.write_u8(view.wire_format()).await?;
 
     // 0x09: Status
-    dest.write_u8(vec.status_u8()).await?;
+    dest.write_u8(view.status_u8()).await?;
 
     // 0x0A: Class ID
-    dest.write_u8(vec.class_id()).await?;
+    dest.write_u8(view.class_id()).await?;
 
     // 0x0B: Function ID
-    dest.write_u8(vec.fn_id()).await?;
+    dest.write_u8(view.fn_id()).await?;
 
     // 0x0C: Mux ID
-    dest.write_u32_le(vec.mux_id()).await?;
+    dest.write_u32_le(mux_id).await?;
 
     // Payload
-    dest.write_all(vec.as_slice()).await?;
+    dest.write_all(view.as_slice()).await?;
 
     Ok(())
 }
@@ -207,19 +206,19 @@ mod tests {
         original.set_wire_format(0xAA);
         original.set_class_id(0xBB);
         original.set_fn_id(0xCC);
-        original.set_mux_id(0x12345678);
         original.set_status(crate::format::header::DataStatus::LocalIo);
 
         let mut stream = Vec::new();
 
         // Step 1: Write to stream
-        write_to_stream(&mut stream, &original, None)
+        write_to_stream(&mut stream, &original.view(), 0x12345678, None)
             .await
             .expect("Failed to write to stream");
 
         // Step 3: Read back from stream using framing logic
         let mut reader = Cursor::new(stream);
-        let recovered = read_from_stream(&mut reader, None)
+        let mut recovered = PyroVec::with_capacity(0);
+        read_from_stream(&mut reader, None, &mut recovered)
             .await
             .expect("Failed to read from stream");
 
@@ -242,10 +241,15 @@ mod tests {
         original.set_class_id(5);
 
         let mut stream = Vec::new();
-        write_to_stream(&mut stream, &original, None).await.unwrap();
+        write_to_stream(&mut stream, &original.view(), 0, None)
+            .await
+            .unwrap();
 
         let mut reader = Cursor::new(stream);
-        let recovered = read_from_stream(&mut reader, None).await.unwrap();
+        let mut recovered = PyroVec::with_capacity(0);
+        read_from_stream(&mut reader, None, &mut recovered)
+            .await
+            .unwrap();
 
         assert_eq!(recovered.len(), 0);
         assert_eq!(
@@ -261,7 +265,8 @@ mod tests {
         let partial_header = vec![0u8; 8];
         let mut reader = Cursor::new(partial_header);
 
-        let result = read_from_stream(&mut reader, None).await;
+        let mut recovered = PyroVec::with_capacity(0);
+        let result = read_from_stream(&mut reader, None, &mut recovered).await;
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().kind(),

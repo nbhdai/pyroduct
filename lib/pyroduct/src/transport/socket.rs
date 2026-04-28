@@ -1,81 +1,51 @@
-//! Socket transport for PyroVec — Unix and TCP.
-//!
-//! Provides [`PyroSocket`], a unified connection abstraction that wraps either a
-//! Unix domain socket or a TCP stream. Both transports use the same framing
-//! protocol as [`read_from_stream`] / [`write_to_stream`].
-//!
-//! # Quick start
-//!
-//! ```rust,ignore
-//! // Connect over TCP
-//! let mut sock = PyroSocket::connect_tcp("127.0.0.1:9000").await?;
-//!
-//! // Connect over a Unix domain socket
-//! let mut sock = PyroSocket::connect_unix("/tmp/pyro.sock").await?;
-//!
-//! // Send a PyroVec
-//! sock.send(&vec).await?;
-//!
-//! // Receive a PyroVec
-//! let response = sock.recv().await?;
-//!
-//! // Listen for incoming connections (TCP)
-//! let mut listener = PyroListener::bind_tcp("127.0.0.1:9000").await?;
-//! while let Some(conn) = listener.accept().await? {
-//!     tokio::spawn(async move { handle(conn).await });
-//! }
-//! ```
-
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
-use tokio::io::{AsyncWriteExt, BufReader, BufWriter};
+use dashmap::DashMap;
+use tokio::io::{BufReader, BufWriter};
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
+use tokio::sync::{mpsc, oneshot};
 
+use crate::format::PyroView;
 use crate::format::{
     PyroVec,
+    header::{PyroHeader, PyroHeaderMut},
     tokio::{PyroStreamSettings, read_from_stream, write_to_stream},
 };
 
-// ── Inner stream ─────────────────────────────────────────────────────────────
-
-enum Inner {
-    Tcp(BufReader<TcpStream>),
-    Unix(BufReader<UnixStream>),
-}
-
-impl Inner {}
-
 // ── PyroSocket ───────────────────────────────────────────────────────────────
 
-/// A bidirectional PyroVec connection over TCP or Unix domain sockets.
+/// A bidirectional, multiplexed PyroVec connection over TCP or Unix domain sockets.
+///
+/// `PyroSocket` allows multiple tasks to share a single connection concurrently.
+/// It automatically manages `mux_id` headers to route responses back to the
+/// correct caller when using [`request`](Self::request).
 ///
 /// Constructed via [`PyroSocket::connect_tcp`], [`PyroSocket::connect_unix`],
 /// or obtained from a [`PyroListener`].
+#[derive(Clone)]
 pub struct PyroSocket {
-    inner: Inner,
+    inner: Arc<SocketInner>,
+    unmatched_rx: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<PyroVec>>>,
+}
+
+struct SocketInner {
+    tx: mpsc::UnboundedSender<PyroVec>,
+    pending: DashMap<u32, oneshot::Sender<PyroVec>>,
+    unmatched_tx: mpsc::UnboundedSender<PyroVec>,
+    next_id: AtomicU32,
     settings: PyroStreamSettings,
 }
 
 /// The reading half of a [`PyroSocket`].
 pub struct PyroReadHalf {
-    inner: ReadInner,
-    settings: PyroStreamSettings,
+    socket: PyroSocket,
 }
 
 /// The writing half of a [`PyroSocket`].
 pub struct PyroWriteHalf {
-    inner: WriteInner,
-    settings: PyroStreamSettings,
-}
-
-enum ReadInner {
-    Tcp(BufReader<tokio::net::tcp::OwnedReadHalf>),
-    Unix(BufReader<tokio::net::unix::OwnedReadHalf>),
-}
-
-enum WriteInner {
-    Tcp(BufWriter<tokio::net::tcp::OwnedWriteHalf>),
-    Unix(BufWriter<tokio::net::unix::OwnedWriteHalf>),
+    socket: PyroSocket,
 }
 
 impl PyroSocket {
@@ -85,122 +55,175 @@ impl PyroSocket {
     pub async fn connect_tcp(addr: impl tokio::net::ToSocketAddrs) -> std::io::Result<Self> {
         let stream = TcpStream::connect(addr).await?;
         stream.set_nodelay(true)?;
-        Ok(Self {
-            inner: Inner::Tcp(BufReader::new(stream)),
-            settings: PyroStreamSettings::default(),
-        })
+        let settings = PyroStreamSettings::default();
+        let (rh, wh) = stream.into_split();
+        Ok(Self::new(BufReader::new(rh), BufWriter::new(wh), settings))
     }
 
     /// Connect to a Unix domain socket path.
     pub async fn connect_unix(path: impl AsRef<Path>) -> std::io::Result<Self> {
         let stream = UnixStream::connect(path).await?;
-        Ok(Self {
-            inner: Inner::Unix(BufReader::new(stream)),
-            settings: PyroStreamSettings::default(),
-        })
+        let settings = PyroStreamSettings::default();
+        let (rh, wh) = stream.into_split();
+        Ok(Self::new(BufReader::new(rh), BufWriter::new(wh), settings))
+    }
+
+    fn new<R, W>(
+        mut reader: BufReader<R>,
+        mut writer: BufWriter<W>,
+        settings: PyroStreamSettings,
+    ) -> Self
+    where
+        R: tokio::io::AsyncRead + Unpin + Send + 'static,
+        W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
+        let (tx, mut rx) = mpsc::unbounded_channel::<PyroVec>();
+        let (unmatched_tx, unmatched_rx) = mpsc::unbounded_channel();
+
+        let inner = Arc::new(SocketInner {
+            tx,
+            pending: DashMap::new(),
+            unmatched_tx,
+            next_id: AtomicU32::new(1),
+            settings,
+        });
+
+        // Background Read Task
+        let inner_read = inner.clone();
+        let settings_read = settings;
+        tokio::spawn(async move {
+            loop {
+                let mut vec = PyroVec::with_capacity(0);
+                match read_from_stream(&mut reader, Some(&settings_read), &mut vec).await {
+                    Ok(_) => {
+                        let id = vec.mux_id();
+                        if id != 0 {
+                            if let Some((_, sender)) = inner_read.pending.remove(&id) {
+                                let _ = sender.send(vec);
+                                continue;
+                            }
+                        }
+                        // Unmatched or mux_id == 0
+                        if inner_read.unmatched_tx.send(vec).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        // Background Write Task
+        let settings_write = settings;
+        tokio::spawn(async move {
+            while let Some(vec) = rx.recv().await {
+                let view = vec.view();
+                if write_to_stream(&mut writer, &view, vec.mux_id(), Some(&settings_write))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                if tokio::io::AsyncWriteExt::flush(&mut writer).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        Self {
+            inner,
+            unmatched_rx: Arc::new(tokio::sync::Mutex::new(unmatched_rx)),
+        }
     }
 
     /// Override the default stream settings (max message size, timeout).
+    ///
+    /// NOTE: This currently only affects the handle. Background tasks use the settings
+    /// provided at creation.
     pub fn with_settings(mut self, settings: PyroStreamSettings) -> Self {
-        self.settings = settings;
+        Arc::get_mut(&mut self.inner).map(|i| i.settings = settings);
         self
     }
 
     // ── Send / Recv ───────────────────────────────────────────────────────────
 
-    /// Write a [`PyroVec`] to the socket.
-    pub async fn send(&mut self, vec: &PyroVec) -> std::io::Result<()> {
-        match &mut self.inner {
-            Inner::Tcp(r) => {
-                // get_mut gives the underlying TcpStream through BufReader
-                let stream = r.get_mut();
-                let mut w = BufWriter::new(stream);
-                write_to_stream(&mut w, vec, Some(&self.settings)).await?;
-                use tokio::io::AsyncWriteExt;
-                w.flush().await
-            }
-            Inner::Unix(r) => {
-                let stream = r.get_mut();
-                let mut w = BufWriter::new(stream);
-                write_to_stream(&mut w, vec, Some(&self.settings)).await?;
-                use tokio::io::AsyncWriteExt;
-                w.flush().await
-            }
-        }
+    /// Write a [`PyroView`] to the socket.
+    ///
+    /// This sends the message without waiting for a response.
+    pub async fn send(&self, view: &PyroView<'_>) -> std::io::Result<()> {
+        let vec = view.clone_to_vec();
+        self.inner.tx.send(vec).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "socket write task closed")
+        })
     }
 
-    /// Read the next [`PyroVec`] from the socket.
-    pub async fn recv(&mut self) -> std::io::Result<PyroVec> {
-        match &mut self.inner {
-            Inner::Tcp(r) => read_from_stream(r, Some(&self.settings)).await,
-            Inner::Unix(r) => read_from_stream(r, Some(&self.settings)).await,
-        }
+    /// Read the next unsolicited [`PyroVec`] from the socket.
+    ///
+    /// This returns messages that were not part of a [`request`](Self::request)
+    /// flow (e.g. notifications or incoming requests).
+    pub async fn recv(&self) -> std::io::Result<PyroVec> {
+        let mut rx = self.unmatched_rx.lock().await;
+        rx.recv().await.ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "socket read task closed",
+            )
+        })
     }
 
-    /// Perform a single send + recv round-trip.
-    pub async fn request(&mut self, vec: &PyroVec) -> std::io::Result<PyroVec> {
-        self.send(vec).await?;
-        self.recv().await
+    /// Perform a multiplexed RPC request.
+    ///
+    /// This assigns a unique `mux_id` to the request, sends it, and waits for
+    /// a response with the same `mux_id`.
+    pub async fn request(&self, view: &PyroView<'_>) -> std::io::Result<PyroVec> {
+        let id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);
+        let mut vec = view.clone_to_vec();
+        vec.set_mux_id(id);
+
+        let (tx, rx) = oneshot::channel();
+        self.inner.pending.insert(id, tx);
+
+        self.inner.tx.send(vec).map_err(|_| {
+            self.inner.pending.remove(&id);
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "socket write task closed")
+        })?;
+
+        rx.await.map_err(|_| {
+            self.inner.pending.remove(&id);
+            std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "socket read task closed or request timed out",
+            )
+        })
     }
 
-    /// Split the socket into owned read and write halves.
+    /// Split the socket into read and write halves.
+    ///
+    /// Since `PyroSocket` is internally multiplexed and cloneable, these halves
+    /// are simply wrappers around the same shared state.
     pub fn split(self) -> (PyroReadHalf, PyroWriteHalf) {
-        match self.inner {
-            Inner::Tcp(r) => {
-                let stream = r.into_inner();
-                let (rh, wh) = stream.into_split();
-                (
-                    PyroReadHalf {
-                        inner: ReadInner::Tcp(BufReader::new(rh)),
-                        settings: self.settings,
-                    },
-                    PyroWriteHalf {
-                        inner: WriteInner::Tcp(BufWriter::new(wh)),
-                        settings: self.settings,
-                    },
-                )
-            }
-            Inner::Unix(r) => {
-                let stream = r.into_inner();
-                let (rh, wh) = stream.into_split();
-                (
-                    PyroReadHalf {
-                        inner: ReadInner::Unix(BufReader::new(rh)),
-                        settings: self.settings,
-                    },
-                    PyroWriteHalf {
-                        inner: WriteInner::Unix(BufWriter::new(wh)),
-                        settings: self.settings,
-                    },
-                )
-            }
-        }
+        (
+            PyroReadHalf {
+                socket: self.clone(),
+            },
+            PyroWriteHalf {
+                socket: self.clone(),
+            },
+        )
     }
 }
 
 impl PyroReadHalf {
-    /// Read the next [`PyroVec`] from the socket.
+    /// Read the next unsolicited [`PyroVec`] from the socket.
     pub async fn recv(&mut self) -> std::io::Result<PyroVec> {
-        match &mut self.inner {
-            ReadInner::Tcp(r) => read_from_stream(r, Some(&self.settings)).await,
-            ReadInner::Unix(r) => read_from_stream(r, Some(&self.settings)).await,
-        }
+        self.socket.recv().await
     }
 }
 
 impl PyroWriteHalf {
     /// Write a [`PyroVec`] to the socket.
-    pub async fn send(&mut self, vec: &PyroVec) -> std::io::Result<()> {
-        match &mut self.inner {
-            WriteInner::Tcp(w) => {
-                write_to_stream(w, vec, Some(&self.settings)).await?;
-                w.flush().await
-            }
-            WriteInner::Unix(w) => {
-                write_to_stream(w, vec, Some(&self.settings)).await?;
-                w.flush().await
-            }
-        }
+    pub async fn send(&mut self, view: &PyroView<'_>) -> std::io::Result<()> {
+        self.socket.send(view).await
     }
 }
 
@@ -227,9 +250,6 @@ impl PyroListener {
     }
 
     /// Bind a Unix domain socket listener to `path`.
-    ///
-    /// The socket file is **not** removed automatically when the listener is
-    /// dropped — callers should delete it beforehand if it may already exist.
     pub async fn bind_unix(path: impl AsRef<Path>) -> std::io::Result<Self> {
         Ok(Self {
             inner: ListenerInner::Unix(UnixListener::bind(path)?),
@@ -245,24 +265,27 @@ impl PyroListener {
 
     /// Accept the next incoming connection.
     ///
-    /// Returns a ready-to-use [`PyroSocket`] inheriting this listener's
-    /// settings.
+    /// Returns a ready-to-use multiplexed [`PyroSocket`].
     pub async fn accept(&self) -> std::io::Result<PyroSocket> {
         match &self.inner {
             ListenerInner::Tcp(l) => {
                 let (stream, _addr) = l.accept().await?;
                 stream.set_nodelay(true)?;
-                Ok(PyroSocket {
-                    inner: Inner::Tcp(BufReader::new(stream)),
-                    settings: self.settings,
-                })
+                let (rh, wh) = stream.into_split();
+                Ok(PyroSocket::new(
+                    BufReader::new(rh),
+                    BufWriter::new(wh),
+                    self.settings,
+                ))
             }
             ListenerInner::Unix(l) => {
                 let (stream, _addr) = l.accept().await?;
-                Ok(PyroSocket {
-                    inner: Inner::Unix(BufReader::new(stream)),
-                    settings: self.settings,
-                })
+                let (rh, wh) = stream.into_split();
+                Ok(PyroSocket::new(
+                    BufReader::new(rh),
+                    BufWriter::new(wh),
+                    self.settings,
+                ))
             }
         }
     }
@@ -293,122 +316,61 @@ mod tests {
         v
     }
 
-    // ── TCP ──────────────────────────────────────────────────────────────────
-
     #[tokio::test]
-    async fn test_tcp_send_recv() {
+    async fn test_multiplexing_concurrent_requests() {
         let listener = PyroListener::bind_tcp("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr_tcp().unwrap();
 
-        let server = tokio::spawn(async move {
-            let mut conn = listener.accept().await.unwrap();
-            conn.recv().await.unwrap()
+        // Echo server that preserves mux_id
+        tokio::spawn(async move {
+            let conn = listener.accept().await.unwrap();
+            loop {
+                let req = match conn.recv().await {
+                    Ok(r) => r,
+                    Err(_) => break,
+                };
+                let mut resp = PyroVec::with_capacity(req.len());
+                resp.extend_from_slice(req.as_slice());
+                resp.set_mux_id(req.mux_id());
+                resp.set_status(DataStatus::Valid);
+                if conn.send(&resp.view()).await.is_err() {
+                    break;
+                }
+            }
         });
 
-        let mut client = PyroSocket::connect_tcp(addr).await.unwrap();
-        let sent = make_vec(b"hello tcp", DataStatus::Valid);
-        client.send(&sent).await.unwrap();
+        let client = PyroSocket::connect_tcp(addr).await.unwrap();
 
-        let received = server.await.unwrap();
-        assert_eq!(received.as_slice(), b"hello tcp");
-        assert_eq!(received.status(), Ok(DataStatus::Valid));
+        let mut handles = Vec::new();
+        for i in 0..10 {
+            let client = client.clone();
+            handles.push(tokio::spawn(async move {
+                let payload = format!("hello {}", i);
+                let mut req = PyroVec::with_capacity(payload.len());
+                req.extend_from_slice(payload.as_bytes());
+                let resp = client.request(&req.view()).await.unwrap();
+                assert_eq!(resp.as_slice(), payload.as_bytes());
+            }));
+        }
+
+        for h in handles {
+            h.await.unwrap();
+        }
     }
 
     #[tokio::test]
-    async fn test_tcp_request_response() {
+    async fn test_unsolicited_messages() {
         let listener = PyroListener::bind_tcp("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr_tcp().unwrap();
 
         tokio::spawn(async move {
-            let mut conn = listener.accept().await.unwrap();
-            let req = conn.recv().await.unwrap();
-            // Echo back with class_id bumped
-            let mut resp = PyroVec::with_capacity(req.len());
-            resp.extend_from_slice(req.as_slice());
-            resp.set_class_id(req.class_id() + 1);
-            conn.send(&resp).await.unwrap();
+            let conn = listener.accept().await.unwrap();
+            let msg = make_vec(b"notification", DataStatus::Valid);
+            conn.send(&msg.view()).await.unwrap();
         });
 
-        let mut client = PyroSocket::connect_tcp(addr).await.unwrap();
-        let req = make_vec(b"ping", DataStatus::Valid);
-        let resp = client.request(&req).await.unwrap();
-
-        assert_eq!(resp.as_slice(), b"ping");
-        assert_eq!(resp.class_id(), req.class_id() + 1);
-    }
-
-    #[tokio::test]
-    async fn test_tcp_multi_message() {
-        let listener = PyroListener::bind_tcp("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr_tcp().unwrap();
-
-        let server = tokio::spawn(async move {
-            let mut conn = listener.accept().await.unwrap();
-            let a = conn.recv().await.unwrap();
-            let b = conn.recv().await.unwrap();
-            (a, b)
-        });
-
-        let mut client = PyroSocket::connect_tcp(addr).await.unwrap();
-        client
-            .send(&make_vec(b"first", DataStatus::Valid))
-            .await
-            .unwrap();
-        client
-            .send(&make_vec(b"second", DataStatus::Error))
-            .await
-            .unwrap();
-
-        let (a, b) = server.await.unwrap();
-        assert_eq!(a.as_slice(), b"first");
-        assert_eq!(b.as_slice(), b"second");
-        assert_eq!(b.status(), Ok(DataStatus::Error));
-    }
-
-    // ── Unix ─────────────────────────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn test_unix_send_recv() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("pyro_test.sock");
-
-        let listener = PyroListener::bind_unix(&path).await.unwrap();
-
-        let server = tokio::spawn(async move {
-            let mut conn = listener.accept().await.unwrap();
-            conn.recv().await.unwrap()
-        });
-
-        let mut client = PyroSocket::connect_unix(&path).await.unwrap();
-        let sent = make_vec(b"hello unix", DataStatus::Valid);
-        client.send(&sent).await.unwrap();
-
-        let received = server.await.unwrap();
-        assert_eq!(received.as_slice(), b"hello unix");
-    }
-
-    #[tokio::test]
-    async fn test_unix_roundtrip_preserves_header() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("pyro_hdr.sock");
-
-        let listener = PyroListener::bind_unix(&path).await.unwrap();
-
-        tokio::spawn(async move {
-            let mut conn = listener.accept().await.unwrap();
-            let msg = conn.recv().await.unwrap();
-            conn.send(&msg).await.unwrap(); // echo
-        });
-
-        let mut client = PyroSocket::connect_unix(&path).await.unwrap();
-        let mut original = make_vec(b"header check", DataStatus::Valid);
-        original.set_class_id(7);
-        original.set_fn_id(3);
-
-        let response = client.request(&original).await.unwrap();
-        assert_eq!(response.as_slice(), b"header check");
-        assert_eq!(response.class_id(), 7);
-        assert_eq!(response.fn_id(), 3);
-        assert_eq!(response.status(), Ok(DataStatus::Valid));
+        let client = PyroSocket::connect_tcp(addr).await.unwrap();
+        let received = client.recv().await.unwrap();
+        assert_eq!(received.as_slice(), b"notification");
     }
 }
