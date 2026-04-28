@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
-use crate::error::PyroError;
-use crate::format::{PyroVec, PyroView};
+use crate::format::header::{PyroHeader, PyroHeaderMut};
 use crate::transport::{PyroListener, PyroRouter, PyroSocket};
 
 /// A server that listens for incoming [`PyroSocket`] connections and routes

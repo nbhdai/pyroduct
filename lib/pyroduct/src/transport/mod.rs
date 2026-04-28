@@ -1,6 +1,9 @@
-pub mod router;
-pub mod server;
-pub mod socket;
+mod client;
+mod router;
+mod server;
+mod socket;
 
+pub use client::PyroClient;
+pub use server::PyroServer;
 pub use router::PyroRouter;
 pub use socket::{PyroListener, PyroSocket};

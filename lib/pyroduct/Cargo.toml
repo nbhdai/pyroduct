@@ -134,3 +134,7 @@ required-features = ["host"]
 [[test]]
 name = "ffi_safety"
 required-features = ["host", "capability"]
+
+[[test]]
+name = "test_pyro_server"
+required-features = ["transport"]
