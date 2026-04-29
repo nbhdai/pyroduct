@@ -6,8 +6,8 @@ use dashmap::DashMap;
 
 use crate::PyroError;
 use crate::ffi::host::ForeignObject;
-use crate::format::header::PyroHeader;
-use crate::format::{Bridgeable, PyroVec, PyroView};
+use crate::format::header::{PyroHeader};
+use crate::format::{Bridgeable, PyroVec, PyroView, SpecWire};
 use crate::module::capability::CapabilityLibrary;
 
 /// A router that dispatches requests to foreign objects loaded from a library.
@@ -48,6 +48,9 @@ impl PyroRouter {
 
         match fn_id {
             0 => {
+                self.library.interface.to_wire()
+            }
+            1 => {
                 let object = self
                     .library
                     .instantiate_class_raw(class_id, request)
@@ -57,14 +60,14 @@ impl PyroRouter {
                 self.objects.insert(class_id, object);
                 Ok(PyroVec::ok())
             }
-            1 => {
+            2 => {
                 let id = self
                     .client_id
                     .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                 self.clients.insert(id, request.clone_to_vec());
                 id.ship()
             }
-            2 => {
+            3 => {
                 let object = self.objects.get(&class_id).ok_or_else(|| {
                     PyroError::NotFound(format!("Object for class ID {} not configured", class_id))
                 })?;
@@ -77,8 +80,8 @@ impl PyroRouter {
                 let object = self.objects.get(&(class_id as u8)).ok_or_else(|| {
                     PyroError::NotFound(format!("Object for class ID {} not configured", class_id))
                 })?;
-                // fn_id 1 maps to methods[0], etc.
-                let method_index = (other - 2) as usize;
+                // fn_id 4 maps to methods[0], etc.
+                let method_index = (other - 4) as usize;
                 let client_id = request.client_id();
 
                 let client_data = self.clients.get(&client_id).ok_or_else(|| {

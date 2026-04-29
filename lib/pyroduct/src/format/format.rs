@@ -8,7 +8,7 @@ use crate::format::{
     header::{DataStatus, MutPyroData, PROTOCOL_VERSION, PyroData, PyroHeader, PyroHeaderMut},
     view::PyroView,
 };
-use crate::{PyroError, PyroResult};
+use crate::{CapturedError, PyroError, PyroResult};
 
 // =============================================================================
 // Foundational wrapper / typed-wrapper traits (unchanged)
@@ -287,22 +287,32 @@ where
 }
 
 // =============================================================================
-// PyroZeroCopyFormat — extension for zero-copy formats (rkyv, zerovec, …)
+// SpecWire
 // =============================================================================
 
-/// Extension trait for formats that support **zero-copy borrowed access**.
-///
-/// This adds:
-/// - `ViewParser` — parsing a `PyroView<'a>` without taking ownership
-/// - `parse_view` — the borrowed-view counterpart of `PyroFormat::parse`
-///
-/// Only formats where the parsed representation is a reference into the buffer
-/// (like rkyv's `T::Archived`) should implement this. Owned formats like JSON
-/// do not benefit from view parsing and should only implement `PyroFormat`.
-pub trait PyroZeroCopyFormat<T>: PyroFormat<T>
-where
-    T: UserHeaderValues,
-{
-    type Receiver: Receiver<<Self::VecParser as Parser<PyroVec, T>>::ParsedType, T>;
-    fn receiver() -> Self::Receiver;
+/// Trait for types that can be encoded as a specification on the wire.
+pub trait SpecWire: Sized {
+    fn to_wire(&self) -> PyroResult<PyroVec>;
+    fn parse_wire(view: PyroView<'_>) -> PyroResult<Self>;
+}
+
+impl SpecWire for pyro_spec::InterfaceSpec<'_> {
+    fn to_wire(&self) -> PyroResult<PyroVec> {
+        let bytes = serde_json::to_vec(self)
+            .map_err(|e| PyroError::serialization(CapturedError::new("Unable to serialize interface spec").with_source(e)))?;
+
+        let mut vec = PyroVec::with_capacity(bytes.len());
+        vec.extend_from_slice(&bytes);
+        vec.set_status(crate::format::header::DataStatus::InterfaceSchema);
+        Ok(vec)
+    }
+
+    fn parse_wire(view: PyroView<'_>) -> PyroResult<Self> {
+        if let Ok(DataStatus::InterfaceSchema) = view.status() {
+            let interface = serde_json::from_slice(&view).map_err(|e| PyroError::serialization(CapturedError::new("Unable to deserialize interface spec").with_source(e)))?;
+            Ok(interface)
+        } else {
+            Err(PyroError::Header(super::ParseError::UnknownStatus(view.status_u8())))
+        }
+    }
 }

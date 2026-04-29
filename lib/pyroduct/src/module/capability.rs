@@ -23,6 +23,7 @@ use crate::format::{
     format::{PyroFormat, Writer},
     json::Json,
 };
+use pyro_spec::InterfaceSpec;
 
 // =============================================================================
 // Error
@@ -186,6 +187,7 @@ pub struct CapabilityLibrary {
     pub id: i64,
     pub name: String,
     pub capabilities: IndexMap<String, Arc<ForeignClass>>,
+    pub interface: InterfaceSpec<'static>,
 }
 
 impl CapabilityLibrary {
@@ -211,7 +213,20 @@ impl CapabilityLibrary {
             return Err(CapabilityError::NoCapabilitiesFound { path: path_str });
         }
 
-        // 2. Load
+        // 2. Load Interface Spec
+        let interface_path = path.parent().unwrap_or(Path::new(".")).join("interface.json");
+        let interface_data = std::fs::read(&interface_path).map_err(|e| CapabilityError::FileRead {
+            path: interface_path.display().to_string(),
+            reason: e.to_string(),
+        })?;
+        let interface: InterfaceSpec<'static> = serde_json::from_slice(&interface_data).map_err(|e| {
+            CapabilityError::BinaryParse {
+                path: interface_path.display().to_string(),
+                reason: e.to_string(),
+            }
+        })?;
+
+        // 3. Load Library
         let library =
             Arc::new(
                 unsafe { Library::new(path) }.map_err(|e| CapabilityError::LibraryOpen {
@@ -221,7 +236,7 @@ impl CapabilityLibrary {
             );
         let id = NEXT_LIB_ID.fetch_add(1, Ordering::SeqCst);
 
-        // 3. Register
+        // 4. Register
         let mut capabilities = IndexMap::with_capacity(pyro_symbols.len());
         for sym in &pyro_symbols {
             let sym_cstr = format!("{}\0", sym.name);
@@ -259,6 +274,7 @@ impl CapabilityLibrary {
             id,
             name: name.clone(),
             capabilities,
+            interface,
         })
     }
 

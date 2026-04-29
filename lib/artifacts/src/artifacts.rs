@@ -35,6 +35,7 @@ impl Deref for CapBinary {
 pub struct CapabilityBinary {
     pub ident: CapabilityIdent,
     pub libs: Vec<CapBinary>,
+    pub interface: InterfaceSpec<'static>,
 }
 
 pub struct CapabilitySource {
@@ -230,6 +231,9 @@ impl Artifact for CapabilityBinary {
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
         )
         .await?;
+        let interface_json = serde_json::to_string_pretty(&self.interface)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        fs::write(path.join("interface.json"), interface_json).await?;
         Ok(())
     }
 
@@ -251,6 +255,13 @@ impl Artifact for CapabilityBinary {
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
                 .as_bytes(),
         )?;
+        append_file(
+            &mut tar,
+            "interface.json",
+            serde_json::to_string_pretty(&self.interface)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
+                .as_bytes(),
+        )?;
 
         tar.into_inner()?.finish()
     }
@@ -261,6 +272,7 @@ impl Artifact for CapabilityBinary {
 
         let mut libs = Vec::new();
         let mut ident = None;
+        let mut interface = None;
 
         for file in archive.entries()? {
             let mut file = file?;
@@ -280,6 +292,14 @@ impl Artifact for CapabilityBinary {
                         )
                     })?;
                 }
+                "interface.json" => {
+                    interface = serde_json::from_slice(&content).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Unable to deserialize interface: {}", e),
+                        )
+                    })?;
+                }
                 _ => {}
             }
         }
@@ -292,6 +312,9 @@ impl Artifact for CapabilityBinary {
             ident: ident
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing ident.json"))?,
             libs,
+            interface: interface.ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "Missing interface.json")
+            })?,
         })
     }
 
@@ -322,7 +345,15 @@ impl Artifact for CapabilityBinary {
             )
         })?;
 
-        Ok(CapabilityBinary { libs, ident })
+        let interface_string = fs::read(path.join("interface.json")).await?;
+        let interface = serde_json::from_slice(&interface_string).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unable to deserialize interface: {}", e),
+            )
+        })?;
+
+        Ok(CapabilityBinary { libs, ident, interface })
     }
 }
 

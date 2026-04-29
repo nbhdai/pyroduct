@@ -1,7 +1,11 @@
 use std::path::Path;
-use crate::format::{PyroVec, PyroView};
+use pyro_spec::InterfaceSpec;
+
+use crate::format::header::{PyroData, PyroHeader, PyroHeaderMut};
+use crate::format::{PyroVec, PyroView, SpecWire};
 use crate::transport::PyroSocket;
 use crate::PyroError;
+use crate::captured::Capture;
 
 /// A high-level client for communicating with a [`crate::transport::PyroServer`].
 ///
@@ -10,51 +14,79 @@ use crate::PyroError;
 pub struct PyroClient {
     socket: PyroSocket,
     client_id: Option<u32>,
+    interface: Option<pyro_spec::InterfaceSpec<'static>>,
 }
 
 impl PyroClient {
     /// Connect to a TCP address (e.g. `"127.0.0.1:9000"`).
-    pub async fn connect_tcp(addr: impl tokio::net::ToSocketAddrs) -> std::io::Result<Self> {
-        let socket = PyroSocket::connect_tcp(addr).await?;
+    pub async fn connect_tcp(addr: impl tokio::net::ToSocketAddrs) -> Result<Self, PyroError> {
+        let socket = PyroSocket::connect_tcp(addr).await.capture("Failed to connect via TCP")
+            .map_err(PyroError::local_io)?;
         Ok(Self {
             socket,
             client_id: None,
+            interface: None,
         })
     }
 
     /// Connect to a Unix domain socket path.
-    pub async fn connect_unix(path: impl AsRef<Path>) -> std::io::Result<Self> {
-        let socket = PyroSocket::connect_unix(path).await?;
+    pub async fn connect_unix(path: impl AsRef<Path>) -> Result<Self, PyroError> {
+        let socket = PyroSocket::connect_unix(path).await.capture("Failed to connect via Unix socket")
+            .map_err(PyroError::local_io)?;
         Ok(Self {
             socket,
             client_id: None,
+            interface: None,
         })
+    }
+
+    /// Fetch the capability interface.
+    ///
+    /// Sends a request with `fn_id = 0`.
+    pub async fn fetch_interface(&mut self) -> Result<&InterfaceSpec<'static>, PyroError> {
+        if let Some(ref interface) = self.interface {
+            return Ok(interface);
+        }
+
+        let mut req = PyroVec::ok();
+        req.set_fn_id(0);
+
+        let resp = self.socket.request(&req.view()).await.capture("Transport request failed")
+            .map_err(PyroError::local_io)?;
+        
+        let interface = InterfaceSpec::parse_wire(resp.view())?;
+        self.interface = Some(interface);
+        Ok(self.interface.as_ref().unwrap())
     }
 
     /// Configure a remote class.
     ///
-    /// Sends a request with `fn_id = 0` and the provided data.
+    /// Sends a request with `fn_id = 1` and the provided data.
     pub async fn configure_class(&mut self, class_id: u8, data: PyroView<'_>) -> Result<(), PyroError> {
         let mut req = data.clone_to_vec();
         req.set_class_id(class_id);
-        req.set_fn_id(0);
+        req.set_fn_id(1);
 
-        let resp = self.socket.request(&req.view()).await.map_err(PyroError::Transport)?;
-        if resp.status().is_ok() {
+        let resp = self.socket.request(&req.view()).await.capture("Transport request failed")
+            .map_err(PyroError::local_io)?;
+        resp.parse_as_error()?;
+
+        if resp.is_ok(){
             Ok(())
         } else {
-            resp.parse_as_error()
+            Err(PyroError::Header(crate::format::ParseError::UnknownStatus(resp.status_u8())))
         }
     }
 
     /// Register the client with the server to receive a `client_id`.
     ///
-    /// Sends a request with `fn_id = 1`. The server responds with the assigned `client_id`.
+    /// Sends a request with `fn_id = 2`. The server responds with the assigned `client_id`.
     pub async fn register(&mut self, data: PyroView<'_>) -> Result<u32, PyroError> {
         let mut req = data.clone_to_vec();
-        req.set_fn_id(1);
+        req.set_fn_id(2);
 
-        let resp = self.socket.request(&req.view()).await.map_err(PyroError::Transport)?;
+        let resp = self.socket.request(&req.view()).await.capture("Transport request failed")
+            .map_err(PyroError::local_io)?;
         
         // The server returns the client_id using .ship(), which means it's a Bridgeable u32.
         // We use u32::expose to get it back.
@@ -66,17 +98,20 @@ impl PyroClient {
 
     /// Reset a remote class.
     ///
-    /// Sends a request with `fn_id = 2`.
+    /// Sends a request with `fn_id = 3`.
     pub async fn reset_class(&mut self, class_id: u8) -> Result<(), PyroError> {
         let mut req = PyroVec::ok();
         req.set_class_id(class_id);
-        req.set_fn_id(2);
+        req.set_fn_id(3);
 
-        let resp = self.socket.request(&req.view()).await.map_err(PyroError::Transport)?;
-        if resp.status().is_ok() {
+        let resp = self.socket.request(&req.view()).await.capture("Transport request failed")
+            .map_err(PyroError::local_io)?;
+        resp.parse_as_error()?;
+
+        if resp.is_ok(){
             Ok(())
         } else {
-            resp.parse_as_error()
+            Err(PyroError::Header(crate::format::ParseError::UnknownStatus(resp.status_u8())))
         }
     }
 
@@ -91,28 +126,17 @@ impl PyroClient {
             req.set_client_id(cid);
         }
 
-        let resp = self.socket.request(&req.view()).await.map_err(PyroError::Transport)?;
-        if resp.status().is_ok() {
-            Ok(resp)
-        } else {
-            resp.parse_as_error()
-        }
+        let resp = self.socket.request(&req.view()).await.capture("Transport request failed")
+            .map_err(PyroError::local_io)?;
+        resp.parse_as_error()?;
+        Ok(resp)
     }
 
     /// Call a remote method by its index.
     ///
-    /// Maps `method_index` to `fn_id` based on the server's routing logic: `fn_id = method_index + 2`.
-    /// Note: Since `fn_id = 2` is reserved for reset, `method_index` 0 corresponds to `fn_id` 3
-    /// if the server logic is `method_index = fn_id - 3`? 
-    /// But server logic is `method_index = fn_id - 2`. 
-    /// If `fn_id = 3`, `method_index = 1`. 
-    /// If `fn_id = 2`, it's reset.
-    /// So `method_index` 0 is unreachable?
-    ///
-    /// For now, we follow `fn_id = method_index + 2` as hinted by the server's `other - 2`, 
-    /// while keeping in mind the potential bug in the server.
+    /// Maps `method_index` to `fn_id` based on the server's routing logic: `fn_id = method_index + 4`.
     pub async fn call_method(&self, class_id: u8, method_index: usize, data: PyroView<'_>) -> Result<PyroVec, PyroError> {
-        let fn_id = (method_index + 2) as u8;
+        let fn_id = (method_index + 4) as u8;
         self.call(class_id, fn_id, data).await
     }
 

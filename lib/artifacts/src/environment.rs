@@ -237,6 +237,7 @@ impl Environment {
                     author,
                 },
                 libs: vec![lib],
+                interface: interface.clone(),
             }),
             Artifacts::Interface(Interface {
                 manifest: self.manifest.clone(),

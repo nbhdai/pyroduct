@@ -234,7 +234,7 @@ pub mod vec_buf;
 mod view;
 
 pub use bridgeable::{Bridgeable, Decoder, Encoder};
-pub use format::{HasReceiver, Receiver};
+pub use format::{HasReceiver, Receiver, SpecWire};
 pub use header::ParseError;
 pub use value::{DeepRef, PyroRow, PyroValue, ToRow};
 pub use vec_buf::{PyroBuf, PyroBufPtr, PyroVec, PyroVecPtr};

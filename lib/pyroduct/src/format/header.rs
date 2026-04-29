@@ -46,6 +46,8 @@ define_data_status! {
     CodeError = 3,
     // The message contains json
     Json = 4,
+    // The message contains an interface specification
+    InterfaceSchema = 5,
 
     // A ffi pyro was unable to parse a header indicating a critical error.
     PyroFfiFail        = 99,
@@ -250,6 +252,7 @@ pub trait PyroData: private::Sealed + Deref<Target = [u8]> + Sized {
                 Ok(DataStatus::Empty)
                 | Ok(DataStatus::Valid)
                 | Ok(DataStatus::Error)
+                | Ok(DataStatus::InterfaceSchema)
                 | Ok(DataStatus::Json) => {
                     return Ok(());
                 }
