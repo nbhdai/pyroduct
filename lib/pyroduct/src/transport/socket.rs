@@ -92,25 +92,33 @@ impl PyroSocket {
         let inner_read = inner.clone();
         let settings_read = settings;
         tokio::spawn(async move {
+            tracing::debug!("READ TASK: started");
             loop {
+                tracing::debug!("READ TASK: waiting for data");
                 let mut vec = PyroVec::with_capacity(0);
                 match read_from_stream(&mut reader, Some(&settings_read), &mut vec).await {
                     Ok(_) => {
                         let id = vec.mux_id();
+                        tracing::debug!("READ TASK: read data, mux_id={}", id);
                         if id != 0 {
                             if let Some((_, sender)) = inner_read.pending.remove(&id) {
+                                tracing::debug!("READ TASK: routing to pending mux_id={}", id);
                                 let _ = sender.send(vec);
                                 continue;
                             }
+                            tracing::debug!("READ TASK: mux_id={} not in pending, routing to unmatched", id);
                         }
                         // Unmatched or mux_id == 0
+                        tracing::debug!("READ TASK: sending to unmatched");
                         if inner_read.unmatched_tx.send(vec).is_err() {
+                            tracing::debug!("READ TASK: unmatched send failed");
                             break;
                         }
                     }
-                    Err(_) => break,
+                    Err(e) => { tracing::debug!("READ TASK: read error: {:?}", e); break; }
                 }
             }
+            tracing::debug!("READ TASK: exited");
         });
 
         // Background Write Task
@@ -325,45 +333,62 @@ mod tests {
     }
 
     #[tokio::test]
+    #[tracing_test::traced_test]
     async fn test_multiplexing_concurrent_requests() {
         let listener = PyroListener::bind_tcp("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr_tcp().unwrap();
+        tracing::debug!("Listener bound to {}", addr);
 
         // Echo server that preserves mux_id
         tokio::spawn(async move {
+            tracing::debug!("Server: waiting for accept");
             let conn = listener.accept().await.unwrap();
+            tracing::debug!("Server: accepted connection");
             loop {
+                tracing::debug!("Server: reading request");
                 let req = match conn.recv().await {
                     Ok(r) => r,
-                    Err(_) => break,
+                    Err(e) => { tracing::debug!("Server: recv error: {:?}", e); break; }
                 };
+                tracing::debug!("Server: read req mux_id={}", req.mux_id());
                 let mut resp = PyroVec::with_capacity(req.len());
                 resp.extend_from_slice(req.as_slice());
                 resp.set_mux_id(req.mux_id());
                 resp.set_status(DataStatus::Valid);
+                tracing::debug!("Server: sending echo with mux_id={}", resp.mux_id());
                 if conn.send(resp.view().into()).await.is_err() {
+                    tracing::debug!("Server: send error");
                     break;
                 }
+                tracing::debug!("Server: echo sent");
             }
+            tracing::debug!("Server: loop exited");
         });
 
+        tracing::debug!("Client: connecting");
         let client = PyroSocket::connect_tcp(addr).await.unwrap();
+        tracing::debug!("Client: connected");
 
         let mut handles = Vec::new();
         for i in 0..10 {
             let client = client.clone();
             handles.push(tokio::spawn(async move {
+                tracing::debug!("Client task {}: sending request", i);
                 let payload = format!("hello {}", i);
                 let mut req = PyroVec::with_capacity(payload.len());
                 req.extend_from_slice(payload.as_bytes());
+                tracing::debug!("Client task {}: waiting for response", i);
                 let resp = client.request(None, None, None, req.into()).await.unwrap();
+                tracing::debug!("Client task {}: received response", i);
                 assert_eq!(resp.as_slice(), payload.as_bytes());
             }));
         }
 
+        tracing::debug!("Client: joining handles");
         for h in handles {
             h.await.unwrap();
         }
+        tracing::debug!("Client: all handles joined");
     }
 
     #[tokio::test]

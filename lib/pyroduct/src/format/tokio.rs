@@ -87,7 +87,9 @@ where
 
     // 2. Parse fields (Little Endian for multi-byte integers)
     // 0x04 - 0x07: Length
-    let len = u32::from_le_bytes(header_buf[4..8].try_into().unwrap()) as usize;
+    let len = u32::from_le_bytes(header_buf[0..4].try_into().unwrap()) as usize;
+
+    let client_id = u32::from_le_bytes(header_buf[4..8].try_into().unwrap());
 
     // 0x08: Wire Format
     let wire_format = header_buf[8];
@@ -113,6 +115,8 @@ where
 
     // 3. Allocate and set metadata
     vec.set_wire_format(wire_format);
+    unsafe { vec.set_len(len as u32) };
+    vec.set_client_id(client_id);
     vec.set_class_id(class_id);
     vec.set_fn_id(fn_id);
     vec.set_mux_id(mux_id);
@@ -232,11 +236,13 @@ where
         ));
     }
 
-    // 0x04: Client
-    dest.write_u32_le(request.client_id()).await?;
 
-    // 0x04: Length
+    // 0x00: Length
     dest.write_u32_le(request.view().len() as u32).await?;
+
+    // Wire header: matches the 16-byte layout that read_from_stream expects
+    // 0x04: client_id
+    dest.write_u32_le(request.client_id()).await?;
 
     // 0x08: Wire Format
     dest.write_u8(request.view().wire_format()).await?;
