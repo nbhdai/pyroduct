@@ -7,10 +7,10 @@ use tokio::io::{BufReader, BufWriter};
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::format::PyroView;
+use crate::format::tokio::{Request, RequestInner};
 use crate::format::{
     PyroVec,
-    header::{PyroHeader, PyroHeaderMut},
+    header::PyroHeader,
     tokio::{PyroStreamSettings, read_from_stream, write_to_stream},
 };
 
@@ -46,14 +46,6 @@ pub struct PyroReadHalf {
 /// The writing half of a [`PyroSocket`].
 pub struct PyroWriteHalf {
     socket: PyroSocket,
-}
-
-pub struct Request {
-    pub client_id: Option<u32>,
-    pub class_id: Option<u8>,
-    pub fn_id: Option<u8>,
-    pub mux_id: u32,
-    pub vec: PyroVec,
 }
 
 impl PyroSocket {
@@ -125,8 +117,7 @@ impl PyroSocket {
         let settings_write = settings;
         tokio::spawn(async move {
             while let Some(rec) = rx.recv().await {
-                let view = rec.vec.view();
-                if write_to_stream(&mut writer, &view, rec.mux_id, Some(&settings_write))
+                if write_to_stream(&mut writer, &rec, Some(&settings_write))
                     .await
                     .is_err()
                 {
@@ -159,9 +150,8 @@ impl PyroSocket {
     /// Write a [`PyroView`] to the socket.
     ///
     /// This sends the message without waiting for a response.
-    pub async fn send(&self, view: &PyroView) -> std::io::Result<()> {
-        let vec = view.clone_to_vec();
-        self.inner.tx.send(vec).map_err(|_| {
+    pub async fn send(&self, rec: Request) -> std::io::Result<()> {
+        self.inner.tx.send(rec).map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::BrokenPipe, "socket write task closed")
         })
     }
@@ -180,18 +170,18 @@ impl PyroSocket {
         })
     }
 
-    /// Perform a multiplexed RPC request.
+    /// Perform a multiplexed RPC request with explicit fields.
     ///
     /// This assigns a unique `mux_id` to the request, sends it, and waits for
     /// a response with the same `mux_id`.
-    pub async fn request(&self, client_id: Option<u32>, class_id: Option<u8>, fn_id: Option<u8>, view: &PyroView) -> std::io::Result<PyroVec> {
+    pub async fn request(&self, client_id: Option<u32>, class_id: Option<u8>, fn_id: Option<u8>, inner: RequestInner) -> std::io::Result<PyroVec> {
         let mux_id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);
         let request = Request {
             client_id,
             class_id,
             fn_id,
-            mux_id: todo!(),
-            vec,
+            mux_id: Some(mux_id),
+            inner,
         };
         let (tx, rx) = oneshot::channel();
         self.inner.pending.insert(mux_id, tx);
@@ -235,8 +225,8 @@ impl PyroReadHalf {
 
 impl PyroWriteHalf {
     /// Write a [`PyroVec`] to the socket.
-    pub async fn send(&mut self, view: &PyroView) -> std::io::Result<()> {
-        self.socket.send(view).await
+    pub async fn send(&mut self, request: Request) -> std::io::Result<()> {
+        self.socket.send(request).await
     }
 }
 
@@ -346,7 +336,7 @@ mod tests {
                 resp.extend_from_slice(req.as_slice());
                 resp.set_mux_id(req.mux_id());
                 resp.set_status(DataStatus::Valid);
-                if conn.send(&resp.view()).await.is_err() {
+                if conn.send(resp.view().into()).await.is_err() {
                     break;
                 }
             }
@@ -361,7 +351,7 @@ mod tests {
                 let payload = format!("hello {}", i);
                 let mut req = PyroVec::with_capacity(payload.len());
                 req.extend_from_slice(payload.as_bytes());
-                let resp = client.request(&req.view()).await.unwrap();
+                let resp = client.request(None, None, None, req.into()).await.unwrap();
                 assert_eq!(resp.as_slice(), payload.as_bytes());
             }));
         }
@@ -379,7 +369,7 @@ mod tests {
         tokio::spawn(async move {
             let conn = listener.accept().await.unwrap();
             let msg = make_vec(b"notification", DataStatus::Valid);
-            conn.send(&msg.view()).await.unwrap();
+            conn.send(msg.into()).await.unwrap();
         });
 
         let client = PyroSocket::connect_tcp(addr).await.unwrap();

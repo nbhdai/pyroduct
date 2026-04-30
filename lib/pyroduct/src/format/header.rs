@@ -116,10 +116,10 @@ pub struct PyroParser;
 impl PyroParser {
     pub const ALIGN: usize = 16;
     pub const HEADER_SIZE: usize = 16;
+    pub const OFFSET_LEN: usize = 0;
 
     // Offsets
-    pub const OFFSET_CLIENT: usize = 0;
-    pub const OFFSET_LEN: usize = 4;
+    pub const OFFSET_CLIENT: usize = 4;
     pub const OFFSET_WIRE: usize = 8;
     pub const OFFSET_STATUS: usize = 9;
     pub const OFFSET_CLASS_ID: usize = 10;

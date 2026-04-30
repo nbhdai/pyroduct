@@ -5,6 +5,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use crate::format::PyroView;
 use crate::format::{
     PyroVec,
     header::{PyroHeader, PyroHeaderMut},
@@ -135,19 +136,68 @@ where
     Ok(())
 }
 
+pub enum RequestInner {
+    View(PyroView),
+    Vec(PyroVec),
+}
+
+impl From<PyroView> for RequestInner {
+    fn from(value: PyroView) -> Self {
+        RequestInner::View(value)
+    }
+}
+
+impl From<PyroVec> for RequestInner {
+    fn from(value: PyroVec) -> Self {
+        RequestInner::Vec(value)
+    }
+}
+
 pub struct Request {
     pub client_id: Option<u32>,
     pub class_id: Option<u8>,
     pub fn_id: Option<u8>,
     pub mux_id: Option<u32>,
-    pub vec: PyroVec,
+    pub inner: RequestInner,
+}
+
+impl From<PyroView> for Request {
+    fn from(value: PyroView) -> Self {
+        Request { client_id: None, class_id: None, fn_id: None, mux_id: None, inner: RequestInner::View(value) }
+    }
 }
 
 impl From<PyroVec> for Request {
     fn from(value: PyroVec) -> Self {
-        Request { client_id: None, class_id: None, fn_id: None, mux_id: None, vec: value }
+        Request { client_id: None, class_id: None, fn_id: None, mux_id: None, inner: RequestInner::Vec(value) }
     }
 }
+
+impl Request {
+    fn view(&self) -> PyroView {
+        match &self.inner {
+            RequestInner::View(v) => *v,
+            RequestInner::Vec(vec) => vec.view(),
+        }
+    }
+
+    pub fn client_id(&self) -> u32 {
+        self.client_id.unwrap_or_else(|| self.view().client_id())
+    }
+
+    pub fn class_id(&self) -> u8 {
+        self.class_id.unwrap_or_else(|| self.view().class_id())
+    }
+
+    pub fn fn_id(&self) -> u8 {
+        self.fn_id.unwrap_or_else(|| self.view().fn_id())
+    }
+
+    pub fn mux_id(&self) -> u32 {
+        self.mux_id.unwrap_or_else(|| self.view().mux_id())
+    }
+}
+
 
 /// Helper to write a PyroVec to an async stream.
 /// This writes the header (with version/status) followed by the data payload.
@@ -164,7 +214,7 @@ where
         None => &DEFAULT_STREAM_SETTINGS,
     };
 
-    if request.vec.len() > config.max_msg_size {
+    if request.view().len() > config.max_msg_size {
         return Err(Error::new(
             ErrorKind::InvalidData,
             "Message size exceeds limit",
@@ -172,44 +222,28 @@ where
     }
 
     // 0x04: Client
-    if let Some(client_id) = request.client_id {
-        dest.write_u32_le(client_id).await?;
-    } else {
-        dest.write_u32_le(request.vec.client_id()).await?;
-    }
+    dest.write_u32_le(request.client_id()).await?;
 
     // 0x04: Length
-    dest.write_u32_le(request.vec.len() as u32).await?;
+    dest.write_u32_le(request.view().len() as u32).await?;
 
     // 0x08: Wire Format
-    dest.write_u8(request.vec.wire_format()).await?;
+    dest.write_u8(request.view().wire_format()).await?;
 
     // 0x09: Status
-    dest.write_u8(request.vec.status_u8()).await?;
+    dest.write_u8(request.view().status_u8()).await?;
 
     // 0x0A: Class ID
-if let Some(class_id) = request.class_id {
-        dest.write_u8(class_id).await?;
-    } else {
-        dest.write_u8(request.vec.class_id()).await?;
-    }
+    dest.write_u8(request.class_id()).await?;
 
     // 0x0B: Function ID
-if let Some(fn_id) = request.fn_id {
-        dest.write_u8(fn_id).await?;
-    } else {
-        dest.write_u8(request.vec.fn_id()).await?;
-    }
+    dest.write_u8(request.fn_id()).await?;
 
     // 0x0C: Mux ID
-if let Some(mux_id) = request.mux_id {
-        dest.write_u32_le(mux_id).await?;
-    } else {
-        dest.write_u32_le(request.vec.mux_id()).await?;
-    }
+    dest.write_u32_le(request.mux_id()).await?;
 
     // Payload
-    dest.write_all(request.vec.as_slice()).await?;
+    dest.write_all(request.view().as_slice()).await?;
 
     Ok(())
 }
@@ -237,7 +271,7 @@ mod tests {
 
         let mut stream = Vec::new();
 
-        let mut request: Request = original.into();
+        let mut request: Request = original.view().into();
         request.mux_id = Some(0x12345678);
 
         // Step 1: Write to stream
@@ -269,9 +303,9 @@ mod tests {
         let mut original = PyroVec::with_capacity(0);
         original.set_status(crate::format::header::DataStatus::Empty);
         original.set_class_id(5);
-
+        let request = original.view().into();
         let mut stream = Vec::new();
-        write_to_stream(&mut stream, &original.into(), None)
+        write_to_stream(&mut stream, &request, None)
             .await
             .unwrap();
 

@@ -55,7 +55,7 @@ impl PyroServer {
                 // Preserve the mux_id so the client can match the response to the request
                 response.set_mux_id(mux_id);
 
-                if let Err(e) = socket_clone.send(&response.view()).await {
+                if let Err(e) = socket_clone.send(response.into()).await {
                     tracing::error!("Failed to send response for mux_id {}: {:?}", mux_id, e);
                 }
             });

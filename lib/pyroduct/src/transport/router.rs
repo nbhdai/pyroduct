@@ -42,7 +42,7 @@ impl PyroRouter {
     /// Handle an incoming request.
     ///
     /// This dispatches the request to the appropriate object or configures a new one.
-    pub async fn handle(&self, request: PyroView<'_>) -> Result<PyroVec, PyroError> {
+    pub async fn handle(&self, request: PyroView) -> Result<PyroVec, PyroError> {
         let class_id = request.class_id();
         let fn_id = request.fn_id();
 
