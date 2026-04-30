@@ -6,6 +6,7 @@ use clap::ValueEnum;
 use fs_err as fs;
 
 use pyro_artifacts::cache::CacheManager;
+use pyroduct::format::PyroLogs;
 use pyroduct::pipeline::pipeline::LoadedPipelineConfig;
 use pyroduct::{
     PyroRow,
@@ -96,7 +97,7 @@ pub async fn run(config_path: &Path, input_json: &str) -> Result<()> {
 
     if has_logs {
         println!("\n=== Logs ===");
-        let print_step_logs = |step_idx: usize, logs: &pyroduct::module::PyroLogs| {
+        let print_step_logs = |step_idx: usize, logs: &PyroLogs| {
             if logs.module_logs.is_empty() && logs.capability_logs.is_empty() {
                 return;
             }

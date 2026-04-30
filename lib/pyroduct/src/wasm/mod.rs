@@ -93,7 +93,7 @@ pub fn get_input(ptr: *mut u8) -> Option<PyroVec> {
 
 /// Lend a read-only pointer to data owned inside wasm, for the host to read.
 pub unsafe fn lend(vec: &PyroVec) -> *const u8 {
-    let raw = vec.as_packet_slice();
+    let raw = vec.as_raw_slice();
     raw.as_ptr()
 }
 
@@ -106,7 +106,7 @@ pub fn store_error(error: PyroError) {
 
 /// Consume a PyroVec and register it for the host to pick up.
 pub fn to_output(vec: PyroVec) -> *const u8 {
-    let raw = vec.as_packet_slice();
+    let raw = vec.as_raw_slice();
     let ptr = raw.as_ptr();
 
     get_output_registry()

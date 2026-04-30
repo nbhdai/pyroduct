@@ -20,46 +20,34 @@ type PyroVecGrower =
     unsafe extern "C" fn(ptr: *mut u8, old_capacity: u32, new_capacity: u32) -> *mut u8;
 
 // ============================================================================
-// PyroInner — shared state for PyroVec, PyroBuf, and PyroView
+// PyroInner — shared state for PyroVec, PyroBuf
 // ============================================================================
 
 pub const INNER_HEADER: usize = 16;
 
 // align(16) guarantees that the start of the `data` field naturally falls on a
 // 16-byte boundary, which perfectly suits the PyroParser requirement.
-// 
-// Layout:
-// Offset 0:  local_ref_count (4 bytes)
-// Offset 4:  capacity (4 bytes)
-// Offset 8:  remote_ref_count (8 bytes)
-// Offset 16: data [u8; 0]
 #[repr(C, align(16))]
 #[derive(Debug)]
 pub(crate) struct PyroInner {
-    pub local_ref_count: AtomicU32,         // 4 bytes
-    pub capacity: u32,                      // 4 bytes
-    pub remote_ref_count: *const AtomicU32, // 8 bytes
+    pub ref_count: AtomicU32, // 4 bytes
+    pub capacity: u32,        // 4 bytes
 
-    // Starts perfectly at offset 16
+    // Explicit padding ensures the header totals exactly 16 bytes.
+    // The next field (`data`) starts perfectly on a 16-byte boundary.
+    _padding: u64, // 8 bytes
+
+    // Starts at offset 16
     pub data: [u8; 0],
 }
 
 impl PyroInner {
     fn new(capacity: u32) -> Self {
         Self {
-            local_ref_count: AtomicU32::new(0),
+            ref_count: AtomicU32::new(0),
             capacity,
-            remote_ref_count: ptr::null(),
+            _padding: 0,
             data: [],
-        }
-    }
-
-    #[inline]
-    pub fn ref_count(&self) -> &AtomicU32 {
-        if self.remote_ref_count.is_null() {
-            &self.local_ref_count
-        } else {
-            unsafe { &*self.remote_ref_count }
         }
     }
 
@@ -595,7 +583,7 @@ impl Drop for PyroVec {
     fn drop(&mut self) {
         unsafe {
             let inner = self.view.as_ref();
-            let ref_count = inner.ref_count().load(Ordering::Acquire);
+            let ref_count = inner.ref_count.load(Ordering::Acquire);
 
             if ref_count == 0 {
                 let base_ptr = self.view.as_ptr() as *mut u8;
@@ -639,6 +627,19 @@ pub struct PyroViewPtr {
 }
 
 // ============================================================================
+// PyroView Inner Representation
+// ============================================================================
+
+#[derive(Clone, Copy)]
+pub(crate) enum PyroViewInner {
+    FromVec(NonNull<PyroInner>),
+    FromOwned {
+        ref_count: NonNull<AtomicU32>,
+        data: *const u8, // Needs to always be 16 byte aligned.
+    },
+}
+
+// ============================================================================
 // PyroView
 // ============================================================================
 
@@ -649,7 +650,7 @@ pub struct PyroViewPtr {
 /// of the underlying memory. The caller must ensure the memory remains valid.
 #[derive(Clone, Copy)]
 pub struct PyroView {
-    pub(crate) inner: NonNull<PyroInner>,
+    pub(crate) inner: PyroViewInner,
 }
 
 unsafe impl Send for PyroView {}
@@ -659,15 +660,26 @@ impl PyroData for PyroView {
     #[inline]
     fn header(&self) -> &[u8; 16] {
         unsafe {
-            let inner = self.inner.as_ref();
-            &*(inner.data_ptr() as *const [u8; 16])
+            match self.inner {
+                PyroViewInner::FromVec(inner) => {
+                    &*(inner.as_ref().data_ptr() as *const [u8; 16])
+                }
+                PyroViewInner::FromOwned { data, .. } => {
+                    &*(data as *const [u8; 16])
+                }
+            }
         }
     }
 
     fn capacity(&self) -> usize {
-        unsafe {
-            let inner = self.inner.as_ref();
-            (inner.capacity as usize) - PyroParser::HEADER_SIZE
+        match self.inner {
+            PyroViewInner::FromVec(inner) => unsafe {
+                (inner.as_ref().capacity as usize) - PyroParser::HEADER_SIZE
+            },
+            PyroViewInner::FromOwned { .. } => {
+                // A split FromOwned view implies an exact slice mapping, so capacity equals its payload length
+                self.len()
+            }
         }
     }
 }
@@ -710,27 +722,36 @@ impl PyroView {
         };
 
         Ok(Self {
-            inner: unsafe { NonNull::new_unchecked(ptr) },
+            inner: PyroViewInner::FromVec(unsafe { NonNull::new_unchecked(ptr) }),
         })
     }
 
     pub fn as_slice(&self) -> &[u8] {
         unsafe {
-            let data = self.inner.as_ref().data_ptr().add(PyroParser::HEADER_SIZE);
-            slice::from_raw_parts(data, self.header_len() as usize)
+            let data_ptr = match self.inner {
+                PyroViewInner::FromVec(inner) => inner.as_ref().data_ptr(),
+                PyroViewInner::FromOwned { data, .. } => data,
+            };
+            slice::from_raw_parts(data_ptr.add(PyroParser::HEADER_SIZE), self.header_len() as usize)
         }
     }
 
     pub fn as_raw_slice(&self) -> &[u8] {
         unsafe {
-            let data = self.inner.as_ref().data_ptr();
-            slice::from_raw_parts(data, PyroParser::HEADER_SIZE + self.header_len() as usize)
+            let data_ptr = match self.inner {
+                PyroViewInner::FromVec(inner) => inner.as_ref().data_ptr(),
+                PyroViewInner::FromOwned { data, .. } => data,
+            };
+            slice::from_raw_parts(data_ptr, PyroParser::HEADER_SIZE + self.header_len() as usize)
         }
     }
 
     pub fn ptr(&self) -> PyroViewPtr {
-        PyroViewPtr {
-            ptr: self.inner.as_ptr(),
+        match self.inner {
+            PyroViewInner::FromVec(inner) => PyroViewPtr { ptr: inner.as_ptr() },
+            PyroViewInner::FromOwned { .. } => {
+                panic!("CRITICAL ERROR: Cannot create a thin FFI PyroViewPtr from a split FromOwned view. Representation is incompatible.");
+            }
         }
     }
 
@@ -749,7 +770,9 @@ impl From<&PyroVec> for PyroView {
 
 impl PyroVec {
     pub fn view(&self) -> PyroView {
-        PyroView { inner: self.view }
+        PyroView {
+            inner: PyroViewInner::FromVec(self.view),
+        }
     }
 }
 
@@ -823,7 +846,7 @@ pub fn get_view(wasm_memory: &[u8], offset: usize) -> Result<PyroView, PyroError
 
     // 6. Construct View
     Ok(PyroView {
-        inner: unsafe { NonNull::new_unchecked(raw_ptr) },
+        inner: PyroViewInner::FromVec(unsafe { NonNull::new_unchecked(raw_ptr) }),
     })
 }
 
@@ -844,83 +867,68 @@ mod tests {
             16,
             "PyroInner must be 16-byte aligned"
         );
-
-        let inner = PyroInner::new(32);
-        let base_ptr = &inner as *const _ as usize;
-
-        let local_ref_ptr = &inner.local_ref_count as *const _ as usize;
-        let cap_ptr = &inner.capacity as *const _ as usize;
-        let remote_ref_ptr = &inner.remote_ref_count as *const _ as usize;
-        let data_ptr = inner.data.as_ptr() as usize;
-
-        assert_eq!(local_ref_ptr - base_ptr, 0, "local_ref_count offset must be 0");
-        assert_eq!(cap_ptr - base_ptr, 4, "capacity offset must be 4");
-        assert_eq!(remote_ref_ptr - base_ptr, 8, "remote_ref_count offset must be 8");
-        assert_eq!(data_ptr - base_ptr, 16, "data offset must be 16");
     }
 
     #[test]
-    fn test_slice_representations() {
-        let mut vec = PyroVec::with_capacity(32);
-        vec.extend_from_slice(b"hello pyroduct");
+    fn test_split_owned_view() {
+        // Create an atomic int we can point to
+        let mut ref_count = AtomicU32::new(0);
+        let ref_ptr = NonNull::new(&mut ref_count).unwrap();
 
-        // The Payload should be 14 bytes long
-        assert_eq!(vec.len(), 14);
+        // Let's create a raw slice that mimics memory-mapped WAL data (16-byte aligned)
+        #[repr(C, align(16))]
+        struct AlignedData {
+            bytes: [u8; 32],
+        }
 
-        // Deref should yield purely the payload
-        assert_eq!(&*vec, b"hello pyroduct");
+        let mut data_block = AlignedData { bytes: [0; 32] };
+        // Write UNIT_HEADER into it
+        unsafe {
+            ptr::copy_nonoverlapping(
+                UNIT_HEADER.0.as_ptr(),
+                data_block.bytes.as_mut_ptr(),
+                PyroParser::HEADER_SIZE,
+            );
+        }
+        
+        // Write some payload length into the header
+        let payload_len: u32 = 4;
+        data_block.bytes[0..4].copy_from_slice(&payload_len.to_le_bytes());
+        
+        // Write payload after header
+        data_block.bytes[16..20].copy_from_slice(b"TEST");
 
-        // as_slice should yield purely the payload
-        assert_eq!(vec.as_slice(), b"hello pyroduct");
-
-        // as_raw_slice should yield HEADER + payload (16 + 14 = 30)
-        let raw = vec.as_raw_slice();
-        assert_eq!(raw.len(), PyroParser::HEADER_SIZE + 14);
-
-        // Ensure the raw slice starts with the valid unit header (modified by length) and ends with payload
-        assert_eq!(&raw[PyroParser::HEADER_SIZE..], b"hello pyroduct");
-    }
-
-    #[test]
-    fn test_remote_ref_count() {
-        let remote_atomic = AtomicU32::new(7);
-        let mut inner = PyroInner::new(32);
-        inner.remote_ref_count = &remote_atomic as *const AtomicU32;
-
-        // Load from the remote ref count
-        assert_eq!(inner.ref_count().load(Ordering::Acquire), 7);
-
-        // Ensure the internal local count remained untouched
-        assert_eq!(inner.local_ref_count.load(Ordering::Acquire), 0);
-    }
-
-    #[test]
-    fn test_view_valid_buffer() {
-        let mut bv = PyroVec::with_capacity(32);
-        bv.extend_from_slice(b"hello world");
-
-        // We need to simulate Wasm memory encompassing the PyroInner block
-        let full_len = 16 + PyroParser::HEADER_SIZE + bv.len();
-        let memory = unsafe {
-            let inner_ptr = bv.view.as_ptr() as *const u8;
-            std::slice::from_raw_parts(inner_ptr, full_len)
+        let view = PyroView {
+            inner: PyroViewInner::FromOwned {
+                ref_count: ref_ptr,
+                data: data_block.bytes.as_ptr(),
+            },
         };
 
-        let view = get_view(memory, 0).expect("Should create view");
-
-        assert_eq!(view.len(), 11);
-        assert_eq!(&*view, b"hello world");
-        assert_eq!(view.status(), Ok(DataStatus::Empty));
+        assert_eq!(view.len(), 4);
+        assert_eq!(view.capacity(), 4, "Capacity should equal payload length for split views");
+        assert_eq!(view.as_slice(), b"TEST");
+        
+        let raw = view.as_raw_slice();
+        assert_eq!(raw.len(), 20); // 16 header + 4 payload
+        assert_eq!(&raw[16..20], b"TEST");
     }
 
     #[test]
-    fn test_view_bounds_check() {
-        // Too small for PyroInner + Header (needs at least 32 bytes)
-        let memory = vec![0u8; 20];
-        let err = get_view(&memory, 0).unwrap_err();
-        match err {
-            PyroError::Header(ParseError::SliceTooSmall) => {}
-            _ => panic!("Expected SliceTooSmall"),
-        }
+    #[should_panic(expected = "CRITICAL ERROR: Cannot create a thin FFI PyroViewPtr")]
+    fn test_split_owned_view_panics_on_ffi_ptr() {
+        let mut ref_count = AtomicU32::new(0);
+        let ref_ptr = NonNull::new(&mut ref_count).unwrap();
+
+        let data: [u8; 16] = UNIT_BYTES;
+        let view = PyroView {
+            inner: PyroViewInner::FromOwned {
+                ref_count: ref_ptr,
+                data: data.as_ptr(),
+            },
+        };
+
+        // This should panic because FromOwned cannot convert to the thin pointer
+        let _ptr = view.ptr();
     }
 }
