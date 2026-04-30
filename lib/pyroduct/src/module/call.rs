@@ -7,7 +7,10 @@
 use wasmtime::{AsContextMut, Caller, Extern, Memory};
 
 use crate::{
-    format::{PyroVec, PyroView, get_view, header::{PyroHeader, PyroParser}},
+    format::{
+        PyroVec, PyroView, get_view,
+        header::{PyroHeader, PyroParser},
+    },
     module::{PyroState, WasmError},
 };
 

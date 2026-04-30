@@ -3,9 +3,8 @@ use std::marker::PhantomData;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::format::{
-    PyroVec,
+    PyroVec, PyroView,
     format::{PyroFormat, UserHeaderValues},
-    PyroView,
 };
 
 use super::{JsonHeader, JsonParser, JsonWriter};

@@ -6,11 +6,10 @@ use tracing::trace;
 use crate::{CapturedError, PyroError, PyroResult};
 
 use crate::format::{
-    PyroVec,
+    PyroVec, PyroView,
     format::{Parser, UserHeaderValues, Wrapper},
     header::PyroData,
     json::buffers::JsonBuf,
-    PyroView,
 };
 
 // ─── Parser ──────────────────────────────────────────────────────────────────

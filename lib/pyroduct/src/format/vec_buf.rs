@@ -25,7 +25,7 @@ type PyroVecGrower =
 
 pub const INNER_HEADER: usize = 16;
 
-// align(16) guarantees that the start of the `data` field naturally falls on a 
+// align(16) guarantees that the start of the `data` field naturally falls on a
 // 16-byte boundary, which perfectly suits the PyroParser requirement.
 #[repr(C, align(16))]
 #[derive(Debug)]
@@ -33,13 +33,13 @@ pub(crate) struct PyroInner {
     ref_count: AtomicU32, // 4 bytes
     capacity: u32,        // 4 bytes
     len: u32,             // 4 bytes
-    
+
     // Explicit padding ensures the header totals exactly 16 bytes.
     // The next field (`data`) starts perfectly on a 16-byte boundary.
-    _padding: u32,        // 4 bytes
-    
+    _padding: u32, // 4 bytes
+
     // Starts at offset 16
-    data: [u8; 0], 
+    data: [u8; 0],
 }
 
 impl PyroInner {
@@ -141,12 +141,22 @@ impl PyroBuf {
 
     pub(crate) fn as_packet_slice(&self) -> &[u8] {
         let inner = unsafe { self.view.as_ref() };
-        unsafe { slice::from_raw_parts(inner.data_ptr(), PyroParser::HEADER_SIZE + inner.len as usize) }
+        unsafe {
+            slice::from_raw_parts(
+                inner.data_ptr(),
+                PyroParser::HEADER_SIZE + inner.len as usize,
+            )
+        }
     }
 
     pub(crate) fn as_packet_slice_mut(&mut self) -> &mut [u8] {
         let inner = unsafe { self.view.as_ref() };
-        unsafe { slice::from_raw_parts_mut(inner.data_ptr(), PyroParser::HEADER_SIZE + inner.len as usize) }
+        unsafe {
+            slice::from_raw_parts_mut(
+                inner.data_ptr(),
+                PyroParser::HEADER_SIZE + inner.len as usize,
+            )
+        }
     }
 
     pub fn clear(&mut self) {
@@ -169,7 +179,7 @@ impl PyroBuf {
     pub unsafe fn from_raw(pointer: PyroBufPtr) -> PyroResult<Self> {
         let ptr = pointer.ptr;
         let data_ptr = unsafe { (*(ptr as *const PyroInner)).data_ptr() };
-        
+
         if let Err(parse_error) = unsafe { PyroParser::check_raw(data_ptr) } {
             tracing::error!(?parse_error, "Checks failed for an FFI PyroBufPtr");
             let error = CapturedError::new(format!(
@@ -235,7 +245,7 @@ impl Drop for PyroBuf {
             let inner = self.view.as_ref();
             let base_ptr = self.view.as_ptr() as *mut u8;
             let cap = inner.capacity;
-            
+
             // Single deallocation pass via the FFI safe dropper
             (self.dropper)(base_ptr, cap);
         }
@@ -329,13 +339,17 @@ impl PyroVec {
             if raw.is_null() {
                 alloc::handle_alloc_error(layout);
             }
-            
+
             // Initialize the header block
             let inner_ptr = raw as *mut PyroInner;
             ptr::write(inner_ptr, PyroInner::new(capacity as u32, 0));
-            
+
             // Write UNIT_BYTES to the start of the data segment
-            ptr::copy_nonoverlapping(UNIT_BYTES.as_ptr(), (*inner_ptr).data_ptr(), UNIT_BYTES.len());
+            ptr::copy_nonoverlapping(
+                UNIT_BYTES.as_ptr(),
+                (*inner_ptr).data_ptr(),
+                UNIT_BYTES.len(),
+            );
             inner_ptr
         };
 
@@ -363,7 +377,7 @@ impl PyroVec {
         if view.is_null() {
             return Err(PyroError::null_pointer());
         }
-        
+
         let data_ptr = unsafe { (*view).data_ptr() };
         if let Err(parse_error) = unsafe { PyroParser::check_raw(data_ptr) } {
             tracing::error!(?parse_error, "Checks failed for an FFI PyroVecPtr");
@@ -398,12 +412,22 @@ impl PyroVec {
 
     pub(crate) fn as_packet_slice(&self) -> &[u8] {
         let inner = unsafe { self.view.as_ref() };
-        unsafe { slice::from_raw_parts(inner.data_ptr(), PyroParser::HEADER_SIZE + inner.len as usize) }
+        unsafe {
+            slice::from_raw_parts(
+                inner.data_ptr(),
+                PyroParser::HEADER_SIZE + inner.len as usize,
+            )
+        }
     }
 
     pub(crate) fn as_packet_slice_mut(&mut self) -> &mut [u8] {
         let inner = unsafe { self.view.as_ref() };
-        unsafe { slice::from_raw_parts_mut(inner.data_ptr(), PyroParser::HEADER_SIZE + inner.len as usize) }
+        unsafe {
+            slice::from_raw_parts_mut(
+                inner.data_ptr(),
+                PyroParser::HEADER_SIZE + inner.len as usize,
+            )
+        }
     }
 
     pub fn push(&mut self, byte: u8) {
@@ -432,7 +456,9 @@ impl PyroVec {
             let inner_mut = self.view.as_ptr();
             ptr::copy_nonoverlapping(
                 other.as_ptr(),
-                (*inner_mut).data_ptr().add(PyroParser::HEADER_SIZE + current_len),
+                (*inner_mut)
+                    .data_ptr()
+                    .add(PyroParser::HEADER_SIZE + current_len),
                 required,
             );
             (*inner_mut).len = (current_len + required) as u32;
@@ -486,7 +512,7 @@ impl PyroVec {
             // Treat the entire struct as the opaque pointer to resize
             let old_ptr = self.view.as_ptr() as *mut u8;
             let new_raw = (self.grower)(old_ptr, current_cap, new_cap) as *mut PyroInner;
-            
+
             self.view = NonNull::new_unchecked(new_raw);
             (*new_raw).capacity = new_cap; // Update the contiguous capacity field directly
         }
@@ -621,8 +647,8 @@ pub struct PyroViewPtr {
 
 /// A temporary, zero-copy view into a PyroVec residing in a byte slice
 /// (e.g., WASM memory or a memory-mapped file).
-/// 
-/// Note: This view holds a raw pointer and does not track the lifetime 
+///
+/// Note: This view holds a raw pointer and does not track the lifetime
 /// of the underlying memory. The caller must ensure the memory remains valid.
 #[derive(Clone, Copy)]
 pub struct PyroView {
@@ -635,16 +661,16 @@ unsafe impl Sync for PyroView {}
 impl PyroData for PyroView {
     #[inline]
     fn header(&self) -> &[u8; 16] {
-        unsafe { 
+        unsafe {
             let inner = self.inner.as_ref();
-            &*(inner.data_ptr() as *const [u8; 16]) 
+            &*(inner.data_ptr() as *const [u8; 16])
         }
     }
 
     fn capacity(&self) -> usize {
-        unsafe { 
+        unsafe {
             let inner = self.inner.as_ref();
-            (inner.capacity as usize) - PyroParser::HEADER_SIZE 
+            (inner.capacity as usize) - PyroParser::HEADER_SIZE
         }
     }
 }
@@ -674,7 +700,7 @@ impl PyroView {
         }
 
         let data_ptr = unsafe { (*ptr).data_ptr() };
-        
+
         if let Err(parse_error) = unsafe { PyroParser::check_raw(data_ptr) } {
             tracing::error!(?parse_error, "Checks failed for an FFI PyroViewPtr");
             let error = CapturedError::new(format!(
@@ -686,7 +712,7 @@ impl PyroView {
             return Err(PyroError::HeaderFfi(error.into()));
         };
 
-        Ok(Self { 
+        Ok(Self {
             inner: unsafe { NonNull::new_unchecked(ptr) },
         })
     }
@@ -728,9 +754,7 @@ impl From<&PyroVec> for PyroView {
 
 impl PyroVec {
     pub fn view(&self) -> PyroView {
-        PyroView {
-            inner: self.view,
-        }
+        PyroView { inner: self.view }
     }
 }
 
@@ -795,9 +819,8 @@ pub fn get_view(wasm_memory: &[u8], offset: usize) -> Result<PyroView, PyroError
 
     // 5. Verify the actual Pyro Data Header
     let data_header_ptr = unsafe { (*raw_ptr).data_ptr() };
-    let validation_slice = unsafe { 
-        slice::from_raw_parts(data_header_ptr, PyroParser::HEADER_SIZE + payload_len) 
-    };
+    let validation_slice =
+        unsafe { slice::from_raw_parts(data_header_ptr, PyroParser::HEADER_SIZE + payload_len) };
     PyroParser::check(validation_slice)?;
 
     // 6. Construct View
@@ -805,7 +828,6 @@ pub fn get_view(wasm_memory: &[u8], offset: usize) -> Result<PyroView, PyroError
         inner: unsafe { NonNull::new_unchecked(raw_ptr) },
     })
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -834,7 +856,7 @@ mod tests {
     #[test]
     fn test_view_bounds_check() {
         // Too small for PyroInner + Header (needs at least 32 bytes)
-        let memory = vec![0u8; 20]; 
+        let memory = vec![0u8; 20];
         let err = get_view(&memory, 0).unwrap_err();
         match err {
             PyroError::Header(ParseError::SliceTooSmall) => {}
@@ -845,11 +867,11 @@ mod tests {
     #[test]
     fn test_view_magic_check() {
         let mut memory = vec![0u8; 32];
-        
+
         // Offset 0 is aligned.
         // We write 0 to the 'len' field of PyroInner at offset 8 (u32 LE).
-        memory[8] = 0; 
-        
+        memory[8] = 0;
+
         // Write garbage magic to the start of the Data Header at offset 16.
         memory[16] = 0xFF;
 

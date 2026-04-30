@@ -4,9 +4,8 @@ use tracing::trace;
 
 use crate::error::ErrorKind;
 use crate::format::{
-    PyroVec,
+    PyroVec, PyroView,
     header::{DataStatus, MutPyroData, PROTOCOL_VERSION, PyroData, PyroHeader, PyroHeaderMut},
-    PyroView,
 };
 use crate::{CapturedError, PyroError, PyroResult};
 
@@ -298,8 +297,11 @@ pub trait SpecWire: Sized {
 
 impl SpecWire for pyro_spec::InterfaceSpec<'_> {
     fn to_wire(&self) -> PyroResult<PyroVec> {
-        let bytes = serde_json::to_vec(self)
-            .map_err(|e| PyroError::serialization(CapturedError::new("Unable to serialize interface spec").with_source(e)))?;
+        let bytes = serde_json::to_vec(self).map_err(|e| {
+            PyroError::serialization(
+                CapturedError::new("Unable to serialize interface spec").with_source(e),
+            )
+        })?;
 
         let mut vec = PyroVec::with_capacity(bytes.len());
         vec.extend_from_slice(&bytes);
@@ -309,10 +311,16 @@ impl SpecWire for pyro_spec::InterfaceSpec<'_> {
 
     fn parse_wire(view: PyroView) -> PyroResult<Self> {
         if let Ok(DataStatus::InterfaceSchema) = view.status() {
-            let interface = serde_json::from_slice(&view).map_err(|e| PyroError::serialization(CapturedError::new("Unable to deserialize interface spec").with_source(e)))?;
+            let interface = serde_json::from_slice(&view).map_err(|e| {
+                PyroError::serialization(
+                    CapturedError::new("Unable to deserialize interface spec").with_source(e),
+                )
+            })?;
             Ok(interface)
         } else {
-            Err(PyroError::Header(super::ParseError::UnknownStatus(view.status_u8())))
+            Err(PyroError::Header(super::ParseError::UnknownStatus(
+                view.status_u8(),
+            )))
         }
     }
 }

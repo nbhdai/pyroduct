@@ -4,6 +4,6 @@ mod server;
 mod socket;
 
 pub use client::PyroClient;
-pub use server::PyroServer;
 pub use router::PyroRouter;
+pub use server::PyroServer;
 pub use socket::{PyroListener, PyroSocket};

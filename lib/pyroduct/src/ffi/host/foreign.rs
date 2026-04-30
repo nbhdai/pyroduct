@@ -258,11 +258,10 @@ impl ForeignObject {
         client_data: PyroView,
         input_data: PyroView,
     ) -> Result<PyroVec, PyroError> {
-        let method = self
-            .class
-            .methods
-            .get(method_index)
-            .ok_or_else(|| PyroError::NotFound(format!("Method index {method_index} not found")))?;
+        let method =
+            self.class.methods.get(method_index).ok_or_else(|| {
+                PyroError::NotFound(format!("Method index {method_index} not found"))
+            })?;
 
         self.call_method(method, client_data, input_data).await
     }

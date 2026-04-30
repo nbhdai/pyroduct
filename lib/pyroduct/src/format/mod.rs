@@ -236,7 +236,7 @@ pub use bridgeable::{Bridgeable, Decoder, Encoder};
 pub use format::{HasReceiver, Receiver, SpecWire};
 pub use header::ParseError;
 pub use value::{DeepRef, PyroRow, PyroValue, ToRow};
-pub use vec_buf::{PyroBuf, PyroVec, PyroView, PyroVecPtr, PyroViewPtr, get_view};
+pub use vec_buf::{PyroBuf, PyroVec, PyroVecPtr, PyroView, PyroViewPtr, get_view};
 
 // Async is not supported for wasm
 #[cfg(any(feature = "host", feature = "capability"))]

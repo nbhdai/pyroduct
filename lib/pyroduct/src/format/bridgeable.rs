@@ -3,7 +3,10 @@
 use std::fmt;
 
 use crate::PyroError;
-use crate::format::{ParseError, PyroVec, PyroView, header::{DataStatus, PyroHeader, PyroHeaderMut}};
+use crate::format::{
+    ParseError, PyroVec, PyroView,
+    header::{DataStatus, PyroHeader, PyroHeaderMut},
+};
 // =============================================================================
 // Encoder / Decoder Traits
 // =============================================================================
@@ -110,8 +113,6 @@ impl<T: fmt::Debug> fmt::Debug for TypedVec<T> {
     }
 }
 
-
-
 // =============================================================================
 // Bridgeable — default-format convenience (every format)
 // =============================================================================
@@ -202,8 +203,6 @@ impl<T: fmt::Debug> fmt::Debug for TypedView<T> {
     }
 }
 
-
-
 /// A type that has a **default pyro format**.
 ///
 /// This is the main entry point for most users. The `#[bridgeable]` macro
@@ -277,7 +276,7 @@ pub struct ResultDecoder<T, E> {
     err_decoder: E,
 }
 
-impl<'a, T: 'a, DT: Decoder<'a, T>, E: 'a , DE: Decoder<'a, E>> Decoder<'a, Result<T, E>>
+impl<'a, T: 'a, DT: Decoder<'a, T>, E: 'a, DE: Decoder<'a, E>> Decoder<'a, Result<T, E>>
     for ResultDecoder<DT, DE>
 {
     fn decode(&mut self, view: &'a PyroView) -> Result<Result<T, E>, PyroError> {

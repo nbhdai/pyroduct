@@ -144,7 +144,6 @@ impl PyroSocket {
         self
     }
 
-
     // ── Send / Recv ───────────────────────────────────────────────────────────
 
     /// Write a [`PyroView`] to the socket.
@@ -174,7 +173,13 @@ impl PyroSocket {
     ///
     /// This assigns a unique `mux_id` to the request, sends it, and waits for
     /// a response with the same `mux_id`.
-    pub async fn request(&self, client_id: Option<u32>, class_id: Option<u8>, fn_id: Option<u8>, inner: RequestInner) -> std::io::Result<PyroVec> {
+    pub async fn request(
+        &self,
+        client_id: Option<u32>,
+        class_id: Option<u8>,
+        fn_id: Option<u8>,
+        inner: RequestInner,
+    ) -> std::io::Result<PyroVec> {
         let mux_id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);
         let request = Request {
             client_id,

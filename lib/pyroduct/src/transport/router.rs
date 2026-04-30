@@ -6,7 +6,7 @@ use dashmap::DashMap;
 
 use crate::PyroError;
 use crate::ffi::host::ForeignObject;
-use crate::format::header::{PyroHeader};
+use crate::format::header::PyroHeader;
 use crate::format::{Bridgeable, PyroVec, PyroView, SpecWire};
 use crate::module::capability::CapabilityLibrary;
 
@@ -47,9 +47,7 @@ impl PyroRouter {
         let fn_id = request.fn_id();
 
         match fn_id {
-            0 => {
-                self.library.interface.to_wire()
-            }
+            0 => self.library.interface.to_wire(),
             1 => {
                 let object = self
                     .library

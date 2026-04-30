@@ -1,14 +1,14 @@
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
-use sha2::{Digest, Sha256};
 
 use pyro_spec::InterfaceSpec;
 
+use crate::PyroError;
+use crate::captured::Capture;
 use crate::format::header::{PyroData, PyroHeader, PyroHeaderMut};
 use crate::format::{PyroVec, PyroView, SpecWire};
 use crate::transport::PyroSocket;
-use crate::PyroError;
-use crate::captured::Capture;
 
 /// A high-level client for communicating with a [`crate::transport::PyroServer`].
 ///
@@ -25,7 +25,9 @@ pub struct PyroClient {
 impl PyroClient {
     /// Connect to a TCP address (e.g. `"127.0.0.1:9000"`).
     pub async fn connect_tcp(addr: impl tokio::net::ToSocketAddrs) -> Result<Self, PyroError> {
-        let socket = PyroSocket::connect_tcp(addr).await.capture("Failed to connect via TCP")
+        let socket = PyroSocket::connect_tcp(addr)
+            .await
+            .capture("Failed to connect via TCP")
             .map_err(PyroError::local_io)?;
         let interface = PyroClient::fetch_interface(&socket).await?;
         let client = Self {
@@ -38,7 +40,9 @@ impl PyroClient {
 
     /// Connect to a Unix domain socket path.
     pub async fn connect_unix(path: impl AsRef<Path>) -> Result<Self, PyroError> {
-        let socket =  PyroSocket::connect_unix(path).await.capture("Failed to connect via Unix socket")
+        let socket = PyroSocket::connect_unix(path)
+            .await
+            .capture("Failed to connect via Unix socket")
             .map_err(PyroError::local_io)?;
         let interface = PyroClient::fetch_interface(&socket).await?;
         let client = Self {
@@ -56,7 +60,8 @@ impl PyroClient {
         let mut req = PyroVec::ok();
         req.set_fn_id(0);
 
-        let resp = socket.request(None, None, Some(0), req.view().into())
+        let resp = socket
+            .request(None, None, Some(0), req.view().into())
             .await
             .capture("Transport request failed")
             .map_err(PyroError::local_io)?;
@@ -71,7 +76,9 @@ impl PyroClient {
         let mut req = data.clone_to_vec();
         req.set_fn_id(1);
 
-        let resp = self.socket.request(None, Some(class_id), Some(1), req.view().into())
+        let resp = self
+            .socket
+            .request(None, Some(class_id), Some(1), req.view().into())
             .await
             .capture("Transport request failed")
             .map_err(PyroError::local_io)?;
@@ -80,7 +87,9 @@ impl PyroClient {
         if resp.is_ok() {
             Ok(())
         } else {
-            Err(PyroError::Header(crate::format::ParseError::UnknownStatus(resp.status_u8())))
+            Err(PyroError::Header(crate::format::ParseError::UnknownStatus(
+                resp.status_u8(),
+            )))
         }
     }
 
@@ -104,7 +113,9 @@ impl PyroClient {
         // Send the raw client_data in the payload
         req.extend_from_slice(client_data.as_slice());
 
-        let resp = self.socket.request(None, None, Some(2), req.view().into())
+        let resp = self
+            .socket
+            .request(None, None, Some(2), req.view().into())
             .await
             .capture("Transport request failed")
             .map_err(PyroError::local_io)?;
@@ -131,7 +142,9 @@ impl PyroClient {
         let mut req = PyroVec::ok();
         req.set_fn_id(3);
 
-        let resp = self.socket.request(None, Some(class_id), Some(3), req.view().into())
+        let resp = self
+            .socket
+            .request(None, Some(class_id), Some(3), req.view().into())
             .await
             .capture("Transport request failed")
             .map_err(PyroError::local_io)?;
@@ -140,19 +153,34 @@ impl PyroClient {
         if resp.is_ok() {
             Ok(())
         } else {
-            Err(PyroError::Header(crate::format::ParseError::UnknownStatus(resp.status_u8())))
+            Err(PyroError::Header(crate::format::ParseError::UnknownStatus(
+                resp.status_u8(),
+            )))
         }
     }
 
     /// Call a remote method by its index.
     ///
     /// Maps `method_index` to `fn_id` based on the server's routing logic: `fn_id = method_index + 4`.
-    async fn call_method(&self, class_id: u8, method_index: usize, client_id: u32, data: PyroView) -> Result<PyroVec, PyroError> {
+    async fn call_method(
+        &self,
+        class_id: u8,
+        method_index: usize,
+        client_id: u32,
+        data: PyroView,
+    ) -> Result<PyroVec, PyroError> {
         let fn_id = (method_index + 4) as u8;
         let mut req = data.clone_to_vec();
         req.set_fn_id(fn_id);
 
-        let resp = self.socket.request(Some(client_id), Some(class_id), Some(fn_id), req.view().into())
+        let resp = self
+            .socket
+            .request(
+                Some(client_id),
+                Some(class_id),
+                Some(fn_id),
+                req.view().into(),
+            )
             .await
             .capture("Transport request failed")
             .map_err(PyroError::local_io)?;
@@ -165,18 +193,37 @@ impl PyroClient {
     /// The `client_data` is hashed with SHA-256 to determine which client_id is used.
     /// This must be called with `&mut self` since it may register a new client_id
     /// if the data hasn't been seen before.
-    pub async fn call(&mut self, class_name: &str, method_name: &str, client_data: PyroView, data: PyroView) -> Result<PyroVec, PyroError> {
-        let class_id = self.interface.classes.iter().position(|c| c.name == class_name)
+    pub async fn call(
+        &mut self,
+        class_name: &str,
+        method_name: &str,
+        client_data: PyroView,
+        data: PyroView,
+    ) -> Result<PyroVec, PyroError> {
+        let class_id = self
+            .interface
+            .classes
+            .iter()
+            .position(|c| c.name == class_name)
             .ok_or_else(|| PyroError::NotFound(format!("Class '{}' not found", class_name)))?;
 
         let class_spec = &self.interface.classes[class_id];
-        let method_index = class_spec.methods.iter().position(|m| m.name == method_name)
-            .ok_or_else(|| PyroError::NotFound(format!("Method '{}' not found in class '{}'", method_name, class_name)))?;
+        let method_index = class_spec
+            .methods
+            .iter()
+            .position(|m| m.name == method_name)
+            .ok_or_else(|| {
+                PyroError::NotFound(format!(
+                    "Method '{}' not found in class '{}'",
+                    method_name, class_name
+                ))
+            })?;
 
         // Get or register client_id based on client_data hash
         let client_id = self.get_or_register_client_id(client_data).await?;
 
-        self.call_method(class_id as u8, method_index, client_id, data).await
+        self.call_method(class_id as u8, method_index, client_id, data)
+            .await
     }
 
     /// Access the underlying [`PyroSocket`].

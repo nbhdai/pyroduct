@@ -96,10 +96,7 @@ pub enum ParseError {
 
 // --- Sealing Module ---
 mod private {
-    use crate::format::{
-        PyroBuf, PyroVec,
-        PyroView,
-    };
+    use crate::format::{PyroBuf, PyroVec, PyroView};
 
     pub trait Sealed {}
     // The primitive array is the base sealed type.

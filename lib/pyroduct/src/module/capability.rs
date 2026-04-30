@@ -192,14 +192,12 @@ pub struct CapabilityLibrary {
 
 impl CapabilityLibrary {
     pub fn load(name: String, path: &Path) -> Result<Arc<Self>, CapabilityError> {
-        let mut libraries = LOADED_LIBRARIES
-            .lock()
-            .unwrap_or_else(|e| {
-                tracing::error!(
-                    "LOADED_LIBRARIES mutex was poisoned (likely a panic in another thread)"
-                );
-                e.into_inner()
-            });
+        let mut libraries = LOADED_LIBRARIES.lock().unwrap_or_else(|e| {
+            tracing::error!(
+                "LOADED_LIBRARIES mutex was poisoned (likely a panic in another thread)"
+            );
+            e.into_inner()
+        });
         if let Some(lib) = libraries.get(&name).map(|w| w.upgrade()).flatten() {
             Ok(lib)
         } else {
@@ -220,17 +218,20 @@ impl CapabilityLibrary {
         }
 
         // 2. Load Interface Spec
-        let interface_path = path.parent().unwrap_or(Path::new(".")).join("interface.json");
-        let interface_data = std::fs::read(&interface_path).map_err(|e| CapabilityError::FileRead {
-            path: interface_path.display().to_string(),
-            reason: e.to_string(),
-        })?;
-        let interface: InterfaceSpec<'static> = serde_json::from_slice(&interface_data).map_err(|e| {
-            CapabilityError::BinaryParse {
+        let interface_path = path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("interface.json");
+        let interface_data =
+            std::fs::read(&interface_path).map_err(|e| CapabilityError::FileRead {
                 path: interface_path.display().to_string(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
+        let interface: InterfaceSpec<'static> =
+            serde_json::from_slice(&interface_data).map_err(|e| CapabilityError::BinaryParse {
+                path: interface_path.display().to_string(),
+                reason: e.to_string(),
+            })?;
 
         // 3. Load Library
         let library =
