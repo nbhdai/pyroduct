@@ -51,7 +51,7 @@ fn get_output_registry() -> std::sync::MutexGuard<'static, Option<HashMap<Stored
 #[unsafe(no_mangle)]
 pub extern "C" fn new_input(capacity: u32) -> *mut u8 {
     let mut vec = PyroVec::with_capacity(capacity as usize);
-    let raw = vec.as_packet_slice_mut();
+    let raw = vec.as_raw_slice_mut();
     let ptr = raw.as_mut_ptr();
 
     get_input_registry()
@@ -72,7 +72,7 @@ pub extern "C" fn grow_input(ptr: *mut u8, new_capacity: u32) -> *mut u8 {
         if (new_capacity as usize) > current_cap {
             vec.grow(new_capacity as usize);
         }
-        let raw = vec.as_packet_slice_mut();
+        let raw = vec.as_raw_slice_mut();
         let new_ptr = raw.as_mut_ptr();
 
         // Re-insert under the (potentially new) pointer — same lock guard.

@@ -669,69 +669,6 @@ pub fn recover(base_path: impl Into<PathBuf>) -> io::Result<Vec<PipelineExecutio
     Ok(executions)
 }
 
-// =============================================================================
-// Convenience: streaming batch with WAL
-// =============================================================================
-
-/// Wraps `PipelinePool::process_batch` to stream results into a WAL.
-///
-/// Both successes and failures are recorded. The pipeline continues past
-/// individual row failures — only infrastructure-level errors bubble up.
-pub async fn process_batch_with_wal(
-    pool: &super::PipelinePool,
-    batch: &arrow::array::RecordBatch,
-    base_path: impl Into<PathBuf>,
-) -> super::PipelineResult<(Vec<PipelineExecution>, Vec<PipelineExecution>)> {
-    let base = base_path.into();
-    let wal_path = base.with_extension("pyrowal");
-
-    // Check for existing WAL (crash recovery)
-    if wal_path.exists() {
-        info!(path = %wal_path.display(), "Found existing WAL, attempting recovery");
-        match recover(&base) {
-            Ok(executions) if executions.len() >= batch.num_rows() => {
-                info!("WAL contains all expected rows, skipping re-execution");
-                let (successes, failures): (Vec<_>, Vec<_>) =
-                    executions.into_iter().partition(|e| e.failure.is_none());
-                return Ok((successes, failures));
-            }
-            Ok(partial) => {
-                warn!(
-                    recovered = partial.len(),
-                    expected = batch.num_rows(),
-                    "Partial WAL recovery — re-executing full batch"
-                );
-                let _ = fs::remove_file(&wal_path);
-                let _ = fs::remove_file(base.with_extension("pyrolog"));
-            }
-            Err(e) => {
-                warn!(error = %e, "WAL recovery failed, starting fresh");
-                let _ = fs::remove_file(&wal_path);
-                let _ = fs::remove_file(base.with_extension("pyrolog"));
-            }
-        }
-    }
-
-    let mut wal = WalWriter::open(&base)
-        .map_err(|e| super::PipelineError::Config(format!("Failed to open WAL: {}", e)))?;
-
-    let (successes, failures) = pool.process_batch(batch).await?;
-
-    for exec in successes.iter().chain(failures.iter()) {
-        if let Err(e) = wal.append(exec) {
-            warn!(error = %e, row_index = exec.row_index, "Failed to write WAL record");
-        }
-    }
-
-    info!(
-        successes = successes.len(),
-        failures = failures.len(),
-        wal = %wal.wal_path().display(),
-        "Batch complete, WAL committed"
-    );
-
-    Ok((successes, failures))
-}
 
 // =============================================================================
 // Tests

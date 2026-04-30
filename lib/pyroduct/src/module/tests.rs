@@ -19,7 +19,7 @@ use crate::wasm::{free_output, get_input, grow_input, new_input, to_output};
 fn make_wasm_memory(payload: &[u8]) -> Vec<u8> {
     let mut vec = PyroVec::with_capacity(payload.len());
     vec.extend_from_slice(payload);
-    let packet = vec.as_packet_slice();
+    let packet = vec.as_raw_slice();
 
     let align = PyroParser::ALIGN;
     let extra = align;
@@ -134,7 +134,7 @@ fn test_get_view_empty_payload() {
 fn test_get_view_misaligned_offset() {
     let mut buf = aligned_buffer(64);
     let vec = PyroVec::with_capacity(4);
-    let packet = vec.as_packet_slice();
+    let packet = vec.as_raw_slice();
     buf.as_mut_slice()[..packet.len()].copy_from_slice(packet);
 
     match get_view(buf.as_slice(), 1) {
@@ -181,7 +181,7 @@ fn test_view_header_fields_preserved() {
     vec.set_wire_format(1);
 
     let mem = {
-        let packet = vec.as_packet_slice();
+        let packet = vec.as_raw_slice();
         let mut m = vec![0u8; packet.len() + 16];
         let base = m.as_ptr() as usize;
         let offset = (16 - (base % 16)) % 16;
@@ -250,7 +250,7 @@ fn test_pyro_row_rkyv_view_roundtrip() {
 
     // Simulate writing into wasm memory and reading back as a view
     let mem = {
-        let packet = vec.as_packet_slice();
+        let packet = vec.as_raw_slice();
         let mut m = std::vec![0u8; packet.len() + 16];
         let base = m.as_ptr() as usize;
         let offset = (16 - (base % 16)) % 16;

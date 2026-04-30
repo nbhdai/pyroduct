@@ -1,5 +1,4 @@
 pub mod pipeline;
-pub mod wal;
 pub mod wasm_execute;
 
 pub use pipeline::{PipelineConfig, PipelineFactory};

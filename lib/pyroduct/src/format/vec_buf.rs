@@ -27,27 +27,39 @@ pub const INNER_HEADER: usize = 16;
 
 // align(16) guarantees that the start of the `data` field naturally falls on a
 // 16-byte boundary, which perfectly suits the PyroParser requirement.
+// 
+// Layout:
+// Offset 0:  local_ref_count (4 bytes)
+// Offset 4:  capacity (4 bytes)
+// Offset 8:  remote_ref_count (8 bytes)
+// Offset 16: data [u8; 0]
 #[repr(C, align(16))]
 #[derive(Debug)]
 pub(crate) struct PyroInner {
-    ref_count: AtomicU32, // 4 bytes
-    capacity: u32,        // 4 bytes
+    pub local_ref_count: AtomicU32,         // 4 bytes
+    pub capacity: u32,                      // 4 bytes
+    pub remote_ref_count: *const AtomicU32, // 8 bytes
 
-    // Explicit padding ensures the header totals exactly 16 bytes.
-    // The next field (`data`) starts perfectly on a 16-byte boundary.
-    _padding: u64, // 4 bytes
-
-    // Starts at offset 16
-    data: [u8; 0],
+    // Starts perfectly at offset 16
+    pub data: [u8; 0],
 }
 
 impl PyroInner {
     fn new(capacity: u32) -> Self {
         Self {
-            ref_count: AtomicU32::new(0),
+            local_ref_count: AtomicU32::new(0),
             capacity,
-            _padding: 0,
+            remote_ref_count: ptr::null(),
             data: [],
+        }
+    }
+
+    #[inline]
+    pub fn ref_count(&self) -> &AtomicU32 {
+        if self.remote_ref_count.is_null() {
+            &self.local_ref_count
+        } else {
+            unsafe { &*self.remote_ref_count }
         }
     }
 
@@ -127,6 +139,11 @@ impl PyroBuf {
         unsafe { inner.data_ptr().add(PyroParser::HEADER_SIZE) }
     }
 
+    pub fn raw_ptr(&self) -> *const u8 {
+        let inner = unsafe { self.view.as_ref() };
+        unsafe { inner.data_ptr() }
+    }
+
     pub fn as_slice(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.data_ptr(), self.header_len() as usize) }
     }
@@ -135,21 +152,19 @@ impl PyroBuf {
         unsafe { slice::from_raw_parts_mut(self.data_ptr() as *mut u8, self.header_len() as usize) }
     }
 
-    pub(crate) fn as_packet_slice(&self) -> &[u8] {
+    pub fn as_raw_slice(&self) -> &[u8] {
         unsafe {
-            let inner = self.view.as_ref();
             slice::from_raw_parts(
-                inner.data_ptr(),
+                self.raw_ptr(),
                 PyroParser::HEADER_SIZE + self.header_len() as usize,
             )
         }
     }
 
-    pub(crate) fn as_packet_slice_mut(&mut self) -> &mut [u8] {
+    pub fn as_raw_slice_mut(&mut self) -> &mut [u8] {
         unsafe {
-            let inner = self.view.as_ref();
             slice::from_raw_parts_mut(
-                inner.data_ptr(),
+                self.raw_ptr() as *mut u8,
                 PyroParser::HEADER_SIZE + self.header_len() as usize,
             )
         }
@@ -224,13 +239,13 @@ impl From<PyroVecPtr> for PyroBufPtr {
 impl Deref for PyroBuf {
     type Target = [u8];
     fn deref(&self) -> &Self::Target {
-        &self.as_packet_slice()[PyroParser::HEADER_SIZE..]
+        self.as_slice()
     }
 }
 
 impl DerefMut for PyroBuf {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.as_packet_slice_mut()[PyroParser::HEADER_SIZE..]
+        self.as_mut_slice()
     }
 }
 
@@ -405,7 +420,7 @@ impl PyroVec {
         unsafe { inner.data_ptr() }
     }
 
-    pub(crate) fn as_packet_slice(&self) -> &[u8] {
+    pub fn as_raw_slice(&self) -> &[u8] {
         unsafe {
             slice::from_raw_parts(
                 self.raw_ptr(),
@@ -414,7 +429,7 @@ impl PyroVec {
         }
     }
 
-    pub(crate) fn as_packet_slice_mut(&mut self) -> &mut [u8] {
+    pub fn as_raw_slice_mut(&mut self) -> &mut [u8] {
         unsafe {
             slice::from_raw_parts_mut(
                 self.raw_ptr() as *mut u8,
@@ -459,12 +474,6 @@ impl PyroVec {
 
     pub fn as_slice(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.data_ptr(), self.header_len() as usize) }
-    }
-
-    pub fn as_raw_slice(&self) -> &[u8] {
-        unsafe {
-            slice::from_raw_parts(self.raw_ptr(), self.header_len() as usize)
-        }
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
@@ -572,13 +581,13 @@ impl std::hash::Hash for PyroVec {
 impl Deref for PyroVec {
     type Target = [u8];
     fn deref(&self) -> &Self::Target {
-        &self.as_packet_slice()[PyroParser::HEADER_SIZE..]
+        self.as_slice()
     }
 }
 
 impl DerefMut for PyroVec {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.as_packet_slice_mut()[PyroParser::HEADER_SIZE..]
+        self.as_mut_slice()
     }
 }
 
@@ -586,7 +595,7 @@ impl Drop for PyroVec {
     fn drop(&mut self) {
         unsafe {
             let inner = self.view.as_ref();
-            let ref_count = inner.ref_count.load(Ordering::Acquire);
+            let ref_count = inner.ref_count().load(Ordering::Acquire);
 
             if ref_count == 0 {
                 let base_ptr = self.view.as_ptr() as *mut u8;
@@ -715,7 +724,7 @@ impl PyroView {
     pub fn as_raw_slice(&self) -> &[u8] {
         unsafe {
             let data = self.inner.as_ref().data_ptr();
-            slice::from_raw_parts(data, self.header_len() as usize)
+            slice::from_raw_parts(data, PyroParser::HEADER_SIZE + self.header_len() as usize)
         }
     }
 
@@ -822,6 +831,68 @@ pub fn get_view(wasm_memory: &[u8], offset: usize) -> Result<PyroView, PyroError
 mod tests {
     use super::*;
     use crate::format::header::DataStatus;
+
+    #[test]
+    fn test_pyro_inner_layout() {
+        assert_eq!(
+            std::mem::size_of::<PyroInner>(),
+            16,
+            "PyroInner must be exactly 16 bytes"
+        );
+        assert_eq!(
+            std::mem::align_of::<PyroInner>(),
+            16,
+            "PyroInner must be 16-byte aligned"
+        );
+
+        let inner = PyroInner::new(32);
+        let base_ptr = &inner as *const _ as usize;
+
+        let local_ref_ptr = &inner.local_ref_count as *const _ as usize;
+        let cap_ptr = &inner.capacity as *const _ as usize;
+        let remote_ref_ptr = &inner.remote_ref_count as *const _ as usize;
+        let data_ptr = inner.data.as_ptr() as usize;
+
+        assert_eq!(local_ref_ptr - base_ptr, 0, "local_ref_count offset must be 0");
+        assert_eq!(cap_ptr - base_ptr, 4, "capacity offset must be 4");
+        assert_eq!(remote_ref_ptr - base_ptr, 8, "remote_ref_count offset must be 8");
+        assert_eq!(data_ptr - base_ptr, 16, "data offset must be 16");
+    }
+
+    #[test]
+    fn test_slice_representations() {
+        let mut vec = PyroVec::with_capacity(32);
+        vec.extend_from_slice(b"hello pyroduct");
+
+        // The Payload should be 14 bytes long
+        assert_eq!(vec.len(), 14);
+
+        // Deref should yield purely the payload
+        assert_eq!(&*vec, b"hello pyroduct");
+
+        // as_slice should yield purely the payload
+        assert_eq!(vec.as_slice(), b"hello pyroduct");
+
+        // as_raw_slice should yield HEADER + payload (16 + 14 = 30)
+        let raw = vec.as_raw_slice();
+        assert_eq!(raw.len(), PyroParser::HEADER_SIZE + 14);
+
+        // Ensure the raw slice starts with the valid unit header (modified by length) and ends with payload
+        assert_eq!(&raw[PyroParser::HEADER_SIZE..], b"hello pyroduct");
+    }
+
+    #[test]
+    fn test_remote_ref_count() {
+        let remote_atomic = AtomicU32::new(7);
+        let mut inner = PyroInner::new(32);
+        inner.remote_ref_count = &remote_atomic as *const AtomicU32;
+
+        // Load from the remote ref count
+        assert_eq!(inner.ref_count().load(Ordering::Acquire), 7);
+
+        // Ensure the internal local count remained untouched
+        assert_eq!(inner.local_ref_count.load(Ordering::Acquire), 0);
+    }
 
     #[test]
     fn test_view_valid_buffer() {
