@@ -264,153 +264,226 @@ mod tests {
     use super::*;
     use crate::format::{
         PyroVec,
-        header::{PyroHeader, PyroHeaderMut},
+        header::{PyroHeader, PyroHeaderMut, DataStatus},
     };
     use std::io::Cursor;
 
-    #[tokio::test]
-    async fn test_streaming_endian_consistency() {
-        // Create a vec with specific metadata to test byte-order
-        let mut original = PyroVec::with_capacity(16);
-        original.extend_from_slice(b"endian-test-data");
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
-        // Use distinct values for all byte fields
-        original.set_wire_format(0xAA);
-        original.set_class_id(0xBB);
-        original.set_fn_id(0xCC);
-        original.set_status(crate::format::header::DataStatus::LocalIo);
-
-        let mut stream = Vec::new();
-
-        let mut request: Request = original.view().into();
-        request.mux_id = Some(0x12345678);
-
-        // Step 1: Write to stream
-        write_to_stream(&mut stream, &request, None)
-            .await
-            .expect("Failed to write to stream");
-
-        // Step 3: Read back from stream using framing logic
-        let mut reader = Cursor::new(stream);
-        let mut recovered = PyroVec::with_capacity(0);
-        read_from_stream(&mut reader, None, &mut recovered)
-            .await
-            .expect("Failed to read from stream");
-
-        // Step 4: Validate integrity
-        assert_eq!(recovered.as_slice(), b"endian-test-data");
-        assert_eq!(recovered.wire_format(), 0xAA);
-        assert_eq!(recovered.class_id(), 0xBB);
-        assert_eq!(recovered.fn_id(), 0xCC);
-        assert_eq!(recovered.mux_id(), 0x12345678);
-        assert_eq!(
-            recovered.status(),
-            Ok(crate::format::header::DataStatus::LocalIo)
-        );
-    }
-
-    #[tokio::test]
-    async fn test_read_empty_payload() {
-        let mut original = PyroVec::with_capacity(0);
-        original.set_status(crate::format::header::DataStatus::Empty);
-        original.set_class_id(5);
-        let request = original.view().into();
+    /// Write a `Request` to a `Vec`, then read it back via `read_from_stream`.
+    /// Returns the recovered `PyroVec`.
+    async fn roundtrip(mut request: Request) -> PyroVec {
         let mut stream = Vec::new();
         write_to_stream(&mut stream, &request, None).await.unwrap();
-
         let mut reader = Cursor::new(stream);
         let mut recovered = PyroVec::with_capacity(0);
         read_from_stream(&mut reader, None, &mut recovered)
             .await
             .unwrap();
+        recovered
+    }
+
+    fn make_request(data: &[u8]) -> Request {
+        let mut vec = PyroVec::with_capacity(data.len());
+        vec.extend_from_slice(data);
+        vec.into()
+    }
+
+    fn make_request_with(vec: &mut PyroVec, data: &[u8]) -> Request {
+        vec.clear();
+        vec.extend_from_slice(data);
+        vec.into()
+    }
+
+    // ── Roundtrip / integrity ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_roundtrip_basic_payload() {
+        let mut vec = PyroVec::with_capacity(16);
+        vec.extend_from_slice(b"endian-test-data");
+        let request = vec.into();
+
+        let recovered = roundtrip(request).await;
+
+        assert_eq!(recovered.as_slice(), b"endian-test-data");
+    }
+
+    #[tokio::test]
+    async fn test_roundtrip_empty_payload() {
+        let mut vec = PyroVec::with_capacity(0);
+        vec.set_status(DataStatus::Empty);
+        vec.set_class_id(5);
+        let request = vec.into();
+
+        let recovered = roundtrip(request).await;
 
         assert_eq!(recovered.len(), 0);
-        assert_eq!(
-            recovered.status(),
-            Ok(crate::format::header::DataStatus::Empty)
-        );
+        assert_eq!(recovered.status(), Ok(DataStatus::Empty));
         assert_eq!(recovered.class_id(), 5);
     }
 
     #[tokio::test]
-    async fn test_read_interrupted_header() {
-        // Provide only 8 bytes of the required 16-byte header
-        let partial_header = vec![0u8; 8];
-        let mut reader = Cursor::new(partial_header);
+    async fn test_roundtrip_all_header_fields() {
+        let mut vec = PyroVec::with_capacity(16);
+        vec.extend_from_slice(b"full-header");
+        vec.set_wire_format(0xAA);
+        vec.set_class_id(0xBB);
+        vec.set_fn_id(0xCC);
+        vec.set_status(DataStatus::LocalIo);
+        let mut request: Request = vec.into();
+        request.mux_id = Some(0x12345678);
 
-        let mut recovered = PyroVec::with_capacity(0);
-        let result = read_from_stream(&mut reader, None, &mut recovered).await;
-        assert!(result.is_err());
+        let recovered = roundtrip(request).await;
+
+        assert_eq!(recovered.wire_format(), 0xAA);
+        assert_eq!(recovered.class_id(), 0xBB);
+        assert_eq!(recovered.fn_id(), 0xCC);
+        assert_eq!(recovered.status(), Ok(DataStatus::LocalIo));
+        assert_eq!(recovered.mux_id(), 0x12345678);
+    }
+
+    // ── Request field overrides ───────────────────────────────────────────────
+
+    /// When a Request field is `Some`, it overrides the PyroView's value.
+    /// When `None`, the PyroView's value is used.
+
+    #[tokio::test]
+    async fn test_override_class_id() {
+        let mut vec = PyroVec::with_capacity(4);
+        vec.extend_from_slice(b"test");
+        vec.set_class_id(0x11); // view value
+        let mut request: Request = vec.into();
+
+        // Override with Some
+        request.class_id = Some(0xFF);
+        let recovered = roundtrip(request).await;
+        assert_eq!(recovered.class_id(), 0xFF, "Override value should win");
+
+        // Fall back to view (None)
+        request.class_id = None;
+        let recovered = roundtrip(request).await;
         assert_eq!(
-            result.unwrap_err().kind(),
-            std::io::ErrorKind::UnexpectedEof
+            recovered.class_id(),
+            0x11,
+            "View value should be used when Some is absent"
         );
     }
 
     #[tokio::test]
-    async fn test_stream_roundtrip() {
-        let mut original = PyroVec::with_capacity(32);
-        original.extend_from_slice(b"Async Data Packet");
-        original.set_status(DataStatus::RemoteUtf8);
-        original.set_fn_id(2);
+    async fn test_override_fn_id() {
+        let mut vec = PyroVec::with_capacity(4);
+        vec.extend_from_slice(b"test");
+        vec.set_fn_id(0x22);
+        let mut request: Request = vec.into();
 
-        let mut stream_buffer = Vec::new();
+        request.fn_id = Some(0xEE);
+        let recovered = roundtrip(request).await;
+        assert_eq!(recovered.fn_id(), 0xEE);
 
-        write_to_stream(&mut stream_buffer, &original.view(), 0, None)
-            .await
-            .expect("Write failed");
-
-        let mut cursor = Cursor::new(stream_buffer);
-        let mut recovered = PyroVec::with_capacity(0);
-        read_from_stream(&mut cursor, None, &mut recovered)
-            .await
-            .expect("Read failed");
-
-        assert_eq!(recovered.as_slice(), b"Async Data Packet");
-        assert_eq!(recovered.len(), 17);
-        assert_eq!(
-            recovered.status(),
-            Ok(DataStatus::RemoteUtf8),
-            "Status must survive roundtrip"
-        );
-        assert_eq!(recovered.fn_id(), 2, "Function ID must survive roundtrip");
+        request.fn_id = None;
+        let recovered = roundtrip(request).await;
+        assert_eq!(recovered.fn_id(), 0x22);
     }
 
     #[tokio::test]
-    async fn test_stream_preserves_header_fields() {
-        let mut original = PyroVec::with_capacity(8);
-        original.extend_from_slice(b"data");
-        original.set_status(DataStatus::LocalSerialization);
-        original.set_fn_id(0x12);
+    async fn test_override_mux_id() {
+        let mut vec = PyroVec::with_capacity(4);
+        vec.extend_from_slice(b"test");
+        vec.set_mux_id(0xAAAAAAAA);
+        let mut request: Request = vec.into();
 
-        let mut stream_buffer = Vec::new();
-        write_to_stream(&mut stream_buffer, &original.view(), 0, None)
-            .await
-            .unwrap();
+        request.mux_id = Some(0xDEADBEEF);
+        let recovered = roundtrip(request).await;
+        assert_eq!(recovered.mux_id(), 0xDEADBEEF);
 
-        let mut cursor = Cursor::new(stream_buffer);
-        let mut recovered = PyroVec::with_capacity(0);
-        read_from_stream(&mut cursor, None, &mut recovered)
-            .await
-            .unwrap();
-
-        assert_eq!(recovered.status(), Ok(DataStatus::LocalSerialization));
-        assert_eq!(recovered.fn_id(), 0x12);
+        request.mux_id = None;
+        let recovered = roundtrip(request).await;
+        assert_eq!(recovered.mux_id(), 0xAAAAAAAA);
     }
+
+    #[tokio::test]
+    async fn test_override_client_id() {
+        let mut vec = PyroVec::with_capacity(4);
+        vec.extend_from_slice(b"test");
+        vec.set_client_id(0x12345678);
+        let mut request: Request = vec.into();
+
+        request.client_id = Some(0xFEDCBA98);
+        let recovered = roundtrip(request).await;
+        assert_eq!(recovered.client_id(), 0xFEDCBA98);
+
+        request.client_id = None;
+        let recovered = roundtrip(request).await;
+        assert_eq!(recovered.client_id(), 0x12345678);
+    }
+
+    #[tokio::test]
+    async fn test_override_all_fields_at_once() {
+        let mut vec = PyroVec::with_capacity(8);
+        vec.extend_from_slice(b"alloverride");
+        vec.set_class_id(0x11);
+        vec.set_fn_id(0x22);
+        vec.set_mux_id(0xAAAAAAAA);
+        vec.set_client_id(0xBBBBBBBB);
+        vec.set_status(DataStatus::RemoteUtf8);
+        vec.set_wire_format(0x55);
+        let mut request: Request = vec.into();
+
+        // Override every field
+        request.client_id = Some(0xCCCCCCCC);
+        request.class_id = Some(0xDD);
+        request.fn_id = Some(0xEE);
+        request.mux_id = Some(0x11223344);
+
+        let recovered = roundtrip(request).await;
+
+        assert_eq!(recovered.client_id(), 0xCCCCCCCC);
+        assert_eq!(recovered.class_id(), 0xDD);
+        assert_eq!(recovered.fn_id(), 0xEE);
+        assert_eq!(recovered.mux_id(), 0x11223344);
+        // Non-overridden fields should come from the view
+        assert_eq!(recovered.status(), Ok(DataStatus::RemoteUtf8));
+        assert_eq!(recovered.wire_format(), 0x55);
+    }
+
+    // ── RequestInner::View vs RequestInner::Vec ───────────────────────────────
+
+    #[tokio::test]
+    async fn test_roundtrip_from_view() {
+        let mut vec = PyroVec::with_capacity(6);
+        vec.extend_from_slice(b"viewed");
+        vec.set_class_id(0x42);
+        let request: Request = vec.view().into();
+
+        let recovered = roundtrip(request).await;
+        assert_eq!(recovered.as_slice(), b"viewed");
+        assert_eq!(recovered.class_id(), 0x42);
+    }
+
+    #[tokio::test]
+    async fn test_roundtrip_from_vec() {
+        let mut vec = PyroVec::with_capacity(6);
+        vec.extend_from_slice(b"vecced");
+        vec.set_class_id(0x99);
+        let request: Request = vec.into();
+
+        let recovered = roundtrip(request).await;
+        assert_eq!(recovered.as_slice(), b"vecced");
+        assert_eq!(recovered.class_id(), 0x99);
+    }
+
+    // ── Error cases ───────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn test_read_rejects_bad_magic() {
         let mut bad_packet = Vec::new();
-        // Header
         bad_packet.extend_from_slice(&0xDEADBEEFu32.to_ne_bytes()); // BAD Magic
-        bad_packet.extend_from_slice(&10u32.to_ne_bytes()); // Len
-        bad_packet.extend_from_slice(&[0u8; 8]); // Rest of header (8 bytes)
-        // Body
+        bad_packet.extend_from_slice(&10u32.to_le_bytes()); // Len
+        bad_packet.extend_from_slice(&[0u8; 8]);
         bad_packet.extend_from_slice(&[0u8; 10]);
 
         let mut cursor = Cursor::new(bad_packet);
         let mut recovered = PyroVec::with_capacity(0);
-
         let result = read_from_stream(&mut cursor, None, &mut recovered).await;
 
         assert!(result.is_err());
@@ -419,42 +492,49 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_detects_header_eof() {
-        // Header is 16 bytes. We only provide 10.
         let partial_header = vec![0u8; 10];
         let mut cursor = Cursor::new(partial_header);
-
         let mut recovered = PyroVec::with_capacity(0);
         let result = read_from_stream(&mut cursor, None, &mut recovered).await;
 
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().kind(),
-            std::io::ErrorKind::UnexpectedEof
-        );
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
     }
 
     #[tokio::test]
     async fn test_read_detects_body_eof() {
         let body_len: u32 = 10;
         let mut packet = Vec::new();
-
-        // Header
-        packet.extend_from_slice(&0x7079726Fu32.to_ne_bytes()); // Valid Magic
-        packet.extend_from_slice(&body_len.to_ne_bytes()); // Len = 10
-        packet.extend_from_slice(&[0u8; 8]); // Rest of header (8 bytes)
-
-        // Body (Only 5 bytes, but we promised 10)
-        packet.extend_from_slice(b"12345");
+        packet.extend_from_slice(&0x7079726Fu32.to_ne_bytes()); // "pyro"
+        packet.extend_from_slice(&body_len.to_le_bytes());
+        packet.extend_from_slice(&[0u8; 8]);
+        packet.extend_from_slice(b"12345"); // Only 5 bytes, promised 10
 
         let mut cursor = Cursor::new(packet);
         let mut recovered = PyroVec::with_capacity(0);
         let result = read_from_stream(&mut cursor, None, &mut recovered).await;
 
         assert!(result.is_err());
-        // Should fail because it couldn't fill the buffer
-        assert_eq!(
-            result.unwrap_err().kind(),
-            std::io::ErrorKind::UnexpectedEof
-        );
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    #[tokio::test]
+    async fn test_read_too_large() {
+        let config = PyroStreamSettings {
+            max_msg_size: 5,
+            timeout: Duration::from_secs(1),
+        };
+        let mut packet = Vec::new();
+        packet.extend_from_slice(&0x7079726Fu32.to_ne_bytes());
+        packet.extend_from_slice(&20u32.to_le_bytes()); // 20 > max 5
+        packet.extend_from_slice(&[0u8; 8]);
+        packet.extend_from_slice(&[0u8; 20]);
+
+        let mut cursor = Cursor::new(packet);
+        let mut recovered = PyroVec::with_capacity(0);
+        let result = read_from_stream(&mut cursor, Some(&config), &mut recovered).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
     }
 }
