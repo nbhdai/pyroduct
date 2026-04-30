@@ -9,7 +9,7 @@ pub const PROTOCOL_VERSION: u8 = 1;
 
 macro_rules! define_data_status {
     ($( $name:ident = $val:expr ),* $(,)?) => {
-        /// Status codes located at Offset 0x0F in the header.
+        /// Status codes located at Offset 0x09 in the header.
         #[repr(u8)]
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         pub enum DataStatus {
@@ -465,10 +465,10 @@ impl<T: MutPyroData> PyroHeaderMut for T {
 }
 
 pub const UNIT_BYTES: [u8; 16] = [
-    0x6F, 0x72, 0x79, 0x70, // Magic
     0x00, 0x00, 0x00, 0x00, // Len (0)
+    0x00, 0x00, 0x00, 0x00, // Client ID
     0x01, // WireFormat (1)
-    0x00, // Status (ValidData)
+    0x00, // Status (Empty)
     0x00, // ClassID
     0x00, // FnID
     0x00, 0x00, 0x00, 0x00, // MuxID

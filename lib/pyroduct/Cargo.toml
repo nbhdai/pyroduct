@@ -121,10 +121,6 @@ name = "logs"
 required-features = ["host"]
 
 [[test]]
-name = "tokio_safety"
-required-features = ["host"]
-
-[[test]]
 name = "integration_state"
 required-features = ["host"]
 

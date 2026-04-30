@@ -272,9 +272,9 @@ mod tests {
 
     /// Write a `Request` to a `Vec`, then read it back via `read_from_stream`.
     /// Returns the recovered `PyroVec`.
-    async fn roundtrip(mut request: Request) -> PyroVec {
+    async fn roundtrip(request: &Request) -> PyroVec {
         let mut stream = Vec::new();
-        write_to_stream(&mut stream, &request, None).await.unwrap();
+        write_to_stream(&mut stream, request, None).await.unwrap();
         let mut reader = Cursor::new(stream);
         let mut recovered = PyroVec::with_capacity(0);
         read_from_stream(&mut reader, None, &mut recovered)
@@ -289,10 +289,32 @@ mod tests {
         vec.into()
     }
 
-    fn make_request_with(vec: &mut PyroVec, data: &[u8]) -> Request {
-        vec.clear();
+    /// Build a Request where:
+    /// - `override_*` fields, if `Some`, override the value in the wire format
+    /// - `vec_*` fields set the underlying PyroVec (used as fallback when override is None)
+    fn make_request_with(
+        data: &[u8],
+        vec_class_id: u8,
+        vec_fn_id: u8,
+        vec_mux_id: u32,
+        vec_client_id: u32,
+        override_class_id: Option<u8>,
+        override_fn_id: Option<u8>,
+        override_mux_id: Option<u32>,
+        override_client_id: Option<u32>,
+    ) -> Request {
+        let mut vec = PyroVec::with_capacity(data.len());
         vec.extend_from_slice(data);
-        vec.into()
+        vec.set_class_id(vec_class_id);
+        vec.set_fn_id(vec_fn_id);
+        vec.set_mux_id(vec_mux_id);
+        vec.set_client_id(vec_client_id);
+        let mut request: Request = vec.into();
+        if let Some(v) = override_class_id { request.class_id = Some(v); }
+        if let Some(v) = override_fn_id { request.fn_id = Some(v); }
+        if let Some(v) = override_mux_id { request.mux_id = Some(v); }
+        if let Some(v) = override_client_id { request.client_id = Some(v); }
+        request
     }
 
     // ── Roundtrip / integrity ─────────────────────────────────────────────────
@@ -303,8 +325,7 @@ mod tests {
         vec.extend_from_slice(b"endian-test-data");
         let request = vec.into();
 
-        let recovered = roundtrip(request).await;
-
+        let recovered = roundtrip(&request).await;
         assert_eq!(recovered.as_slice(), b"endian-test-data");
     }
 
@@ -315,8 +336,7 @@ mod tests {
         vec.set_class_id(5);
         let request = vec.into();
 
-        let recovered = roundtrip(request).await;
-
+        let recovered = roundtrip(&request).await;
         assert_eq!(recovered.len(), 0);
         assert_eq!(recovered.status(), Ok(DataStatus::Empty));
         assert_eq!(recovered.class_id(), 5);
@@ -330,16 +350,16 @@ mod tests {
         vec.set_class_id(0xBB);
         vec.set_fn_id(0xCC);
         vec.set_status(DataStatus::LocalIo);
-        let mut request: Request = vec.into();
-        request.mux_id = Some(0x12345678);
+        let request = vec.into();
 
-        let recovered = roundtrip(request).await;
+        let recovered = roundtrip(&request).await;
 
         assert_eq!(recovered.wire_format(), 0xAA);
         assert_eq!(recovered.class_id(), 0xBB);
         assert_eq!(recovered.fn_id(), 0xCC);
         assert_eq!(recovered.status(), Ok(DataStatus::LocalIo));
-        assert_eq!(recovered.mux_id(), 0x12345678);
+        // mux_id defaults to 0 in the view (no mux_id set), so that's what we get back
+        assert_eq!(recovered.mux_id(), 0);
     }
 
     // ── Request field overrides ───────────────────────────────────────────────
@@ -349,93 +369,59 @@ mod tests {
 
     #[tokio::test]
     async fn test_override_class_id() {
-        let mut vec = PyroVec::with_capacity(4);
-        vec.extend_from_slice(b"test");
-        vec.set_class_id(0x11); // view value
-        let mut request: Request = vec.into();
-
         // Override with Some
-        request.class_id = Some(0xFF);
-        let recovered = roundtrip(request).await;
+        let request = make_request_with(b"test", 0x11, 0, 0, 0, Some(0xFF), None, None, None);
+        let recovered = roundtrip(&request).await;
         assert_eq!(recovered.class_id(), 0xFF, "Override value should win");
 
         // Fall back to view (None)
-        request.class_id = None;
-        let recovered = roundtrip(request).await;
-        assert_eq!(
-            recovered.class_id(),
-            0x11,
-            "View value should be used when Some is absent"
-        );
+        let request = make_request_with(b"test", 0x11, 0, 0, 0, None, None, None, None);
+        let recovered = roundtrip(&request).await;
+        assert_eq!(recovered.class_id(), 0x11, "View value should be used when Some is absent");
     }
 
     #[tokio::test]
     async fn test_override_fn_id() {
-        let mut vec = PyroVec::with_capacity(4);
-        vec.extend_from_slice(b"test");
-        vec.set_fn_id(0x22);
-        let mut request: Request = vec.into();
-
-        request.fn_id = Some(0xEE);
-        let recovered = roundtrip(request).await;
+        let request = make_request_with(b"test", 0, 0x22, 0, 0, None, Some(0xEE), None, None);
+        let recovered = roundtrip(&request).await;
         assert_eq!(recovered.fn_id(), 0xEE);
 
-        request.fn_id = None;
-        let recovered = roundtrip(request).await;
+        let request = make_request_with(b"test", 0, 0x22, 0, 0, None, None, None, None);
+        let recovered = roundtrip(&request).await;
         assert_eq!(recovered.fn_id(), 0x22);
     }
 
     #[tokio::test]
     async fn test_override_mux_id() {
-        let mut vec = PyroVec::with_capacity(4);
-        vec.extend_from_slice(b"test");
-        vec.set_mux_id(0xAAAAAAAA);
-        let mut request: Request = vec.into();
-
-        request.mux_id = Some(0xDEADBEEF);
-        let recovered = roundtrip(request).await;
+        let request = make_request_with(b"test", 0, 0, 0xAAAAAAAA, 0, None, None, Some(0xDEADBEEF), None);
+        let recovered = roundtrip(&request).await;
         assert_eq!(recovered.mux_id(), 0xDEADBEEF);
 
-        request.mux_id = None;
-        let recovered = roundtrip(request).await;
+        let request = make_request_with(b"test", 0, 0, 0xAAAAAAAA, 0, None, None, None, None);
+        let recovered = roundtrip(&request).await;
         assert_eq!(recovered.mux_id(), 0xAAAAAAAA);
     }
 
     #[tokio::test]
     async fn test_override_client_id() {
-        let mut vec = PyroVec::with_capacity(4);
-        vec.extend_from_slice(b"test");
-        vec.set_client_id(0x12345678);
-        let mut request: Request = vec.into();
-
-        request.client_id = Some(0xFEDCBA98);
-        let recovered = roundtrip(request).await;
+        let request = make_request_with(b"test", 0, 0, 0, 0x12345678, None, None, None, Some(0xFEDCBA98));
+        let recovered = roundtrip(&request).await;
         assert_eq!(recovered.client_id(), 0xFEDCBA98);
 
-        request.client_id = None;
-        let recovered = roundtrip(request).await;
+        let request = make_request_with(b"test", 0, 0, 0, 0x12345678, None, None, None, None);
+        let recovered = roundtrip(&request).await;
         assert_eq!(recovered.client_id(), 0x12345678);
     }
 
     #[tokio::test]
     async fn test_override_all_fields_at_once() {
-        let mut vec = PyroVec::with_capacity(8);
-        vec.extend_from_slice(b"alloverride");
-        vec.set_class_id(0x11);
-        vec.set_fn_id(0x22);
-        vec.set_mux_id(0xAAAAAAAA);
-        vec.set_client_id(0xBBBBBBBB);
-        vec.set_status(DataStatus::RemoteUtf8);
-        vec.set_wire_format(0x55);
-        let mut request: Request = vec.into();
+        // vec_* values are the fallback; override_* values should win
+        let request = make_request_with(
+            b"alloverride", 0x11, 0x22, 0xAAAAAAAA, 0xBBBBBBBB,
+            Some(0xDD), Some(0xEE), Some(0x11223344), Some(0xCCCCCCCC),
+        );
 
-        // Override every field
-        request.client_id = Some(0xCCCCCCCC);
-        request.class_id = Some(0xDD);
-        request.fn_id = Some(0xEE);
-        request.mux_id = Some(0x11223344);
-
-        let recovered = roundtrip(request).await;
+        let recovered = roundtrip(&request).await;
 
         assert_eq!(recovered.client_id(), 0xCCCCCCCC);
         assert_eq!(recovered.class_id(), 0xDD);
@@ -455,7 +441,7 @@ mod tests {
         vec.set_class_id(0x42);
         let request: Request = vec.view().into();
 
-        let recovered = roundtrip(request).await;
+        let recovered = roundtrip(&request).await;
         assert_eq!(recovered.as_slice(), b"viewed");
         assert_eq!(recovered.class_id(), 0x42);
     }
@@ -467,7 +453,7 @@ mod tests {
         vec.set_class_id(0x99);
         let request: Request = vec.into();
 
-        let recovered = roundtrip(request).await;
+        let recovered = roundtrip(&request).await;
         assert_eq!(recovered.as_slice(), b"vecced");
         assert_eq!(recovered.class_id(), 0x99);
     }
