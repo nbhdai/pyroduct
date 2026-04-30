@@ -55,10 +55,10 @@ pub fn deserialize_input<I>(data: PyroViewPtr) -> Result<I, PyroError>
 where
     for<'a> I: Bridgeable + From<I::Ref<'a>>,
 {
-    tracing::trace!(?data, "Deserializing view");
+    tracing::trace!("Deserializing view");
     let guard = panic::catch_unwind(AssertUnwindSafe(|| {
         let view = unsafe { PyroView::from_ptr(data) }?;
-        let typed = I::expose_view(view)?;
+        let typed = I::expose(view)?;
         Ok(typed.into())
     }));
 

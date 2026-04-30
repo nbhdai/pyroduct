@@ -23,7 +23,7 @@ pub struct EmptyConfig {}
 pub fn deserialize_config<C: serde::de::DeserializeOwned>(
     config: PyroViewPtr,
 ) -> Result<Option<C>, PyroError> {
-    if config.ptr.is_null() || config.len == 0 {
+    if config.ptr.is_null() {
         return Ok(None);
     }
 

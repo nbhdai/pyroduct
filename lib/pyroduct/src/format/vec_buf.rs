@@ -391,6 +391,11 @@ impl PyroVec {
         unsafe { inner.data_ptr().add(PyroParser::HEADER_SIZE) }
     }
 
+    pub fn raw_ptr(&self) -> *const u8 {
+        let inner = unsafe { self.view.as_ref() };
+        unsafe { inner.data_ptr() }
+    }
+
     pub(crate) fn as_packet_slice(&self) -> &[u8] {
         let inner = unsafe { self.view.as_ref() };
         unsafe { slice::from_raw_parts(inner.data_ptr(), PyroParser::HEADER_SIZE + inner.len as usize) }
@@ -437,6 +442,13 @@ impl PyroVec {
     pub fn as_slice(&self) -> &[u8] {
         let inner = unsafe { self.view.as_ref() };
         unsafe { slice::from_raw_parts(self.data_ptr(), inner.len as usize) }
+    }
+
+    pub fn as_raw_slice(&self) -> &[u8] {
+        unsafe {
+            let inner = self.view.as_ref();
+            slice::from_raw_parts(self.raw_ptr(), inner.len as usize)
+        }
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
@@ -683,6 +695,14 @@ impl PyroView {
         unsafe {
             let inner = self.inner.as_ref();
             let data = inner.data_ptr().add(PyroParser::HEADER_SIZE);
+            slice::from_raw_parts(data, inner.len as usize)
+        }
+    }
+
+    pub fn as_raw_slice(&self) -> &[u8] {
+        unsafe {
+            let inner = self.inner.as_ref();
+            let data = inner.data_ptr();
             slice::from_raw_parts(data, inner.len as usize)
         }
     }

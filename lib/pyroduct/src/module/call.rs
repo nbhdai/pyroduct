@@ -117,7 +117,7 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
                     ptr, total_len, memory_len
                 )))
             })?;
-        dest.copy_from_slice(data.raw_slice);
+        dest.copy_from_slice(data.as_raw_slice());
 
         Ok(ptr)
     }
