@@ -31,7 +31,7 @@ pub struct PyroSocket {
 }
 
 struct SocketInner {
-    tx: mpsc::UnboundedSender<PyroVec>,
+    tx: mpsc::UnboundedSender<Request>,
     pending: DashMap<u32, oneshot::Sender<PyroVec>>,
     unmatched_tx: mpsc::UnboundedSender<PyroVec>,
     next_id: AtomicU32,
@@ -46,6 +46,14 @@ pub struct PyroReadHalf {
 /// The writing half of a [`PyroSocket`].
 pub struct PyroWriteHalf {
     socket: PyroSocket,
+}
+
+pub struct Request {
+    pub client_id: Option<u32>,
+    pub class_id: Option<u8>,
+    pub fn_id: Option<u8>,
+    pub mux_id: u32,
+    pub vec: PyroVec,
 }
 
 impl PyroSocket {
@@ -77,7 +85,7 @@ impl PyroSocket {
         R: tokio::io::AsyncRead + Unpin + Send + 'static,
         W: tokio::io::AsyncWrite + Unpin + Send + 'static,
     {
-        let (tx, mut rx) = mpsc::unbounded_channel::<PyroVec>();
+        let (tx, mut rx) = mpsc::unbounded_channel::<Request>();
         let (unmatched_tx, unmatched_rx) = mpsc::unbounded_channel();
 
         let inner = Arc::new(SocketInner {
@@ -116,9 +124,9 @@ impl PyroSocket {
         // Background Write Task
         let settings_write = settings;
         tokio::spawn(async move {
-            while let Some(vec) = rx.recv().await {
-                let view = vec.view();
-                if write_to_stream(&mut writer, &view, vec.mux_id(), Some(&settings_write))
+            while let Some(rec) = rx.recv().await {
+                let view = rec.vec.view();
+                if write_to_stream(&mut writer, &view, rec.mux_id, Some(&settings_write))
                     .await
                     .is_err()
                 {
@@ -145,12 +153,13 @@ impl PyroSocket {
         self
     }
 
+
     // ── Send / Recv ───────────────────────────────────────────────────────────
 
     /// Write a [`PyroView`] to the socket.
     ///
     /// This sends the message without waiting for a response.
-    pub async fn send(&self, view: &PyroView<'_>) -> std::io::Result<()> {
+    pub async fn send(&self, view: &PyroView) -> std::io::Result<()> {
         let vec = view.clone_to_vec();
         self.inner.tx.send(vec).map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::BrokenPipe, "socket write task closed")
@@ -175,21 +184,25 @@ impl PyroSocket {
     ///
     /// This assigns a unique `mux_id` to the request, sends it, and waits for
     /// a response with the same `mux_id`.
-    pub async fn request(&self, view: &PyroView<'_>) -> std::io::Result<PyroVec> {
-        let id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);
-        let mut vec = view.clone_to_vec();
-        vec.set_mux_id(id);
-
+    pub async fn request(&self, client_id: Option<u32>, class_id: Option<u8>, fn_id: Option<u8>, view: &PyroView) -> std::io::Result<PyroVec> {
+        let mux_id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);
+        let request = Request {
+            client_id,
+            class_id,
+            fn_id,
+            mux_id: todo!(),
+            vec,
+        };
         let (tx, rx) = oneshot::channel();
-        self.inner.pending.insert(id, tx);
+        self.inner.pending.insert(mux_id, tx);
 
-        self.inner.tx.send(vec).map_err(|_| {
-            self.inner.pending.remove(&id);
+        self.inner.tx.send(request).map_err(|_| {
+            self.inner.pending.remove(&mux_id);
             std::io::Error::new(std::io::ErrorKind::BrokenPipe, "socket write task closed")
         })?;
 
         rx.await.map_err(|_| {
-            self.inner.pending.remove(&id);
+            self.inner.pending.remove(&mux_id);
             std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
                 "socket read task closed or request timed out",
@@ -222,7 +235,7 @@ impl PyroReadHalf {
 
 impl PyroWriteHalf {
     /// Write a [`PyroVec`] to the socket.
-    pub async fn send(&mut self, view: &PyroView<'_>) -> std::io::Result<()> {
+    pub async fn send(&mut self, view: &PyroView) -> std::io::Result<()> {
         self.socket.send(view).await
     }
 }

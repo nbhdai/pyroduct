@@ -2,8 +2,10 @@ use std::alloc::{self, Layout};
 use std::hash::Hasher;
 use std::ops::{Deref, DerefMut};
 use std::ptr::{self, NonNull};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::{fmt, io, slice};
 
+use crate::format::ParseError;
 use crate::format::header::{
     OwnedPyroData, PyroData, PyroHeader, PyroHeaderMut, PyroParser, UNIT_BYTES, UNIT_HEADER,
 };
@@ -13,9 +15,49 @@ use crate::{CapturedError, PyroError, PyroResult};
 // Function pointer types for FFI-safe memory management
 // ============================================================================
 
-type PyroVecDropper = unsafe extern "C" fn(ptr: *mut u8, capacity: usize);
+type PyroVecDropper = unsafe extern "C" fn(ptr: *mut u8, capacity: u32);
 type PyroVecGrower =
-    unsafe extern "C" fn(ptr: *mut u8, old_capacity: usize, new_capacity: usize) -> *mut u8;
+    unsafe extern "C" fn(ptr: *mut u8, old_capacity: u32, new_capacity: u32) -> *mut u8;
+
+// ============================================================================
+// PyroInner — shared state for PyroVec, PyroBuf, and PyroView
+// ============================================================================
+
+pub const INNER_HEADER: usize = 16;
+
+// align(16) guarantees that the start of the `data` field naturally falls on a 
+// 16-byte boundary, which perfectly suits the PyroParser requirement.
+#[repr(C, align(16))]
+#[derive(Debug)]
+pub(crate) struct PyroInner {
+    ref_count: AtomicU32, // 4 bytes
+    capacity: u32,        // 4 bytes
+    len: u32,             // 4 bytes
+    
+    // Explicit padding ensures the header totals exactly 16 bytes.
+    // The next field (`data`) starts perfectly on a 16-byte boundary.
+    _padding: u32,        // 4 bytes
+    
+    // Starts at offset 16
+    data: [u8; 0], 
+}
+
+impl PyroInner {
+    fn new(capacity: u32, len: u32) -> Self {
+        Self {
+            ref_count: AtomicU32::new(0),
+            capacity,
+            len,
+            _padding: 0,
+            data: [],
+        }
+    }
+
+    #[inline]
+    pub fn data_ptr(&self) -> *mut u8 {
+        self.data.as_ptr() as *mut u8
+    }
+}
 
 // ============================================================================
 // PyroVec
@@ -24,8 +66,7 @@ type PyroVecGrower =
 /// A 16-byte aligned buffer with a self-describing header.
 /// Compatible with FFI passing as a raw pointer or TCP/Unix framing.
 pub struct PyroVec {
-    ptr: NonNull<u8>,
-    capacity: usize,
+    pub(super) view: NonNull<PyroInner>,
     dropper: PyroVecDropper,
     grower: PyroVecGrower,
 }
@@ -36,8 +77,7 @@ pub struct PyroVec {
 
 #[repr(C)]
 pub struct PyroVecPtr {
-    ptr: *mut u8,
-    capacity: usize,
+    ptr: *mut PyroInner,
     dropper: PyroVecDropper,
     grower: PyroVecGrower,
 }
@@ -48,25 +88,14 @@ unsafe impl std::marker::Send for PyroVecPtr {}
 // PyroBuf — a PyroVec with the grow capability removed
 // ============================================================================
 
-/// A mutable buffer that owns its allocation but cannot grow.
-///
-/// Created by consuming a `PyroVec` via `PyroVec::into_buf()` or
-/// `PyroBuf::from(pyro_vec)`. The header and existing data remain
-/// fully mutable, but `push` / `extend_from_slice` are not available.
 pub struct PyroBuf {
-    ptr: NonNull<u8>,
-    capacity: usize,
+    view: NonNull<PyroInner>,
     dropper: PyroVecDropper,
 }
 
-/// FFI-safe representation of a `PyroBuf`.
-///
-/// Like `PyroVecPtr` but without the grower — suitable for passing
-/// fixed-capacity buffers across FFI boundaries.
 #[repr(C)]
 pub struct PyroBufPtr {
-    ptr: *mut u8,
-    capacity: usize,
+    ptr: *mut PyroInner,
     dropper: PyroVecDropper,
 }
 
@@ -77,85 +106,71 @@ unsafe impl Sync for PyroBuf {}
 impl PyroData for PyroBuf {
     #[inline]
     fn header(&self) -> &[u8; 16] {
-        unsafe { &*(self.ptr.as_ptr() as *const [u8; 16]) }
+        let inner = unsafe { self.view.as_ref() };
+        unsafe { &*(inner.data_ptr() as *const [u8; 16]) }
     }
     fn capacity(&self) -> usize {
-        self.capacity - PyroParser::HEADER_SIZE
+        let cap = unsafe { self.view.as_ref().capacity } as usize;
+        cap - PyroParser::HEADER_SIZE
     }
 }
 
 impl OwnedPyroData for PyroBuf {
     #[inline]
     fn header_mut(&mut self) -> &mut [u8; 16] {
-        unsafe { &mut *(self.ptr.as_ptr() as *mut [u8; 16]) }
+        let inner = unsafe { self.view.as_ref() };
+        unsafe { &mut *(inner.data_ptr() as *mut [u8; 16]) }
     }
 }
 
 impl PyroBuf {
-    /// Returns the raw pointer to the start of the data section (after header).
     pub fn data_ptr(&self) -> *const u8 {
-        unsafe { self.ptr.as_ptr().add(PyroParser::HEADER_SIZE) }
+        let inner = unsafe { self.view.as_ref() };
+        unsafe { inner.data_ptr().add(PyroParser::HEADER_SIZE) }
     }
 
-    /// Returns a slice over the data payload.
     pub fn as_slice(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(self.data_ptr(), self.len()) }
+        let inner = unsafe { self.view.as_ref() };
+        unsafe { slice::from_raw_parts(self.data_ptr(), inner.len as usize) }
     }
 
-    /// Returns a mutable slice over the data payload.
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        unsafe {
-            slice::from_raw_parts_mut(self.ptr.as_ptr().add(PyroParser::HEADER_SIZE), self.len())
-        }
+        let inner = unsafe { self.view.as_ref() };
+        unsafe { slice::from_raw_parts_mut(self.data_ptr() as *mut u8, inner.len as usize) }
     }
 
-    /// Returns a slice containing the Header (16 bytes) AND the Data (len bytes).
     pub(crate) fn as_packet_slice(&self) -> &[u8] {
-        unsafe {
-            slice::from_raw_parts(
-                self.ptr.as_ptr(),
-                PyroParser::HEADER_SIZE + self.header_len() as usize,
-            )
-        }
+        let inner = unsafe { self.view.as_ref() };
+        unsafe { slice::from_raw_parts(inner.data_ptr(), PyroParser::HEADER_SIZE + inner.len as usize) }
     }
 
-    /// Returns a mutable slice containing the Header (16 bytes) AND the Data (len bytes).
-    pub(crate) fn as_packet_slice_mut(&self) -> &mut [u8] {
-        unsafe {
-            slice::from_raw_parts_mut(
-                self.ptr.as_ptr(),
-                PyroParser::HEADER_SIZE + self.header_len() as usize,
-            )
-        }
+    pub(crate) fn as_packet_slice_mut(&mut self) -> &mut [u8] {
+        let inner = unsafe { self.view.as_ref() };
+        unsafe { slice::from_raw_parts_mut(inner.data_ptr(), PyroParser::HEADER_SIZE + inner.len as usize) }
     }
 
-    /// Resets the data length to zero without deallocating.
     pub fn clear(&mut self) {
-        unsafe { self.set_len(0) };
+        unsafe {
+            let inner = self.view.as_ptr();
+            (*inner).len = 0;
+        }
     }
 
-    /// Consumes self and returns the raw FFI-safe pointer.
-    ///
-    /// Caller is responsible for eventually reconstructing via `from_raw`
-    /// and dropping, or manually deallocating with the correct layout.
     pub fn into_raw(self) -> PyroBufPtr {
         let raw = PyroBufPtr {
-            ptr: self.ptr.as_ptr(),
-            capacity: self.capacity,
+            ptr: self.view.as_ptr(),
             dropper: self.dropper,
         };
         std::mem::forget(self);
         raw
     }
 
-    /// Reconstructs a `PyroBuf` from a raw `PyroBufPtr`.
-    ///
-    /// # Safety
-    /// Caller ensures pointer is valid, non-null, and owned by the caller.
     #[track_caller]
     pub unsafe fn from_raw(pointer: PyroBufPtr) -> PyroResult<Self> {
         let ptr = pointer.ptr;
-        if let Err(parse_error) = unsafe { PyroParser::check_raw(ptr) } {
+        let data_ptr = unsafe { (*(ptr as *const PyroInner)).data_ptr() };
+        
+        if let Err(parse_error) = unsafe { PyroParser::check_raw(data_ptr) } {
             tracing::error!(?parse_error, "Checks failed for an FFI PyroBufPtr");
             let error = CapturedError::new(format!(
                 "CRITICAL ERROR: Unable to construct a Ffi buffer due to {}",
@@ -165,27 +180,18 @@ impl PyroBuf {
             .with_backtrace(std::backtrace::Backtrace::force_capture());
             return Err(PyroError::HeaderFfi(error.into()));
         }
-        let ptr = unsafe { NonNull::new_unchecked(ptr as *mut u8) };
+        let ptr = unsafe { NonNull::new_unchecked(ptr) };
+
         Ok(Self {
-            ptr,
-            capacity: pointer.capacity,
+            view: ptr,
             dropper: pointer.dropper,
         })
     }
 
-    /// Creates a new PyroBuf by cloning the header and data from any
-    /// type that implements PyroData.
     pub fn clone_from_pyro<T: PyroData>(source: &T) -> Self {
-        // Use PyroVec's allocation logic to ensure proper 16-byte alignment
         let mut vec = PyroVec::with_capacity(source.len());
-
-        // Copy the data payload
         vec.extend_from_slice(&*source);
-
-        // Copy the header metadata (status, versions, etc.)
         vec.header_mut().copy_from_slice(source.header());
-
-        // Convert to PyroBuf (this consumes the PyroVec and removes growth capability)
         Self::from(vec)
     }
 }
@@ -193,8 +199,7 @@ impl PyroBuf {
 impl From<PyroVec> for PyroBuf {
     fn from(vec: PyroVec) -> Self {
         let buf = PyroBuf {
-            ptr: vec.ptr,
-            capacity: vec.capacity,
+            view: vec.view,
             dropper: vec.dropper,
         };
         std::mem::forget(vec);
@@ -206,7 +211,6 @@ impl From<PyroVecPtr> for PyroBufPtr {
     fn from(vec_ptr: PyroVecPtr) -> Self {
         PyroBufPtr {
             ptr: vec_ptr.ptr,
-            capacity: vec_ptr.capacity,
             dropper: vec_ptr.dropper,
         }
     }
@@ -228,7 +232,12 @@ impl DerefMut for PyroBuf {
 impl Drop for PyroBuf {
     fn drop(&mut self) {
         unsafe {
-            (self.dropper)(self.ptr.as_ptr(), self.capacity);
+            let inner = self.view.as_ref();
+            let base_ptr = self.view.as_ptr() as *mut u8;
+            let cap = inner.capacity;
+            
+            // Single deallocation pass via the FFI safe dropper
+            (self.dropper)(base_ptr, cap);
         }
     }
 }
@@ -255,22 +264,23 @@ impl fmt::Debug for PyroBuf {
 impl PyroData for PyroVec {
     #[inline]
     fn header(&self) -> &[u8; 16] {
-        unsafe { &*(self.ptr.as_ptr() as *const [u8; 16]) }
+        let inner = unsafe { self.view.as_ref() };
+        unsafe { &*(inner.data_ptr() as *const [u8; 16]) }
     }
     fn capacity(&self) -> usize {
-        self.capacity - PyroParser::HEADER_SIZE
+        let cap = unsafe { self.view.as_ref().capacity } as usize;
+        cap - PyroParser::HEADER_SIZE
     }
 }
 
-// SAFETY: PyroVec owns its allocation exclusively
-// and contains no references to thread-local state
 unsafe impl Send for PyroVec {}
 unsafe impl Sync for PyroVec {}
 
 impl OwnedPyroData for PyroVec {
     #[inline]
     fn header_mut(&mut self) -> &mut [u8; 16] {
-        unsafe { &mut *(self.ptr.as_ptr() as *mut [u8; 16]) }
+        let inner = unsafe { self.view.as_ref() };
+        unsafe { &mut *(inner.data_ptr() as *mut [u8; 16]) }
     }
 }
 
@@ -279,79 +289,83 @@ impl OwnedPyroData for PyroVec {
 // ============================================================================
 
 impl PyroVec {
-    extern "C" fn default_dropper(ptr: *mut u8, capacity: usize) {
+    /// Helper to dynamically compute the total layout of PyroInner + contiguous data
+    fn layout_for_capacity(capacity: usize) -> Layout {
+        let inner_layout = Layout::new::<PyroInner>();
+        let data_layout = Layout::from_size_align(capacity, PyroParser::ALIGN).unwrap();
+        let (layout, _) = inner_layout.extend(data_layout).unwrap();
+        layout.pad_to_align()
+    }
+
+    extern "C" fn default_dropper(ptr: *mut u8, capacity: u32) {
         unsafe {
-            let layout = Layout::from_size_align(capacity, PyroParser::ALIGN)
-                .expect("Layout logic mismatch in dropper");
+            let layout = Self::layout_for_capacity(capacity as usize);
             alloc::dealloc(ptr, layout);
         }
     }
 
     unsafe extern "C" fn default_grower(
         ptr: *mut u8,
-        old_capacity: usize,
-        new_capacity: usize,
+        old_capacity: u32,
+        new_capacity: u32,
     ) -> *mut u8 {
         unsafe {
-            let old_layout = Layout::from_size_align(old_capacity, PyroParser::ALIGN).unwrap();
-            let new_ptr = alloc::realloc(ptr, old_layout, new_capacity);
+            let old_layout = Self::layout_for_capacity(old_capacity as usize);
+            let new_layout = Self::layout_for_capacity(new_capacity as usize);
+            let new_ptr = alloc::realloc(ptr, old_layout, new_layout.size());
             if new_ptr.is_null() {
-                alloc::handle_alloc_error(
-                    Layout::from_size_align(new_capacity, PyroParser::ALIGN).unwrap(),
-                );
+                alloc::handle_alloc_error(new_layout);
             }
             new_ptr
         }
     }
 
-    /// Creates a new vector with a specific capacity.
     pub fn with_capacity(capacity: usize) -> Self {
         let capacity = capacity + PyroParser::HEADER_SIZE;
-        let layout =
-            Layout::from_size_align(capacity, PyroParser::ALIGN).expect("Invalid layout alignment");
+        let layout = Self::layout_for_capacity(capacity);
 
-        let ptr = unsafe {
+        let raw_ptr = unsafe {
             let raw = alloc::alloc(layout);
             if raw.is_null() {
                 alloc::handle_alloc_error(layout);
             }
-            ptr::copy_nonoverlapping(UNIT_BYTES.as_ptr(), raw as *mut u8, UNIT_BYTES.len());
-            NonNull::new_unchecked(raw)
+            
+            // Initialize the header block
+            let inner_ptr = raw as *mut PyroInner;
+            ptr::write(inner_ptr, PyroInner::new(capacity as u32, 0));
+            
+            // Write UNIT_BYTES to the start of the data segment
+            ptr::copy_nonoverlapping(UNIT_BYTES.as_ptr(), (*inner_ptr).data_ptr(), UNIT_BYTES.len());
+            inner_ptr
         };
+
         Self {
-            ptr,
-            capacity,
+            view: unsafe { NonNull::new_unchecked(raw_ptr) },
             dropper: Self::default_dropper,
             grower: Self::default_grower,
         }
     }
 
-    /// Consumes self and returns the raw FFI-safe pointer.
-    ///
-    /// Caller is responsible for eventually reconstructing via `from_raw`
-    /// and dropping, or manually deallocating with the correct layout.
     pub fn into_raw(self) -> PyroVecPtr {
-        let ptr = self.ptr.as_ptr();
-        let capacity = self.capacity;
+        let ptr = self.view.as_ptr();
         let dropper = self.dropper;
         let grower = self.grower;
         std::mem::forget(self);
         PyroVecPtr {
             ptr,
-            capacity,
             dropper,
             grower,
         }
     }
 
-    /// Reconstructs a `PyroVec` from a raw `PyroVecPtr`.
-    ///
-    /// # Safety
-    /// Caller ensures pointer is valid, non-null, and owned by the caller.
-    #[track_caller]
     pub unsafe fn from_raw(pointer: PyroVecPtr) -> PyroResult<Self> {
-        let ptr = pointer.ptr;
-        if let Err(parse_error) = unsafe { PyroParser::check_raw(ptr) } {
+        let view = pointer.ptr;
+        if view.is_null() {
+            return Err(PyroError::null_pointer());
+        }
+        
+        let data_ptr = unsafe { (*view).data_ptr() };
+        if let Err(parse_error) = unsafe { PyroParser::check_raw(data_ptr) } {
             tracing::error!(?parse_error, "Checks failed for an FFI PyroVecPtr");
             let error = CapturedError::new(format!(
                 "CRITICAL ERROR: Unable to construct a Ffi vector due to {}",
@@ -361,155 +375,131 @@ impl PyroVec {
             .with_backtrace(std::backtrace::Backtrace::force_capture());
             return Err(PyroError::HeaderFfi(error.into()));
         }
-        let ptr = unsafe { NonNull::new_unchecked(ptr as *mut u8) };
-        let capacity = pointer.capacity;
-        let dropper = pointer.dropper;
-        let grower = pointer.grower;
         Ok(Self {
-            ptr,
-            capacity,
-            dropper,
-            grower,
+            view: unsafe { NonNull::new_unchecked(view) },
+            dropper: pointer.dropper,
+            grower: pointer.grower,
         })
     }
 
-    /// Consumes self and returns a `PyroBuf` (drops the grow capability).
     pub fn into_buf(self) -> PyroBuf {
         PyroBuf::from(self)
     }
 
     pub fn data_ptr(&self) -> *const u8 {
-        unsafe { self.ptr.as_ptr().add(PyroParser::HEADER_SIZE) }
+        let inner = unsafe { self.view.as_ref() };
+        unsafe { inner.data_ptr().add(PyroParser::HEADER_SIZE) }
     }
 
-    // --- Vec Operations ---
-
-    /// Returns a slice containing the Header (16 bytes) AND the Data (len bytes).
     pub(crate) fn as_packet_slice(&self) -> &[u8] {
-        unsafe {
-            slice::from_raw_parts(
-                self.ptr.as_ptr(),
-                PyroParser::HEADER_SIZE + self.header_len() as usize,
-            )
-        }
+        let inner = unsafe { self.view.as_ref() };
+        unsafe { slice::from_raw_parts(inner.data_ptr(), PyroParser::HEADER_SIZE + inner.len as usize) }
     }
 
-    /// Returns a mutable slice containing the Header (16 bytes) AND the Data (len bytes).
     pub(crate) fn as_packet_slice_mut(&mut self) -> &mut [u8] {
-        unsafe {
-            slice::from_raw_parts_mut(
-                self.ptr.as_ptr(),
-                PyroParser::HEADER_SIZE + self.header_len() as usize,
-            )
-        }
+        let inner = unsafe { self.view.as_ref() };
+        unsafe { slice::from_raw_parts_mut(inner.data_ptr(), PyroParser::HEADER_SIZE + inner.len as usize) }
     }
 
     pub fn push(&mut self, byte: u8) {
-        if self.header_len() as usize == self.capacity() {
+        let inner_len = unsafe { self.view.as_ref().len } as usize;
+        if inner_len == self.capacity() {
             self.grow(1);
         }
         unsafe {
-            let len = self.len();
-            let data_start = self.ptr.as_ptr().add(PyroParser::HEADER_SIZE);
-            ptr::write(data_start.add(len), byte);
-            self.set_len(len as u32 + 1);
+            let data_ptr = self.data_ptr() as *mut u8;
+            ptr::write(data_ptr.add(inner_len), byte);
+            let inner_mut = self.view.as_ptr();
+            (*inner_mut).len = inner_len as u32 + 1;
         }
     }
 
     pub fn extend_from_slice(&mut self, other: &[u8]) {
         let required = other.len();
-        let current_len = self.len();
-        let current_cap = self.capacity();
+        let inner = unsafe { self.view.as_ref() };
+        let current_len = inner.len as usize;
+        let current_cap = inner.capacity as usize;
 
         if current_len + required + PyroParser::HEADER_SIZE > current_cap {
             self.grow(required);
         }
         unsafe {
+            let inner_mut = self.view.as_ptr();
             ptr::copy_nonoverlapping(
                 other.as_ptr(),
-                self.ptr.as_ptr().add(PyroParser::HEADER_SIZE + current_len),
+                (*inner_mut).data_ptr().add(PyroParser::HEADER_SIZE + current_len),
                 required,
             );
-            self.set_len((current_len + required) as u32);
+            (*inner_mut).len = (current_len + required) as u32;
         }
     }
 
     pub fn as_slice(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(self.data_ptr(), self.len()) }
+        let inner = unsafe { self.view.as_ref() };
+        unsafe { slice::from_raw_parts(self.data_ptr(), inner.len as usize) }
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        unsafe {
-            slice::from_raw_parts_mut(self.ptr.as_ptr().add(PyroParser::HEADER_SIZE), self.len())
-        }
+        let inner = unsafe { self.view.as_ref() };
+        unsafe { slice::from_raw_parts_mut(self.data_ptr() as *mut u8, inner.len as usize) }
     }
 
     pub fn clear(&mut self) {
-        unsafe { self.set_len(0) };
+        unsafe {
+            let inner = self.view.as_ptr();
+            (*inner).len = 0;
+        }
     }
 
-    // --- Internals ---
-
     pub(crate) fn grow(&mut self, additional: usize) {
-        let current_cap = self.capacity;
-        let current_len = self.len();
+        let inner = unsafe { self.view.as_ref() };
+        let current_cap = inner.capacity;
+        let current_len = inner.len;
 
         let required_cap = current_len
-            .checked_add(additional)
-            .and_then(|c| c.checked_add(PyroParser::HEADER_SIZE))
+            .checked_add(additional as u32)
+            .and_then(|c| c.checked_add(PyroParser::HEADER_SIZE as u32))
             .expect("capacity overflow");
 
         let mut new_cap = current_cap.saturating_mul(2).max(required_cap);
 
-        let remainder = new_cap % PyroParser::ALIGN;
+        let remainder = new_cap as usize % PyroParser::ALIGN;
         if remainder != 0 {
             new_cap = new_cap
-                .checked_add(PyroParser::ALIGN - remainder)
+                .checked_add((PyroParser::ALIGN - remainder) as u32)
                 .expect("capacity overflow during alignment");
         }
 
         unsafe {
-            let new_ptr = (self.grower)(self.ptr.as_ptr(), current_cap, new_cap);
-            // NOTE: null check / handle_alloc_error is the grower's responsibility
-            self.capacity = new_cap;
-            self.ptr = NonNull::new_unchecked(new_ptr);
+            // Treat the entire struct as the opaque pointer to resize
+            let old_ptr = self.view.as_ptr() as *mut u8;
+            let new_raw = (self.grower)(old_ptr, current_cap, new_cap) as *mut PyroInner;
+            
+            self.view = NonNull::new_unchecked(new_raw);
+            (*new_raw).capacity = new_cap; // Update the contiguous capacity field directly
         }
     }
 
-    /// Returns a new, owned PyroVec representing Ok(()).
-    /// This performs an allocation so it can be safely dropped later.
     pub fn ok() -> Self {
         let vec = Self::with_capacity(0);
         unsafe {
+            let inner_data_ptr = vec.view.as_ref().data_ptr();
             ptr::copy_nonoverlapping(
                 UNIT_HEADER.0.as_ptr(),
-                vec.ptr.as_ptr(),
+                inner_data_ptr,
                 PyroParser::HEADER_SIZE,
             );
         }
         vec
     }
 
-    /// Creates a new PyroVec by cloning the header and data from any
-    /// type that implements PyroData.
     pub fn clone_from_pyro<T: PyroData>(source: &T) -> Self {
-        // 1. Allocate a new vector with the required capacity
         let mut new_vec = Self::with_capacity(source.len());
-
-        // 2. Copy the data payload
-        // Note: PyroData provides .as_slice() via common trait logic
-        // but here we can use the source's length and data access.
         new_vec.extend_from_slice(&*source);
-
-        // 3. Copy the header metadata
-        // We use the raw header to ensure status, versions, and wire format are preserved
         new_vec.header_mut().copy_from_slice(source.header());
-
         new_vec
     }
 }
-
-// --- PyroVec Trait Implementations ---
 
 impl Clone for PyroVec {
     fn clone(&self) -> Self {
@@ -569,7 +559,26 @@ impl DerefMut for PyroVec {
 impl Drop for PyroVec {
     fn drop(&mut self) {
         unsafe {
-            (self.dropper)(self.ptr.as_ptr(), self.capacity);
+            let inner = self.view.as_ref();
+            let ref_count = inner.ref_count.load(Ordering::Acquire);
+
+            if ref_count == 0 {
+                let base_ptr = self.view.as_ptr() as *mut u8;
+                let cap = inner.capacity;
+                (self.dropper)(base_ptr, cap);
+            } else {
+                if cfg!(debug_assertions) {
+                    panic!(
+                        "CRITICAL ERROR: Dropping PyroVec while {} references (PyroView) still exist. Memory leaked.",
+                        ref_count
+                    );
+                } else {
+                    tracing::error!(
+                        ref_count = ref_count,
+                        "CRITICAL ERROR: Dropping PyroVec while references still exist. Memory leaked."
+                    );
+                }
+            }
         }
     }
 }
@@ -585,249 +594,249 @@ impl io::Write for PyroVec {
     }
 }
 
+// ============================================================================
+// PyroViewPtr — the completely FFI-safe, thin representation
+// ============================================================================
+
+#[repr(C)]
+pub struct PyroViewPtr {
+    pub ptr: *mut PyroInner,
+}
+
+// ============================================================================
+// PyroView
+// ============================================================================
+
+/// A temporary, zero-copy view into a PyroVec residing in a byte slice
+/// (e.g., WASM memory or a memory-mapped file).
+/// 
+/// Note: This view holds a raw pointer and does not track the lifetime 
+/// of the underlying memory. The caller must ensure the memory remains valid.
+#[derive(Clone, Copy)]
+pub struct PyroView {
+    pub(crate) inner: NonNull<PyroInner>,
+}
+
+unsafe impl Send for PyroView {}
+unsafe impl Sync for PyroView {}
+
+impl PyroData for PyroView {
+    #[inline]
+    fn header(&self) -> &[u8; 16] {
+        unsafe { 
+            let inner = self.inner.as_ref();
+            &*(inner.data_ptr() as *const [u8; 16]) 
+        }
+    }
+
+    fn capacity(&self) -> usize {
+        unsafe { 
+            let inner = self.inner.as_ref();
+            (inner.capacity as usize) - PyroParser::HEADER_SIZE 
+        }
+    }
+}
+
+impl TryFrom<&[u8]> for PyroView {
+    type Error = ParseError;
+
+    fn try_from(slice: &[u8]) -> Result<Self, Self::Error> {
+        // Assume the slice starts exactly at the PyroInner.
+        get_view(slice, 0).map_err(|e| match e {
+            PyroError::Header(p) => p,
+            _ => ParseError::MisalignedPointer,
+        })
+    }
+}
+
+impl PyroView {
+    /// Reconstructs a `PyroView` from a raw `PyroViewPtr`.
+    ///
+    /// # Safety
+    /// * `raw.ptr` must be non-null and properly aligned (16-byte alignment).
+    /// * The memory referenced must remain valid for the duration this view is used.
+    pub unsafe fn from_ptr(raw: PyroViewPtr) -> Result<Self, PyroError> {
+        let ptr = raw.ptr;
+        if ptr.is_null() {
+            return Err(PyroError::null_pointer());
+        }
+
+        let data_ptr = unsafe { (*ptr).data_ptr() };
+        
+        if let Err(parse_error) = unsafe { PyroParser::check_raw(data_ptr) } {
+            tracing::error!(?parse_error, "Checks failed for an FFI PyroViewPtr");
+            let error = CapturedError::new(format!(
+                "CRITICAL ERROR: Unable to construct a Ffi view due to {}",
+                parse_error
+            ))
+            .with_location(std::panic::Location::caller())
+            .with_backtrace(std::backtrace::Backtrace::force_capture());
+            return Err(PyroError::HeaderFfi(error.into()));
+        };
+
+        Ok(Self { 
+            inner: unsafe { NonNull::new_unchecked(ptr) },
+        })
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        unsafe {
+            let inner = self.inner.as_ref();
+            let data = inner.data_ptr().add(PyroParser::HEADER_SIZE);
+            slice::from_raw_parts(data, inner.len as usize)
+        }
+    }
+
+    pub fn ptr(&self) -> PyroViewPtr {
+        PyroViewPtr {
+            ptr: self.inner.as_ptr(),
+        }
+    }
+
+    pub fn clone_to_vec(&self) -> PyroVec {
+        let mut vec = PyroVec::clone_from_pyro(self);
+        vec.extend_from_slice(self.as_slice());
+        vec
+    }
+}
+
+impl From<&PyroVec> for PyroView {
+    fn from(value: &PyroVec) -> Self {
+        value.view()
+    }
+}
+
+impl PyroVec {
+    pub fn view(&self) -> PyroView {
+        PyroView {
+            inner: self.view,
+        }
+    }
+}
+
+impl Deref for PyroView {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl fmt::Debug for PyroView {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PyroView")
+            .field("len", &self.len())
+            .field("capacity", &self.capacity())
+            .field("status", &self.status())
+            .field("wire_fmt", &self.wire_format())
+            .field("class_id", &self.class_id())
+            .field("fn_id", &self.fn_id())
+            .field("mux_id", &self.mux_id())
+            .finish()
+    }
+}
+
+impl From<PyroView> for PyroViewPtr {
+    fn from(view: PyroView) -> Self {
+        view.ptr()
+    }
+}
+
+/// Creates a `PyroView` from a raw memory slice and an offset.
+///
+/// This performs bounds checks and header validation assuming the offset
+/// points to a 16-byte `PyroInner` struct, followed immediately by the Data Header.
+///
+/// # Arguments
+///
+/// * `wasm_memory` - The entire available memory buffer.
+/// * `offset` - The index into `wasm_memory` where the `PyroInner` struct begins.
+pub fn get_view(wasm_memory: &[u8], offset: usize) -> Result<PyroView, PyroError> {
+    // 1. We need at least 16 bytes for PyroInner + 16 bytes for the Data Header
+    let inner_size = 16;
+    if wasm_memory.len() < offset + inner_size + PyroParser::HEADER_SIZE {
+        return Err(ParseError::SliceTooSmall.into());
+    }
+    if offset % 16 != 0 {
+        return Err(ParseError::MisalignedPointer.into());
+    }
+
+    // 2. Map the pointer into the Wasm memory space safely
+    let raw_ptr = unsafe { wasm_memory.as_ptr().add(offset) as *mut PyroInner };
+
+    // 3. Read the payload length dynamically from the inner header (u32 field)
+    let payload_len = unsafe { (*raw_ptr).len as usize };
+
+    // 4. Validate total bounds
+    let total_required = inner_size + PyroParser::HEADER_SIZE + payload_len;
+    if wasm_memory.len() - offset < total_required {
+        return Err(ParseError::LengthExceedsCapacity.into());
+    }
+
+    // 5. Verify the actual Pyro Data Header
+    let data_header_ptr = unsafe { (*raw_ptr).data_ptr() };
+    let validation_slice = unsafe { 
+        slice::from_raw_parts(data_header_ptr, PyroParser::HEADER_SIZE + payload_len) 
+    };
+    PyroParser::check(validation_slice)?;
+
+    // 6. Construct View
+    Ok(PyroView {
+        inner: unsafe { NonNull::new_unchecked(raw_ptr) },
+    })
+}
+
+
 #[cfg(test)]
-mod unit_tests {
+mod tests {
     use super::*;
-    use crate::format::header::{DataStatus, PyroData};
+    use crate::format::header::DataStatus;
 
     #[test]
-    fn test_pyro_vec_ok() {
-        let vec = PyroVec::ok();
+    fn test_view_valid_buffer() {
+        let mut bv = PyroVec::with_capacity(32);
+        bv.extend_from_slice(b"hello world");
 
-        // Check Header correctness
-        assert_eq!(vec.len(), 0);
-        assert_eq!(vec.capacity(), 0);
-        assert_eq!(vec.status(), Ok(DataStatus::Empty));
-        assert_eq!(vec.wire_format(), 1);
-
-        // Check Memory Layout
-        assert_eq!(vec.as_ptr() as usize % 16, 0, "Owned Ok must be aligned");
-
-        // Ensure it is actually owned (drop shouldn't panic/segfault)
-        drop(vec);
-    }
-
-    #[test]
-    fn test_pyrovecptr_preserves_dropper() {
-        // Custom dropper that sets a flag (for testing purposes)
-        // Note: In real code, you'd typically use the default dropper
-        static mut CUSTOM_DROPPER_CALLED: bool = false;
-
-        unsafe extern "C" fn test_dropper(ptr: *mut u8, capacity: usize) {
-            unsafe { CUSTOM_DROPPER_CALLED = true };
-            // Still need to actually free the memory
-            use std::alloc::{Layout, dealloc};
-            let total_cap = capacity; // HEADER_SIZE
-            let layout = Layout::from_size_align(total_cap, 16).unwrap();
-            unsafe { dealloc(ptr, layout) };
-        }
-
-        let vec = PyroVec::with_capacity(100);
-        let original_ptr = vec.as_ptr();
-
-        // Convert to PyroVecPtr and modify dropper
-        let mut ptr_struct = vec.into_raw();
-        ptr_struct.dropper = test_dropper;
-
-        // Reconstruct
-        let reconstructed = unsafe { PyroVec::from_raw(ptr_struct) }.unwrap();
-
-        // Verify pointer is the same
-        assert_eq!(reconstructed.as_ptr(), original_ptr);
-
-        // Drop it - this should call our custom dropper
-        drop(reconstructed);
-
-        // Verify our custom dropper was called
-        unsafe {
-            assert!(
-                CUSTOM_DROPPER_CALLED,
-                "Custom dropper should have been called"
-            );
-        }
-    }
-
-    #[test]
-    fn test_from_raw_validates_null_pointer() {
-        // Create a valid PyroVec and get its pointer structure
-        let vector = PyroVec::with_capacity(100);
-        let mut pointer = vector.into_raw();
-        let original_ptr = pointer.ptr;
-        // Corrupt the pointer field to be null (requires private access)
-        pointer.ptr = std::ptr::null_mut();
-
-        // from_raw should now catch this via check_raw validation
-        let result = unsafe { PyroVec::from_raw(pointer) };
-
-        match result {
-            Err(PyroError::HeaderFfi(captured)) => {
-                assert!(captured.message.contains("pointer is null"));
-            }
-            _ => panic!("Expected PyroError::HeaderFfi, got {:?}", result),
-        }
-
-        let cleanup_ptr = PyroVecPtr {
-            ptr: original_ptr,
-            capacity: 116,
-            dropper: PyroVec::default_dropper,
-            grower: PyroVec::default_grower,
+        // We need to simulate Wasm memory encompassing the PyroInner block
+        let full_len = 16 + PyroParser::HEADER_SIZE + bv.len();
+        let memory = unsafe {
+            let inner_ptr = bv.view.as_ptr() as *const u8;
+            std::slice::from_raw_parts(inner_ptr, full_len)
         };
-        let _ = unsafe { PyroVec::from_raw(cleanup_ptr) };
+
+        let view = get_view(memory, 0).expect("Should create view");
+
+        assert_eq!(view.len(), 11);
+        assert_eq!(&*view, b"hello world");
+        assert_eq!(view.status(), Ok(DataStatus::Empty));
     }
 
     #[test]
-    fn test_from_raw_validates_misaligned_pointer() {
-        // Create a valid PyroVec
-        let vector = PyroVec::with_capacity(100);
-        let mut pointer = vector.into_raw();
-
-        // Corrupt the pointer to be misaligned (add 1 to make it not 16-byte aligned)
-        // Store original for cleanup
-        let original_ptr = pointer.ptr;
-        pointer.ptr = unsafe { pointer.ptr.add(1) };
-
-        // from_raw should catch the misalignment
-        let result = unsafe { PyroVec::from_raw(pointer) };
-
-        match result {
-            Err(PyroError::HeaderFfi(captured)) => {
-                assert!(captured.message.contains("pointer is misaligned"));
-            }
-            _ => panic!("Expected PyroError::HeaderFfi, got {:?}", result),
-        }
-
-        // Restore and clean up properly
-        let cleanup_ptr = PyroVecPtr {
-            ptr: original_ptr,
-            capacity: 116,
-            dropper: PyroVec::default_dropper,
-            grower: PyroVec::default_grower,
-        };
-        let _ = unsafe { PyroVec::from_raw(cleanup_ptr) };
-    }
-
-    #[test]
-    fn test_from_raw_validates_bad_magic() {
-        use std::ptr;
-
-        // Create a valid PyroVec
-        let vector = PyroVec::with_capacity(100);
-        let pointer = vector.into_raw();
-        let original_ptr = pointer.ptr;
-
-        // Corrupt the magic number at the pointer location
-        unsafe {
-            ptr::write(pointer.ptr as *mut u32, 0xDEADBEEF);
-        }
-
-        // from_raw should catch the bad magic
-        let result = unsafe { PyroVec::from_raw(pointer) };
-
-        match result {
-            Err(PyroError::HeaderFfi(captured)) => {
-                assert!(captured.message.contains("invalid magic header"));
-            }
-            _ => panic!("Expected PyroError::HeaderFfi, got {:?}", result),
-        }
-
-        let cleanup_ptr = PyroVecPtr {
-            ptr: original_ptr,
-            capacity: 116,
-            dropper: PyroVec::default_dropper,
-            grower: PyroVec::default_grower,
-        };
-        let _ = unsafe { PyroVec::from_raw(cleanup_ptr) };
-    }
-
-    #[test]
-    fn test_from_raw_with_zero_capacity() {
-        // Test that a PyroVecPtr with zero capacity works
-        let vector = PyroVec::with_capacity(0);
-        assert_eq!(vector.capacity(), 0);
-        let pointer = vector.into_raw();
-
-        assert_eq!(pointer.capacity, 16);
-
-        let reconstructed =
-            unsafe { PyroVec::from_raw(pointer) }.expect("Zero capacity should be valid");
-        assert_eq!(reconstructed.capacity(), 0);
-        assert_eq!(reconstructed.len(), 0);
-    }
-
-    #[test]
-    fn test_pyrovecptr_fields_accessible() {
-        // Test that PyroVecPtr fields can be accessed (private access in unit tests)
-        let vector = PyroVec::with_capacity(100);
-        assert_eq!(vector.capacity(), 100);
-        assert_eq!(vector.capacity, 116);
-        let pointer = vector.into_raw();
-
-        // These fields are accessible within the crate's tests
-        assert!(!pointer.ptr.is_null());
-        assert_eq!(pointer.capacity, 116);
-        // dropper is a function pointer, just verify it exists
-        assert_ne!(pointer.dropper as usize, 0);
-
-        // Clean up
-        let _vec = unsafe { PyroVec::from_raw(pointer) }.expect("Should reconstruct");
-    }
-
-    #[test]
-    fn test_grow_maintains_alignment() {
-        let mut vec = PyroVec::with_capacity(1);
-
-        for _ in 0..4 {
-            // Each iteration should trigger growth
-            let current_cap = vec.capacity();
-            while vec.len() < current_cap {
-                vec.push(0);
-            }
-            vec.push(0); // Trigger grow
-
-            let addr = vec.as_ptr() as usize;
-            assert_eq!(addr % 16, 0, "Must remain 16-byte aligned after grow");
+    fn test_view_bounds_check() {
+        // Too small for PyroInner + Header (needs at least 32 bytes)
+        let memory = vec![0u8; 20]; 
+        let err = get_view(&memory, 0).unwrap_err();
+        match err {
+            PyroError::Header(ParseError::SliceTooSmall) => {}
+            _ => panic!("Expected SliceTooSmall"),
         }
     }
-    // Slow with miri
-    // #[test]
-    // fn test_large_allocation() {
-    //     let mut vec = PyroVec::with_capacity(1_000_000);
-    //     let data = vec![0xABu8; 1_000_000];
-
-    //     vec.extend_from_slice(&data);
-
-    //     assert_eq!(vec.len(), 1_000_000);
-    //     assert!(vec.as_slice().iter().all(|&b| b == 0xAB));
-    // }
 
     #[test]
-    fn test_mixed_operations() {
-        let mut vec = PyroVec::with_capacity(10);
+    fn test_view_magic_check() {
+        let mut memory = vec![0u8; 32];
+        
+        // Offset 0 is aligned.
+        // We write 0 to the 'len' field of PyroInner at offset 8 (u32 LE).
+        memory[8] = 0; 
+        
+        // Write garbage magic to the start of the Data Header at offset 16.
+        memory[16] = 0xFF;
 
-        vec.push(1);
-        vec.extend_from_slice(&[2, 3, 4]);
-        vec.push(5);
-        vec.set_status_u8(100);
-        vec.extend_from_slice(&[6, 7]);
-        vec.push(8);
-
-        assert_eq!(vec.as_slice(), &[1, 2, 3, 4, 5, 6, 7, 8]);
-        assert_eq!(vec.status_u8(), 100);
-    }
-
-    #[test]
-    fn test_clear_and_refill_multiple_times() {
-        let mut vec = PyroVec::with_capacity(10);
-
-        for round in 0..5 {
-            vec.clear();
-            for i in 0..50 {
-                vec.push((round * 50 + i) as u8);
-            }
-            assert_eq!(vec.len(), 50);
+        let err = get_view(&memory, 0).unwrap_err();
+        match err {
+            PyroError::Header(ParseError::InvalidMagic) => {}
+            _ => panic!("Expected InvalidMagic"),
         }
-
-        // Final state should be last round's data
-        assert_eq!(vec.len(), 50);
     }
 }

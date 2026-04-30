@@ -7,7 +7,7 @@
 use wasmtime::{AsContextMut, Caller, Extern, Memory};
 
 use crate::{
-    format::{PyroVec, PyroView, get_view},
+    format::{PyroVec, PyroView, get_view, header::{PyroHeader, PyroParser}},
     module::{PyroState, WasmError},
 };
 
@@ -81,7 +81,7 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
     }
 
     /// Read a `PyroView` from wasm memory at the given pointer.
-    pub async fn borrow_argument(&self, ptr: i32) -> Result<PyroView<'_>, WasmError> {
+    pub async fn borrow_argument(&self, ptr: i32) -> Result<PyroView, WasmError> {
         let wasm_memory = self.memory.data(self.ctx.as_context());
         let view = get_view(wasm_memory, ptr as usize)
             .map_err(|e| WasmError::InputMemory(wasmtime::Error::msg(e.to_string())))?;
@@ -90,9 +90,9 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
 
     /// Allocate a new buffer in wasm memory via `new_input` and copy the
     /// full PyroView (header + payload) into it. Returns the wasm pointer.
-    pub async fn new_input(&mut self, data: &PyroView<'_>) -> Result<i32, WasmError> {
-        let total_len = data.raw_slice.len(); // header + payload
+    pub async fn new_input(&mut self, data: &PyroView) -> Result<i32, WasmError> {
         let data_len = data.len(); // payload only
+        let total_len = PyroParser::HEADER_SIZE + crate::format::vec_buf::INNER_HEADER;
 
         let new_input = self
             .ctx

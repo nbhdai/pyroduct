@@ -38,8 +38,8 @@ macro_rules! impl_bridgeable_scalar {
                 Self
             }
         }
-        impl<'a> Decoder<'a, $t> for $decoder {
-            fn decode(&mut self, view: PyroView<'a>) -> Result<$t, PyroError> {
+        impl Decoder<'_, $t> for $decoder {
+            fn decode(&mut self, view: &PyroView) -> Result<$t, PyroError> {
                 let val = PyroValue::parse_wire(view)?;
                 if let PyroValue::$variant(inner) = val {
                     Ok(inner)
@@ -105,7 +105,7 @@ impl Default for StringDecoder {
     }
 }
 impl<'a> Decoder<'a, &'a str> for StringDecoder {
-    fn decode(&mut self, view: PyroView<'a>) -> Result<&'a str, PyroError> {
+    fn decode(&mut self, view: &'a PyroView) -> Result<&'a str, PyroError> {
         let val = PyroValue::parse_wire(view)?;
         if let PyroValue::Str(cow) = val {
             Ok(match cow {
@@ -122,7 +122,7 @@ impl<'a> Decoder<'a, &'a str> for StringDecoder {
 }
 
 impl<'a> Decoder<'a, String> for StringDecoder {
-    fn decode(&mut self, view: PyroView<'a>) -> Result<String, PyroError> {
+    fn decode(&mut self, view: &PyroView) -> Result<String, PyroError> {
         let val = PyroValue::parse_wire(view)?;
         if let PyroValue::Str(cow) = val {
             Ok(match cow {
@@ -178,7 +178,7 @@ macro_rules! impl_bridgeable_list {
         #[derive(Default)]
         pub struct $decoder;
         impl<'a> Decoder<'a, &'a [$t]> for $decoder {
-            fn decode(&mut self, view: PyroView<'a>) -> Result<&'a [$t], PyroError> {
+            fn decode(&mut self, view: &'a PyroView) -> Result<&'a [$t], PyroError> {
                 let val = PyroValue::parse_wire(view)?;
                 if let PyroValue::PrimitiveList(PrimitiveValueList::$variant(cow)) = val {
                     Ok(match cow {
@@ -238,8 +238,8 @@ impl Default for EmptyDecoder {
         Self
     }
 }
-impl<'a> Decoder<'a, ()> for EmptyDecoder {
-    fn decode(&mut self, view: PyroView<'a>) -> Result<(), PyroError> {
+impl Decoder<'_, ()> for EmptyDecoder {
+    fn decode(&mut self, view: &PyroView) -> Result<(), PyroError> {
         if matches!(view.status(), Ok(DataStatus::Empty)) {
             Ok(())
         } else {

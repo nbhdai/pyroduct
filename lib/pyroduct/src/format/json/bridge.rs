@@ -5,7 +5,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use crate::format::{
     PyroVec,
     format::{PyroFormat, UserHeaderValues},
-    view::PyroView,
+    PyroView,
 };
 
 use super::{JsonHeader, JsonParser, JsonWriter};
@@ -29,7 +29,7 @@ where
     type ParsedType = T;
 
     type VecParser = JsonParser<PyroVec, T>;
-    type ViewParser<'a> = JsonParser<PyroView<'a>, T>;
+    type ViewParser = JsonParser<PyroView, T>;
     type VecWriter = JsonWriter<PyroVec, T>;
 
     fn new() -> Self {
@@ -51,7 +51,7 @@ where
             phantom: PhantomData,
         }
     }
-    fn view_parser<'a>(data: PyroView<'a>) -> Self::ViewParser<'a> {
+    fn view_parser(data: PyroView) -> Self::ViewParser {
         JsonParser {
             data,
             phantom: PhantomData,

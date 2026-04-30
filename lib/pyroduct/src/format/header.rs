@@ -98,7 +98,7 @@ pub enum ParseError {
 mod private {
     use crate::format::{
         PyroBuf, PyroVec,
-        view::{PyroMutView, PyroView},
+        PyroView,
     };
 
     pub trait Sealed {}
@@ -106,8 +106,7 @@ mod private {
     impl Sealed for [u8; 16] {}
     impl Sealed for PyroVec {}
     impl Sealed for PyroBuf {}
-    impl Sealed for PyroView<'_> {}
-    impl Sealed for PyroMutView<'_> {}
+    impl Sealed for PyroView {}
 }
 
 /// A specialized parser for the 16-byte PyroVec header.

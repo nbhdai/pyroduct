@@ -120,7 +120,7 @@ impl ForeignClass {
 
     pub async fn create_instance(
         self: &Arc<Self>,
-        config: PyroView<'_>,
+        config: PyroView,
         object_id: u64,
         mut log_channel: tokio::sync::mpsc::Receiver<String>,
     ) -> Result<ForeignObject, PyroError> {
@@ -222,7 +222,7 @@ impl ForeignObject {
         }
     }
     /// Registers a client
-    pub async fn register(&self, client_state: PyroView<'_>) -> Result<PyroVec, PyroError> {
+    pub async fn register(&self, client_state: PyroView) -> Result<PyroVec, PyroError> {
         match self.class.register {
             ClientRegisterFn::Sync(f) => {
                 let vec_ptr = unsafe { f(self.obj.ref_ptr(), client_state.ptr()) };
@@ -241,8 +241,8 @@ impl ForeignObject {
     pub async fn call(
         &self,
         method_name: &str,
-        client_data: PyroView<'_>,
-        input_data: PyroView<'_>,
+        client_data: PyroView,
+        input_data: PyroView,
     ) -> Result<PyroVec, PyroError> {
         let method = self
             .class
@@ -255,8 +255,8 @@ impl ForeignObject {
     pub async fn call_index(
         &self,
         method_index: usize,
-        client_data: PyroView<'_>,
-        input_data: PyroView<'_>,
+        client_data: PyroView,
+        input_data: PyroView,
     ) -> Result<PyroVec, PyroError> {
         let method = self
             .class
@@ -270,8 +270,8 @@ impl ForeignObject {
     async fn call_method(
         &self,
         method: &ForeignMethod,
-        client_data: PyroView<'_>,
-        input_data: PyroView<'_>,
+        client_data: PyroView,
+        input_data: PyroView,
     ) -> Result<PyroVec, PyroError> {
         match method.pointer {
             Function::Sync(f) => unsafe {

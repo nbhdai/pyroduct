@@ -573,7 +573,7 @@ fn frame_to_execution(
         .enumerate()
         .filter_map(|(i, &pkt_slice)| {
             let view = PyroView::try_from(pkt_slice).ok()?;
-            let row = PyroRow::parse_wire(view).ok()?.to_static();
+            let row = PyroRow::parse_wire(&view).ok()?.to_static();
 
             let logs = log
                 .and_then(|l| l.step_logs.get(i))
@@ -858,7 +858,7 @@ mod tests {
             // This is the zero-copy path: packet slice -> PyroView -> expose_view
             let pkt = frame.packets[0];
             let view = PyroView::try_from(pkt).expect("valid PyroView from WAL packet");
-            let row = PyroRow::parse_wire(view).expect("expose_view should succeed on WAL packet");
+            let row = PyroRow::parse_wire(&view).expect("expose_view should succeed on WAL packet");
 
             assert_eq!(row.get("id"), Some(&PyroValue::from(i as i32)));
         }

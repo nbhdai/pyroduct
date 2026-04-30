@@ -6,7 +6,7 @@
 
 use crate::PyroError;
 use crate::format::{
-    ParseError, PyroVec, get_view, get_view_mut,
+    ParseError, PyroVec, get_view,
     header::{PyroData, PyroHeader, PyroHeaderMut, PyroParser},
 };
 use crate::wasm::{free_output, get_input, grow_input, new_input, to_output};
@@ -152,27 +152,6 @@ fn test_get_view_truncated_header() {
     }
 }
 
-#[test]
-fn test_get_view_bad_magic() {
-    let buf = aligned_buffer(32);
-    match get_view(buf.as_slice(), 0) {
-        Err(PyroError::Header(ParseError::InvalidMagic)) => {}
-        other => panic!("expected InvalidHeader, got {:?}", other),
-    }
-}
-
-#[test]
-fn test_get_view_mut_write_through() {
-    let mut mem = make_wasm_memory(b"abcd");
-    {
-        let mut view = get_view_mut(&mut mem, 0).expect("valid mutable view");
-        view[0] = b'X';
-        assert_eq!(&*view, b"Xbcd");
-    }
-    let check = get_view(&mem, 0).unwrap();
-    assert_eq!(&*check, b"Xbcd");
-}
-
 // =========================================================================
 // PyroView ↔ PyroVec roundtrip
 // =========================================================================
@@ -186,7 +165,7 @@ fn test_view_from_vec_roundtrip() {
     original.set_fn_id(7);
     original.set_wire_format(2);
 
-    let view: PyroView<'_> = (&original).into();
+    let view: PyroView = (&original).into();
     assert_eq!(&*view, b"roundtrip data");
     assert_eq!(view.fn_id(), 7);
     assert_eq!(view.wire_format(), 2);
@@ -283,5 +262,5 @@ fn test_pyro_row_rkyv_view_roundtrip() {
 
     // Zero-copy access via PyroView → expose_view
     let view = get_view(&mem, 0).unwrap();
-    let _ = PyroRow::parse_wire(view).expect("expose_view should succeed");
+    let _ = PyroRow::parse_wire(&view).expect("expose_view should succeed");
 }

@@ -179,7 +179,7 @@ where
         return to_output(err.encode());
     };
     let input_view = input_vec.view();
-    let input_row = match PyroRow::parse_wire(input_view) {
+    let input_row = match PyroRow::parse_wire(&input_view) {
         Ok(vec) => vec,
         Err(err) => return to_output(err.encode()),
     };
@@ -313,7 +313,7 @@ impl<T> Client<T> {
             Some(result_vec) => result_vec,
             None => panic!("Host registration failed with no returned"),
         };
-        let result = O::expose(result_vec);
+        let result = O::expose_vec(result_vec);
         match result {
             Ok(result) => result.into(),
             Err(err) => {
@@ -345,7 +345,7 @@ impl<T> Client<T> {
             Some(result_vec) => result_vec,
             None => panic!("Host registration failed with no returned"),
         };
-        let result = Result::<O, E>::expose(result_vec).and_then(|r| {
+        let result = Result::<O, E>::expose_vec(result_vec).and_then(|r| {
             let res = r.into_result();
             Ok(res)
         });

@@ -1,12 +1,9 @@
 //! Bridgeable trait and BridgeableResult extension.
 
 use std::fmt;
-use std::ops::Deref;
 
 use crate::PyroError;
-use crate::format::header::{DataStatus, PyroHeader, PyroHeaderMut};
-use crate::format::view::PyroView;
-use crate::format::{ParseError, PyroVec};
+use crate::format::{ParseError, PyroVec, PyroView, header::{DataStatus, PyroHeader, PyroHeaderMut}};
 // =============================================================================
 // Encoder / Decoder Traits
 // =============================================================================
@@ -16,7 +13,7 @@ pub trait Encoder<T> {
 }
 
 pub trait Decoder<'a, T: 'a> {
-    fn decode(&mut self, vec: PyroView<'a>) -> Result<T, PyroError>;
+    fn decode(&mut self, vec: &'a PyroView) -> Result<T, PyroError>;
 }
 
 pub trait Unpack<Packed>: Sized {
@@ -28,17 +25,17 @@ pub trait Unpack<Packed>: Sized {
 // =============================================================================
 
 /// A type-safe wrapper around a PyroVec containing an archived rkyv type.
-pub struct TypedBuf<T> {
+pub struct TypedVec<T> {
     pub(super) vec: PyroVec,
     pub(super) inner: T,
 }
 
-impl<T> TypedBuf<T> {
+impl<T> TypedVec<T> {
     pub fn inner(&self) -> &T {
         &self.inner
     }
 
-    pub fn view(&self) -> PyroView<'_> {
+    pub fn view(&self) -> PyroView {
         self.vec.view()
     }
 
@@ -58,7 +55,7 @@ impl<T> TypedBuf<T> {
     }
 }
 
-impl<T, E> TypedBuf<Result<T, E>> {
+impl<T, E> TypedVec<Result<T, E>> {
     pub fn into_result<S, U>(self) -> Result<S, U>
     where
         S: From<T>,
@@ -84,7 +81,7 @@ impl<T, E> TypedBuf<Result<T, E>> {
     }
 }
 
-impl<T> TypedBuf<Option<T>> {
+impl<T> TypedVec<Option<T>> {
     pub fn into_option<S>(self) -> Option<S>
     where
         S: From<T>,
@@ -107,29 +104,31 @@ impl<T> TypedBuf<Option<T>> {
     }
 }
 
-impl<T: fmt::Debug> fmt::Debug for TypedBuf<T> {
+impl<T: fmt::Debug> fmt::Debug for TypedVec<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.inner.fmt(f)
     }
 }
 
+
+
+// =============================================================================
+// Bridgeable — default-format convenience (every format)
+// =============================================================================
+
 /// A type-safe wrapper around a PyroVec containing an archived rkyv type.
-pub struct TypedView<'a, T: 'a> {
-    pub(super) view: PyroView<'a>,
+pub struct TypedView<T> {
+    pub(super) view: PyroView,
     pub(super) inner: T,
 }
 
-impl<'a, T> Deref for TypedView<'a, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
+impl<T> TypedView<T> {
+    pub fn inner(&self) -> &T {
         &self.inner
     }
-}
 
-impl<'a, T> TypedView<'a, T> {
-    pub fn view(&self) -> PyroView<'a> {
-        self.view
+    pub fn view(&self) -> &PyroView {
+        &self.view
     }
 
     pub fn into<S>(self) -> S
@@ -148,13 +147,7 @@ impl<'a, T> TypedView<'a, T> {
     }
 }
 
-impl<'a, T: fmt::Debug> fmt::Debug for TypedView<'a, T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.inner.fmt(f)
-    }
-}
-
-impl<'a, T, E> TypedView<'a, Result<T, E>> {
+impl<T, E> TypedView<Result<T, E>> {
     pub fn into_result<S, U>(self) -> Result<S, U>
     where
         S: From<T>,
@@ -180,7 +173,7 @@ impl<'a, T, E> TypedView<'a, Result<T, E>> {
     }
 }
 
-impl<'a, T> TypedView<'a, Option<T>> {
+impl<T> TypedView<Option<T>> {
     pub fn into_option<S>(self) -> Option<S>
     where
         S: From<T>,
@@ -202,6 +195,14 @@ impl<'a, T> TypedView<'a, Option<T>> {
         }
     }
 }
+
+impl<T: fmt::Debug> fmt::Debug for TypedView<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.inner.fmt(f)
+    }
+}
+
+
 
 /// A type that has a **default pyro format**.
 ///
@@ -222,21 +223,24 @@ pub trait Bridgeable: Sized {
     }
 
     /// Parse an owned `PyroVec` using the default format.
-    fn expose(vec: PyroVec) -> Result<TypedBuf<Self::Ref<'static>>, PyroError> {
+    fn expose(view: PyroView) -> Result<TypedView<Self::Ref<'static>>, PyroError> {
         let mut decoder = Self::Decoder::default();
         let inner = {
-            let inner = decoder.decode(vec.view())?;
+            let inner = decoder.decode(&view)?;
             unsafe { std::mem::transmute::<Self::Ref<'_>, Self::Ref<'static>>(inner) }
         };
-        Ok(TypedBuf { inner, vec })
+        Ok(TypedView { inner, view })
     }
 
-    /// Parse a borrowed `PyroView` without taking ownership.
-    /// Only available for zero-copy formats (rkyv, zerovec, …).
-    fn expose_view<'a>(view: PyroView<'a>) -> Result<TypedView<'a, Self::Ref<'a>>, PyroError> {
+    /// Parse an owned `PyroVec` using the default format.
+    fn expose_vec(vec: PyroVec) -> Result<TypedVec<Self::Ref<'static>>, PyroError> {
         let mut decoder = Self::Decoder::default();
-        let inner = decoder.decode(view)?;
-        Ok(TypedView { inner, view })
+        let inner = {
+            let view = vec.view();
+            let inner = decoder.decode(&view)?;
+            unsafe { std::mem::transmute::<Self::Ref<'_>, Self::Ref<'static>>(inner) }
+        };
+        Ok(TypedVec { inner, vec })
     }
 }
 
@@ -273,13 +277,13 @@ pub struct ResultDecoder<T, E> {
     err_decoder: E,
 }
 
-impl<'a, T: 'a, DT: Decoder<'a, T>, E: 'a, DE: Decoder<'a, E>> Decoder<'a, Result<T, E>>
+impl<'a, T: 'a, DT: Decoder<'a, T>, E: 'a , DE: Decoder<'a, E>> Decoder<'a, Result<T, E>>
     for ResultDecoder<DT, DE>
 {
-    fn decode(&mut self, view: PyroView<'a>) -> Result<Result<T, E>, PyroError> {
+    fn decode(&mut self, view: &'a PyroView) -> Result<Result<T, E>, PyroError> {
         let inner = match view.status() {
-            Ok(DataStatus::Valid) => Ok(self.ok_decoder.decode(view)?),
-            Ok(DataStatus::Error) => Err(self.err_decoder.decode(view)?),
+            Ok(DataStatus::Valid) => Ok(self.ok_decoder.decode(&view)?),
+            Ok(DataStatus::Error) => Err(self.err_decoder.decode(&view)?),
             // Todo: Properly decode the pyro errors.
             Ok(other) => return Err(ParseError::UnknownStatus(other.into()).into()),
             Err(other) => return Err(ParseError::UnknownStatus(other).into()),
@@ -320,9 +324,9 @@ pub struct OptionDecoder<T> {
 }
 
 impl<'a, T: 'a, DT: Decoder<'a, T>> Decoder<'a, Option<T>> for OptionDecoder<DT> {
-    fn decode(&mut self, view: PyroView<'a>) -> Result<Option<T>, PyroError> {
+    fn decode(&mut self, view: &'a PyroView) -> Result<Option<T>, PyroError> {
         let inner = match view.status() {
-            Ok(DataStatus::Valid) => Some(self.decoder.decode(view)?),
+            Ok(DataStatus::Valid) => Some(self.decoder.decode(&view)?),
             Ok(DataStatus::Empty) => None,
             Ok(other) => return Err(ParseError::UnknownStatus(other.into()).into()),
             Err(other) => return Err(ParseError::UnknownStatus(other).into()),

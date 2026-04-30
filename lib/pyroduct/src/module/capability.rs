@@ -192,8 +192,14 @@ pub struct CapabilityLibrary {
 
 impl CapabilityLibrary {
     pub fn load(name: String, path: &Path) -> Result<Arc<Self>, CapabilityError> {
-        LOADED_LIBRARIES.clear_poison();
-        let mut libraries = LOADED_LIBRARIES.lock().unwrap();
+        let mut libraries = LOADED_LIBRARIES
+            .lock()
+            .unwrap_or_else(|e| {
+                tracing::error!(
+                    "LOADED_LIBRARIES mutex was poisoned (likely a panic in another thread)"
+                );
+                e.into_inner()
+            });
         if let Some(lib) = libraries.get(&name).map(|w| w.upgrade()).flatten() {
             Ok(lib)
         } else {
@@ -360,7 +366,7 @@ impl CapabilityLibrary {
     pub async fn instantiate_class_raw(
         &self,
         class: u8,
-        config: PyroView<'_>,
+        config: PyroView,
     ) -> Result<ForeignObject, CapabilityError> {
         let (_, cap_class) = self.capabilities.get_index(class as usize).ok_or_else(|| {
             CapabilityError::CapabilityNotFound {

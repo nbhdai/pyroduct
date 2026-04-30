@@ -406,7 +406,7 @@ impl PyroInstance {
         let input_vec = input_row_owned
             .to_wire()
             .map_err(|err| self.pack_pyro_error(err))?;
-        let input_view: PyroView<'_> = input_vec.view();
+        let input_view: PyroView = input_vec.view();
 
         // 1. Write Input using PyroCallIo
         let mut io = PyroCallIo::new(&mut self.store, self.memory);
@@ -448,7 +448,7 @@ impl PyroInstance {
         match result_view.status() {
             Ok(DataStatus::Valid) => {
                 let row =
-                    PyroRow::parse_wire(result_view).map_err(|err| self.pack_pyro_error(err))?;
+                    PyroRow::parse_wire(&result_view).map_err(|err| self.pack_pyro_error(err))?;
                 Ok(self.pack_success(row.to_static()))
             }
             Ok(DataStatus::Error) => match serde_json::from_slice(&result_view) {

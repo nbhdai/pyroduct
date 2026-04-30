@@ -10,7 +10,7 @@ use crate::format::{
     format::{Parser, UserHeaderValues, Wrapper},
     header::PyroData,
     json::buffers::JsonBuf,
-    view::PyroView,
+    PyroView,
 };
 
 // ─── Parser ──────────────────────────────────────────────────────────────────
@@ -62,13 +62,13 @@ where
 
 // ─── PyroView (borrowed) ──────────────────────────────────────────────────
 
-impl<'a, T> Parser<PyroView<'a>, T> for JsonParser<PyroView<'a>, T>
+impl<T> Parser<PyroView, T> for JsonParser<PyroView, T>
 where
     T: UserHeaderValues + DeserializeOwned,
 {
     type HeaderValues = super::JsonHeader;
     type ParsedType = T;
-    type TypedWrapper = JsonBuf<PyroView<'a>, T>;
+    type TypedWrapper = JsonBuf<PyroView, T>;
 
     fn unchecked_parse(self) -> PyroResult<Self::TypedWrapper> {
         let slice = &*self.data;

@@ -44,7 +44,7 @@ impl<'a> PyroRow<'a> {
     }
 
     ///
-    pub fn parse_wire(view: PyroView<'a>) -> Result<Self, PyroError> {
+    pub fn parse_wire(view: &'a PyroView) -> Result<Self, PyroError> {
         let archived_ref = rkyv::access::<ArchivedPyroRow, RancorError>(&view)
             .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
         let row = PyroRow::from(archived_ref);
@@ -63,7 +63,7 @@ impl<'a> PyroValue<'a> {
     }
 
     ///
-    pub fn parse_wire(view: PyroView<'a>) -> Result<Self, PyroError> {
+    pub fn parse_wire(view: &'a PyroView) -> Result<Self, PyroError> {
         let archived_ref = rkyv::access::<ArchivedPyroValue, RancorError>(&view)
             .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
         let row = PyroValue::from(archived_ref);
@@ -89,7 +89,8 @@ mod tests {
         assert!(vec.len() > 0);
 
         // Expose
-        let recovered = PyroRow::parse_wire(vec.view()).expect("expose failed");
+        let view = vec.view();
+        let recovered = PyroRow::parse_wire(&view).expect("expose failed");
         assert_eq!(recovered, row);
     }
 
@@ -98,7 +99,8 @@ mod tests {
         let val = PyroValue::from(42i32).into_owned();
 
         let vec = val.to_wire().expect("ship failed");
-        let recovered = PyroValue::parse_wire(vec.view()).expect("expose failed");
+        let view = vec.view();
+        let recovered = PyroValue::parse_wire(&view).expect("expose failed");
         assert_eq!(recovered, val);
     }
 
@@ -113,7 +115,8 @@ mod tests {
         .into_owned();
 
         let vec = outer.to_wire().expect("ship failed");
-        let recovered = PyroRow::parse_wire(vec.view()).expect("expose failed");
+        let view = vec.view();
+        let recovered = PyroRow::parse_wire(&view).expect("expose failed");
         assert_eq!(recovered, outer);
     }
 
@@ -126,7 +129,8 @@ mod tests {
         ]);
 
         let vec = val.to_wire().expect("ship failed");
-        let recovered = PyroValue::parse_wire(vec.view()).expect("expose failed");
+        let view = vec.view();
+        let recovered = PyroValue::parse_wire(&view).expect("expose failed");
         assert_eq!(recovered, val);
     }
 }

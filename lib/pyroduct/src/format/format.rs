@@ -6,7 +6,7 @@ use crate::error::ErrorKind;
 use crate::format::{
     PyroVec,
     header::{DataStatus, MutPyroData, PROTOCOL_VERSION, PyroData, PyroHeader, PyroHeaderMut},
-    view::PyroView,
+    PyroView,
 };
 use crate::{CapturedError, PyroError, PyroResult};
 
@@ -248,19 +248,19 @@ where
         }
     }
 
-    type ViewParser<'a>: Parser<
-            PyroView<'a>,
+    type ViewParser: Parser<
+            PyroView,
             T,
             HeaderValues = <Self as PyroFormat<T>>::HeaderValues,
             ParsedType = <Self as PyroFormat<T>>::ParsedType,
         >;
 
-    fn view_parser<'a>(data: PyroView<'a>) -> Self::ViewParser<'a>;
+    fn view_parser(data: PyroView) -> Self::ViewParser;
 
     /// Parse a borrowed `PyroView` into a typed view wrapper.
-    fn parse_view<'a>(
-        vec: PyroView<'a>,
-    ) -> Result<<Self::ViewParser<'a> as Parser<PyroView<'a>, T>>::TypedWrapper, PyroError> {
+    fn parse_view(
+        vec: PyroView,
+    ) -> Result<<Self::ViewParser as Parser<PyroView, T>>::TypedWrapper, PyroError> {
         trace!(
             type_name = std::any::type_name::<T>(),
             len = vec.len(),
@@ -293,7 +293,7 @@ where
 /// Trait for types that can be encoded as a specification on the wire.
 pub trait SpecWire: Sized {
     fn to_wire(&self) -> PyroResult<PyroVec>;
-    fn parse_wire(view: PyroView<'_>) -> PyroResult<Self>;
+    fn parse_wire(view: PyroView) -> PyroResult<Self>;
 }
 
 impl SpecWire for pyro_spec::InterfaceSpec<'_> {
@@ -307,7 +307,7 @@ impl SpecWire for pyro_spec::InterfaceSpec<'_> {
         Ok(vec)
     }
 
-    fn parse_wire(view: PyroView<'_>) -> PyroResult<Self> {
+    fn parse_wire(view: PyroView) -> PyroResult<Self> {
         if let Ok(DataStatus::InterfaceSchema) = view.status() {
             let interface = serde_json::from_slice(&view).map_err(|e| PyroError::serialization(CapturedError::new("Unable to deserialize interface spec").with_source(e)))?;
             Ok(interface)
