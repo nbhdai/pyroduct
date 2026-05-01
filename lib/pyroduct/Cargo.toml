@@ -100,6 +100,7 @@ fs-err = { workspace = true, optional = true }
 toml = { workspace = true, optional = true }
 pyro-macro = { workspace = true, optional = true }
 prettyplease = { workspace = true, optional = true }
+memmap2.workspace = true
 
 [[bin]]
 name = "pyroduct"

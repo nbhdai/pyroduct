@@ -100,7 +100,7 @@ impl PyroClient {
     /// client_id is returned. Otherwise, the server is contacted (fn_id = 2) to
     /// receive a new client_id, which is then cached.
     async fn get_or_register_client_id(&mut self, client_data: PyroView) -> Result<u32, PyroError> {
-        let hash = Self::hash_data(client_data);
+        let hash = Self::hash_data(&client_data);
 
         // Check cache first
         if let Some(&id) = self.client_hashes.get(&hash) {
@@ -129,7 +129,7 @@ impl PyroClient {
     }
 
     /// Hash `client_data` using SHA-256.
-    fn hash_data(data: PyroView) -> [u8; 32] {
+    fn hash_data(data: &PyroView) -> [u8; 32] {
         let mut hasher = Sha256::new();
         hasher.update(data.as_slice());
         hasher.finalize().into()

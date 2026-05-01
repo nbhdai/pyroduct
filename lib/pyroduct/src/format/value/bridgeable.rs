@@ -4,7 +4,7 @@ use std::panic::Location;
 use crate::format::bridgeable::{Decoder, Encoder};
 use crate::format::header::{DataStatus, PyroHeader};
 use crate::format::value::{PrimitiveValueList, PyroValue, Time};
-use crate::format::{Bridgeable, PyroVec, PyroView};
+use crate::format::{Bridgeable, PyroVec, PyroView, PyroRef};
 use crate::{CapturedError, PyroError};
 
 // =============================================================================
@@ -39,8 +39,8 @@ macro_rules! impl_bridgeable_scalar {
             }
         }
         impl Decoder<'_, $t> for $decoder {
-            fn decode(&mut self, view: &PyroView) -> Result<$t, PyroError> {
-                let val = PyroValue::parse_wire(view)?;
+            fn decode(&mut self, view: PyroRef<'_>) -> Result<$t, PyroError> {
+                let val = PyroValue::parse_wire(&view)?;
                 if let PyroValue::$variant(inner) = val {
                     Ok(inner)
                 } else {
@@ -105,9 +105,10 @@ impl Default for StringDecoder {
     }
 }
 impl<'a> Decoder<'a, &'a str> for StringDecoder {
-    fn decode(&mut self, view: &'a PyroView) -> Result<&'a str, PyroError> {
-        let val = PyroValue::parse_wire(view)?;
+    fn decode(&mut self, view: PyroRef<'a>) -> Result<&'a str, PyroError> {
+        let val = PyroValue::parse_wire(&view)?;
         if let PyroValue::Str(cow) = val {
+            let cow = unsafe { std::mem::transmute::<Cow<'_, str>, Cow<'a, str>>(cow)};
             Ok(match cow {
                 Cow::Borrowed(s) => s,
                 Cow::Owned(_) => unreachable!("rkyv parsing should return borrowed data"),
@@ -122,8 +123,8 @@ impl<'a> Decoder<'a, &'a str> for StringDecoder {
 }
 
 impl<'a> Decoder<'a, String> for StringDecoder {
-    fn decode(&mut self, view: &PyroView) -> Result<String, PyroError> {
-        let val = PyroValue::parse_wire(view)?;
+    fn decode(&mut self, view: PyroRef<'a>) -> Result<String, PyroError> {
+        let val = PyroValue::parse_wire(&view)?;
         if let PyroValue::Str(cow) = val {
             Ok(match cow {
                 Cow::Borrowed(s) => s.to_owned(),
@@ -178,9 +179,10 @@ macro_rules! impl_bridgeable_list {
         #[derive(Default)]
         pub struct $decoder;
         impl<'a> Decoder<'a, &'a [$t]> for $decoder {
-            fn decode(&mut self, view: &'a PyroView) -> Result<&'a [$t], PyroError> {
-                let val = PyroValue::parse_wire(view)?;
+            fn decode(&mut self, view: PyroRef<'a>) -> Result<&'a [$t], PyroError> {
+                let val = PyroValue::parse_wire(&view)?;
                 if let PyroValue::PrimitiveList(PrimitiveValueList::$variant(cow)) = val {
+                    let cow = unsafe { std::mem::transmute::<Cow<'_, [$t]>, Cow<'a, [$t]>>(cow)};
                     Ok(match cow {
                         Cow::Borrowed(s) => s,
                         Cow::Owned(_) => unreachable!("rkyv parsing should return borrowed data"),
@@ -239,7 +241,7 @@ impl Default for EmptyDecoder {
     }
 }
 impl Decoder<'_, ()> for EmptyDecoder {
-    fn decode(&mut self, view: &PyroView) -> Result<(), PyroError> {
+    fn decode(&mut self, view: PyroRef<'_>) -> Result<(), PyroError> {
         if matches!(view.status(), Ok(DataStatus::Empty)) {
             Ok(())
         } else {

@@ -1,4 +1,5 @@
 use crate::error::ErrorKind;
+use crate::format::PyroRef;
 use crate::{CapturedError, PyroError};
 use std::convert::TryInto;
 use std::ops::{Deref, DerefMut};
@@ -96,14 +97,15 @@ pub enum ParseError {
 
 // --- Sealing Module ---
 mod private {
-    use crate::format::{PyroBuf, PyroVec, PyroView};
+    use crate::format::{PyroVec, PyroView, PyroRef};
 
     pub trait Sealed {}
     // The primitive array is the base sealed type.
     impl Sealed for [u8; 16] {}
+    impl Sealed for &[u8; 16] {}
     impl Sealed for PyroVec {}
-    impl Sealed for PyroBuf {}
     impl Sealed for PyroView {}
+    impl Sealed for PyroRef<'_> {}
 }
 
 /// A specialized parser for the 16-byte PyroVec header.
@@ -212,6 +214,52 @@ pub trait PyroHeader: private::Sealed {
     fn is_pyro_err(&self) -> bool;
 }
 
+impl PyroHeader for [u8;16] {
+    fn header_len(&self) -> u32 {
+        todo!()
+    }
+
+    fn wire_format(&self) -> u8 {
+        todo!()
+    }
+
+    fn client_id(&self) -> u32 {
+        todo!()
+    }
+
+    fn fn_id(&self) -> u8 {
+        todo!()
+    }
+
+    fn class_id(&self) -> u8 {
+        todo!()
+    }
+
+    fn mux_id(&self) -> u32 {
+        todo!()
+    }
+
+    fn status_u8(&self) -> u8 {
+        todo!()
+    }
+
+    fn status(&self) -> Result<DataStatus, u8> {
+        todo!()
+    }
+
+    fn is_ok(&self) -> bool {
+        todo!()
+    }
+
+    fn is_user_err(&self) -> bool {
+        todo!()
+    }
+
+    fn is_pyro_err(&self) -> bool {
+        todo!()
+    }
+}
+
 pub trait PyroHeaderMut: private::Sealed {
     unsafe fn set_len(&mut self, len: u32);
     fn set_wire_format(&mut self, wire_fmt: u8);
@@ -232,6 +280,12 @@ pub trait PyroHeaderMut: private::Sealed {
 pub trait PyroData: private::Sealed + Deref<Target = [u8]> + Sized {
     fn header(&self) -> &[u8; 16];
     fn capacity(&self) -> usize;
+
+    fn as_ref(&self) -> PyroRef<'_> {
+        PyroRef {
+            data: &*self,
+        }
+    }
 
     /// Consumes the PyroVec and converts it into the appropriate PyroError
     /// based on the Status header.

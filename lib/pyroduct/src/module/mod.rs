@@ -302,7 +302,6 @@ impl PyroFactory {
                                 );
 
                                 let mut io = PyroCallIo::from_caller(caller)?;
-
                                 let client_view = io.borrow_argument(client_ptr).await?;
                                 let input_view = io.borrow_argument(input_ptr).await?;
 

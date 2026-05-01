@@ -8,8 +8,7 @@ use wasmtime::{AsContextMut, Caller, Extern, Memory};
 
 use crate::{
     format::{
-        PyroVec, PyroView, get_view,
-        header::{PyroHeader, PyroParser},
+        PyroRef, PyroVec, PyroView, get_ref, header::{PyroHeader, PyroParser}
     },
     module::{PyroState, WasmError},
 };
@@ -66,7 +65,7 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
     /// Read a `PyroView` from wasm memory at the given pointer.
     pub async fn get_output(&mut self, ptr: i32) -> Result<PyroVec, WasmError> {
         let wasm_memory = self.memory.data(self.ctx.as_context());
-        let view = get_view(wasm_memory, ptr as usize)
+        let view = get_ref(wasm_memory, ptr as usize)
             .map_err(|e| WasmError::InputMemory(wasmtime::Error::msg(e.to_string())))?;
         let vec = PyroVec::clone_from_pyro(&view);
         let free_output = self
@@ -84,9 +83,9 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
     }
 
     /// Read a `PyroView` from wasm memory at the given pointer.
-    pub async fn borrow_argument(&self, ptr: i32) -> Result<PyroView, WasmError> {
+    pub async fn borrow_argument(&self, ptr: i32) -> Result<PyroRef<'_>, WasmError> {
         let wasm_memory = self.memory.data(self.ctx.as_context());
-        let view = get_view(wasm_memory, ptr as usize)
+        let view = get_ref(wasm_memory, ptr as usize)
             .map_err(|e| WasmError::InputMemory(wasmtime::Error::msg(e.to_string())))?;
         Ok(view)
     }

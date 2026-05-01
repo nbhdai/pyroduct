@@ -26,8 +26,7 @@ use rkyv::rancor::Error as RancorError;
 use crate::{
     CapturedError, PyroError,
     format::{
-        PyroVec, PyroView,
-        value::{ArchivedPyroRow, ArchivedPyroValue},
+        PyroVec, header::PyroData, value::{ArchivedPyroRow, ArchivedPyroValue}
     },
 };
 
@@ -44,7 +43,7 @@ impl<'a> PyroRow<'a> {
     }
 
     ///
-    pub fn parse_wire(view: &'a PyroView) -> Result<Self, PyroError> {
+    pub fn parse_wire<T: PyroData>(view: &'a T) -> Result<Self, PyroError> {
         let archived_ref = rkyv::access::<ArchivedPyroRow, RancorError>(&view)
             .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
         let row = PyroRow::from(archived_ref);
@@ -63,7 +62,7 @@ impl<'a> PyroValue<'a> {
     }
 
     ///
-    pub fn parse_wire(view: &'a PyroView) -> Result<Self, PyroError> {
+    pub fn parse_wire<T: PyroData>(view: &'a T) -> Result<Self, PyroError> {
         let archived_ref = rkyv::access::<ArchivedPyroValue, RancorError>(&view)
             .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
         let row = PyroValue::from(archived_ref);

@@ -192,7 +192,7 @@ impl From<PyroVec> for Request {
 impl Request {
     fn view(&self) -> PyroView {
         match &self.inner {
-            RequestInner::View(v) => *v,
+            RequestInner::View(v) => v.clone(),
             RequestInner::Vec(vec) => vec.view(),
         }
     }

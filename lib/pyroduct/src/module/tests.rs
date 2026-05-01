@@ -6,7 +6,7 @@
 
 use crate::PyroError;
 use crate::format::{
-    ParseError, PyroVec, get_view,
+    ParseError, PyroVec,
     header::{PyroData, PyroHeader, PyroHeaderMut, PyroParser},
 };
 use crate::wasm::{free_output, get_input, grow_input, new_input, to_output};

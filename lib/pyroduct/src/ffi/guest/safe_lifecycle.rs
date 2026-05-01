@@ -8,7 +8,7 @@ use crate::ffi::guest::panic_wrap::get_runtime;
 use crate::ffi::{FutureInitResult, InitResult};
 use crate::format::{
     PyroView, PyroViewPtr,
-    header::{DataStatus, PyroHeader},
+    header::{DataStatus, PyroHeader, ParseError},
 };
 use crate::panic::{clear_last_panic, recover_panic_info, register_ffi_panic_hook};
 use crate::{CapturedError, PyroError};
@@ -23,11 +23,11 @@ pub struct EmptyConfig {}
 pub fn deserialize_config<C: serde::de::DeserializeOwned>(
     config: PyroViewPtr,
 ) -> Result<Option<C>, PyroError> {
-    if config.ptr.is_null() {
-        return Ok(None);
+    let view = match unsafe { PyroView::from_ptr(config) } {
+        Err(PyroError::Header(ParseError::NullPointer)) => return Ok(None),
+        Err(err) => return Err(err),
+        Ok(ok) => ok, 
     }
-
-    let view = unsafe { PyroView::from_ptr(config) }?;
     if let Ok(DataStatus::Empty) = view.status() {
         return Ok(None);
     }

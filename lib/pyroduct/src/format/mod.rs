@@ -238,7 +238,7 @@ pub use bridgeable::{Bridgeable, Decoder, Encoder};
 pub use format::{HasReceiver, Receiver, SpecWire};
 pub use header::ParseError;
 pub use value::{DeepRef, PyroRow, PyroValue, ToRow};
-pub use vec_buf::{PyroBuf, PyroVec, PyroVecPtr, PyroView, PyroViewPtr, get_view};
+pub use vec_buf::{PyroVec, PyroVecPtr, PyroView, PyroViewPtr, make_view, get_ref, PyroRef};
 pub use execution::{PyroFailure, PyroLogs, PyroSuccess};
 
 // Async is not supported for wasm

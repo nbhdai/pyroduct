@@ -2316,6 +2316,7 @@ dependencies = [
  "lazy_static",
  "libloading",
  "macrotest",
+ "memmap2",
  "object 0.38.1",
  "parquet",
  "paste",

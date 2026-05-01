@@ -3,6 +3,8 @@
 use std::fmt;
 
 use crate::PyroError;
+use crate::format::PyroRef;
+use crate::format::header::PyroData;
 use crate::format::{
     ParseError, PyroVec, PyroView,
     header::{DataStatus, PyroHeader, PyroHeaderMut},
@@ -16,7 +18,7 @@ pub trait Encoder<T> {
 }
 
 pub trait Decoder<'a, T: 'a> {
-    fn decode(&mut self, vec: &'a PyroView) -> Result<T, PyroError>;
+    fn decode(&mut self, vec: PyroRef<'a>) -> Result<T, PyroError>;
 }
 
 pub trait Unpack<Packed>: Sized {
@@ -225,7 +227,7 @@ pub trait Bridgeable: Sized {
     fn expose(view: PyroView) -> Result<TypedView<Self::Ref<'static>>, PyroError> {
         let mut decoder = Self::Decoder::default();
         let inner = {
-            let inner = decoder.decode(&view)?;
+            let inner = decoder.decode(view.as_ref())?;
             unsafe { std::mem::transmute::<Self::Ref<'_>, Self::Ref<'static>>(inner) }
         };
         Ok(TypedView { inner, view })
@@ -236,7 +238,7 @@ pub trait Bridgeable: Sized {
         let mut decoder = Self::Decoder::default();
         let inner = {
             let view = vec.view();
-            let inner = decoder.decode(&view)?;
+            let inner = decoder.decode(view.as_ref())?;
             unsafe { std::mem::transmute::<Self::Ref<'_>, Self::Ref<'static>>(inner) }
         };
         Ok(TypedVec { inner, vec })
@@ -279,10 +281,10 @@ pub struct ResultDecoder<T, E> {
 impl<'a, T: 'a, DT: Decoder<'a, T>, E: 'a, DE: Decoder<'a, E>> Decoder<'a, Result<T, E>>
     for ResultDecoder<DT, DE>
 {
-    fn decode(&mut self, view: &'a PyroView) -> Result<Result<T, E>, PyroError> {
+    fn decode(&mut self, view: PyroRef<'a>) -> Result<Result<T, E>, PyroError> {
         let inner = match view.status() {
-            Ok(DataStatus::Valid) => Ok(self.ok_decoder.decode(&view)?),
-            Ok(DataStatus::Error) => Err(self.err_decoder.decode(&view)?),
+            Ok(DataStatus::Valid) => Ok(self.ok_decoder.decode(view)?),
+            Ok(DataStatus::Error) => Err(self.err_decoder.decode(view)?),
             // Todo: Properly decode the pyro errors.
             Ok(other) => return Err(ParseError::UnknownStatus(other.into()).into()),
             Err(other) => return Err(ParseError::UnknownStatus(other).into()),
@@ -323,9 +325,9 @@ pub struct OptionDecoder<T> {
 }
 
 impl<'a, T: 'a, DT: Decoder<'a, T>> Decoder<'a, Option<T>> for OptionDecoder<DT> {
-    fn decode(&mut self, view: &'a PyroView) -> Result<Option<T>, PyroError> {
+    fn decode(&mut self, view: PyroRef<'a>) -> Result<Option<T>, PyroError> {
         let inner = match view.status() {
-            Ok(DataStatus::Valid) => Some(self.decoder.decode(&view)?),
+            Ok(DataStatus::Valid) => Some(self.decoder.decode(view)?),
             Ok(DataStatus::Empty) => None,
             Ok(other) => return Err(ParseError::UnknownStatus(other.into()).into()),
             Err(other) => return Err(ParseError::UnknownStatus(other).into()),
