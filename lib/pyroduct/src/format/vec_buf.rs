@@ -582,9 +582,38 @@ pub unsafe fn make_view(counter: &AtomicU32, reference: PyroRef<'_>) -> Result<P
     })
 }
 
-// ============================================================================
-// PyroRef
-// ============================================================================
+/// A raw pointer to a Pyro data structure.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PyroRefPtr(pub(super) *const u8);
+
+impl PyroRefPtr {
+    pub fn new(ptr: *const u8) -> Self {
+        Self(ptr)
+    }
+
+    pub fn as_ptr(&self) -> *const u8 {
+        self.0
+    }
+
+    /// Reconstructs a `PyroRef` from a raw pointer.
+    ///
+    /// # Safety
+    /// * The pointer must be non-null and properly aligned (16-byte alignment).
+    /// * The memory referenced must remain valid for the lifetime `'a`.
+    /// * The memory must contain a valid Pyro header and payload as specified by the header.
+    pub unsafe fn assume_ref<'a>(&self) -> PyroRef<'a> {
+        let ptr = self.0;
+        let header = unsafe { &*(ptr as *const [u8; 16]) };
+        let payload_len = PyroHeader::header_len(header) as usize;
+        let total_len = PyroParser::HEADER_SIZE + payload_len;
+        
+        PyroRef {
+            data: unsafe { slice::from_raw_parts(ptr, total_len) },
+        }
+    }
+}
+
 
 /// A safe, lifetime-bound view into a Pyro data structure.
 ///
@@ -609,7 +638,13 @@ impl<'a> PyroData for PyroRef<'a> {
 }
 
 impl<'a> PyroRef<'a> {
+    /// Returns a raw pointer to the start of the Pyro data (including header).
+    pub fn as_ptr(&self) -> PyroRefPtr {
+        PyroRefPtr::new(self.data.as_ptr())
+    }
+
     /// Creates a `PyroRef` from a byte slice.
+
     ///
     /// The slice must contain the 16-byte header followed by the payload.
     pub fn try_from_slice(data: &'a [u8]) -> Result<Self, PyroError> {
@@ -721,3 +756,60 @@ pub fn get_ref(wasm_memory: &[u8], offset: usize) -> Result<PyroRef<'_>, PyroErr
         data: &wasm_memory[offset..offset+total_required]
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pyrovec_buffer_layout() {
+        let mut vec = PyroVec::with_capacity(10);
+        vec.extend_from_slice(b"TEST");
+
+        let raw = vec.as_raw_slice();
+        
+        let mut expected = [0u8; 20];
+        expected[0..4].copy_from_slice(&4u32.to_le_bytes()); // Length
+        expected[8] = 1; // Wire format
+        expected[16..20].copy_from_slice(b"TEST"); // Payload
+
+        assert_eq!(raw, &expected, "PyroVec raw buffer layout mismatch");
+    }
+
+    #[test]
+    fn test_pyro_ref_ptr() {
+        let mut vec = PyroVec::with_capacity(10);
+        vec.extend_from_slice(b"TEST");
+        let reference = PyroRef::try_from_slice(vec.as_raw_slice()).unwrap();
+        
+        let ptr = reference.as_ptr();
+        let reconstructed = unsafe { ptr.assume_ref() };
+        
+        assert_eq!(reconstructed.as_slice(), b"TEST");
+        assert_eq!(reconstructed.len(), 4);
+    }
+
+    #[test]
+    fn test_view_ref_counting_lifecycle() {
+        let vec = PyroVec::with_capacity(10);
+        let inner_ptr = vec.view.as_ptr() as *const AtomicU32;
+        
+        assert_eq!(unsafe { (*inner_ptr).load(Ordering::Acquire) }, 0, "Initial ref count should be 0");
+
+        // 1. Creation
+        let view1 = vec.view();
+        assert_eq!(unsafe { (*inner_ptr).load(Ordering::Acquire) }, 1, "Creating a view should increment to 1");
+
+        // 2. Cloning
+        let view2 = view1.clone();
+        assert_eq!(unsafe { (*inner_ptr).load(Ordering::Acquire) }, 2, "Cloning should increment to 2");
+
+        // 3. Dropping
+        drop(view1);
+        assert_eq!(unsafe { (*inner_ptr).load(Ordering::Acquire) }, 1, "Dropping a view should decrement to 1");
+
+        drop(view2);
+        assert_eq!(unsafe { (*inner_ptr).load(Ordering::Acquire) }, 0, "Dropping the last view should decrement to 0");
+    }
+}
+

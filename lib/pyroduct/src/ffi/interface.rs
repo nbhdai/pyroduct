@@ -2,6 +2,7 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 
 use crate::format::PyroView;
+use crate::format::vec_buf::PyroRefPtr;
 use crate::format::{PyroVec, PyroViewPtr, header::PyroData};
 use crate::{CapturedError, PyroError};
 
@@ -23,13 +24,13 @@ pub type AsyncFn = unsafe extern "C" fn(
     // itself
     PyroRefObjectPtr,
     // Client (wasm side class state)
-    PyroViewPtr,
+    PyroRefPtr,
     // Input
-    PyroViewPtr,
+    PyroRefPtr,
 ) -> FuturePyroView;
 
 /// We expect the return to be a bridge vec.
-pub type SyncFn = unsafe extern "C" fn(PyroRefObjectPtr, PyroViewPtr, PyroViewPtr) -> PyroViewPtr;
+pub type SyncFn = unsafe extern "C" fn(PyroRefObjectPtr, PyroRefPtr, PyroRefPtr) -> PyroViewPtr;
 
 #[repr(C, u8)]
 #[derive(Clone, Copy)]
@@ -290,9 +291,9 @@ pub enum FutureInitResult {
     Future(::async_ffi::BorrowingFfiFuture<'static, InitResult>),
 }
 
-pub type SyncClassInitFn = unsafe extern "C" fn(config: PyroViewPtr, object_id: u64) -> InitResult;
+pub type SyncClassInitFn = unsafe extern "C" fn(config: PyroRefPtr, object_id: u64) -> InitResult;
 pub type AsyncClassInitFn =
-    unsafe extern "C" fn(config: PyroViewPtr, object_id: u64) -> FutureInitResult;
+    unsafe extern "C" fn(config: PyroRefPtr, object_id: u64) -> FutureInitResult;
 
 #[repr(C, u8)]
 #[derive(Clone, Copy)]
@@ -316,8 +317,8 @@ pub enum ClassResetFn {
 // Registration
 
 pub type AsyncClientRegisterFn =
-    unsafe extern "C" fn(PyroRefObjectPtr, PyroViewPtr) -> FuturePyroView;
-pub type SyncClientRegisterFn = unsafe extern "C" fn(PyroRefObjectPtr, PyroViewPtr) -> PyroViewPtr;
+    unsafe extern "C" fn(PyroRefObjectPtr, PyroRefPtr) -> FuturePyroView;
+pub type SyncClientRegisterFn = unsafe extern "C" fn(PyroRefObjectPtr, PyroRefPtr) -> PyroViewPtr;
 
 #[repr(C, u8)]
 #[derive(Clone, Copy)]

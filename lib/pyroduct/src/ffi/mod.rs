@@ -15,7 +15,8 @@ impl UserHeaderValues for serde_json::Value {}
 mod tests {
     use super::*;
     use crate::ffi::host::ForeignClass;
-    use crate::format::header::PyroHeader;
+    use crate::format::header::{PyroData, PyroHeader};
+    use crate::format::vec_buf::PyroRefPtr;
     use crate::format::{PyroVec, PyroViewPtr};
     use crate::module::capability::create_log;
     use std::cell::RefCell;
@@ -48,7 +49,7 @@ mod tests {
         ctx.drop_called.store(true, Ordering::SeqCst);
     }
 
-    unsafe extern "C" fn mock_init(_: PyroViewPtr, object_id: u64) -> InitResult {
+    unsafe extern "C" fn mock_init(_: PyroRefPtr, object_id: u64) -> InitResult {
         // Retrieve the pointer pre-allocated by the test setup
         let state = NEXT_OBJ_STATE.with(|s| {
             s.borrow_mut()
@@ -76,7 +77,7 @@ mod tests {
 
     unsafe extern "C" fn mock_register_sync(
         ptr: PyroRefObjectPtr,
-        _client: PyroViewPtr,
+        _client: PyroRefPtr,
     ) -> PyroViewPtr {
         if !ptr.state.is_null() {
             let ctx = unsafe { &*(ptr.state as *const TestContext) };
@@ -202,7 +203,7 @@ mod tests {
         // Create Instance (calls mock_init, which claims m.state_ptr from TLS)
         let config = PyroVec::ok();
         let handle = class
-            .create_instance(config.view(), 0, log_channel)
+            .create_instance(config.py_ref(), 0, log_channel)
             .await
             .unwrap();
 
@@ -237,12 +238,12 @@ mod tests {
 
         let config = PyroVec::ok();
         let handle = class
-            .create_instance(config.view(), 0, log_channel)
+            .create_instance(config.py_ref(), 0, log_channel)
             .await
             .unwrap();
 
         let client_data = PyroVec::ok();
-        let result = handle.register(client_data.view()).await.unwrap();
+        let result = handle.register(client_data.py_ref()).await.unwrap();
 
         assert!(m.register_called.load(Ordering::SeqCst));
         assert!(result.is_ok());
@@ -268,12 +269,12 @@ mod tests {
         );
         let config = PyroVec::ok();
         let handle = class
-            .create_instance(config.view(), 0, log_channel)
+            .create_instance(config.py_ref(), 0, log_channel)
             .await
             .unwrap();
 
         let client_data = PyroVec::ok();
-        let result = handle.register(client_data.view()).await;
+        let result = handle.register(client_data.py_ref()).await;
 
         assert!(result.is_ok());
     }

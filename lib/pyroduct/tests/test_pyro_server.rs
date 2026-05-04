@@ -1,6 +1,5 @@
 use pyroduct::format::PyroVec;
 use pyroduct::format::header::{PyroHeader, PyroHeaderMut};
-use pyroduct::format::tokio::RequestInner;
 use pyroduct::transport::{PyroListener, PyroRouter, PyroServer, PyroSocket};
 
 #[tokio::test]
@@ -32,7 +31,7 @@ async fn test_pyro_server_capability_call() {
     // 3. Fetch Interface (fn_id = 0) - returns the interface spec
     let fetch_req = PyroVec::ok();
     let fetch_resp = socket
-        .request(None, None, Some(0), RequestInner::Vec(fetch_req))
+        .request(None, None, Some(0), fetch_req.view())
         .await
         .expect("Failed to fetch interface");
     assert!(fetch_resp.is_ok(), "Interface fetch should be successful");
@@ -43,7 +42,7 @@ async fn test_pyro_server_capability_call() {
     config_req.set_fn_id(1);
 
     let config_resp = socket
-        .request(None, Some(0), Some(1), RequestInner::Vec(config_req))
+        .request(None, Some(0), Some(1), config_req.view())
         .await
         .expect("Failed to configure class");
     assert!(config_resp.is_ok(), "Configuration should be successful");
@@ -53,7 +52,7 @@ async fn test_pyro_server_capability_call() {
     reg_req.set_fn_id(2);
 
     let reg_resp = socket
-        .request(None, None, Some(2), RequestInner::Vec(reg_req))
+        .request(None, None, Some(2), reg_req.view())
         .await
         .expect("Failed to register client");
     // reg_resp should contain the client_id (u32)
@@ -66,7 +65,7 @@ async fn test_pyro_server_capability_call() {
     reset_req.set_fn_id(3);
 
     let reset_resp = socket
-        .request(None, Some(0), Some(3), RequestInner::Vec(reset_req))
+        .request(None, Some(0), Some(3), reset_req.view())
         .await
         .expect("Failed to reset class");
     assert!(reset_resp.is_ok(), "Reset should be successful");
@@ -81,7 +80,7 @@ async fn test_pyro_server_capability_call() {
             Some(client_id),
             Some(0),
             Some(4),
-            RequestInner::Vec(call_req),
+            call_req.view(),
         )
         .await
         .expect("Failed to call method");

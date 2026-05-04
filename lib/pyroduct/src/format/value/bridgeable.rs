@@ -40,7 +40,7 @@ macro_rules! impl_bridgeable_scalar {
         }
         impl Decoder<'_, $t> for $decoder {
             fn decode(&mut self, view: PyroRef<'_>) -> Result<$t, PyroError> {
-                let val = PyroValue::parse_wire(&view)?;
+                let val = PyroValue::parse_wire(view)?;
                 if let PyroValue::$variant(inner) = val {
                     Ok(inner)
                 } else {
@@ -106,7 +106,7 @@ impl Default for StringDecoder {
 }
 impl<'a> Decoder<'a, &'a str> for StringDecoder {
     fn decode(&mut self, view: PyroRef<'a>) -> Result<&'a str, PyroError> {
-        let val = PyroValue::parse_wire(&view)?;
+        let val = PyroValue::parse_wire(view)?;
         if let PyroValue::Str(cow) = val {
             let cow = unsafe { std::mem::transmute::<Cow<'_, str>, Cow<'a, str>>(cow)};
             Ok(match cow {
@@ -124,7 +124,7 @@ impl<'a> Decoder<'a, &'a str> for StringDecoder {
 
 impl<'a> Decoder<'a, String> for StringDecoder {
     fn decode(&mut self, view: PyroRef<'a>) -> Result<String, PyroError> {
-        let val = PyroValue::parse_wire(&view)?;
+        let val = PyroValue::parse_wire(view)?;
         if let PyroValue::Str(cow) = val {
             Ok(match cow {
                 Cow::Borrowed(s) => s.to_owned(),
@@ -180,7 +180,7 @@ macro_rules! impl_bridgeable_list {
         pub struct $decoder;
         impl<'a> Decoder<'a, &'a [$t]> for $decoder {
             fn decode(&mut self, view: PyroRef<'a>) -> Result<&'a [$t], PyroError> {
-                let val = PyroValue::parse_wire(&view)?;
+                let val = PyroValue::parse_wire(view)?;
                 if let PyroValue::PrimitiveList(PrimitiveValueList::$variant(cow)) = val {
                     let cow = unsafe { std::mem::transmute::<Cow<'_, [$t]>, Cow<'a, [$t]>>(cow)};
                     Ok(match cow {

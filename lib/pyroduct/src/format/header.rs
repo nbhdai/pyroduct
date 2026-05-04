@@ -1,5 +1,6 @@
 use crate::error::ErrorKind;
 use crate::format::PyroRef;
+use crate::format::vec_buf::PyroRefPtr;
 use crate::{CapturedError, PyroError};
 use std::convert::TryInto;
 use std::ops::{Deref, DerefMut};
@@ -281,10 +282,14 @@ pub trait PyroData: private::Sealed + Deref<Target = [u8]> + Sized {
     fn header(&self) -> &[u8; 16];
     fn capacity(&self) -> usize;
 
-    fn as_ref(&self) -> PyroRef<'_> {
+    fn py_ref(&self) -> PyroRef<'_> {
         PyroRef {
             data: &*self,
         }
+    }
+
+    fn py_ptr(&self) -> PyroRefPtr {
+        PyroRefPtr(self.as_ptr())
     }
 
     /// Consumes the PyroVec and converts it into the appropriate PyroError

@@ -445,7 +445,7 @@ impl WalRecord {
     fn from_frame(frame: &WalFrame, logs: Option<&LogRecord>) -> Option<Self> {
         use crate::format::header::PyroHeader;
 
-        let pkt = &frame.packet;
+        let pkt = frame.packet;
         let status = pkt.status_u8();
 
         let mut extracted_logs = PyroLogs::empty();
@@ -603,7 +603,7 @@ mod tests {
 
         // Get a tracked view from the reader
         let view = reader.view_at(frame.packet_offset).expect("Should get view");
-        let recovered_row = PyroRow::parse_wire(&view).expect("parse should work");
+        let recovered_row = PyroRow::parse_wire(view).expect("parse should work");
         assert_eq!(recovered_row.get("id"), Some(&PyroValue::from(42i32)));
     }
 }

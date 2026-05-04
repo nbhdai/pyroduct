@@ -418,7 +418,7 @@ impl PyroInstance {
         match result_view.status() {
             Ok(DataStatus::Valid) => {
                 let row =
-                    PyroRow::parse_wire(&result_view).map_err(|err| self.pack_pyro_error(err))?;
+                    PyroRow::parse_wire(result_view).map_err(|err| self.pack_pyro_error(err))?;
                 Ok(self.pack_success(row.to_static()))
             }
             Ok(DataStatus::Error) => match serde_json::from_slice(&result_view) {

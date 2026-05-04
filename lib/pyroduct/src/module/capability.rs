@@ -18,6 +18,7 @@ use crate::ffi::{
     CapabilityRegisterFn, ClassExport,
     host::{ForeignClass, ForeignObject},
 };
+use crate::format::header::PyroData;
 use crate::format::{
     PyroVec, PyroView,
     format::{PyroFormat, Writer},
@@ -318,7 +319,7 @@ impl CapabilityLibrary {
             let log_channel = create_log(self.id, object_id, 100);
             // 3. Call create_instance on the ForeignClass
             let handle = cap_class
-                .create_instance(vec.view(), object_id, log_channel)
+                .create_instance(vec.py_ref(), object_id, log_channel)
                 .await
                 .map_err(|e| CapabilityError::Instantiation {
                     class: cap_name.clone(),
@@ -379,7 +380,7 @@ impl CapabilityLibrary {
         let log_channel = create_log(self.id, object_id, 100);
 
         let handle = cap_class
-            .create_instance(config, object_id, log_channel)
+            .create_instance(config.py_ref(), object_id, log_channel)
             .await
             .map_err(|e| CapabilityError::Instantiation {
                 class: class.to_string(),

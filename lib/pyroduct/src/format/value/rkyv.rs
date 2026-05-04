@@ -43,7 +43,7 @@ impl<'a> PyroRow<'a> {
     }
 
     ///
-    pub fn parse_wire<T: PyroData>(view: &'a T) -> Result<Self, PyroError> {
+    pub fn parse_wire<T: PyroData + 'a>(view: T) -> Result<Self, PyroError> {
         let archived_ref = rkyv::access::<ArchivedPyroRow, RancorError>(&view)
             .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
         let row = PyroRow::from(archived_ref);
@@ -62,7 +62,7 @@ impl<'a> PyroValue<'a> {
     }
 
     ///
-    pub fn parse_wire<T: PyroData>(view: &'a T) -> Result<Self, PyroError> {
+    pub fn parse_wire<T: PyroData + 'a>(view: T) -> Result<Self, PyroError> {
         let archived_ref = rkyv::access::<ArchivedPyroValue, RancorError>(&view)
             .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
         let row = PyroValue::from(archived_ref);
@@ -89,7 +89,7 @@ mod tests {
 
         // Expose
         let view = vec.view();
-        let recovered = PyroRow::parse_wire(&view).expect("expose failed");
+        let recovered = PyroRow::parse_wire(view).expect("expose failed");
         assert_eq!(recovered, row);
     }
 
@@ -99,7 +99,7 @@ mod tests {
 
         let vec = val.to_wire().expect("ship failed");
         let view = vec.view();
-        let recovered = PyroValue::parse_wire(&view).expect("expose failed");
+        let recovered = PyroValue::parse_wire(view).expect("expose failed");
         assert_eq!(recovered, val);
     }
 
@@ -115,7 +115,7 @@ mod tests {
 
         let vec = outer.to_wire().expect("ship failed");
         let view = vec.view();
-        let recovered = PyroRow::parse_wire(&view).expect("expose failed");
+        let recovered = PyroRow::parse_wire(view).expect("expose failed");
         assert_eq!(recovered, outer);
     }
 
@@ -129,7 +129,7 @@ mod tests {
 
         let vec = val.to_wire().expect("ship failed");
         let view = vec.view();
-        let recovered = PyroValue::parse_wire(&view).expect("expose failed");
+        let recovered = PyroValue::parse_wire(view).expect("expose failed");
         assert_eq!(recovered, val);
     }
 }

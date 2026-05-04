@@ -180,7 +180,7 @@ where
         return to_output(err.encode());
     };
     let input_view = input_vec.view();
-    let input_row = match PyroRow::parse_wire(&input_view) {
+    let input_row = match PyroRow::parse_wire(input_view) {
         Ok(vec) => vec,
         Err(err) => return to_output(err.encode()),
     };

@@ -137,7 +137,7 @@ pub trait Bridgeable: Sized {
     fn expose(view: PyroView) -> Result<TypedView<Self::Ref<'static>>, PyroError> {
         let mut decoder = Self::Decoder::default();
         let inner = {
-            let inner = decoder.decode(view.as_ref())?;
+            let inner = decoder.decode(view.py_ref())?;
             unsafe { std::mem::transmute::<Self::Ref<'_>, Self::Ref<'static>>(inner) }
         };
         Ok(TypedView { inner, view })

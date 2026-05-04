@@ -6,7 +6,7 @@ use dashmap::DashMap;
 
 use crate::PyroError;
 use crate::ffi::host::ForeignObject;
-use crate::format::header::PyroHeader;
+use crate::format::header::{PyroData, PyroHeader};
 use crate::format::{Bridgeable, PyroVec, PyroView, SpecWire};
 use crate::module::capability::CapabilityLibrary;
 
@@ -89,7 +89,7 @@ impl PyroRouter {
                     ))
                 })?;
                 object
-                    .call_index(method_index, client_data.clone(), request)
+                    .call_index(method_index, client_data.py_ref(), request.py_ref())
                     .await
             }
         }
