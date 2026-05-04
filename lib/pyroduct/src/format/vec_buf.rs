@@ -412,13 +412,9 @@ impl Drop for PyroView {
             // Decrement the reference count when the view is dropped
             if (*self.ref_count).fetch_sub(1, Ordering::AcqRel) == 1 {
                 // We were the last owner, drop the underlying memory
-                if self.dropper == PyroVec::no_op_dropper {
-                    (self.dropper)(self.ref_count as *mut u8, 0);
-                } else {
-                    let inner = self.ref_count as *mut PyroInner;
-                    let capacity = (*inner).capacity;
-                    (self.dropper)(inner as *mut u8, capacity);
-                }
+                let inner = self.ref_count as *mut PyroInner;
+                let capacity = (*inner).capacity;
+                (self.dropper)(inner as *mut u8, capacity);
             }
         }
     }
@@ -465,11 +461,6 @@ impl PyroView {
         }
         let ref_count = raw.ref_count;
 
-        // Bumping the ref count because we are materializing a usable View
-        unsafe {
-            (*ref_count).fetch_add(1, Ordering::Relaxed);
-        }
-
         Ok(Self {
             data,
             ref_count,
@@ -490,6 +481,9 @@ impl PyroView {
     }
 
     pub fn ptr(&self) -> PyroViewPtr {
+        unsafe {
+            (*self.ref_count).fetch_add(1, Ordering::Relaxed);
+        }
         PyroViewPtr {
             ref_count: self.ref_count,
             data: self.data,

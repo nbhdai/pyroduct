@@ -75,6 +75,7 @@ pub async fn read_from_stream<R>(
 where
     R: AsyncRead + Unpin,
 {
+    vec.clear();
     let config = match config {
         Some(c) => c,
         None => &DEFAULT_STREAM_SETTINGS,
@@ -86,25 +87,25 @@ where
     src.read_exact(&mut header_buf).await?;
 
     // 2. Parse fields (Little Endian for multi-byte integers)
-    // 0x04 - 0x07: Length
-    let len = u32::from_le_bytes(header_buf[0..4].try_into().unwrap()) as usize;
+    // 0x00 - 0x03: Length
+    let len = header_buf.header_len() as usize;
 
-    let client_id = u32::from_le_bytes(header_buf[4..8].try_into().unwrap());
+    let client_id = header_buf.client_id();
 
     // 0x08: Wire Format
-    let wire_format = header_buf[8];
+    let wire_format = header_buf.wire_format();
 
     // 0x09: Status
-    let status = header_buf[9];
+    let status = header_buf.status_u8();
 
     // 0x0A: Class ID
-    let class_id = header_buf[10];
+    let class_id = header_buf.class_id();
 
     // 0x0B: Function ID
-    let fn_id = header_buf[11];
+    let fn_id = header_buf.fn_id();
 
     // 0x0C - 0x0F: Mux ID
-    let mux_id = u32::from_le_bytes(header_buf[12..16].try_into().unwrap());
+    let mux_id = header_buf.mux_id();
 
     if len > config.max_msg_size {
         return Err(Error::new(
@@ -115,7 +116,6 @@ where
 
     // 3. Allocate and set metadata
     vec.set_wire_format(wire_format);
-    unsafe { vec.set_len(len as u32) };
     vec.set_client_id(client_id);
     vec.set_class_id(class_id);
     vec.set_fn_id(fn_id);
@@ -216,7 +216,6 @@ where
         ));
     }
 
-
     // 0x00: Length
     dest.write_u32_le(request.view().len() as u32).await?;
 
@@ -267,12 +266,6 @@ mod tests {
             .await
             .unwrap();
         recovered
-    }
-
-    fn make_request(data: &[u8]) -> Request {
-        let mut vec = PyroVec::with_capacity(data.len());
-        vec.extend_from_slice(data);
-        vec.into()
     }
 
     /// Build a Request where:

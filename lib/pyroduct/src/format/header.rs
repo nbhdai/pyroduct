@@ -216,48 +216,67 @@ pub trait PyroHeader: private::Sealed {
 }
 
 impl PyroHeader for [u8;16] {
+    #[inline]
     fn header_len(&self) -> u32 {
-        todo!()
+        let bytes: [u8;4] = self[PyroParser::OFFSET_LEN..PyroParser::OFFSET_LEN + 4]
+            .try_into()
+            .unwrap();
+        u32::from_le_bytes(bytes)
     }
 
+    #[inline]
     fn wire_format(&self) -> u8 {
-        todo!()
+        self[PyroParser::OFFSET_WIRE]
     }
 
+    #[inline]
     fn client_id(&self) -> u32 {
-        todo!()
+        let h = self;
+        let bytes = h[PyroParser::OFFSET_CLIENT..PyroParser::OFFSET_CLIENT + 4]
+            .try_into()
+            .unwrap();
+        u32::from_le_bytes(bytes)
     }
 
+    #[inline]
     fn fn_id(&self) -> u8 {
-        todo!()
+        self[PyroParser::OFFSET_FN_ID]
     }
 
+    #[inline]
     fn class_id(&self) -> u8 {
-        todo!()
+        self[PyroParser::OFFSET_CLASS_ID]
     }
 
+    #[inline]
     fn mux_id(&self) -> u32 {
-        todo!()
+        let h = self;
+        let bytes = h[PyroParser::OFFSET_MUX_ID..PyroParser::OFFSET_MUX_ID + 4]
+            .try_into()
+            .unwrap();
+        u32::from_le_bytes(bytes)
     }
 
+    #[inline]
     fn status_u8(&self) -> u8 {
-        todo!()
+        self[PyroParser::OFFSET_STATUS]
     }
 
     fn status(&self) -> Result<DataStatus, u8> {
-        todo!()
+        DataStatus::parse(self.status_u8())
     }
 
     fn is_ok(&self) -> bool {
-        todo!()
+        self.status_u8() == 0
     }
 
     fn is_user_err(&self) -> bool {
-        todo!()
+        self.status_u8() == 1
     }
 
     fn is_pyro_err(&self) -> bool {
-        todo!()
+        let s = self.status_u8();
+        s != 0 && s != 1
     }
 }
 
