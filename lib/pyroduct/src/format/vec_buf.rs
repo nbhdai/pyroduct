@@ -460,7 +460,9 @@ impl PyroView {
             return Err(PyroError::null_pointer())
         }
         let ref_count = raw.ref_count;
-
+        unsafe {
+            (*ref_count).fetch_add(1, Ordering::Relaxed);
+        }
         Ok(Self {
             data,
             ref_count,
@@ -481,9 +483,7 @@ impl PyroView {
     }
 
     pub fn ptr(&self) -> PyroViewPtr {
-        unsafe {
-            (*self.ref_count).fetch_add(1, Ordering::Relaxed);
-        }
+        
         PyroViewPtr {
             ref_count: self.ref_count,
             data: self.data,
@@ -802,8 +802,8 @@ mod tests {
         drop(view1);
         assert_eq!(unsafe { (*inner_ptr).load(Ordering::Acquire) }, 1, "Dropping a view should decrement to 1");
 
+        // Can't reference the pointer
         drop(view2);
-        assert_eq!(unsafe { (*inner_ptr).load(Ordering::Acquire) }, 0, "Dropping the last view should decrement to 0");
     }
 }
 
