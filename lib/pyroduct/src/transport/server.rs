@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use crate::format::header::{PyroHeader, PyroHeaderMut};
+use crate::format::header::PyroHeader;
+use crate::format::tokio::Request;
 use crate::transport::{PyroListener, PyroRouter, PyroSocket};
 
 /// A server that listens for incoming [`PyroSocket`] connections and routes
@@ -47,15 +48,24 @@ impl PyroServer {
 
             // Handle each request concurrently to leverage multiplexing
             tokio::spawn(async move {
-                let mut response = match router.handle(req.view()).await {
+                let client_id = Some(req.client_id());
+                let class_id = Some(req.class_id());
+                let fn_id = Some(req.fn_id());
+                let response = match router.handle(req).await {
                     Ok(vec) => vec,
                     Err(e) => e.encode(),
                 };
 
                 // Preserve the mux_id so the client can match the response to the request
-                response.set_mux_id(mux_id);
+                let response = Request {
+                    client_id,
+                    class_id,
+                    fn_id,
+                    mux_id: Some(mux_id),
+                    inner: response,
+                };
 
-                if let Err(e) = socket_clone.send(response.into()).await {
+                if let Err(e) = socket_clone.send(response).await {
                     tracing::error!("Failed to send response for mux_id {}: {:?}", mux_id, e);
                 }
             });

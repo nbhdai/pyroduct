@@ -66,7 +66,7 @@ impl PyroClient {
             .capture("Transport request failed")
             .map_err(PyroError::local_io)?;
 
-        InterfaceSpec::parse_wire(resp.view())
+        InterfaceSpec::parse_wire(resp)
     }
 
     /// Configure a remote class.
@@ -121,7 +121,7 @@ impl PyroClient {
             .map_err(PyroError::local_io)?;
 
         // The server returns the client_id using .ship(), which means it's a Bridgeable u32.
-        let typed = <u32 as crate::format::Bridgeable>::expose_vec(resp)?;
+        let typed = <u32 as crate::format::Bridgeable>::expose(resp)?;
         let id = *typed.inner();
 
         self.client_hashes.insert(hash, id);
@@ -168,7 +168,7 @@ impl PyroClient {
         method_index: usize,
         client_id: u32,
         data: PyroView,
-    ) -> Result<PyroVec, PyroError> {
+    ) -> Result<PyroView, PyroError> {
         let fn_id = (method_index + 4) as u8;
         let mut req = data.clone_to_vec();
         req.set_fn_id(fn_id);
@@ -199,7 +199,7 @@ impl PyroClient {
         method_name: &str,
         client_data: PyroView,
         data: PyroView,
-    ) -> Result<PyroVec, PyroError> {
+    ) -> Result<PyroView, PyroError> {
         let class_id = self
             .interface
             .classes

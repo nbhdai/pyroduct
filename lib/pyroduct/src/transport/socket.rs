@@ -7,16 +7,17 @@ use tokio::io::{BufReader, BufWriter};
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::format::tokio::{Request, RequestInner};
+use crate::format::PyroVec;
+use crate::format::tokio::Request;
 use crate::format::{
-    PyroVec,
+    PyroView,
     header::PyroHeader,
     tokio::{PyroStreamSettings, read_from_stream, write_to_stream},
 };
 
 // ── PyroSocket ───────────────────────────────────────────────────────────────
 
-/// A bidirectional, multiplexed PyroVec connection over TCP or Unix domain sockets.
+/// A bidirectional, multiplexed PyroView connection over TCP or Unix domain sockets.
 ///
 /// `PyroSocket` allows multiple tasks to share a single connection concurrently.
 /// It automatically manages `mux_id` headers to route responses back to the
@@ -27,13 +28,13 @@ use crate::format::{
 #[derive(Clone)]
 pub struct PyroSocket {
     inner: Arc<SocketInner>,
-    unmatched_rx: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<PyroVec>>>,
+    unmatched_rx: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<PyroView>>>,
 }
 
 struct SocketInner {
     tx: mpsc::UnboundedSender<Request>,
-    pending: DashMap<u32, oneshot::Sender<PyroVec>>,
-    unmatched_tx: mpsc::UnboundedSender<PyroVec>,
+    pending: DashMap<u32, oneshot::Sender<PyroView>>,
+    unmatched_tx: mpsc::UnboundedSender<PyroView>,
     next_id: AtomicU32,
     settings: PyroStreamSettings,
 }
@@ -103,14 +104,14 @@ impl PyroSocket {
                         if id != 0 {
                             if let Some((_, sender)) = inner_read.pending.remove(&id) {
                                 tracing::debug!("READ TASK: routing to pending mux_id={}", id);
-                                let _ = sender.send(vec);
+                                let _ = sender.send(vec.view());
                                 continue;
                             }
                             tracing::debug!("READ TASK: mux_id={} not in pending, routing to unmatched", id);
                         }
                         // Unmatched or mux_id == 0
                         tracing::debug!("READ TASK: sending to unmatched");
-                        if inner_read.unmatched_tx.send(vec).is_err() {
+                        if inner_read.unmatched_tx.send(vec.view()).is_err() {
                             tracing::debug!("READ TASK: unmatched send failed");
                             break;
                         }
@@ -163,11 +164,11 @@ impl PyroSocket {
         })
     }
 
-    /// Read the next unsolicited [`PyroVec`] from the socket.
+    /// Read the next unsolicited [`PyroView`] from the socket.
     ///
     /// This returns messages that were not part of a [`request`](Self::request)
     /// flow (e.g. notifications or incoming requests).
-    pub async fn recv(&self) -> std::io::Result<PyroVec> {
+    pub async fn recv(&self) -> std::io::Result<PyroView> {
         let mut rx = self.unmatched_rx.lock().await;
         rx.recv().await.ok_or_else(|| {
             std::io::Error::new(
@@ -186,8 +187,8 @@ impl PyroSocket {
         client_id: Option<u32>,
         class_id: Option<u8>,
         fn_id: Option<u8>,
-        inner: RequestInner,
-    ) -> std::io::Result<PyroVec> {
+        inner: PyroView,
+    ) -> std::io::Result<PyroView> {
         let mux_id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);
         let request = Request {
             client_id,
@@ -230,14 +231,14 @@ impl PyroSocket {
 }
 
 impl PyroReadHalf {
-    /// Read the next unsolicited [`PyroVec`] from the socket.
-    pub async fn recv(&mut self) -> std::io::Result<PyroVec> {
+    /// Read the next unsolicited [`PyroView`] from the socket.
+    pub async fn recv(&mut self) -> std::io::Result<PyroView> {
         self.socket.recv().await
     }
 }
 
 impl PyroWriteHalf {
-    /// Write a [`PyroVec`] to the socket.
+    /// Write a [`PyroView`] to the socket.
     pub async fn send(&mut self, request: Request) -> std::io::Result<()> {
         self.socket.send(request).await
     }

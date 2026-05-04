@@ -1,8 +1,9 @@
 use std::sync::Mutex;
 use std::{collections::HashMap, ops::Deref};
 
+use crate::format::PyroVec;
 use crate::format::{
-    Bridgeable, PyroVec, ToRow,
+    Bridgeable, PyroView, ToRow,
     header::PyroData,
     header::{DataStatus, PyroHeaderMut},
     value::PyroRow,
@@ -25,9 +26,9 @@ unsafe impl Send for StoredMutPtr {}
 // Registry for vectors created by the Host (inputs)
 static INPUT_REGISTRY: Mutex<Option<HashMap<StoredMutPtr, PyroVec>>> = Mutex::new(None);
 // Registry for vectors created by WASM (outputs)
-static OUTPUT_REGISTRY: Mutex<Option<HashMap<StoredPtr, PyroVec>>> = Mutex::new(None);
+static OUTPUT_REGISTRY: Mutex<Option<HashMap<StoredPtr, PyroView>>> = Mutex::new(None);
 
-static ERROR_REGISTRY: Mutex<Vec<PyroVec>> = Mutex::new(Vec::new());
+static ERROR_REGISTRY: Mutex<Vec<PyroView>> = Mutex::new(Vec::new());
 
 fn get_input_registry() -> std::sync::MutexGuard<'static, Option<HashMap<StoredMutPtr, PyroVec>>> {
     let mut lock = INPUT_REGISTRY.lock().unwrap();
@@ -37,7 +38,7 @@ fn get_input_registry() -> std::sync::MutexGuard<'static, Option<HashMap<StoredM
     lock
 }
 
-fn get_output_registry() -> std::sync::MutexGuard<'static, Option<HashMap<StoredPtr, PyroVec>>> {
+fn get_output_registry() -> std::sync::MutexGuard<'static, Option<HashMap<StoredPtr, PyroView>>> {
     let mut lock = OUTPUT_REGISTRY.lock().unwrap();
     if lock.is_none() {
         *lock = Some(HashMap::new());
@@ -92,20 +93,20 @@ pub fn get_input(ptr: *mut u8) -> Option<PyroVec> {
 }
 
 /// Lend a read-only pointer to data owned inside wasm, for the host to read.
-pub unsafe fn lend(vec: &PyroVec) -> *const u8 {
+pub unsafe fn lend(vec: &PyroView) -> *const u8 {
     let raw = vec.as_raw_slice();
     raw.as_ptr()
 }
 
-/// Consume a PyroVec and register it for the host to pick up.
+/// Consume a PyroView and register it for the host to pick up.
 pub fn store_error(error: PyroError) {
     let vec = error.encode();
 
     ERROR_REGISTRY.lock().as_mut().unwrap().push(vec);
 }
 
-/// Consume a PyroVec and register it for the host to pick up.
-pub fn to_output(vec: PyroVec) -> *const u8 {
+/// Consume a PyroView and register it for the host to pick up.
+pub fn to_output(vec: PyroView) -> *const u8 {
     let raw = vec.as_raw_slice();
     let ptr = raw.as_ptr();
 
@@ -125,7 +126,7 @@ pub extern "C" fn free_output(ptr: *const u8) {
         .remove(&StoredPtr(ptr));
 }
 
-/// Test-only: re-insert a PyroVec into the input registry under a given pointer.
+/// Test-only: re-insert a PyroView into the input registry under a given pointer.
 /// This simulates the host writing data into wasm linear memory.
 #[cfg(test)]
 pub fn _test_reinsert_input(ptr: *mut u8, vec: PyroVec) {
@@ -138,7 +139,7 @@ pub fn _test_reinsert_input(ptr: *mut u8, vec: PyroVec) {
 /// Wasm-side entry-point wrapper for the standard `call_extern` convention.
 ///
 /// The host calls a wasm export with signature `fn(i32) -> i32` where the i32
-/// values are pointers into linear memory pointing at PyroVec buffers
+/// values are pointers into linear memory pointing at PyroView buffers
 /// containing rkyv-serialized `PyroRowOwned` data.
 ///
 /// This module provides:
@@ -146,7 +147,7 @@ pub fn _test_reinsert_input(ptr: *mut u8, vec: PyroVec) {
 ///   export delegates to.
 /// - `WasmMain`: a trait the plugin author implements with their business logic.
 ///
-/// The entire path is zero-copy on input: the host writes an rkyv PyroVec
+/// The entire path is zero-copy on input: the host writes an rkyv PyroView
 /// into wasm linear memory via `new_input`, the wasm side retrieves ownership
 /// via `get_input`, and `expose` / `expose_view` gives direct archived access
 /// without deserialization.
@@ -198,7 +199,7 @@ where
     })
 }
 
-fn encode_result<'a>(result: Result<PyroRow<'a>, CapturedError>) -> PyroVec {
+fn encode_result<'a>(result: Result<PyroRow<'a>, CapturedError>) -> PyroView {
     let encoding = match result {
         Ok(success) => {
             let static_success = success.into_owned();
@@ -208,18 +209,18 @@ fn encode_result<'a>(result: Result<PyroRow<'a>, CapturedError>) -> PyroVec {
             let captured: CapturedError = err.into();
             let mut vec = captured.encode();
             vec.set_status(DataStatus::Error);
-            return vec;
+            return vec.view();
         }
     };
     match encoding {
-        Ok(v) => v,
+        Ok(v) => v.view(),
         Err(e) => e.encode(),
     }
 }
 
 pub struct Client<T> {
     data: T,
-    config_buf: PyroVec,
+    config_buf: PyroView,
 }
 
 impl<T> Deref for Client<T> {
@@ -305,7 +306,7 @@ impl<T> Client<T> {
                 Ok(vec) => vec,
                 Err(err) => err.encode(),
             },
-            None => PyroVec::ok(),
+            None => PyroVec::ok().view(),
         };
 
         let result_ptr = (func)(unsafe { lend(&self.config_buf) }, unsafe { lend(&input) });
@@ -313,7 +314,7 @@ impl<T> Client<T> {
             Some(result_vec) => result_vec,
             None => panic!("Host registration failed with no returned"),
         };
-        let result = O::expose_vec(result_vec);
+        let result = O::expose(result_vec.view());
         match result {
             Ok(result) => result.into(),
             Err(err) => {
@@ -337,7 +338,7 @@ impl<T> Client<T> {
                 Ok(vec) => vec,
                 Err(err) => err.encode(),
             },
-            None => PyroVec::ok(),
+            None => PyroVec::ok().view(),
         };
 
         let result_ptr = (func)(unsafe { lend(&self.config_buf) }, unsafe { lend(&input) });
@@ -345,7 +346,7 @@ impl<T> Client<T> {
             Some(result_vec) => result_vec,
             None => panic!("Host registration failed with no returned"),
         };
-        let result = Result::<O, E>::expose_vec(result_vec).and_then(|r| {
+        let result = Result::<O, E>::expose(result_vec.view()).and_then(|r| {
             let res = r.into_result();
             Ok(res)
         });

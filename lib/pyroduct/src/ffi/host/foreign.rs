@@ -212,7 +212,7 @@ impl ForeignObject {
         match self.class.reset {
             ClassResetFn::Sync(f) => {
                 let vec_ptr = unsafe { f(self.obj.ref_ptr()) };
-                unsafe { PyroVec::from_raw(vec_ptr) }.and_then(|v| v.parse_as_error())
+                unsafe { PyroView::from_ptr(vec_ptr) }.and_then(|v| v.parse_as_error())
             }
             ClassResetFn::Async(f) => {
                 let fut_res = unsafe { f(self.obj.ref_ptr()) };
@@ -222,11 +222,11 @@ impl ForeignObject {
         }
     }
     /// Registers a client
-    pub async fn register(&self, client_state: PyroView) -> Result<PyroVec, PyroError> {
+    pub async fn register(&self, client_state: PyroView) -> Result<PyroView, PyroError> {
         match self.class.register {
             ClientRegisterFn::Sync(f) => {
                 let vec_ptr = unsafe { f(self.obj.ref_ptr(), client_state.ptr()) };
-                let vec = unsafe { PyroVec::from_raw(vec_ptr) }?;
+                let vec = unsafe { PyroView::from_ptr(vec_ptr) }?;
                 vec.parse_as_error()?;
                 Ok(vec)
             }
@@ -234,7 +234,7 @@ impl ForeignObject {
                 let fut_res = unsafe { f(self.obj.ref_ptr(), client_state.ptr()) };
                 ClientRegisterFuture::from_async(fut_res).await
             }
-            ClientRegisterFn::Null => Ok(PyroVec::ok()),
+            ClientRegisterFn::Null => Ok(PyroVec::ok().view()),
         }
     }
 
@@ -243,7 +243,7 @@ impl ForeignObject {
         method_name: &str,
         client_data: PyroView,
         input_data: PyroView,
-    ) -> Result<PyroVec, PyroError> {
+    ) -> Result<PyroView, PyroError> {
         let method = self
             .class
             .find_method(method_name)
@@ -257,7 +257,7 @@ impl ForeignObject {
         method_index: usize,
         client_data: PyroView,
         input_data: PyroView,
-    ) -> Result<PyroVec, PyroError> {
+    ) -> Result<PyroView, PyroError> {
         let method =
             self.class.methods.get(method_index).ok_or_else(|| {
                 PyroError::NotFound(format!("Method index {method_index} not found"))
@@ -271,10 +271,10 @@ impl ForeignObject {
         method: &ForeignMethod,
         client_data: PyroView,
         input_data: PyroView,
-    ) -> Result<PyroVec, PyroError> {
+    ) -> Result<PyroView, PyroError> {
         match method.pointer {
             Function::Sync(f) => unsafe {
-                PyroVec::from_raw((f)(self.obj.ref_ptr(), client_data.ptr(), input_data.ptr()))
+                PyroView::from_ptr((f)(self.obj.ref_ptr(), client_data.ptr(), input_data.ptr()))
             },
             Function::Async(f) => {
                 MethodCallFuture::from_async(unsafe {

@@ -1,7 +1,8 @@
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
-use crate::format::{PyroVec, PyroVecPtr, PyroViewPtr, header::PyroData};
+use crate::format::PyroView;
+use crate::format::{PyroVec, PyroViewPtr, header::PyroData};
 use crate::{CapturedError, PyroError};
 
 pub type LogCallback = unsafe extern "C" fn(i64, u64, *const u8, usize);
@@ -25,10 +26,10 @@ pub type AsyncFn = unsafe extern "C" fn(
     PyroViewPtr,
     // Input
     PyroViewPtr,
-) -> FuturePyroVec;
+) -> FuturePyroView;
 
 /// We expect the return to be a bridge vec.
-pub type SyncFn = unsafe extern "C" fn(PyroRefObjectPtr, PyroViewPtr, PyroViewPtr) -> PyroVecPtr;
+pub type SyncFn = unsafe extern "C" fn(PyroRefObjectPtr, PyroViewPtr, PyroViewPtr) -> PyroViewPtr;
 
 #[repr(C, u8)]
 #[derive(Clone, Copy)]
@@ -38,16 +39,16 @@ pub enum Function {
 }
 
 #[repr(C)]
-pub enum FuturePyroVec {
+pub enum FuturePyroView {
     /// The operation succeeded or failed immediately.
-    Early(PyroVecPtr),
+    Early(PyroViewPtr),
     /// The operation started successfully, and we have to await the result.
-    Future(::async_ffi::BorrowingFfiFuture<'static, PyroVecPtr>),
+    Future(::async_ffi::BorrowingFfiFuture<'static, PyroViewPtr>),
 }
 
-impl From<PyroVecPtr> for FuturePyroVec {
-    fn from(value: PyroVecPtr) -> Self {
-        FuturePyroVec::Early(value)
+impl From<PyroViewPtr> for FuturePyroView {
+    fn from(value: PyroViewPtr) -> Self {
+        FuturePyroView::Early(value)
     }
 }
 
@@ -109,7 +110,7 @@ impl PyroObject {
     }
 
     /// Consumes the wrapper and returns the FFI-safe pointer struct.
-    pub fn into_raw(self) -> PyroObjectPtr {
+    pub fn ptr(self) -> PyroObjectPtr {
         let ptr = PyroObjectPtr {
             state: self.state.as_ptr(),
             dropper: self.dropper,
@@ -225,7 +226,7 @@ impl PyroObjectRef {
 #[repr(C)]
 pub struct InitResult {
     pub state: PyroObjectPtr,
-    pub error: PyroVecPtr,
+    pub error: PyroViewPtr,
 }
 
 /// Generate a typed dropper for a given state type `S`.
@@ -249,7 +250,7 @@ impl InitResult {
                 dropper: typed_dropper::<S>,
                 object_id: object_id,
             },
-            error: PyroVec::ok().into_raw(),
+            error: PyroVec::ok().view().ptr(),
         }
     }
 
@@ -261,12 +262,12 @@ impl InitResult {
                 dropper: typed_dropper::<()>,
                 object_id: object_id,
             },
-            error: err.encode().into_raw(),
+            error: err.encode().ptr(),
         }
     }
 
     pub fn process(self) -> Result<PyroObject, PyroError> {
-        let err_vec = unsafe { PyroVec::from_raw(self.error) }?;
+        let err_vec = unsafe { PyroView::from_ptr(self.error) }?;
         err_vec.parse_as_error()?;
 
         let state_ptr = NonNull::new(self.state.state).ok_or_else(|| {
@@ -301,8 +302,8 @@ pub enum ClassInitFn {
 }
 
 // Updated to use PyroRefObjectPtr to allow borrowing state during reset
-pub type AsyncClassResetFn = unsafe extern "C" fn(PyroRefObjectPtr) -> FuturePyroVec;
-pub type SyncClassResetFn = unsafe extern "C" fn(PyroRefObjectPtr) -> PyroVecPtr;
+pub type AsyncClassResetFn = unsafe extern "C" fn(PyroRefObjectPtr) -> FuturePyroView;
+pub type SyncClassResetFn = unsafe extern "C" fn(PyroRefObjectPtr) -> PyroViewPtr;
 
 #[repr(C, u8)]
 #[derive(Clone, Copy)]
@@ -315,8 +316,8 @@ pub enum ClassResetFn {
 // Registration
 
 pub type AsyncClientRegisterFn =
-    unsafe extern "C" fn(PyroRefObjectPtr, PyroViewPtr) -> FuturePyroVec;
-pub type SyncClientRegisterFn = unsafe extern "C" fn(PyroRefObjectPtr, PyroViewPtr) -> PyroVecPtr;
+    unsafe extern "C" fn(PyroRefObjectPtr, PyroViewPtr) -> FuturePyroView;
+pub type SyncClientRegisterFn = unsafe extern "C" fn(PyroRefObjectPtr, PyroViewPtr) -> PyroViewPtr;
 
 #[repr(C, u8)]
 #[derive(Clone, Copy)]

@@ -30,96 +30,6 @@ pub trait Unpack<Packed>: Sized {
 // =============================================================================
 
 /// A type-safe wrapper around a PyroVec containing an archived rkyv type.
-pub struct TypedVec<T> {
-    pub(super) vec: PyroVec,
-    pub(super) inner: T,
-}
-
-impl<T> TypedVec<T> {
-    pub fn inner(&self) -> &T {
-        &self.inner
-    }
-
-    pub fn view(&self) -> PyroView {
-        self.vec.view()
-    }
-
-    pub fn into<S>(self) -> S
-    where
-        S: From<T>,
-    {
-        self.inner.into()
-    }
-
-    pub fn to_owned<S>(self) -> S
-    where
-        T: ToOwned,
-        S: From<T::Owned>,
-    {
-        self.inner.to_owned().into()
-    }
-}
-
-impl<T, E> TypedVec<Result<T, E>> {
-    pub fn into_result<S, U>(self) -> Result<S, U>
-    where
-        S: From<T>,
-        U: From<E>,
-    {
-        match self.inner {
-            Ok(ok) => Ok(ok.into()),
-            Err(err) => Err(err.into()),
-        }
-    }
-
-    pub fn to_owned_result<S, U>(self) -> Result<S, U>
-    where
-        T: ToOwned,
-        E: ToOwned,
-        S: From<T::Owned>,
-        U: From<E::Owned>,
-    {
-        match self.inner {
-            Ok(ok) => Ok(ok.to_owned().into()),
-            Err(err) => Err(err.to_owned().into()),
-        }
-    }
-}
-
-impl<T> TypedVec<Option<T>> {
-    pub fn into_option<S>(self) -> Option<S>
-    where
-        S: From<T>,
-    {
-        match self.inner {
-            Some(ok) => Some(ok.into()),
-            None => None,
-        }
-    }
-
-    pub fn to_owned_option<S>(self) -> Option<S>
-    where
-        T: ToOwned,
-        S: From<T::Owned>,
-    {
-        match self.inner {
-            Some(ok) => Some(ok.to_owned().into()),
-            None => None,
-        }
-    }
-}
-
-impl<T: fmt::Debug> fmt::Debug for TypedVec<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.inner.fmt(f)
-    }
-}
-
-// =============================================================================
-// Bridgeable — default-format convenience (every format)
-// =============================================================================
-
-/// A type-safe wrapper around a PyroVec containing an archived rkyv type.
 pub struct TypedView<T> {
     pub(super) view: PyroView,
     pub(super) inner: T,
@@ -218,9 +128,9 @@ pub trait Bridgeable: Sized {
     type Ref<'a>: 'a;
 
     /// Serialize into a `PyroVec` using the default format.
-    fn ship(&self) -> Result<PyroVec, PyroError> {
+    fn ship(&self) -> Result<PyroView, PyroError> {
         let mut encoder = Self::Encoder::default();
-        encoder.encode(self)
+        encoder.encode(self).map(|e| e.view())
     }
 
     /// Parse an owned `PyroVec` using the default format.
@@ -231,17 +141,6 @@ pub trait Bridgeable: Sized {
             unsafe { std::mem::transmute::<Self::Ref<'_>, Self::Ref<'static>>(inner) }
         };
         Ok(TypedView { inner, view })
-    }
-
-    /// Parse an owned `PyroVec` using the default format.
-    fn expose_vec(vec: PyroVec) -> Result<TypedVec<Self::Ref<'static>>, PyroError> {
-        let mut decoder = Self::Decoder::default();
-        let inner = {
-            let view = vec.view();
-            let inner = decoder.decode(view.as_ref())?;
-            unsafe { std::mem::transmute::<Self::Ref<'_>, Self::Ref<'static>>(inner) }
-        };
-        Ok(TypedVec { inner, vec })
     }
 }
 

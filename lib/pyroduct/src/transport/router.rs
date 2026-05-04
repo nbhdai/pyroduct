@@ -23,7 +23,7 @@ pub struct PyroRouter {
     library: Arc<CapabilityLibrary>,
     objects: DashMap<u8, ForeignObject>,
     client_id: AtomicU32,
-    clients: DashMap<u32, PyroVec>,
+    clients: DashMap<u32, PyroView>,
 }
 
 impl PyroRouter {
@@ -42,7 +42,7 @@ impl PyroRouter {
     /// Handle an incoming request.
     ///
     /// This dispatches the request to the appropriate object or configures a new one.
-    pub async fn handle(&self, request: PyroView) -> Result<PyroVec, PyroError> {
+    pub async fn handle(&self, request: PyroView) -> Result<PyroView, PyroError> {
         let class_id = request.class_id();
         let fn_id = request.fn_id();
 
@@ -56,22 +56,22 @@ impl PyroRouter {
                     .map_err(|e| PyroError::NotFound(e.to_string()))?;
 
                 self.objects.insert(class_id, object);
-                Ok(PyroVec::ok())
+                Ok(PyroVec::ok().view())
             }
             2 => {
                 let id = self
                     .client_id
                     .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-                self.clients.insert(id, request.clone_to_vec());
+                self.clients.insert(id, request.clone_to_vec().view());
                 id.ship()
-            }
+            },
             3 => {
                 let object = self.objects.get(&class_id).ok_or_else(|| {
                     PyroError::NotFound(format!("Object for class ID {} not configured", class_id))
                 })?;
 
                 object.reset().await?;
-                Ok(PyroVec::ok())
+                Ok(PyroVec::ok().view())
             }
             other => {
                 // Routing: Dispatch to the already-instantiated object.
@@ -89,7 +89,7 @@ impl PyroRouter {
                     ))
                 })?;
                 object
-                    .call_index(method_index, client_data.view(), request)
+                    .call_index(method_index, client_data.clone(), request)
                     .await
             }
         }

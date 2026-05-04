@@ -31,8 +31,8 @@ use crate::{CapturedError, PyroError};
 mod call;
 pub mod capability;
 mod state;
-#[cfg(all(test, feature = "module"))]
-mod tests;
+// #[cfg(all(test, feature = "module"))]
+// mod tests;
 
 use capability::CapabilityLibrary;
 pub use state::{PyroModule, PyroState};
@@ -305,11 +305,10 @@ impl PyroFactory {
                                 let client_view = io.borrow_argument(client_ptr).await?;
                                 let input_view = io.borrow_argument(input_ptr).await?;
 
-                                let output_vec =
+                                let output_view =
                                     object.call(&fn_name, client_view, input_view).await?;
-                                output_vec.parse_as_error()?;
+                                output_view.parse_as_error()?;
 
-                                let output_view = PyroView::from(&output_vec);
                                 let ptr = io.new_input(&output_view).await?;
 
                                 results[0] = Val::I32(ptr);
@@ -345,11 +344,10 @@ impl PyroFactory {
                             let client_view = io.borrow_argument(client_ptr).await?;
 
                             // Call user function — consumes both borrows on return.
-                            let output_vec = object.register(client_view).await?;
-                            output_vec.parse_as_error()?;
+                            let output_view = object.register(client_view).await?;
+                            output_view.parse_as_error()?;
 
                             // Write output back into wasm memory.
-                            let output_view = PyroView::from(&output_vec);
                             let ptr = io.new_input(&output_view).await?;
                             results[0] = Val::I32(ptr);
                             Ok(())

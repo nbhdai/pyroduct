@@ -1,7 +1,7 @@
 //! # FFI Boundary Safety & Execution
 //!
 //! This module provides the "safety firewall" required when exposing Rust functions to foreign code.
-//! It guarantees that panics and errors strictly adhere to the `PyroVec` protocol and never
+//! It guarantees that panics and errors strictly adhere to the `PyroView` protocol and never
 //! unwind across the FFI boundary.
 //!
 //! ## Core Responsibilities
@@ -9,7 +9,7 @@
 //! 1.  **Panic Isolation**: Wraps user logic in `catch_unwind`.
 //! 2.  **Rich Error Reporting**: Captures diagnostic info into TLS.
 //! 3.  **Serialization Safety**: Guards the serialization step itself.
-//! 4.  **Boundary Types**: Exclusively uses `PyroVecPtr` for stable ABI passing.
+//! 4.  **Boundary Types**: Exclusively uses `PyroViewPtr` for stable ABI passing.
 
 use ::async_ffi::BorrowingFfiFuture;
 use futures::FutureExt;
@@ -18,9 +18,9 @@ use std::sync::OnceLock;
 use tokio::runtime::Runtime;
 use tracing::Instrument;
 
-use crate::ffi::FuturePyroVec;
+use crate::ffi::FuturePyroView;
 use crate::ffi::guest::logger::object_span;
-use crate::format::{Bridgeable, PyroVec, PyroVecPtr, PyroView, PyroViewPtr};
+use crate::format::{Bridgeable, PyroVec, PyroViewPtr, PyroView};
 use crate::panic::{clear_last_panic, recover_panic_info, register_ffi_panic_hook};
 use crate::{CapturedError, PyroError};
 
@@ -28,11 +28,11 @@ use crate::{CapturedError, PyroError};
 // Execution & Serialization Logic
 // ============================================================================
 
-/// Safe entry point for FFI operations returning a PyroVecPtr.
+/// Safe entry point for FFI operations returning a PyroViewPtr.
 #[track_caller]
-pub fn execute_safe<F>(func: F, object_id: u64) -> PyroVecPtr
+pub fn execute_safe<F>(func: F, object_id: u64) -> PyroViewPtr
 where
-    F: FnOnce() -> PyroVec,
+    F: FnOnce() -> PyroView,
 {
     let span = object_span(object_id);
     let _guard = span.enter();
@@ -42,15 +42,15 @@ where
     let result = panic::catch_unwind(AssertUnwindSafe(func));
 
     match result {
-        Ok(output_obj) => output_obj.into_raw(),
+        Ok(output_obj) => output_obj.ptr(),
         Err(_) => {
             let panic_info = recover_panic_info();
-            PyroError::CodePanic(panic_info).encode().into_raw()
+            PyroError::CodePanic(panic_info).encode().ptr()
         }
     }
 }
 
-/// Helper to deserialize input from a raw PyroVecPtr.
+/// Helper to deserialize input from a raw PyroViewPtr.
 pub fn deserialize_input<I>(data: PyroViewPtr) -> Result<I, PyroError>
 where
     for<'a> I: Bridgeable + From<I::Ref<'a>>,
@@ -72,7 +72,7 @@ where
 }
 
 /// Helper to serialize a successful output object.
-pub fn serialize_output<T>(val: T) -> PyroVec
+pub fn serialize_output<T>(val: T) -> PyroView
 where
     T: Bridgeable,
 {
@@ -90,7 +90,7 @@ where
 }
 
 /// Helper to serialize a Result into a PyroVec.
-pub fn serialize_result<T, E>(result: Result<T, E>) -> PyroVec
+pub fn serialize_result<T, E>(result: Result<T, E>) -> PyroView
 where
     T: Bridgeable,
     E: Bridgeable,
@@ -115,13 +115,13 @@ pub fn get_runtime() -> &'static Runtime {
 }
 
 #[track_caller]
-pub fn execute_safe_async<F, Fut>(f: F, object_id: u64) -> FuturePyroVec
+pub fn execute_safe_async<F, Fut>(f: F, object_id: u64) -> FuturePyroView
 where
     F: FnOnce() -> Fut + Send,
-    Fut: std::future::Future<Output = PyroVec> + Send + 'static,
+    Fut: std::future::Future<Output = PyroView> + Send + 'static,
 {
     let fut = f();
-    FuturePyroVec::Future(BorrowingFfiFuture::<'static>::new(SafeMethodHandle::new(
+    FuturePyroView::Future(BorrowingFfiFuture::<'static>::new(SafeMethodHandle::new(
         get_runtime().spawn(async move {
             let span = object_span(object_id);
             {
@@ -136,10 +136,10 @@ where
                 .await;
 
             match result {
-                Ok(val) => val.into_raw(),
+                Ok(val) => val.ptr(),
                 Err(_) => {
                     let panic_info = recover_panic_info();
-                    PyroError::CodePanic(panic_info).encode().into_raw()
+                    PyroError::CodePanic(panic_info).encode().ptr()
                 }
             }
         }),
@@ -152,17 +152,17 @@ use std::task::{Context, Poll};
 use tokio::task::JoinHandle;
 
 pub struct SafeMethodHandle {
-    handle: JoinHandle<PyroVecPtr>,
+    handle: JoinHandle<PyroViewPtr>,
 }
 
 impl SafeMethodHandle {
-    pub fn new(handle: JoinHandle<PyroVecPtr>) -> Self {
+    pub fn new(handle: JoinHandle<PyroViewPtr>) -> Self {
         Self { handle }
     }
 }
 
 impl Future for SafeMethodHandle {
-    type Output = PyroVecPtr;
+    type Output = PyroViewPtr;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // Poll the underlying tokio JoinHandle
@@ -171,7 +171,7 @@ impl Future for SafeMethodHandle {
             Poll::Ready(Err(join_error)) => Poll::Ready(
                 PyroError::CodePanic(CapturedError::new(join_error).into())
                     .encode()
-                    .into_raw(),
+                    .ptr(),
             ),
             Poll::Pending => Poll::Pending,
         }

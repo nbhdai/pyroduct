@@ -27,7 +27,7 @@ pub fn deserialize_config<C: serde::de::DeserializeOwned>(
         Err(PyroError::Header(ParseError::NullPointer)) => return Ok(None),
         Err(err) => return Err(err),
         Ok(ok) => ok, 
-    }
+    };
     if let Ok(DataStatus::Empty) = view.status() {
         return Ok(None);
     }

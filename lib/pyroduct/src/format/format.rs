@@ -291,12 +291,12 @@ where
 
 /// Trait for types that can be encoded as a specification on the wire.
 pub trait SpecWire: Sized {
-    fn to_wire(&self) -> PyroResult<PyroVec>;
+    fn to_wire(&self) -> PyroResult<PyroView>;
     fn parse_wire(view: PyroView) -> PyroResult<Self>;
 }
 
 impl SpecWire for pyro_spec::InterfaceSpec<'_> {
-    fn to_wire(&self) -> PyroResult<PyroVec> {
+    fn to_wire(&self) -> PyroResult<PyroView> {
         let bytes = serde_json::to_vec(self).map_err(|e| {
             PyroError::serialization(
                 CapturedError::new("Unable to serialize interface spec").with_source(e),
@@ -306,7 +306,7 @@ impl SpecWire for pyro_spec::InterfaceSpec<'_> {
         let mut vec = PyroVec::with_capacity(bytes.len());
         vec.extend_from_slice(&bytes);
         vec.set_status(crate::format::header::DataStatus::InterfaceSchema);
-        Ok(vec)
+        Ok(vec.view())
     }
 
     fn parse_wire(view: PyroView) -> PyroResult<Self> {

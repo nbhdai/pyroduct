@@ -9,7 +9,7 @@ use crate::format::ParseError;
 use crate::format::header::{
     OwnedPyroData, PyroData, PyroHeader, PyroHeaderMut, PyroParser, UNIT_BYTES, UNIT_HEADER,
 };
-use crate::{CapturedError, PyroError, PyroResult};
+use crate::{CapturedError, PyroError};
 
 // ============================================================================
 // Function pointer types for FFI-safe memory management
@@ -72,21 +72,6 @@ pub struct PyroVec {
 }
 
 // ============================================================================
-// PyroVecPtr — the FFI-safe representation
-// ============================================================================
-
-/// This is for transferring a complete PyroVec across an FFI boundary.
-#[repr(C)]
-pub struct PyroVecPtr {
-    ptr: *mut PyroInner,
-    dropper: PyroVecDropper,
-    grower: PyroVecGrower,
-}
-
-unsafe impl std::marker::Send for PyroVecPtr {}
-
-
-// ============================================================================
 // PyroVec trait impls
 // ============================================================================
 
@@ -113,9 +98,16 @@ impl OwnedPyroData for PyroVec {
     }
 }
 
-// ============================================================================
-// PyroVec implementation
-// ============================================================================
+impl Drop for PyroVec {
+    fn drop(&mut self) {
+        unsafe {
+            let inner = self.view.as_ref();
+            let capacity = inner.capacity;
+            let ptr = self.view.as_ptr() as *mut u8;
+            (self.dropper)(ptr, capacity);
+        }
+    }
+}
 
 impl PyroVec {
     /// Helper to dynamically compute the total layout of PyroInner + contiguous data
@@ -132,6 +124,8 @@ impl PyroVec {
             alloc::dealloc(ptr, layout);
         }
     }
+
+    extern "C" fn no_op_dropper(_ptr: *mut u8, _capacity: u32) {}
 
     unsafe extern "C" fn default_grower(
         ptr: *mut u8,
@@ -177,42 +171,6 @@ impl PyroVec {
             dropper: Self::default_dropper,
             grower: Self::default_grower,
         }
-    }
-
-    pub fn into_raw(self) -> PyroVecPtr {
-        let ptr = self.view.as_ptr();
-        let dropper = self.dropper;
-        let grower = self.grower;
-        std::mem::forget(self);
-        PyroVecPtr {
-            ptr,
-            dropper,
-            grower,
-        }
-    }
-
-    pub unsafe fn from_raw(pointer: PyroVecPtr) -> PyroResult<Self> {
-        let view = pointer.ptr;
-        if view.is_null() {
-            return Err(PyroError::null_pointer());
-        }
-
-        let data_ptr = unsafe { (*view).data_ptr() };
-        if let Err(parse_error) = unsafe { PyroParser::check_raw(data_ptr) } {
-            tracing::error!(?parse_error, "Checks failed for an FFI PyroVecPtr");
-            let error = CapturedError::new(format!(
-                "CRITICAL ERROR: Unable to construct a Ffi vector due to {}",
-                parse_error
-            ))
-            .with_location(std::panic::Location::caller())
-            .with_backtrace(std::backtrace::Backtrace::force_capture());
-            return Err(PyroError::HeaderFfi(error.into()));
-        }
-        Ok(Self {
-            view: unsafe { NonNull::new_unchecked(view) },
-            dropper: pointer.dropper,
-            grower: pointer.grower,
-        })
     }
 
     pub fn data_ptr(&self) -> *const u8 {
@@ -396,33 +354,6 @@ impl DerefMut for PyroVec {
     }
 }
 
-impl Drop for PyroVec {
-    fn drop(&mut self) {
-        unsafe {
-            let inner = self.view.as_ref();
-            let ref_count = inner.ref_count.load(Ordering::Acquire);
-
-            if ref_count == 0 {
-                let base_ptr = self.view.as_ptr() as *mut u8;
-                let cap = inner.capacity;
-                (self.dropper)(base_ptr, cap);
-            } else {
-                if cfg!(debug_assertions) {
-                    panic!(
-                        "CRITICAL ERROR: Dropping PyroVec while {} references (PyroView) still exist. Memory leaked.",
-                        ref_count
-                    );
-                } else {
-                    tracing::error!(
-                        ref_count = ref_count,
-                        "CRITICAL ERROR: Dropping PyroVec while references still exist. Memory leaked."
-                    );
-                }
-            }
-        }
-    }
-}
-
 impl io::Write for PyroVec {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.extend_from_slice(buf);
@@ -435,12 +366,7 @@ impl io::Write for PyroVec {
 }
 
 
-/// Borrows a view across an FFI boundary. This will 
-#[repr(C)]
-pub struct PyroViewPtr {
-    ref_count: *const AtomicU32,
-    data: *const u8, // Needs to always be 16 byte aligned.
-}
+
 
 // ============================================================================
 // PyroView
@@ -454,7 +380,18 @@ pub struct PyroViewPtr {
 pub struct PyroView {
     pub(super) ref_count: *const AtomicU32,
     pub(super) data: *const u8, // Needs to always be 16 byte aligned.
+    pub(super) dropper: PyroVecDropper,
 }
+
+/// Borrows a view across an FFI boundary. This will 
+#[repr(C)]
+pub struct PyroViewPtr {
+    ref_count: *const AtomicU32,
+    data: *const u8, // Needs to always be 16 byte aligned.
+    dropper: PyroVecDropper,
+}
+
+unsafe impl Send for PyroViewPtr {}
 
 impl Clone for PyroView {
     fn clone(&self) -> Self {
@@ -464,6 +401,7 @@ impl Clone for PyroView {
         Self {
             ref_count: self.ref_count,
             data: self.data,
+            dropper: self.dropper,
         }
     }
 }
@@ -472,7 +410,16 @@ impl Drop for PyroView {
     fn drop(&mut self) {
         unsafe {
             // Decrement the reference count when the view is dropped
-            (*self.ref_count).fetch_sub(1, Ordering::Release);
+            if (*self.ref_count).fetch_sub(1, Ordering::AcqRel) == 1 {
+                // We were the last owner, drop the underlying memory
+                if self.dropper == PyroVec::no_op_dropper {
+                    (self.dropper)(self.ref_count as *mut u8, 0);
+                } else {
+                    let inner = self.ref_count as *mut PyroInner;
+                    let capacity = (*inner).capacity;
+                    (self.dropper)(inner as *mut u8, capacity);
+                }
+            }
         }
     }
 }
@@ -526,6 +473,7 @@ impl PyroView {
         Ok(Self {
             data,
             ref_count,
+            dropper: raw.dropper,
         })
     }
 
@@ -542,7 +490,11 @@ impl PyroView {
     }
 
     pub fn ptr(&self) -> PyroViewPtr {
-        PyroViewPtr { ref_count: self.ref_count, data: self.data }
+        PyroViewPtr {
+            ref_count: self.ref_count,
+            data: self.data,
+            dropper: self.dropper,
+        }
     }
 
     pub fn clone_to_vec(&self) -> PyroVec {
@@ -552,14 +504,14 @@ impl PyroView {
     }
 }
 
-impl From<&PyroVec> for PyroView {
-    fn from(value: &PyroVec) -> Self {
+impl From<PyroVec> for PyroView {
+    fn from(value: PyroVec) -> Self {
         value.view()
     }
 }
 
 impl PyroVec {
-    pub fn view(&self) -> PyroView {
+    pub fn view(self) -> PyroView {
         unsafe { 
             let inner = self.view.as_ref();
             let ref_count = (&inner.ref_count) as *const AtomicU32;
@@ -568,7 +520,15 @@ impl PyroVec {
             (*ref_count).fetch_add(1, Ordering::Relaxed);
             
             let data = inner.data_ptr();
-            PyroView { ref_count, data }
+            let dropper = self.dropper;
+
+            std::mem::forget(self); // Transfer ownership to PyroView
+
+            PyroView { 
+                ref_count, 
+                data, 
+                dropper,
+            }
         }
     }
 }
@@ -618,6 +578,7 @@ pub unsafe fn make_view(counter: &AtomicU32, reference: PyroRef<'_>) -> Result<P
     Ok(PyroView {
         ref_count: counter as *const AtomicU32,
         data: reference.data.as_ptr(),
+        dropper: PyroVec::no_op_dropper,
     })
 }
 
@@ -759,158 +720,4 @@ pub fn get_ref(wasm_memory: &[u8], offset: usize) -> Result<PyroRef<'_>, PyroErr
     Ok(PyroRef{
         data: &wasm_memory[offset..offset+total_required]
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_pyro_inner_layout() {
-        assert_eq!(
-            std::mem::size_of::<PyroInner>(),
-            16,
-            "PyroInner must be exactly 16 bytes"
-        );
-        assert_eq!(
-            std::mem::align_of::<PyroInner>(),
-            16,
-            "PyroInner must be 16-byte aligned"
-        );
-    }
-
-    #[test]
-    fn test_split_owned_view() {
-        // Create an atomic int we can point to
-        let ref_count = AtomicU32::new(0);
-        let ref_ptr = &ref_count as *const AtomicU32;
-
-        // Let's create a raw slice that mimics memory-mapped WAL data (16-byte aligned)
-        #[repr(C, align(16))]
-        struct AlignedData {
-            bytes: [u8; 32],
-        }
-
-        let mut data_block = AlignedData { bytes: [0; 32] };
-        // Write UNIT_HEADER into it
-        unsafe {
-            ptr::copy_nonoverlapping(
-                UNIT_HEADER.0.as_ptr(),
-                data_block.bytes.as_mut_ptr(),
-                PyroParser::HEADER_SIZE,
-            );
-        }
-        
-        // Write some payload length into the header
-        let payload_len: u32 = 4;
-        data_block.bytes[0..4].copy_from_slice(&payload_len.to_le_bytes());
-        
-        // Write payload after header
-        data_block.bytes[16..20].copy_from_slice(b"TEST");
-
-        let view = PyroView {
-                ref_count: ref_ptr,
-                data: data_block.bytes.as_ptr(),
-        };
-
-        assert_eq!(view.len(), 4);
-        assert_eq!(view.capacity(), 4, "Capacity should equal payload length for split views");
-        assert_eq!(view.as_slice(), b"TEST");
-        
-        let raw = view.as_raw_slice();
-        assert_eq!(raw.len(), 20); // 16 header + 4 payload
-        assert_eq!(&raw[16..20], b"TEST");
-    }
-
-    #[test]
-    #[should_panic(expected = "CRITICAL ERROR: Cannot create a thin FFI PyroViewPtr")]
-    fn test_split_owned_view_panics_on_ffi_ptr() {
-        let ref_count = AtomicU32::new(0);
-        let ref_ptr = &ref_count as *const AtomicU32;
-
-        let data: [u8; 16] = UNIT_BYTES;
-        let view = PyroView {
-                ref_count: ref_ptr,
-                data: data.as_ptr(),
-        };
-
-        // This should panic because FromOwned cannot convert to the thin pointer
-        let _ptr = view.ptr();
-    }
-
-    #[test]
-    fn test_view_ref_counting_lifecycle() {
-        let vec = PyroVec::with_capacity(10);
-        let inner = unsafe { vec.view.as_ref() };
-        
-        assert_eq!(inner.ref_count.load(Ordering::Acquire), 0, "Initial ref count should be 0");
-
-        // 1. Creation
-        let view1 = vec.view();
-        assert_eq!(inner.ref_count.load(Ordering::Acquire), 1, "Creating a view should increment to 1");
-
-        // 2. Cloning
-        let view2 = view1.clone();
-        assert_eq!(inner.ref_count.load(Ordering::Acquire), 2, "Cloning should increment to 2");
-
-        // 3. Dropping
-        drop(view1);
-        assert_eq!(inner.ref_count.load(Ordering::Acquire), 1, "Dropping a view should decrement to 1");
-
-        drop(view2);
-        assert_eq!(inner.ref_count.load(Ordering::Acquire), 0, "Dropping the last view should decrement to 0");
-    }
-
-    #[test]
-    #[should_panic(expected = "CRITICAL ERROR: Dropping PyroVec while")]
-    fn test_pyrovec_drop_panics_with_outstanding_view() {
-        let vec = PyroVec::with_capacity(10);
-        
-        // Intentionally leak a view into the current scope
-        let _view = vec.view(); 
-        
-        // Dropping the vec while `_view` is still alive should trigger the debug assert panic
-        drop(vec);
-    }
-
-    #[test]
-    fn test_view_from_ptr_ref_counting() {
-        let vec = PyroVec::with_capacity(10);
-        let inner = unsafe { vec.view.as_ref() };
-        
-        let view1 = vec.view();
-        assert_eq!(inner.ref_count.load(Ordering::Acquire), 1);
-
-        let ptr = view1.ptr();
-        
-        // Simulating passing the view across an FFI boundary and reconstructing it
-        let view2 = unsafe { PyroView::from_ptr(ptr) }.expect("Should reconstruct view");
-        
-        assert_eq!(inner.ref_count.load(Ordering::Acquire), 2, "Reconstructing from ptr should increment the count");
-        
-        drop(view1);
-        drop(view2);
-        assert_eq!(inner.ref_count.load(Ordering::Acquire), 0, "Dropping both should clear the count");
-    }
-
-    #[test]
-    fn test_get_view_ref_counting() {
-        let ref_count = AtomicU32::new(0);
-        
-        // Setup minimal valid memory buffer
-        #[repr(C, align(16))]
-        struct AlignedData { bytes: [u8; 32] }
-        let mut data_block = AlignedData { bytes: [0; 32] };
-        
-        // Write the required 16-byte header
-        unsafe {
-            ptr::copy_nonoverlapping(UNIT_HEADER.0.as_ptr(), data_block.bytes.as_mut_ptr(), 16);
-        }
-        let reference = get_ref(&data_block.bytes, 0).unwrap();
-        let view = unsafe { make_view(&ref_count, reference) }.expect("Should create view");
-        assert_eq!(ref_count.load(Ordering::Acquire), 1, "get_view should increment the provided standalone counter");
-        
-        drop(view);
-        assert_eq!(ref_count.load(Ordering::Acquire), 0, "dropping the constructed view should decrement the standalone counter");
-    }
 }

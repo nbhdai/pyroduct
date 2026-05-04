@@ -140,29 +140,12 @@ where
     Ok(())
 }
 
-pub enum RequestInner {
-    View(PyroView),
-    Vec(PyroVec),
-}
-
-impl From<PyroView> for RequestInner {
-    fn from(value: PyroView) -> Self {
-        RequestInner::View(value)
-    }
-}
-
-impl From<PyroVec> for RequestInner {
-    fn from(value: PyroVec) -> Self {
-        RequestInner::Vec(value)
-    }
-}
-
 pub struct Request {
     pub client_id: Option<u32>,
     pub class_id: Option<u8>,
     pub fn_id: Option<u8>,
     pub mux_id: Option<u32>,
-    pub inner: RequestInner,
+    pub inner: PyroView,
 }
 
 impl From<PyroView> for Request {
@@ -172,7 +155,7 @@ impl From<PyroView> for Request {
             class_id: None,
             fn_id: None,
             mux_id: None,
-            inner: RequestInner::View(value),
+            inner: value,
         }
     }
 }
@@ -184,17 +167,14 @@ impl From<PyroVec> for Request {
             class_id: None,
             fn_id: None,
             mux_id: None,
-            inner: RequestInner::Vec(value),
+            inner: value.into(),
         }
     }
 }
 
 impl Request {
-    fn view(&self) -> PyroView {
-        match &self.inner {
-            RequestInner::View(v) => v.clone(),
-            RequestInner::Vec(vec) => vec.view(),
-        }
+    fn view(&self) -> &PyroView {
+        &self.inner
     }
 
     pub fn client_id(&self) -> u32 {

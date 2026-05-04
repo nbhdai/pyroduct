@@ -4,8 +4,7 @@ use crate::{
     CapturedError, PyroError,
     error::ErrorKind,
     format::{
-        PyroVec,
-        header::{DataStatus, PyroHeaderMut},
+        PyroVec, PyroView, header::{DataStatus, PyroHeaderMut}
     },
 };
 
@@ -13,31 +12,31 @@ impl PyroError {
     // Users should use the ffi code that does this for them, or should read the codebase to understand.
     #[doc(hidden)]
     #[track_caller]
-    pub fn encode(&self) -> PyroVec {
+    pub fn encode(&self) -> PyroView {
         match self {
             PyroError::IncorrectParse(_) => {
                 let mut err_vec = CapturedError::new("Encoding a PyroError that is an unhandled user deserialization error, not a pyro error").with_location(Location::caller()).encode();
                 err_vec.set_status(DataStatus::CodeError);
-                err_vec
+                err_vec.view()
             }
             PyroError::CodePanic(err) => {
                 let mut vec = err.encode();
                 vec.set_status(DataStatus::CodeError);
-                vec
+                vec.view()
             }
             PyroError::NotFound(msg) => {
                 let mut err_vec = CapturedError::new(msg)
                     .with_location(Location::caller())
                     .encode();
                 err_vec.set_status(DataStatus::CodeError);
-                err_vec
+                err_vec.view()
             }
             PyroError::Header(error) => {
                 let mut err_vec = CapturedError::new(error.to_string())
                     .with_location(Location::caller())
                     .encode();
                 err_vec.set_status(DataStatus::RemoteInvalidHeader);
-                err_vec
+                err_vec.view()
             }
             PyroError::Pyro { kind, .. } => {
                 let error: Option<&Box<CapturedError>> = match kind {
@@ -60,12 +59,12 @@ impl PyroError {
                 };
 
                 vec.set_status(status_code);
-                vec
+                vec.view()
             }
             PyroError::HeaderFfi(captured_error) => {
                 let mut vec = captured_error.encode();
                 vec.set_status(DataStatus::PyroFfiFail);
-                vec
+                vec.view()
             }
         }
     }

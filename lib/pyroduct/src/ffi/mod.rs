@@ -16,7 +16,7 @@ mod tests {
     use super::*;
     use crate::ffi::host::ForeignClass;
     use crate::format::header::PyroHeader;
-    use crate::format::{PyroVec, PyroVecPtr, PyroViewPtr};
+    use crate::format::{PyroVec, PyroViewPtr};
     use crate::module::capability::create_log;
     use std::cell::RefCell;
     use std::ffi::c_void;
@@ -62,27 +62,27 @@ mod tests {
                 dropper: mock_dropper,
                 object_id,
             },
-            error: PyroVec::ok().into_raw(),
+            error: PyroVec::ok().view().ptr(),
         }
     }
 
-    unsafe extern "C" fn mock_reset_sync(ptr: PyroRefObjectPtr) -> PyroVecPtr {
+    unsafe extern "C" fn mock_reset_sync(ptr: PyroRefObjectPtr) -> PyroViewPtr {
         if !ptr.state.is_null() {
             let ctx = unsafe { &*(ptr.state as *const TestContext) };
             ctx.reset_called.store(true, Ordering::SeqCst);
         }
-        PyroVec::ok().into_raw()
+        PyroVec::ok().view().ptr()
     }
 
     unsafe extern "C" fn mock_register_sync(
         ptr: PyroRefObjectPtr,
         _client: PyroViewPtr,
-    ) -> PyroVecPtr {
+    ) -> PyroViewPtr {
         if !ptr.state.is_null() {
             let ctx = unsafe { &*(ptr.state as *const TestContext) };
             ctx.register_called.store(true, Ordering::SeqCst);
         }
-        PyroVec::ok().into_raw()
+        PyroVec::ok().view().ptr()
     }
 
     // ============================================================================
