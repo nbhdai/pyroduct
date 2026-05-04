@@ -30,6 +30,7 @@ use tracing::{info, warn};
 
 use crate::format::vec_buf::PyroRef;
 use crate::format::{PyroFailure, PyroLogs, PyroSuccess, PyroView, get_ref};
+use crate::format::header::PyroHeaderMut;
 use crate::PyroRow;
 
 // =============================================================================
@@ -207,7 +208,9 @@ impl WalWriter {
             WalRecord::Success { success, .. } => success.row.to_wire().map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?,
             WalRecord::Failure { failure, .. } => {
                 let msg = match &failure.result { Ok(err) => err.message.clone(), Err(msg) => msg.clone() };
-                crate::PyroValue::from(msg).to_wire().map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?
+                let mut packet = crate::PyroValue::from(msg).to_wire().map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+                packet.set_status_u8(1);
+                packet
             }
         };
 
@@ -259,9 +262,18 @@ impl Deref for WalBuffer {
     }
 }
 
+#[repr(C, align(16))]
 pub struct WalInner {
-    ref_count: AtomicU32,
-    buffer: WalBuffer,
+    pub ref_count: AtomicU32,
+    pub buffer: WalBuffer,
+}
+
+// =============================================================================
+// WalInner Dropper
+// =============================================================================
+
+unsafe extern "C" fn wal_inner_dropper(ptr: *mut u8, _capacity: u32) {
+    let _ = Box::from_raw(ptr as *mut WalInner);
 }
 
 // =============================================================================
@@ -299,7 +311,7 @@ impl WalReader {
         };
 
         let inner = Box::new(WalInner {
-            ref_count: AtomicU32::new(0),
+            ref_count: AtomicU32::new(1),
             buffer: WalBuffer::Mmap(mmap),
         });
 
@@ -315,7 +327,7 @@ impl WalReader {
     /// Creates a WAL reader from an owned memory buffer.
     pub fn from_vec(data: Vec<u8>) -> Self {
         let inner = Box::new(WalInner {
-            ref_count: AtomicU32::new(0),
+            ref_count: AtomicU32::new(1),
             buffer: WalBuffer::Vec(data),
         });
 
@@ -340,7 +352,7 @@ impl WalReader {
         let inner = unsafe { self.inner.as_ref() };
         let reference = get_ref(&inner.buffer, offset)?;
         unsafe {
-            crate::format::vec_buf::make_view(&inner.ref_count, reference)
+            crate::format::vec_buf::make_view(&inner.ref_count, reference, wal_inner_dropper)
         }
     }
 
@@ -357,19 +369,21 @@ impl Drop for WalReader {
     fn drop(&mut self) {
         unsafe {
             let inner = self.inner.as_ref();
-            let refs = inner.ref_count.load(Ordering::Acquire);
+            let refs = inner.ref_count.fetch_sub(1, Ordering::AcqRel);
 
-            if refs == 0 {
+            if refs == 1 {
+                // We were the last owner
                 let _ = Box::from_raw(self.inner.as_ptr());
             } else {
+                // Other references (PyroViews) still exist
                 if cfg!(debug_assertions) {
                     panic!(
                         "CRITICAL ERROR: Dropping WalReader while {} references (PyroView) still exist. Memory leaked.",
-                        refs
+                        refs - 1
                     );
                 } else {
                     tracing::error!(
-                        ref_count = refs,
+                        ref_count = refs - 1,
                         "CRITICAL ERROR: Dropping WalReader while references still exist. Memory leaked."
                     );
                 }

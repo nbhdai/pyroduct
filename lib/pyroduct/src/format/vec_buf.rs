@@ -126,6 +126,9 @@ impl PyroVec {
     }
 
     extern "C" fn no_op_dropper(_ptr: *mut u8, _capacity: u32) {}
+    pub(crate) fn no_op_dropper_fn() -> PyroVecDropper {
+        Self::no_op_dropper
+    }
 
     unsafe extern "C" fn default_grower(
         ptr: *mut u8,
@@ -566,13 +569,17 @@ impl From<PyroView> for PyroViewPtr {
 /// * `offset` - The index into `wasm_memory` where the `PyroInner` struct begins.
 /// 
 /// SAFETY: The caller needs to own the memory and the counter for this. It can only drop once the counter is 0 again. 
-pub unsafe fn make_view(counter: &AtomicU32, reference: PyroRef<'_>) -> Result<PyroView, PyroError> {
+pub unsafe fn make_view(
+    counter: &AtomicU32,
+    reference: PyroRef<'_>,
+    dropper: PyroVecDropper,
+) -> Result<PyroView, PyroError> {
     counter.fetch_add(1, Ordering::Relaxed);
     // 6. Construct View
     Ok(PyroView {
         ref_count: counter as *const AtomicU32,
         data: reference.data.as_ptr(),
-        dropper: PyroVec::no_op_dropper,
+        dropper,
     })
 }
 
