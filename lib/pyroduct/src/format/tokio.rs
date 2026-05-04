@@ -281,6 +281,7 @@ mod tests {
         override_fn_id: Option<u8>,
         override_mux_id: Option<u32>,
         override_client_id: Option<u32>,
+        vec_status: Option<crate::format::header::DataStatus>,
     ) -> Request {
         let mut vec = PyroVec::with_capacity(data.len());
         vec.extend_from_slice(data);
@@ -288,6 +289,7 @@ mod tests {
         vec.set_fn_id(vec_fn_id);
         vec.set_mux_id(vec_mux_id);
         vec.set_client_id(vec_client_id);
+        if let Some(s) = vec_status { vec.set_status(s); }
         let mut request: Request = vec.into();
         if let Some(v) = override_class_id { request.class_id = Some(v); }
         if let Some(v) = override_fn_id { request.fn_id = Some(v); }
@@ -349,45 +351,45 @@ mod tests {
     #[tokio::test]
     async fn test_override_class_id() {
         // Override with Some
-        let request = make_request_with(b"test", 0x11, 0, 0, 0, Some(0xFF), None, None, None);
+        let request = make_request_with(b"test", 0x11, 0, 0, 0, Some(0xFF), None, None, None, None);
         let recovered = roundtrip(&request).await;
         assert_eq!(recovered.class_id(), 0xFF, "Override value should win");
 
         // Fall back to view (None)
-        let request = make_request_with(b"test", 0x11, 0, 0, 0, None, None, None, None);
+        let request = make_request_with(b"test", 0x11, 0, 0, 0, None, None, None, None, None);
         let recovered = roundtrip(&request).await;
         assert_eq!(recovered.class_id(), 0x11, "View value should be used when Some is absent");
     }
 
     #[tokio::test]
     async fn test_override_fn_id() {
-        let request = make_request_with(b"test", 0, 0x22, 0, 0, None, Some(0xEE), None, None);
+        let request = make_request_with(b"test", 0, 0x22, 0, 0, None, Some(0xEE), None, None, None);
         let recovered = roundtrip(&request).await;
         assert_eq!(recovered.fn_id(), 0xEE);
 
-        let request = make_request_with(b"test", 0, 0x22, 0, 0, None, None, None, None);
+        let request = make_request_with(b"test", 0, 0x22, 0, 0, None, None, None, None, None);
         let recovered = roundtrip(&request).await;
         assert_eq!(recovered.fn_id(), 0x22);
     }
 
     #[tokio::test]
     async fn test_override_mux_id() {
-        let request = make_request_with(b"test", 0, 0, 0xAAAAAAAA, 0, None, None, Some(0xDEADBEEF), None);
+        let request = make_request_with(b"test", 0, 0, 0xAAAAAAAA, 0, None, None, Some(0xDEADBEEF), None, None);
         let recovered = roundtrip(&request).await;
         assert_eq!(recovered.mux_id(), 0xDEADBEEF);
 
-        let request = make_request_with(b"test", 0, 0, 0xAAAAAAAA, 0, None, None, None, None);
+        let request = make_request_with(b"test", 0, 0, 0xAAAAAAAA, 0, None, None, None, None, None);
         let recovered = roundtrip(&request).await;
         assert_eq!(recovered.mux_id(), 0xAAAAAAAA);
     }
 
     #[tokio::test]
     async fn test_override_client_id() {
-        let request = make_request_with(b"test", 0, 0, 0, 0x12345678, None, None, None, Some(0xFEDCBA98));
+        let request = make_request_with(b"test", 0, 0, 0, 0x12345678, None, None, None, Some(0xFEDCBA98), None);
         let recovered = roundtrip(&request).await;
         assert_eq!(recovered.client_id(), 0xFEDCBA98);
 
-        let request = make_request_with(b"test", 0, 0, 0, 0x12345678, None, None, None, None);
+        let request = make_request_with(b"test", 0, 0, 0, 0x12345678, None, None, None, None, None);
         let recovered = roundtrip(&request).await;
         assert_eq!(recovered.client_id(), 0x12345678);
     }
@@ -398,6 +400,7 @@ mod tests {
         let request = make_request_with(
             b"alloverride", 0x11, 0x22, 0xAAAAAAAA, 0xBBBBBBBB,
             Some(0xDD), Some(0xEE), Some(0x11223344), Some(0xCCCCCCCC),
+            Some(DataStatus::RemoteUtf8),
         );
 
         let recovered = roundtrip(&request).await;
@@ -408,7 +411,7 @@ mod tests {
         assert_eq!(recovered.mux_id(), 0x11223344);
         // Non-overridden fields should come from the view
         assert_eq!(recovered.status(), Ok(DataStatus::RemoteUtf8));
-        assert_eq!(recovered.wire_format(), 0x55);
+        assert_eq!(recovered.wire_format(), 1);
     }
 
     // ── RequestInner::View vs RequestInner::Vec ───────────────────────────────
@@ -440,22 +443,6 @@ mod tests {
     // ── Error cases ───────────────────────────────────────────────────────────
 
     #[tokio::test]
-    async fn test_read_rejects_bad_magic() {
-        let mut bad_packet = Vec::new();
-        bad_packet.extend_from_slice(&0xDEADBEEFu32.to_ne_bytes()); // BAD Magic
-        bad_packet.extend_from_slice(&10u32.to_le_bytes()); // Len
-        bad_packet.extend_from_slice(&[0u8; 8]);
-        bad_packet.extend_from_slice(&[0u8; 10]);
-
-        let mut cursor = Cursor::new(bad_packet);
-        let mut recovered = PyroVec::with_capacity(0);
-        let result = read_from_stream(&mut cursor, None, &mut recovered).await;
-
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
-    }
-
-    #[tokio::test]
     async fn test_read_detects_header_eof() {
         let partial_header = vec![0u8; 10];
         let mut cursor = Cursor::new(partial_header);
@@ -470,9 +457,8 @@ mod tests {
     async fn test_read_detects_body_eof() {
         let body_len: u32 = 10;
         let mut packet = Vec::new();
-        packet.extend_from_slice(&0x7079726Fu32.to_ne_bytes()); // "pyro"
         packet.extend_from_slice(&body_len.to_le_bytes());
-        packet.extend_from_slice(&[0u8; 8]);
+        packet.extend_from_slice(&[0u8; 12]); // Rest of the 16-byte header
         packet.extend_from_slice(b"12345"); // Only 5 bytes, promised 10
 
         let mut cursor = Cursor::new(packet);
@@ -490,9 +476,8 @@ mod tests {
             timeout: Duration::from_secs(1),
         };
         let mut packet = Vec::new();
-        packet.extend_from_slice(&0x7079726Fu32.to_ne_bytes());
         packet.extend_from_slice(&20u32.to_le_bytes()); // 20 > max 5
-        packet.extend_from_slice(&[0u8; 8]);
+        packet.extend_from_slice(&[0u8; 12]);
         packet.extend_from_slice(&[0u8; 20]);
 
         let mut cursor = Cursor::new(packet);
