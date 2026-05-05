@@ -63,7 +63,7 @@ impl PyroInner {
 
 /// A 16-byte aligned buffer with a self-describing header.
 /// Compatible with FFI passing as a raw pointer or TCP/Unix framing.
-/// 
+///
 /// This is wholely owned with it's own reference counting.
 pub struct PyroVec {
     view: NonNull<PyroInner>,
@@ -88,7 +88,7 @@ impl PyroData for PyroVec {
 
     fn py_ref(&self) -> PyroRef<'_> {
         PyroRef {
-            data: self.as_raw_slice()
+            data: self.as_raw_slice(),
         }
     }
 
@@ -162,15 +162,15 @@ impl PyroVec {
             }
 
             // Initialize the header block
+            // Use write_unaligned to avoid Stacked Borrows issues:
+            // the allocation layout (inner + data) is larger than PyroInner,
+            // and ptr::write would create a tag only covering PyroInner's size.
             let inner_ptr = raw as *mut PyroInner;
-            ptr::write(inner_ptr, PyroInner::new(capacity as u32));
+            ptr::write_unaligned(inner_ptr, PyroInner::new(capacity as u32));
 
             // Write UNIT_BYTES to the start of the data segment
-            ptr::copy_nonoverlapping(
-                UNIT_BYTES.as_ptr(),
-                (*inner_ptr).data_ptr(),
-                UNIT_BYTES.len(),
-            );
+            let data_ptr = (inner_ptr as *mut u8).add(INNER_HEADER);
+            ptr::copy_nonoverlapping(UNIT_BYTES.as_ptr(), data_ptr, UNIT_BYTES.len());
             inner_ptr
         };
 
@@ -373,9 +373,6 @@ impl io::Write for PyroVec {
     }
 }
 
-
-
-
 // ============================================================================
 // PyroView
 // ============================================================================
@@ -391,7 +388,7 @@ pub struct PyroView {
     pub(super) dropper: PyroVecDropper,
 }
 
-/// Borrows a view across an FFI boundary. This will 
+/// Borrows a view across an FFI boundary. This will
 #[repr(C)]
 pub struct PyroViewPtr {
     ref_count: *const AtomicU32,
@@ -434,9 +431,7 @@ unsafe impl Sync for PyroView {}
 impl PyroData for PyroView {
     #[inline]
     fn header(&self) -> &[u8; 16] {
-        unsafe { 
-            &*(self.data as *const [u8; 16])
-        }
+        unsafe { &*(self.data as *const [u8; 16]) }
     }
 
     fn capacity(&self) -> usize {
@@ -445,7 +440,7 @@ impl PyroData for PyroView {
 
     fn py_ref(&self) -> PyroRef<'_> {
         PyroRef {
-            data: self.as_raw_slice()
+            data: self.as_raw_slice(),
         }
     }
 
@@ -461,7 +456,6 @@ impl PyroView {
     /// * `raw.ptr` must be non-null and properly aligned (16-byte alignment).
     /// * The memory referenced must remain valid for the duration this view is used.
     pub unsafe fn from_ptr(raw: PyroViewPtr) -> Result<Self, PyroError> {
-
         if let Err(parse_error) = unsafe { PyroParser::check_raw(raw.data) } {
             tracing::error!(?parse_error, "Checks failed for an FFI PyroViewPtr");
             let error = CapturedError::new(format!(
@@ -475,7 +469,7 @@ impl PyroView {
 
         let data = raw.data;
         if raw.ref_count.is_null() {
-            return Err(PyroError::null_pointer())
+            return Err(PyroError::null_pointer());
         }
         let ref_count = raw.ref_count;
         unsafe {
@@ -490,18 +484,23 @@ impl PyroView {
 
     pub fn as_slice(&self) -> &[u8] {
         unsafe {
-            slice::from_raw_parts(self.data.add(PyroParser::HEADER_SIZE), self.header_len() as usize)
+            slice::from_raw_parts(
+                self.data.add(PyroParser::HEADER_SIZE),
+                self.header_len() as usize,
+            )
         }
     }
 
     pub fn as_raw_slice(&self) -> &[u8] {
         unsafe {
-            slice::from_raw_parts(self.data, PyroParser::HEADER_SIZE + self.header_len() as usize)
+            slice::from_raw_parts(
+                self.data,
+                PyroParser::HEADER_SIZE + self.header_len() as usize,
+            )
         }
     }
 
     pub fn ptr(&self) -> PyroViewPtr {
-        
         PyroViewPtr {
             ref_count: self.ref_count,
             data: self.data,
@@ -524,21 +523,21 @@ impl From<PyroVec> for PyroView {
 
 impl PyroVec {
     pub fn view(self) -> PyroView {
-        unsafe { 
+        unsafe {
             let inner = self.view.as_ref();
             let ref_count = (&inner.ref_count) as *const AtomicU32;
-            
+
             // Increment reference count for the new view
             (*ref_count).fetch_add(1, Ordering::Relaxed);
-            
+
             let data = inner.data_ptr();
             let dropper = self.dropper;
 
             std::mem::forget(self); // Transfer ownership to PyroView
 
-            PyroView { 
-                ref_count, 
-                data, 
+            PyroView {
+                ref_count,
+                data,
                 dropper,
             }
         }
@@ -582,8 +581,8 @@ impl From<PyroView> for PyroViewPtr {
 ///
 /// * `wasm_memory` - The entire available memory buffer.
 /// * `offset` - The index into `wasm_memory` where the `PyroInner` struct begins.
-/// 
-/// SAFETY: The caller needs to own the memory and the counter for this. It can only drop once the counter is 0 again. 
+///
+/// SAFETY: The caller needs to own the memory and the counter for this. It can only drop once the counter is 0 again.
 pub unsafe fn make_view(
     counter: &AtomicU32,
     reference: PyroRef<'_>,
@@ -626,7 +625,7 @@ impl PyroRefPtr {
         let header = unsafe { &*(ptr as *const [u8; 16]) };
         let payload_len = PyroHeader::header_len(header) as usize;
         let total_len = PyroParser::HEADER_SIZE + payload_len;
-        
+
         PyroRef {
             data: unsafe { slice::from_raw_parts(ptr, total_len) },
         }
@@ -641,7 +640,7 @@ impl PyroRefPtr {
     pub unsafe fn try_ref<'a>(&self) -> Result<PyroRef<'a>, PyroError> {
         let ptr = self.0;
         let header = unsafe { &*(ptr as *const [u8; 16]) };
-        
+
         let payload_len = PyroHeader::header_len(header) as usize;
         let total_len = PyroParser::HEADER_SIZE + payload_len;
         if let Err(parse_error) = PyroParser::check(header) {
@@ -660,11 +659,10 @@ impl PyroRefPtr {
     }
 }
 
-
 /// A safe, lifetime-bound view into a Pyro data structure.
 ///
-/// Unlike `PyroView`, this does not participate in reference counting and is 
-/// tied strictly to the lifetime of the borrowed slice. This makes it a zero-cost 
+/// Unlike `PyroView`, this does not participate in reference counting and is
+/// tied strictly to the lifetime of the borrowed slice. This makes it a zero-cost
 /// abstraction for passing Pyro data down the call stack.
 #[derive(Clone, Copy)]
 pub struct PyroRef<'a> {
@@ -722,14 +720,14 @@ impl<'a> PyroRef<'a> {
         let header = unsafe { &*(data.as_ptr() as *const [u8; 16]) };
         let payload_len = PyroHeader::header_len(header) as usize;
         let total_required = PyroParser::HEADER_SIZE + payload_len;
-        
+
         if data.len() < total_required {
             return Err(ParseError::LengthExceedsCapacity.into());
         }
 
-        Ok(Self { 
+        Ok(Self {
             // Narrow the slice to exactly the header + payload to prevent trailing garbage
-            data: &data[..total_required] 
+            data: &data[..total_required],
         })
     }
 
@@ -764,7 +762,6 @@ impl<'a> fmt::Debug for PyroRef<'a> {
     }
 }
 
-
 /// Creates a `PyroView` from a raw memory slice and an offset.
 ///
 /// This performs bounds checks and header validation assuming the offset
@@ -797,7 +794,9 @@ pub fn get_ref(wasm_memory: &[u8], offset: usize) -> Result<PyroRef<'_>, PyroErr
     };
 
     // Safety: Checked that it's a valid header above
-    let header: [u8;16] = wasm_memory[offset..offset + 16].try_into().map_err(|_| ParseError::LengthExceedsCapacity)?;
+    let header: [u8; 16] = wasm_memory[offset..offset + 16]
+        .try_into()
+        .map_err(|_| ParseError::LengthExceedsCapacity)?;
     let payload_len = PyroHeader::header_len(&header) as usize;
 
     // 4. Validate total bounds
@@ -806,8 +805,8 @@ pub fn get_ref(wasm_memory: &[u8], offset: usize) -> Result<PyroRef<'_>, PyroErr
         return Err(ParseError::LengthExceedsCapacity.into());
     }
     // 6. Construct View
-    Ok(PyroRef{
-        data: &wasm_memory[offset..offset+total_required]
+    Ok(PyroRef {
+        data: &wasm_memory[offset..offset + total_required],
     })
 }
 
@@ -821,7 +820,7 @@ mod tests {
         vec.extend_from_slice(b"TEST");
 
         let raw = vec.as_raw_slice();
-        
+
         let mut expected = [0u8; 20];
         expected[0..4].copy_from_slice(&4u32.to_le_bytes()); // Length
         expected[8] = 1; // Wire format
@@ -835,10 +834,10 @@ mod tests {
         let mut vec = PyroVec::with_capacity(10);
         vec.extend_from_slice(b"TEST");
         let reference = PyroRef::try_from_slice(vec.as_raw_slice()).unwrap();
-        
+
         let ptr = reference.as_ptr();
         let reconstructed = unsafe { ptr.assume_ref() };
-        
+
         assert_eq!(reconstructed.as_slice(), b"TEST");
         assert_eq!(reconstructed.len(), 4);
     }
@@ -847,23 +846,38 @@ mod tests {
     fn test_view_ref_counting_lifecycle() {
         let vec = PyroVec::with_capacity(10);
         let inner_ptr = vec.view.as_ptr() as *const AtomicU32;
-        
-        assert_eq!(unsafe { (*inner_ptr).load(Ordering::Acquire) }, 0, "Initial ref count should be 0");
+
+        assert_eq!(
+            unsafe { (*inner_ptr).load(Ordering::Acquire) },
+            0,
+            "Initial ref count should be 0"
+        );
 
         // 1. Creation
         let view1 = vec.view();
-        assert_eq!(unsafe { (*inner_ptr).load(Ordering::Acquire) }, 1, "Creating a view should increment to 1");
+        assert_eq!(
+            unsafe { (*inner_ptr).load(Ordering::Acquire) },
+            1,
+            "Creating a view should increment to 1"
+        );
 
         // 2. Cloning
         let view2 = view1.clone();
-        assert_eq!(unsafe { (*inner_ptr).load(Ordering::Acquire) }, 2, "Cloning should increment to 2");
+        assert_eq!(
+            unsafe { (*inner_ptr).load(Ordering::Acquire) },
+            2,
+            "Cloning should increment to 2"
+        );
 
         // 3. Dropping
         drop(view1);
-        assert_eq!(unsafe { (*inner_ptr).load(Ordering::Acquire) }, 1, "Dropping a view should decrement to 1");
+        assert_eq!(
+            unsafe { (*inner_ptr).load(Ordering::Acquire) },
+            1,
+            "Dropping a view should decrement to 1"
+        );
 
         // Can't reference the pointer
         drop(view2);
     }
 }
-
