@@ -91,6 +91,7 @@
 
         test-miri = pkgs.writeShellScriptBin "test-miri" ''
           set -e
+          export PATH="${miriToolchain}/bin:$PATH"
           export RUST_BACKTRACE=1
           echo "Running Miri tests for vec_buf_safety..."
           cargo miri test --manifest-path lib/pyroduct/Cargo.toml --test vec_buf_safety
