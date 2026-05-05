@@ -513,9 +513,7 @@ impl PyroView {
             return Err(PyroError::null_pointer());
         }
         let ref_count = raw.ref_count;
-        unsafe {
-            (*ref_count).fetch_add(1, Ordering::Relaxed);
-        }
+
         Ok(Self {
             data,
             drop_ptr,
@@ -543,14 +541,18 @@ impl PyroView {
         }
     }
 
-    pub fn ptr(&self) -> PyroViewPtr {
-        PyroViewPtr {
+    pub fn into_ptr(self) -> PyroViewPtr {
+        let ptr = PyroViewPtr {
             ref_count: self.ref_count,
             data: self.data,
             drop_ptr: self.drop_ptr,
             capacity: self.capacity,
             dropper: self.dropper,
-        }
+        };
+        // We MUST NOT drop self, because that would decrement the ref_count
+        // and potentially free the memory we just handed off.
+        std::mem::forget(self);
+        ptr
     }
 
     pub fn clone_to_vec(&self) -> PyroVec {
@@ -590,7 +592,7 @@ impl fmt::Debug for PyroView {
 
 impl From<PyroView> for PyroViewPtr {
     fn from(view: PyroView) -> Self {
-        view.ptr()
+        view.into_ptr()
     }
 }
 

@@ -63,7 +63,7 @@ mod tests {
                 dropper: mock_dropper,
                 object_id,
             },
-            error: PyroVec::ok().view().ptr(),
+            error: PyroVec::ok().view().into_ptr(),
         }
     }
 
@@ -72,7 +72,7 @@ mod tests {
             let ctx = unsafe { &*(ptr.state as *const TestContext) };
             ctx.reset_called.store(true, Ordering::SeqCst);
         }
-        PyroVec::ok().view().ptr()
+        PyroVec::ok().view().into_ptr()
     }
 
     unsafe extern "C" fn mock_register_sync(
@@ -83,7 +83,7 @@ mod tests {
             let ctx = unsafe { &*(ptr.state as *const TestContext) };
             ctx.register_called.store(true, Ordering::SeqCst);
         }
-        PyroVec::ok().view().ptr()
+        PyroVec::ok().view().into_ptr()
     }
 
     // ============================================================================

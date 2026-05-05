@@ -39,7 +39,7 @@ fn test_pyro_view_ref_counting() {
 fn test_pyro_view_ptr_roundtrip() {
     let vec = PyroVec::with_capacity(100);
     let view = vec.view();
-    let ptr = view.ptr(); // ref count becomes 2
+    let ptr = view.clone().into_ptr(); // ref count becomes 2
     
     let view_reconstructed = unsafe { PyroView::from_ptr(ptr).unwrap() };
     // ref count still 2 (from_ptr doesn't increment)

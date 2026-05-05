@@ -42,10 +42,10 @@ where
     let result = panic::catch_unwind(AssertUnwindSafe(func));
 
     match result {
-        Ok(output_obj) => output_obj.ptr(),
+        Ok(output_obj) => output_obj.into_ptr(),
         Err(_) => {
             let panic_info = recover_panic_info();
-            PyroError::CodePanic(panic_info).encode().ptr()
+            PyroError::CodePanic(panic_info).encode().into_ptr()
         }
     }
 }
@@ -137,10 +137,10 @@ where
                 .await;
 
             match result {
-                Ok(val) => val.ptr(),
+                Ok(val) => val.into_ptr(),
                 Err(_) => {
                     let panic_info = recover_panic_info();
-                    PyroError::CodePanic(panic_info).encode().ptr()
+                    PyroError::CodePanic(panic_info).encode().into_ptr()
                 }
             }
         }),
@@ -172,7 +172,7 @@ impl Future for SafeMethodHandle {
             Poll::Ready(Err(join_error)) => Poll::Ready(
                 PyroError::CodePanic(CapturedError::new(join_error).into())
                     .encode()
-                    .ptr(),
+                    .into_ptr(),
             ),
             Poll::Pending => Poll::Pending,
         }

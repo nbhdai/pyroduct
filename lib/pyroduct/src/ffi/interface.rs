@@ -251,7 +251,7 @@ impl InitResult {
                 dropper: typed_dropper::<S>,
                 object_id: object_id,
             },
-            error: PyroVec::ok().view().ptr(),
+            error: PyroVec::ok().view().into_ptr(),
         }
     }
 
@@ -263,7 +263,7 @@ impl InitResult {
                 dropper: typed_dropper::<()>,
                 object_id: object_id,
             },
-            error: err.encode().ptr(),
+            error: err.encode().into_ptr(),
         }
     }
 
