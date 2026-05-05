@@ -16,7 +16,7 @@ craneLib.cargoBuild (commonArgs // {
     cargo miri test --manifest-path lib/pyroduct/Cargo.toml --all-features --test vec_buf_safety
     
     echo "Running Miri tests for ffi_safety..."
-    MIRIFLAGS=-Zmiri-disable-isolation cargo miri test --manifest-path lib/pyroduct/Cargo.toml --all-features --test ffi_safety
+    MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-tree-borrows" cargo miri test --manifest-path lib/pyroduct/Cargo.toml --all-features --test ffi_safety
   '';
 
   buildPhase = "true";

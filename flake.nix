@@ -96,7 +96,7 @@
           echo "Running Miri tests for vec_buf_safety..."
           cargo miri test --manifest-path lib/pyroduct/Cargo.toml --all-features --test vec_buf_safety
           echo "Running Miri tests for ffi_safety..."
-          MIRIFLAGS=-Zmiri-disable-isolation cargo miri test --manifest-path lib/pyroduct/Cargo.toml --all-features --test ffi_safety
+          MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-tree-borrows" cargo miri test --manifest-path lib/pyroduct/Cargo.toml --all-features --test ffi_safety
         '';
         test-rust = pkgs.writeShellScriptBin "test-rust" ''
           cargo test --manifest-path lib/Cargo.toml --all-features
