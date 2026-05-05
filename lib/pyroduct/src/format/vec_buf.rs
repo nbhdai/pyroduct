@@ -38,6 +38,8 @@ struct PyroInner {
     _padding: u64, // 8 bytes
 
     // Starts at offset 16
+    pub header: [u8; 16],
+    // Starts at offset 32
     pub data: [u8; 0],
 }
 
@@ -47,12 +49,13 @@ impl PyroInner {
             ref_count: AtomicU32::new(0),
             capacity,
             _padding: 0,
+            header: [0;16],
             data: [],
         }
     }
 
     #[inline]
-    pub fn data_ptr(&self) -> *mut u8 {
+    fn data_ptr(&self) -> *mut u8 {
         self.data.as_ptr() as *mut u8
     }
 }
