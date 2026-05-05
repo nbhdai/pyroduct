@@ -659,11 +659,8 @@ impl PyroRefPtr {
     /// * The memory must contain a valid Pyro header and payload as specified by the header.
     pub unsafe fn try_ref<'a>(&self) -> Result<PyroRef<'a>, PyroError> {
         let ptr = self.0;
-        let header = unsafe { &*(ptr as *const [u8; 16]) };
 
-        let payload_len = PyroHeader::header_len(header) as usize;
-        let total_len = PyroParser::HEADER_SIZE + payload_len;
-        if let Err(parse_error) = PyroParser::check(header) {
+        if let Err(parse_error) = unsafe { PyroParser::check_raw(ptr) } {
             tracing::error!(?parse_error, "Checks failed for an FFI PyroViewPtr");
             let error = CapturedError::new(format!(
                 "CRITICAL ERROR: Unable to construct a Ffi view due to {}",
@@ -673,6 +670,10 @@ impl PyroRefPtr {
             .with_backtrace(std::backtrace::Backtrace::force_capture());
             return Err(PyroError::HeaderFfi(error.into()));
         };
+        let header = unsafe { &*(ptr as *const [u8; 16]) };
+
+        let payload_len = PyroHeader::header_len(header) as usize;
+        let total_len = PyroParser::HEADER_SIZE + payload_len;
         Ok(PyroRef {
             data: unsafe { slice::from_raw_parts(ptr, total_len) },
         })
