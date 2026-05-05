@@ -51,7 +51,7 @@ pub fn bridgeable(input: &ItemStruct, import_location: &Path) -> syn::Result<Tok
         }
 
         impl<'decoder_life> #impl_generics #import_location::format::Decoder<'decoder_life, #ref_struct_name < #(#ref_struct_args),* >> for #decoder_name #ty_generics #where_clause {
-            fn decode(&mut self, view: #import_location::format::PyroRef<'decoder_life>) -> Result<#ref_struct_name < #(#ref_struct_args),* >, #import_location::PyroError> {
+            fn decode(&mut self, view: &'decoder_life #import_location::format::PyroRef<'decoder_life>) -> Result<#ref_struct_name < #(#ref_struct_args),* >, #import_location::PyroError> {
                 let val = #import_location::format::PyroValue::parse_wire(view)?;
                 if let #import_location::format::PyroValue::Group(row) = val {
                     #ref_struct_name::try_from(row).map_err(|_| #import_location::PyroError::deserialization(

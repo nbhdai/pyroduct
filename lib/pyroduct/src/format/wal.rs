@@ -273,7 +273,7 @@ pub struct WalInner {
 // =============================================================================
 
 unsafe extern "C" fn wal_inner_dropper(ptr: *mut u8, _capacity: u32) {
-    let _ = Box::from_raw(ptr as *mut WalInner);
+    let _ = unsafe { Box::from_raw(ptr as *mut WalInner) };
 }
 
 // =============================================================================
@@ -476,7 +476,7 @@ impl WalRecord {
         }
 
         if status == 0 {
-            let row = PyroRow::parse_wire(pkt).ok()?.to_static();
+            let row = PyroRow::parse_wire(&pkt).ok()?.to_static();
             Some(WalRecord::Success {
                 row_index: frame.row_index,
                 success: PyroSuccess { row, logs: extracted_logs },
@@ -544,7 +544,7 @@ pub fn recover(base_path: impl Into<PathBuf>) -> io::Result<Vec<WalRecord>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{PyroRow, PyroValue};
+    use crate::{PyroRow, PyroValue, format::header::PyroData};
     use super::*;
     use tempfile::TempDir;
 
@@ -617,7 +617,9 @@ mod tests {
 
         // Get a tracked view from the reader
         let view = reader.view_at(frame.packet_offset).expect("Should get view");
-        let recovered_row = PyroRow::parse_wire(view).expect("parse should work");
+        let pyref = view.py_ref();
+
+        let recovered_row = PyroRow::parse_wire(&pyref).expect("parse should work");
         assert_eq!(recovered_row.get("id"), Some(&PyroValue::from(42i32)));
     }
 }

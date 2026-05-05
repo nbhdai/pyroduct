@@ -194,7 +194,7 @@ impl InitFn {
         quote! {
             #[unsafe(no_mangle)]
             pub extern "C" fn #init_name(
-                config_ptr: ::pyroduct::format::PyroViewPtr,
+                config_ptr: ::pyroduct::format::PyroRefPtr,
                 object_id: u64,
             ) -> #return_ty {
                 #closure
@@ -269,7 +269,7 @@ mod tests {
         let expected = quote! {
             #[unsafe(no_mangle)]
             pub extern "C" fn p__greeter_server__ffi_init(
-                config_ptr: ::pyroduct::format::PyroViewPtr,
+                config_ptr: ::pyroduct::format::PyroRefPtr,
                 object_id: u64,
             ) -> ::pyroduct::ffi::InitResult {
                 ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_init(|object_id| {
@@ -306,7 +306,7 @@ mod tests {
         let expected = quote! {
             #[unsafe(no_mangle)]
             pub extern "C" fn p__greeter_server__ffi_init(
-                config_ptr: ::pyroduct::format::PyroViewPtr,
+                config_ptr: ::pyroduct::format::PyroRefPtr,
                 object_id: u64,
             ) -> ::pyroduct::ffi::FutureInitResult {
                 ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_async_init(|object_id| async move {

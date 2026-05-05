@@ -20,7 +20,7 @@ use tracing::Instrument;
 
 use crate::ffi::FuturePyroView;
 use crate::ffi::guest::logger::object_span;
-use crate::format::{Bridgeable, PyroVec, PyroViewPtr, PyroView};
+use crate::format::{Bridgeable, PyroViewPtr, PyroView};
 use crate::panic::{clear_last_panic, recover_panic_info, register_ffi_panic_hook};
 use crate::{CapturedError, PyroError};
 

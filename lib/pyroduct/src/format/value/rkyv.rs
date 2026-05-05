@@ -26,7 +26,7 @@ use rkyv::rancor::Error as RancorError;
 use crate::{
     CapturedError, PyroError,
     format::{
-        PyroVec, header::PyroData, value::{ArchivedPyroRow, ArchivedPyroValue}
+        PyroRef, PyroVec, header::PyroData, value::{ArchivedPyroRow, ArchivedPyroValue}
     },
 };
 
@@ -43,8 +43,8 @@ impl<'a> PyroRow<'a> {
     }
 
     ///
-    pub fn parse_wire<T: PyroData + 'a>(view: T) -> Result<Self, PyroError> {
-        let archived_ref = rkyv::access::<ArchivedPyroRow, RancorError>(&view)
+    pub fn parse_wire(view: &'a PyroRef<'a>) -> Result<Self, PyroError> {
+        let archived_ref = rkyv::access::<ArchivedPyroRow, RancorError>(view)
             .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
         let row = PyroRow::from(archived_ref);
         Ok(row)
@@ -62,8 +62,8 @@ impl<'a> PyroValue<'a> {
     }
 
     ///
-    pub fn parse_wire<T: PyroData + 'a>(view: T) -> Result<Self, PyroError> {
-        let archived_ref = rkyv::access::<ArchivedPyroValue, RancorError>(&view)
+    pub fn parse_wire(view: &'a PyroRef<'a>) -> Result<Self, PyroError> {
+        let archived_ref = rkyv::access::<ArchivedPyroValue, RancorError>(view)
             .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
         let row = PyroValue::from(archived_ref);
         Ok(row)
@@ -88,8 +88,8 @@ mod tests {
         assert!(vec.len() > 0);
 
         // Expose
-        let view = vec.view();
-        let recovered = PyroRow::parse_wire(view).expect("expose failed");
+        let view = vec.py_ref();
+        let recovered = PyroRow::parse_wire(&view).expect("expose failed");
         assert_eq!(recovered, row);
     }
 
@@ -98,8 +98,8 @@ mod tests {
         let val = PyroValue::from(42i32).into_owned();
 
         let vec = val.to_wire().expect("ship failed");
-        let view = vec.view();
-        let recovered = PyroValue::parse_wire(view).expect("expose failed");
+        let view = vec.py_ref();
+        let recovered = PyroValue::parse_wire(&view).expect("expose failed");
         assert_eq!(recovered, val);
     }
 
@@ -114,8 +114,8 @@ mod tests {
         .into_owned();
 
         let vec = outer.to_wire().expect("ship failed");
-        let view = vec.view();
-        let recovered = PyroRow::parse_wire(view).expect("expose failed");
+        let view = vec.py_ref();
+        let recovered = PyroRow::parse_wire(&view).expect("expose failed");
         assert_eq!(recovered, outer);
     }
 
@@ -128,8 +128,8 @@ mod tests {
         ]);
 
         let vec = val.to_wire().expect("ship failed");
-        let view = vec.view();
-        let recovered = PyroValue::parse_wire(view).expect("expose failed");
+        let view = vec.py_ref();
+        let recovered = PyroValue::parse_wire(&view).expect("expose failed");
         assert_eq!(recovered, val);
     }
 }

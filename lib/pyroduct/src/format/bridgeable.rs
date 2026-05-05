@@ -18,7 +18,7 @@ pub trait Encoder<T> {
 }
 
 pub trait Decoder<'a, T: 'a> {
-    fn decode(&mut self, vec: PyroRef<'a>) -> Result<T, PyroError>;
+    fn decode(&mut self, vec: &'a PyroRef<'a>) -> Result<T, PyroError>;
 }
 
 pub trait Unpack<Packed>: Sized {
@@ -137,7 +137,8 @@ pub trait Bridgeable: Sized {
     fn expose(view: PyroView) -> Result<TypedView<Self::Ref<'static>>, PyroError> {
         let mut decoder = Self::Decoder::default();
         let inner = {
-            let inner = decoder.decode(view.py_ref())?;
+            let pyref = view.py_ref();
+            let inner = decoder.decode(&pyref)?;
             unsafe { std::mem::transmute::<Self::Ref<'_>, Self::Ref<'static>>(inner) }
         };
         Ok(TypedView { inner, view })
@@ -180,7 +181,7 @@ pub struct ResultDecoder<T, E> {
 impl<'a, T: 'a, DT: Decoder<'a, T>, E: 'a, DE: Decoder<'a, E>> Decoder<'a, Result<T, E>>
     for ResultDecoder<DT, DE>
 {
-    fn decode(&mut self, view: PyroRef<'a>) -> Result<Result<T, E>, PyroError> {
+    fn decode(&mut self, view: &'a PyroRef<'a>) -> Result<Result<T, E>, PyroError> {
         let inner = match view.status() {
             Ok(DataStatus::Valid) => Ok(self.ok_decoder.decode(view)?),
             Ok(DataStatus::Error) => Err(self.err_decoder.decode(view)?),
@@ -224,7 +225,7 @@ pub struct OptionDecoder<T> {
 }
 
 impl<'a, T: 'a, DT: Decoder<'a, T>> Decoder<'a, Option<T>> for OptionDecoder<DT> {
-    fn decode(&mut self, view: PyroRef<'a>) -> Result<Option<T>, PyroError> {
+    fn decode(&mut self, view: &'a PyroRef<'a>) -> Result<Option<T>, PyroError> {
         let inner = match view.status() {
             Ok(DataStatus::Valid) => Some(self.decoder.decode(view)?),
             Ok(DataStatus::Empty) => None,
