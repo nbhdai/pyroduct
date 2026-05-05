@@ -51,7 +51,7 @@ EOF
 echo "✅ Created configuration file at: $CONFIG_FILE"
 echo ""
 
-CLI_PATH="lib/cli"
+CLI_PATH="lib/pyroduct"
 
 if [ -d "$CLI_PATH" ]; then
     echo "Compiling and installing the pyroduct CLI..."
