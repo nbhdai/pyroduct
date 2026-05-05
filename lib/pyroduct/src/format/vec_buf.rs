@@ -66,7 +66,7 @@ impl PyroInner {
 /// 
 /// This is wholely owned with it's own reference counting.
 pub struct PyroVec {
-    pub(super) view: NonNull<PyroInner>,
+    view: NonNull<PyroInner>,
     dropper: PyroVecDropper,
     grower: PyroVecGrower,
 }
@@ -84,6 +84,16 @@ impl PyroData for PyroVec {
     fn capacity(&self) -> usize {
         let cap = unsafe { self.view.as_ref().capacity } as usize;
         cap - PyroParser::HEADER_SIZE
+    }
+
+    fn py_ref(&self) -> PyroRef<'_> {
+        PyroRef {
+            data: self.as_raw_slice()
+        }
+    }
+
+    fn py_ptr(&self) -> PyroRefPtr {
+        PyroRefPtr::new(self.as_raw_slice().as_ptr())
     }
 }
 
@@ -123,11 +133,6 @@ impl PyroVec {
             let layout = Self::layout_for_capacity(capacity as usize);
             alloc::dealloc(ptr, layout);
         }
-    }
-
-    extern "C" fn no_op_dropper(_ptr: *mut u8, _capacity: u32) {}
-    pub(crate) fn no_op_dropper_fn() -> PyroVecDropper {
-        Self::no_op_dropper
     }
 
     unsafe extern "C" fn default_grower(
@@ -437,6 +442,16 @@ impl PyroData for PyroView {
     fn capacity(&self) -> usize {
         self.len()
     }
+
+    fn py_ref(&self) -> PyroRef<'_> {
+        PyroRef {
+            data: self.as_raw_slice()
+        }
+    }
+
+    fn py_ptr(&self) -> PyroRefPtr {
+        PyroRefPtr::new(self.as_raw_slice().as_ptr())
+    }
 }
 
 impl PyroView {
@@ -588,6 +603,9 @@ pub unsafe fn make_view(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PyroRefPtr(pub(super) *const u8);
 
+unsafe impl Send for PyroRefPtr {}
+unsafe impl Sync for PyroRefPtr {}
+
 impl PyroRefPtr {
     pub fn new(ptr: *const u8) -> Self {
         Self(ptr)
@@ -613,6 +631,33 @@ impl PyroRefPtr {
             data: unsafe { slice::from_raw_parts(ptr, total_len) },
         }
     }
+
+    /// Reconstructs a `PyroRef` from a raw pointer.
+    ///
+    /// # Safety
+    /// * The pointer must be non-null and properly aligned (16-byte alignment).
+    /// * The memory referenced must remain valid for the lifetime `'a`.
+    /// * The memory must contain a valid Pyro header and payload as specified by the header.
+    pub unsafe fn try_ref<'a>(&self) -> Result<PyroRef<'a>, PyroError> {
+        let ptr = self.0;
+        let header = unsafe { &*(ptr as *const [u8; 16]) };
+        
+        let payload_len = PyroHeader::header_len(header) as usize;
+        let total_len = PyroParser::HEADER_SIZE + payload_len;
+        if let Err(parse_error) = PyroParser::check(header) {
+            tracing::error!(?parse_error, "Checks failed for an FFI PyroViewPtr");
+            let error = CapturedError::new(format!(
+                "CRITICAL ERROR: Unable to construct a Ffi view due to {}",
+                parse_error
+            ))
+            .with_location(std::panic::Location::caller())
+            .with_backtrace(std::backtrace::Backtrace::force_capture());
+            return Err(PyroError::HeaderFfi(error.into()));
+        };
+        Ok(PyroRef {
+            data: unsafe { slice::from_raw_parts(ptr, total_len) },
+        })
+    }
 }
 
 
@@ -635,6 +680,14 @@ impl<'a> PyroData for PyroRef<'a> {
 
     fn capacity(&self) -> usize {
         self.data.len().saturating_sub(PyroParser::HEADER_SIZE)
+    }
+
+    fn py_ref(&self) -> PyroRef<'_> {
+        self.clone()
+    }
+
+    fn py_ptr(&self) -> PyroRefPtr {
+        PyroRefPtr::new(self.data.as_ptr())
     }
 }
 

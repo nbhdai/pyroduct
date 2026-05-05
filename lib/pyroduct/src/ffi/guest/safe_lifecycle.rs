@@ -7,7 +7,7 @@ use tracing::{debug, error, trace};
 use crate::ffi::guest::panic_wrap::get_runtime;
 use crate::ffi::{FutureInitResult, InitResult};
 use crate::format::{
-    PyroView, PyroViewPtr,
+    PyroRefPtr,
     header::{DataStatus, PyroHeader, ParseError},
 };
 use crate::panic::{clear_last_panic, recover_panic_info, register_ffi_panic_hook};
@@ -21,9 +21,9 @@ pub struct EmptyConfig {}
 ///
 /// Returns `None` if the view is empty/null, otherwise deserializes the JSON payload.
 pub fn deserialize_config<C: serde::de::DeserializeOwned>(
-    config: PyroViewPtr,
+    config: PyroRefPtr,
 ) -> Result<Option<C>, PyroError> {
-    let view = match unsafe { PyroView::from_ptr(config) } {
+    let view = match unsafe { config.try_ref() } {
         Err(PyroError::Header(ParseError::NullPointer)) => return Ok(None),
         Err(err) => return Err(err),
         Ok(ok) => ok, 

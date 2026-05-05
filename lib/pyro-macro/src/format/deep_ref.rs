@@ -81,11 +81,11 @@ pub fn deep_ref(
         }
     };
 
-    // 3. Generate FromDeepRef Implementation
+    // 3. Generate From<DeepRef> Implementation
     let from_ref_conversions = fields.iter().map(|f| {
         let field_name = f.ident.as_ref().unwrap();
         let ty = &f.ty;
-        generate_from_ref_conversion(field_name, ty, import_location)
+        generate_from_ref_conversion(field_name, ty)
     });
 
     let impl_from_ref = quote! {
@@ -101,7 +101,7 @@ pub fn deep_ref(
     let from_ref_conversions = fields.iter().map(|f| {
         let field_name = f.ident.as_ref().unwrap();
         let ty = &f.ty;
-        generate_from_ref_conversion(field_name, ty, import_location)
+        generate_from_ref_conversion(field_name, ty)
     });
 
     let impl_from_ref_ref = quote! {
@@ -282,7 +282,6 @@ fn generate_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream {
 fn generate_from_ref_conversion(
     field_name: &Ident,
     ty: &Type,
-    import_location: &Path,
 ) -> TokenStream {
     match ty {
         Type::Path(TypePath { path, .. }) => {
@@ -336,7 +335,7 @@ fn generate_from_ref_conversion(
                                 }
                             } else {
                                 quote! {
-                                    #field_name: reference.#field_name.iter().map(|x| <#inner_ty as #import_location::format::FromDeepRef>::from_ref(x)).collect()
+                                    #field_name: reference.#field_name.iter().map(|x| #inner_ty::from(x)).collect()
                                 }
                             }
                         } else {

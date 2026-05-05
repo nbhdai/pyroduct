@@ -12,6 +12,16 @@ impl ::pyroduct::format::DeepRef for Empty {
         }
     }
 }
+impl<'a> From<EmptyRef<'a>> for Empty {
+    fn from(reference: EmptyRef<'a>) -> Self {
+        Self {}
+    }
+}
+impl<'a> From<&'a EmptyRef<'a>> for Empty {
+    fn from(reference: &'a EmptyRef<'a>) -> Self {
+        Self {}
+    }
+}
 fn main() {
     let empty = Empty {};
     let _e = empty.as_deep_ref();

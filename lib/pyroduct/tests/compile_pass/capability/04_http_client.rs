@@ -35,7 +35,7 @@ impl HttpServer {
         _client: &HttpClient,
         url: String,
         body: String,
-        len: u64,
+        _len: u64,
     ) -> Result<String, String> {
         Ok(format!("POST {} bytes to {}", body.len(), url))
     }

@@ -114,6 +114,16 @@ impl ::pyroduct::format::DeepRef for Empty {
         }
     }
 }
+impl<'a> From<EmptyRef<'a>> for Empty {
+    fn from(reference: EmptyRef<'a>) -> Self {
+        Self {}
+    }
+}
+impl<'a> From<&'a EmptyRef<'a>> for Empty {
+    fn from(reference: &'a EmptyRef<'a>) -> Self {
+        Self {}
+    }
+}
 fn main() {
     let row = PyroRow::new();
     let _e = EmptyRef::try_from(&row).unwrap();

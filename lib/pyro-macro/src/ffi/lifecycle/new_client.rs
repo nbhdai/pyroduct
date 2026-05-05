@@ -155,7 +155,7 @@ impl NewClientFn {
             quote! {
                 let client: #client_type = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
                     Ok(v) => v,
-                    Err(e) => return e.encode().into_raw(),
+                    Err(e) => return e.encode().ptr(),
                 };
 
                 ::pyroduct::ffi::guest::execute_safe(|| {
@@ -168,7 +168,7 @@ impl NewClientFn {
             quote! {
                 let client: #client_type = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
                     Ok(v) => v,
-                    Err(e) => return e.encode().into_raw(),
+                    Err(e) => return e.encode().ptr(),
                 };
 
                 ::pyroduct::ffi::guest::execute_safe(|| {
@@ -183,7 +183,7 @@ impl NewClientFn {
             pub unsafe extern "C" fn #fn_ffi_name(
                 capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
                 client_state_ptr: ::pyroduct::format::PyroRefPtr,
-            ) -> ::pyroduct::format::PyroVecPtr {
+            ) -> ::pyroduct::format::PyroViewPtr {
                 #body
             }
         }

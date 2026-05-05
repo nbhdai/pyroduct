@@ -2,7 +2,7 @@ use pyroduct::{
     CapturedError,
     ffi::guest::{deserialize_input, execute_safe, serialize_output, serialize_result},
     format::{
-        Bridgeable, PyroView, header::{DataStatus, PyroHeader}
+        Bridgeable, PyroView, header::{DataStatus, PyroHeader, PyroData}
     },
     magma,
     panic::register_ffi_panic_hook,
@@ -283,7 +283,7 @@ fn test_deserialize_input_roundtrip() {
         payload: "roundtrip".into(),
     };
     let shipped = original.ship().unwrap();
-    let view_ptr = shipped.ptr();
+    let view_ptr = shipped.py_ptr();
 
     let recovered: UserData = deserialize_input(view_ptr).expect("Should deserialize");
     assert_eq!(recovered, original);
@@ -292,7 +292,7 @@ fn test_deserialize_input_roundtrip() {
 #[test]
 fn test_deserialize_input_primitive() {
     let shipped = 123u32.ship().unwrap();
-    let view_ptr = shipped.ptr();
+    let view_ptr = shipped.py_ptr();
 
     let recovered: u32 = deserialize_input(view_ptr).expect("Should deserialize u32");
     assert_eq!(recovered, 123);

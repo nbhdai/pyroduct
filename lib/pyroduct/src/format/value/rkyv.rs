@@ -26,7 +26,7 @@ use rkyv::rancor::Error as RancorError;
 use crate::{
     CapturedError, PyroError,
     format::{
-        PyroRef, PyroVec, header::PyroData, value::{ArchivedPyroRow, ArchivedPyroValue}
+        PyroRef, PyroVec, value::{ArchivedPyroRow, ArchivedPyroValue}
     },
 };
 
@@ -72,6 +72,8 @@ impl<'a> PyroValue<'a> {
 
 #[cfg(test)]
 mod tests {
+    use crate::format::header::PyroData;
+
     use super::*;
 
     #[test]
@@ -91,6 +93,7 @@ mod tests {
         let view = vec.py_ref();
         let recovered = PyroRow::parse_wire(&view).expect("expose failed");
         assert_eq!(recovered, row);
+        drop(vec);
     }
 
     #[test]
@@ -101,6 +104,7 @@ mod tests {
         let view = vec.py_ref();
         let recovered = PyroValue::parse_wire(&view).expect("expose failed");
         assert_eq!(recovered, val);
+        drop(vec);
     }
 
     #[test]
@@ -117,6 +121,7 @@ mod tests {
         let view = vec.py_ref();
         let recovered = PyroRow::parse_wire(&view).expect("expose failed");
         assert_eq!(recovered, outer);
+        drop(vec);
     }
 
     #[test]
@@ -131,5 +136,6 @@ mod tests {
         let view = vec.py_ref();
         let recovered = PyroValue::parse_wire(&view).expect("expose failed");
         assert_eq!(recovered, val);
+        drop(vec);
     }
 }
