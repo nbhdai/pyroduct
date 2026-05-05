@@ -2,7 +2,8 @@ use pyroduct::{
     CapturedError,
     ffi::guest::{deserialize_input, execute_safe, serialize_output, serialize_result},
     format::{
-        Bridgeable, PyroView, header::{DataStatus, PyroHeader, PyroData}
+        Bridgeable, PyroView,
+        header::{DataStatus, PyroData, PyroHeader},
     },
     magma,
     panic::register_ffi_panic_hook,
@@ -46,7 +47,7 @@ fn test_execute_safe_success() {
     assert_eq!(vec.status(), Ok(DataStatus::Valid));
     let typed = UserData::expose(vec)
         .expect("Should parse as UserData")
-        .into::<UserData>();
+        .into_owned::<UserData>();
     assert_eq!(typed.id, 101);
     assert_eq!(typed.payload.as_str(), "Success");
 }
@@ -67,7 +68,7 @@ fn test_execute_safe_large_payload() {
     };
 
     assert_eq!(vec.status(), Ok(DataStatus::Valid));
-    let typed = UserData::expose(vec).unwrap().into::<UserData>();
+    let typed = UserData::expose(vec).unwrap().into_owned::<UserData>();
     assert_eq!(typed.id, u32::MAX);
     assert_eq!(typed.payload.len(), 10_000);
 }
@@ -141,7 +142,7 @@ fn test_execute_safe_panic_then_success() {
         .unwrap()
     };
     assert_eq!(r2.status(), Ok(DataStatus::Valid));
-    let typed = UserData::expose(r2).unwrap().into::<UserData>();
+    let typed = UserData::expose(r2).unwrap().into_owned::<UserData>();
     assert_eq!(typed.id, 999);
 }
 
@@ -161,7 +162,7 @@ fn test_execute_safe_multiple_sequential() {
             .unwrap()
         };
         assert_eq!(vec.status(), Ok(DataStatus::Valid));
-        let typed = UserData::expose(vec).unwrap().into::<UserData>();
+        let typed = UserData::expose(vec).unwrap().into_owned::<UserData>();
         assert_eq!(typed.id, i);
     }
 }
@@ -178,7 +179,7 @@ fn test_serialize_output_struct() {
     });
     assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
-    let typed = UserData::expose(vec).unwrap().into::<UserData>();
+    let typed = UserData::expose(vec).unwrap().into_owned::<UserData>();
     assert_eq!(typed.id, 42);
     assert_eq!(typed.payload.as_str(), "hello");
 }
@@ -191,7 +192,7 @@ fn test_serialize_output_empty_string() {
     });
     assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
-    let typed = UserData::expose(vec).unwrap().into::<UserData>();
+    let typed = UserData::expose(vec).unwrap().into_owned::<UserData>();
     assert_eq!(typed.id, 0);
     assert!(typed.payload.is_empty());
 }
@@ -201,7 +202,7 @@ fn test_serialize_output_primitive() {
     let vec = serialize_output(42u64);
     assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
-    let restored: u64 = u64::expose(vec).expect("Should parse u64").into();
+    let restored: u64 = u64::expose(vec).expect("Should parse u64").clone_into();
     assert_eq!(restored, 42);
 }
 
@@ -210,7 +211,7 @@ fn test_serialize_output_vec() {
     let vec = serialize_output(vec![1u32, 2, 3, 4, 5]);
     assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
-    let restored = Vec::<u32>::expose(vec).unwrap().into::<Vec<u32>>();
+    let restored = Vec::<u32>::expose(vec).unwrap().clone_into::<Vec<u32>>();
     assert_eq!(restored, vec![1, 2, 3, 4, 5]);
 }
 
@@ -314,7 +315,7 @@ fn test_full_roundtrip_user_data() {
     };
     assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
-    let recovered = UserData::expose(vec).unwrap().into();
+    let recovered = UserData::expose(vec).unwrap().into_owned();
     assert_eq!(original, recovered);
 }
 
@@ -330,7 +331,7 @@ fn test_full_roundtrip_user_error() {
     };
     assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
-    let recovered = UserError::expose(vec).unwrap().into();
+    let recovered = UserError::expose(vec).unwrap().into_owned();
     assert_eq!(original, recovered);
 }
 

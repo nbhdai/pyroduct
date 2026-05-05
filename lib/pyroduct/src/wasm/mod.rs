@@ -298,7 +298,7 @@ impl<T> Client<T> {
     pub fn __call_from_wasm<I, O, F>(&self, input: Option<&I>, func: F) -> O
     where
         I: Bridgeable,
-        for<'a> O: Bridgeable + From<O::Ref<'a>> + 'static,
+        for<'a> O: Bridgeable + From<&'a O::Ref<'static>> + 'static,
         F: FnOnce(*const u8, *const u8) -> *mut u8,
     {
         let input = match input {
@@ -316,7 +316,7 @@ impl<T> Client<T> {
         };
         let result = O::expose(result_vec.view());
         match result {
-            Ok(result) => result.into(),
+            Ok(result) => result.into_owned(),
             Err(err) => {
                 store_error(err);
                 panic!("Received an unhandled error from host")

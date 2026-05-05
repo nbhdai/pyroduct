@@ -44,14 +44,22 @@ impl<T> TypedView<T> {
         &self.view
     }
 
-    pub fn into<S>(self) -> S
+    pub fn clone_into<S>(&self) -> S
     where
         S: From<T>,
+        T: Clone,
     {
-        self.inner.into()
+        S::from(self.inner.clone())
     }
 
-    pub fn to_owned<S>(self) -> S
+    pub fn into_owned<S>(&self) -> S
+    where
+        S: for<'a> From<&'a T>,
+    {
+        S::from(&self.inner)
+    }
+
+    pub fn to_owned<S>(&self) -> S
     where
         T: ToOwned,
         S: From<T::Owned>,

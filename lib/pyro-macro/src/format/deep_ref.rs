@@ -105,8 +105,8 @@ pub fn deep_ref(
     });
 
     let impl_from_ref_ref = quote! {
-        impl<'a> From<&'a #ref_struct_name<'a>> for #struct_name {
-            fn from(reference: &'a #ref_struct_name<'a>) -> Self {
+        impl<'a, 'b> From<&'a #ref_struct_name<'b>> for #struct_name {
+            fn from(reference: &'a #ref_struct_name<'b>) -> Self {
                 Self {
                     #(#from_ref_conversions,)*
                 }
@@ -279,10 +279,7 @@ fn generate_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream {
 }
 
 // Generate the conversion logic for from_ref (Borrowed -> Owned)
-fn generate_from_ref_conversion(
-    field_name: &Ident,
-    ty: &Type,
-) -> TokenStream {
+fn generate_from_ref_conversion(field_name: &Ident, ty: &Type) -> TokenStream {
     match ty {
         Type::Path(TypePath { path, .. }) => {
             let segment = path.segments.last().unwrap();
