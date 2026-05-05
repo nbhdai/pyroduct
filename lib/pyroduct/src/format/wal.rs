@@ -352,7 +352,7 @@ impl WalReader {
         let inner = unsafe { self.inner.as_ref() };
         let reference = get_ref(&inner.buffer, offset)?;
         unsafe {
-            crate::format::vec_buf::make_view(&inner.ref_count, reference, wal_inner_dropper)
+            crate::format::vec_buf::make_view(&inner.ref_count, reference)
         }
     }
 

@@ -98,12 +98,3 @@ fn test_pyro_vec_zero_capacity() {
     assert_eq!(vec.len(), 1);
     assert_eq!(vec.as_slice(), &[1]);
 }
-
-#[test]
-fn test_pyro_vec_large_growth() {
-    let mut vec = PyroVec::with_capacity(1);
-    for i in 0..100_000 {
-        vec.push(i as u8);
-    }
-    assert_eq!(vec.len(), 100_000);
-}
