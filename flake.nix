@@ -36,9 +36,11 @@
             targets.wasm32-unknown-unknown.stable.rust-std
           ];
 
-        miriToolchain = with fenix.packages.${system}; combine [
-          complete.toolchain
-        ];
+        miriToolchain =
+          with fenix.packages.${system};
+          combine [
+            complete.toolchain
+          ];
 
         craneLibNative = (crane.mkLib pkgs).overrideToolchain nativeToolchain;
         craneLibWasm = (crane.mkLib pkgs).overrideToolchain wasmToolchain;
@@ -155,7 +157,6 @@
           // {
             packages = [
               wasmToolchain
-              miriToolchain
               pyroduct
               test-miri
               pkgs.jq
