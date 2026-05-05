@@ -1,4 +1,4 @@
-{ pkgs, craneLib, commonArgs }:
+{ craneLib, commonArgs }:
 
 craneLib.cargoBuild (commonArgs // {
   pname = "pyroduct-miri-tests";
