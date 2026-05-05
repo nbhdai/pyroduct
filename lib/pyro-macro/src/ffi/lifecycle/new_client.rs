@@ -155,7 +155,7 @@ impl NewClientFn {
             quote! {
                 let client: #client_type = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
                     Ok(v) => v,
-                    Err(e) => return e.encode().ptr(),
+                    Err(e) => return e.encode().into_ptr(),
                 };
 
                 ::pyroduct::ffi::guest::execute_safe(|| {
@@ -168,7 +168,7 @@ impl NewClientFn {
             quote! {
                 let client: #client_type = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
                     Ok(v) => v,
-                    Err(e) => return e.encode().ptr(),
+                    Err(e) => return e.encode().into_ptr(),
                 };
 
                 ::pyroduct::ffi::guest::execute_safe(|| {

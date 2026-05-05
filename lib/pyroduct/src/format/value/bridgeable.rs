@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::panic::Location;
 
 use crate::format::bridgeable::{Decoder, Encoder};
-use crate::format::header::{DataStatus, PyroHeader};
+use crate::format::header::{DataStatus, PyroHeader, PyroHeaderMut};
 use crate::format::value::{PrimitiveValueList, PyroValue, Time};
 use crate::format::{Bridgeable, PyroVec, PyroRef};
 use crate::{CapturedError, PyroError};
@@ -22,13 +22,17 @@ macro_rules! impl_bridgeable_scalar {
 
         impl Encoder<$t> for $encoder {
             fn encode(&mut self, value: &$t) -> Result<PyroVec, PyroError> {
-                PyroValue::$variant(*value).to_wire()
+                let mut wire = PyroValue::$variant(*value).to_wire()?;
+                wire.set_status(DataStatus::Valid);
+                Ok(wire)
             }
         }
 
         impl Encoder<&$t> for $encoder {
             fn encode(&mut self, value: &&$t) -> Result<PyroVec, PyroError> {
-                PyroValue::$variant(**value).to_wire()
+                let mut wire = PyroValue::$variant(**value).to_wire()?;
+                wire.set_status(DataStatus::Valid);
+                Ok(wire)
             }
         }
 
@@ -163,16 +167,20 @@ macro_rules! impl_bridgeable_list {
         }
         impl Encoder<&[$t]> for $encoder {
             fn encode(&mut self, value: &&[$t]) -> Result<PyroVec, PyroError> {
-                PyroValue::PrimitiveList(PrimitiveValueList::$variant(Cow::Borrowed(*value)))
-                    .to_wire()
+                let mut wire = PyroValue::PrimitiveList(PrimitiveValueList::$variant(Cow::Borrowed(*value)))
+                    .to_wire()?;
+                wire.set_status(DataStatus::Valid);
+                Ok(wire)
             }
         }
         impl Encoder<Vec<$t>> for $encoder {
             fn encode(&mut self, value: &Vec<$t>) -> Result<PyroVec, PyroError> {
-                PyroValue::PrimitiveList(PrimitiveValueList::$variant(Cow::Borrowed(
+                let mut wire = PyroValue::PrimitiveList(PrimitiveValueList::$variant(Cow::Borrowed(
                     value.as_slice(),
                 )))
-                .to_wire()
+                .to_wire()?;
+                wire.set_status(DataStatus::Valid);
+                Ok(wire)
             }
         }
 

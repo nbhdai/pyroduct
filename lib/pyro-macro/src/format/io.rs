@@ -41,7 +41,9 @@ pub fn bridgeable(input: &ItemStruct, import_location: &Path) -> syn::Result<Tok
         impl #impl_generics #import_location::format::Encoder<#struct_name #ty_generics> for #encoder_name #ty_generics #where_clause {
             fn encode(&mut self, val: &#struct_name #ty_generics) -> Result<#import_location::format::PyroVec, #import_location::PyroError> {
                 let row = #import_location::format::ToRow::to_row(val);
-                #import_location::format::PyroValue::Group(row).to_wire()
+                let mut wire = #import_location::format::PyroValue::Group(row).to_wire()?;
+                <#import_location::format::PyroVec as #import_location::format::header::PyroHeaderMut>::set_status(&mut wire, #import_location::format::header::DataStatus::Valid);
+                Ok(wire)
             }
         }
 

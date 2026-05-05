@@ -228,7 +228,7 @@ fn test_serialize_output_option_some() {
 #[test]
 fn test_serialize_output_option_none() {
     let vec = serialize_output(Option::<String>::None);
-    assert_eq!(vec.status(), Ok(DataStatus::Valid));
+    assert_eq!(vec.status(), Ok(DataStatus::Empty));
 
     let restored = Option::<String>::expose(vec)
         .unwrap()

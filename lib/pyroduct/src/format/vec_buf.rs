@@ -53,11 +53,6 @@ impl PyroInner {
             data: [],
         }
     }
-
-    #[inline]
-    fn data_ptr(&self) -> *mut u8 {
-        self.data.as_ptr() as *mut u8
-    }
 }
 
 // ============================================================================
