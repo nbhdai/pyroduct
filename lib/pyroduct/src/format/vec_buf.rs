@@ -241,7 +241,7 @@ impl PyroVec {
         }
         unsafe {
             // Extract the payload pointer directly from the allocation
-            let payload_ptr = (self.view.as_ptr() as *mut u8).add(INNER_HEADER);
+            let payload_ptr = (self.view.as_ptr() as *mut u8).add(INNER_HEADER + PyroParser::HEADER_SIZE);
             ptr::copy_nonoverlapping(
                 other.as_ptr(),
                 payload_ptr.add(current_len),
@@ -298,7 +298,7 @@ pub fn ok() -> Self {
         let vec = Self::with_capacity(0);
         unsafe {
             // Use the outer vec.data_ptr() instead of going through inner
-            let inner_data_ptr = vec.data_ptr() as *mut u8;
+            let inner_data_ptr = vec.raw_ptr() as *mut u8;
             ptr::copy_nonoverlapping(
                 UNIT_HEADER.0.as_ptr(),
                 inner_data_ptr,
