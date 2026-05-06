@@ -12,13 +12,8 @@ impl ::pyroduct::format::DeepRef for Empty {
         }
     }
 }
-impl<'a> From<EmptyRef<'a>> for Empty {
-    fn from(reference: EmptyRef<'a>) -> Self {
-        Self {}
-    }
-}
-impl<'a> From<&'a EmptyRef<'a>> for Empty {
-    fn from(reference: &'a EmptyRef<'a>) -> Self {
+impl<'a> ::pyroduct::format::FromRef<EmptyRef<'a>> for Empty {
+    fn from_ref(reference: &EmptyRef<'a>) -> Self {
         Self {}
     }
 }

@@ -20,17 +20,8 @@ impl ::pyroduct::format::DeepRef for User {
         }
     }
 }
-impl<'a> From<UserRef<'a>> for User {
-    fn from(reference: UserRef<'a>) -> Self {
-        Self {
-            id: reference.id,
-            username: reference.username.to_string(),
-            score: reference.score,
-        }
-    }
-}
-impl<'a> From<&'a UserRef<'a>> for User {
-    fn from(reference: &'a UserRef<'a>) -> Self {
+impl<'a> ::pyroduct::format::FromRef<UserRef<'a>> for User {
+    fn from_ref(reference: &UserRef<'a>) -> Self {
         Self {
             id: reference.id,
             username: reference.username.to_string(),

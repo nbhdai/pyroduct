@@ -350,12 +350,14 @@ fn generate_from_ref_conversion(field_name: &Ident, ty: &Type, import_location: 
                     }
                 }
                 _ => {
-                    quote! { #field_name: #import_location::format::FromRef::from_ref(reference.#field_name.as_deep_ref()) }
+                    // Nested struct: field in Ref is already a Ref<'a>, pass it directly to FromRef
+                    quote! { #field_name: #import_location::format::FromRef::from_ref(&reference.#field_name) }
                 }
             }
         }
         _ => {
-            quote! { #field_name: #import_location::format::FromRef::from_ref(reference.#field_name.as_deep_ref()) }
+            // Fallback for unexpected types
+            quote! { #field_name: #import_location::format::FromRef::from_ref(&reference.#field_name) }
         }
     }
 }
