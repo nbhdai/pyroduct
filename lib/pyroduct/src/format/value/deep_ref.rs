@@ -19,7 +19,7 @@ pub trait DeepRef {
 }
 
 pub trait FromRef<S> {
-    fn from_ref(val: S) -> Self;
+    fn from_ref(val: &S) -> Self;
 }
 
 // =========================================================================
@@ -30,14 +30,14 @@ macro_rules! impl_from_ref_primitive {
     ($($t:ty),*) => {
         $(
             impl FromRef<$t> for $t {
-                fn from_ref(val: $t) -> $t {
-                    val
+                fn from_ref(val: &$t) -> $t {
+                    *val
                 }
             }
 
             impl FromRef<&$t> for $t {
-                fn from_ref(val: &$t) -> $t {
-                    *val
+                fn from_ref(val: &&$t) -> $t {
+                    **val
                 }
             }
         )*
@@ -56,8 +56,8 @@ impl_from_ref_primitive!(
 // =========================================================================
 
 impl FromRef<&str> for String {
-    fn from_ref(val: &str) -> String {
-        val.to_owned()
+    fn from_ref(val: &&str) -> String {
+        (**val).to_owned()
     }
 }
 
@@ -69,8 +69,8 @@ macro_rules! impl_from_ref_primitive_slice {
     ($($t:ty),*) => {
         $(
             impl FromRef<&[$t]> for Vec<$t> {
-                fn from_ref(val: &[$t]) -> Vec<$t> {
-                    val.to_vec()
+                fn from_ref(val: &&[$t]) -> Vec<$t> {
+                    (**val).to_vec()
                 }
             }
         )*
@@ -89,10 +89,19 @@ impl_from_ref_primitive_slice!(
 // =========================================================================
 
 impl FromRef<&String> for String {
-    fn from_ref(val: &String) -> String {
-        val.clone()
+    fn from_ref(val: &&String) -> String {
+        (**val).clone()
     }
 }
+
+// Vec<T> from borrowed &Vec<T>
+impl<T: Clone> FromRef<&Vec<T>> for Vec<T> {
+    fn from_ref(val: &&Vec<T>) -> Vec<T> {
+        (**val).clone()
+    }
+}
+
+
 
 impl DeepRef for Vec<String> {
     type Ref<'a> = Vec<&'a str>;
@@ -115,7 +124,7 @@ impl DeepRef for Vec<&String> {
 
 
 impl<T, S: FromRef<T>> FromRef<Option<T>> for Option<S> {
-    fn from_ref(val: Option<T>) -> Self {
+    fn from_ref(val: &Option<T>) -> Self {
         match val {
             Some(t) => Some(FromRef::from_ref(t)),
             None => None,
@@ -124,7 +133,7 @@ impl<T, S: FromRef<T>> FromRef<Option<T>> for Option<S> {
 }
 
 impl<T, S: FromRef<T>, E, U: FromRef<E>> FromRef<Result<T, E>> for Result<S, U> {
-    fn from_ref(val: Result<T, E>) -> Self {
+    fn from_ref(val: &Result<T, E>) -> Self {
         match val {
             Ok(t) => Ok(FromRef::from_ref(t)),
             Err(e) => Err(FromRef::from_ref(e)),

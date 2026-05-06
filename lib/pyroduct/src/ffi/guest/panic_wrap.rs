@@ -20,7 +20,7 @@ use tracing::Instrument;
 
 use crate::ffi::FuturePyroView;
 use crate::ffi::guest::logger::object_span;
-use crate::format::{Bridgeable, Decoder, PyroRefPtr, PyroView, PyroViewPtr};
+use crate::format::{Bridgeable, Decoder, FromRef, PyroRefPtr, PyroView, PyroViewPtr};
 use crate::panic::{clear_last_panic, recover_panic_info, register_ffi_panic_hook};
 use crate::{CapturedError, PyroError};
 
@@ -53,14 +53,14 @@ where
 /// Helper to deserialize input from a raw PyroViewPtr.
 pub fn deserialize_input<I>(data: PyroRefPtr) -> Result<I, PyroError>
 where
-    for<'a> I: Bridgeable + From<I::Ref<'a>>,
+    for<'a> I: Bridgeable + FromRef<I::Ref<'a>>,
 {
     tracing::trace!("Deserializing view");
     let guard = panic::catch_unwind(AssertUnwindSafe(|| {
         let view = unsafe { data.try_ref() }?;
         let mut decoder = <I as Bridgeable>::Decoder::default();
         let typed = decoder.decode(&view)?;
-        Ok(typed.into())
+        Ok(I::from_ref(&typed))
     }));
 
     match guard {

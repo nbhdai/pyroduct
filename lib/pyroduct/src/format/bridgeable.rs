@@ -4,7 +4,7 @@ use std::fmt;
 use std::ops::Deref;
 
 use crate::PyroError;
-use crate::format::PyroRef;
+use crate::format::{FromRef, PyroRef};
 use crate::format::header::PyroData;
 use crate::format::{
     ParseError, PyroVec, PyroView,
@@ -50,102 +50,18 @@ impl<T> TypedView<T> {
         &self.view
     }
 
-    pub fn clone_into<S>(&self) -> S
-    where
-        S: From<T>,
-        T: Clone,
-    {
-        S::from(self.inner.clone())
-    }
-
+    /// Convert the inner value to another type.
+    ///
+    /// `T: Clone` is needed because `self.inner` is behind a `&self`.
+    /// For identity (`S = T`) this is just a clone.
     pub fn into_owned<S>(&self) -> S
     where
-        S: for<'a> From<&'a T>,
+        S: FromRef<T>,
     {
-        S::from(&self.inner)
-    }
-
-    pub fn to_owned<S>(&self) -> S
-    where
-        T: ToOwned,
-        S: From<T::Owned>,
-    {
-        self.inner.to_owned().into()
+        S::from_ref(&self.inner)
     }
 }
 
-impl<T, E> TypedView<Result<T, E>> {
-    pub fn clone_into_result<S, U>(&self) -> Result<S, U>
-    where
-        S: From<T>,
-        U: From<E>,
-        T: Clone,
-        E: Clone,
-    {
-        match &self.inner {
-            Ok(ok) => Ok(S::from(ok.clone())),
-            Err(err) => Err(U::from(err.clone())),
-        }
-    }
-
-    pub fn into_owned_result<S, U>(&self) -> Result<S, U>
-    where
-        S: for<'a> From<&'a T>,
-        U: for<'a> From<&'a E>,
-    {
-        match &self.inner {
-            Ok(ok) => Ok(S::from(ok)),
-            Err(err) => Err(U::from(err)),
-        }
-    }
-
-    pub fn to_owned_result<S, U>(&self) -> Result<S, U>
-    where
-        T: ToOwned,
-        E: ToOwned,
-        S: From<T::Owned>,
-        U: From<E::Owned>,
-    {
-        match &self.inner {
-            Ok(ok) => Ok(S::from(ok.to_owned())),
-            Err(err) => Err(U::from(err.to_owned())),
-        }
-    }
-}
-
-impl<T> TypedView<Option<T>> {
-    pub fn clone_into_option<S>(&self) -> Option<S>
-    where
-        S: From<T>,
-        T: Clone,
-    {
-        match &self.inner {
-            Some(inner) => Some(S::from(inner.clone())),
-            None => None,
-        }
-    }
-
-    pub fn into_owned_option<S>(&self) -> Option<S>
-    where
-        S: for<'a> From<&'a T>,
-    {
-        match &self.inner {
-            Some(inner) => Some(S::from(&inner)),
-            None => None,
-        }
-    }
-
-    pub fn to_owned_option<S>(&self) -> Option<S>
-    where
-        T: ToOwned,
-        S: From<T::Owned>,
-    {
-        match &self.inner {
-            Some(inner) => Some(inner.to_owned().into()),
-            None => None,
-        }
-    }
-}
 
 impl<T: fmt::Debug> fmt::Debug for TypedView<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

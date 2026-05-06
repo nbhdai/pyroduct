@@ -90,7 +90,7 @@ pub fn deep_ref(
 
     let impl_from_ref = quote! {
         impl<'a> #import_location::format::FromRef<#ref_struct_name<'a>> for #struct_name {
-            fn from_ref(reference: #ref_struct_name<'a>) -> Self {
+            fn from_ref(reference: &#ref_struct_name<'a>) -> Self {
                 Self {
                     #(#from_ref_conversions,)*
                 }

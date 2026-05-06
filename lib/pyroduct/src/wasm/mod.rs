@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 use std::{collections::HashMap, ops::Deref};
 
-use crate::format::PyroVec;
+use crate::format::{FromRef, PyroVec};
 use crate::format::{
     Bridgeable, PyroView, ToRow,
     header::PyroData,
@@ -298,7 +298,7 @@ impl<T> Client<T> {
     pub fn __call_from_wasm<I, O, F>(&self, input: Option<&I>, func: F) -> O
     where
         I: Bridgeable,
-        for<'a> O: Bridgeable + From<&'a O::Ref<'static>> + 'static,
+        for<'a> O: Bridgeable + FromRef<O::Ref<'static>> + 'static,
         F: FnOnce(*const u8, *const u8) -> *mut u8,
     {
         let input = match input {
@@ -328,9 +328,9 @@ impl<T> Client<T> {
     where
         I: Bridgeable,
         O: Bridgeable + 'static,
-        for<'a> O: Bridgeable + From<&'a O::Ref<'static>> + 'static,
+        for<'a> O: Bridgeable + FromRef<O::Ref<'static>> + 'static,
         E: Bridgeable + 'static,
-        for<'a> E: Bridgeable + From<&'a E::Ref<'static>> + 'static,
+        for<'a> E: Bridgeable + FromRef<E::Ref<'static>> + 'static,
         F: FnOnce(*const u8, *const u8) -> *mut u8,
     {
         let input = match input {
@@ -347,7 +347,7 @@ impl<T> Client<T> {
             None => panic!("Host registration failed with no returned"),
         };
         let result = Result::<O, E>::expose(result_vec.view()).and_then(|r| {
-            let res = r.into_owned_result();
+            let res = r.into_owned();
             Ok(res)
         });
         match result {
