@@ -222,7 +222,7 @@ fn test_serialize_output_option_some() {
 
     let restored = Option::<String>::expose(vec)
         .unwrap()
-        .into_option::<String>();
+        .clone_into_option::<String>();
     assert_eq!(restored, Some("hello".to_string()));
 }
 
@@ -233,7 +233,7 @@ fn test_serialize_output_option_none() {
 
     let restored = Option::<String>::expose(vec)
         .unwrap()
-        .into_option::<String>();
+        .clone_into_option::<String>();
     assert_eq!(restored, None);
 }
 
@@ -251,7 +251,7 @@ fn test_serialize_result_ok() {
 
     let typed = <Result<UserData, UserError>>::expose(vec)
         .unwrap()
-        .into_result::<UserData, UserError>()
+        .into_owned_result::<UserData, UserError>()
         .unwrap();
     assert_eq!(typed.id, 200);
     assert_eq!(typed.payload.as_str(), "ok");
@@ -267,7 +267,7 @@ fn test_serialize_result_err() {
 
     let typed = <Result<UserData, UserError>>::expose(vec)
         .unwrap()
-        .into_result::<UserData, UserError>()
+        .into_owned_result::<UserData, UserError>()
         .unwrap_err();
     assert_eq!(typed.code, 404);
     assert_eq!(typed.msg.as_str(), "not found");

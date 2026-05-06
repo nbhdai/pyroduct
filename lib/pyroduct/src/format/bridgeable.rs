@@ -69,49 +69,73 @@ impl<T> TypedView<T> {
 }
 
 impl<T, E> TypedView<Result<T, E>> {
-    pub fn into_result<S, U>(self) -> Result<S, U>
+    pub fn clone_into_result<S, U>(&self) -> Result<S, U>
     where
         S: From<T>,
         U: From<E>,
+        T: Clone,
+        E: Clone,
     {
-        match self.inner {
-            Ok(ok) => Ok(ok.into()),
-            Err(err) => Err(err.into()),
+        match &self.inner {
+            Ok(ok) => Ok(S::from(ok.clone())),
+            Err(err) => Err(U::from(err.clone())),
         }
     }
 
-    pub fn to_owned_result<S, U>(self) -> Result<S, U>
+    pub fn into_owned_result<S, U>(&self) -> Result<S, U>
+    where
+        S: for<'a> From<&'a T>,
+        U: for<'a> From<&'a E>,
+    {
+        match &self.inner {
+            Ok(ok) => Ok(S::from(ok)),
+            Err(err) => Err(U::from(err)),
+        }
+    }
+
+    pub fn to_owned_result<S, U>(&self) -> Result<S, U>
     where
         T: ToOwned,
         E: ToOwned,
         S: From<T::Owned>,
         U: From<E::Owned>,
     {
-        match self.inner {
-            Ok(ok) => Ok(ok.to_owned().into()),
-            Err(err) => Err(err.to_owned().into()),
+        match &self.inner {
+            Ok(ok) => Ok(S::from(ok.to_owned())),
+            Err(err) => Err(U::from(err.to_owned())),
         }
     }
 }
 
 impl<T> TypedView<Option<T>> {
-    pub fn into_option<S>(self) -> Option<S>
+    pub fn clone_into_option<S>(&self) -> Option<S>
     where
         S: From<T>,
+        T: Clone,
     {
-        match self.inner {
-            Some(ok) => Some(ok.into()),
+        match &self.inner {
+            Some(inner) => Some(S::from(inner.clone())),
             None => None,
         }
     }
 
-    pub fn to_owned_option<S>(self) -> Option<S>
+    pub fn into_owned_option<S>(&self) -> Option<S>
+    where
+        S: for<'a> From<&'a T>,
+    {
+        match &self.inner {
+            Some(inner) => Some(S::from(&inner)),
+            None => None,
+        }
+    }
+
+    pub fn to_owned_option<S>(&self) -> Option<S>
     where
         T: ToOwned,
         S: From<T::Owned>,
     {
-        match self.inner {
-            Some(ok) => Some(ok.to_owned().into()),
+        match &self.inner {
+            Some(inner) => Some(inner.to_owned().into()),
             None => None,
         }
     }

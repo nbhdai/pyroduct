@@ -328,9 +328,9 @@ impl<T> Client<T> {
     where
         I: Bridgeable,
         O: Bridgeable + 'static,
-        for<'a> O: Bridgeable + From<O::Ref<'a>> + 'static,
+        for<'a> O: Bridgeable + From<&'a O::Ref<'static>> + 'static,
         E: Bridgeable + 'static,
-        for<'a> E: Bridgeable + From<E::Ref<'a>> + 'static,
+        for<'a> E: Bridgeable + From<&'a E::Ref<'static>> + 'static,
         F: FnOnce(*const u8, *const u8) -> *mut u8,
     {
         let input = match input {
@@ -347,7 +347,7 @@ impl<T> Client<T> {
             None => panic!("Host registration failed with no returned"),
         };
         let result = Result::<O, E>::expose(result_vec.view()).and_then(|r| {
-            let res = r.into_result();
+            let res = r.into_owned_result();
             Ok(res)
         });
         match result {
