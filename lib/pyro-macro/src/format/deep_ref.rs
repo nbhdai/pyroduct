@@ -81,47 +81,14 @@ pub fn deep_ref(
         }
     };
 
-    // 3. Generate From<DeepRef> Implementation
-    let from_ref_conversions = fields.iter().map(|f| {
+    // 3. Generate FromRef<DeepRef> Implementation (borrowed ref → owned)
+    let from_ref_conversions: Vec<_> = fields.iter().map(|f| {
         let field_name = f.ident.as_ref().unwrap();
         let ty = &f.ty;
-        generate_from_ref_conversion(field_name, ty)
-    });
+        generate_from_ref_conversion(field_name, ty, import_location)
+    }).collect();
 
     let impl_from_ref = quote! {
-        impl<'a> From<#ref_struct_name<'a>> for #struct_name {
-            fn from(reference: #ref_struct_name<'a>) -> Self {
-                Self {
-                    #(#from_ref_conversions,)*
-                }
-            }
-        }
-    };
-
-    let from_ref_conversions = fields.iter().map(|f| {
-        let field_name = f.ident.as_ref().unwrap();
-        let ty = &f.ty;
-        generate_from_ref_conversion(field_name, ty)
-    });
-
-    let impl_from_ref_ref = quote! {
-        impl<'a, 'b> From<&'a #ref_struct_name<'b>> for #struct_name {
-            fn from(reference: &'a #ref_struct_name<'b>) -> Self {
-                Self {
-                    #(#from_ref_conversions,)*
-                }
-            }
-        }
-    };
-
-    let from_ref_conversions = fields.iter().map(|f| {
-        let field_name = f.ident.as_ref().unwrap();
-        let ty = &f.ty;
-        generate_from_ref_conversion(field_name, ty)
-    });
-
-
-    let impl_ref_from_ref_ref = quote! {
         impl<'a> #import_location::format::FromRef<#ref_struct_name<'a>> for #struct_name {
             fn from_ref(reference: #ref_struct_name<'a>) -> Self {
                 Self {
@@ -135,8 +102,6 @@ pub fn deep_ref(
         #struct_def
         #impl_owned
         #impl_from_ref
-        #impl_from_ref_ref
-        #impl_ref_from_ref_ref
     })
 }
 
@@ -219,7 +184,6 @@ fn generate_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream {
 
             // Direct String-like types (Arc<str>, String, Box<str>) -> &str
             if is_string_like(ty) {
-                // as_deref works for Option, but for Arc<str>/String we usually use as_ref() or &*
                 // String: .as_str()
                 // Arc<str>: &**self.field or .as_ref()
                 if ident_str == "String" {
@@ -297,7 +261,9 @@ fn generate_field_conversion(field_name: &Ident, ty: &Type) -> TokenStream {
 }
 
 // Generate the conversion logic for from_ref (Borrowed -> Owned)
-fn generate_from_ref_conversion(field_name: &Ident, ty: &Type) -> TokenStream {
+// Uses FromRef::from_ref() for all conversions to maintain consistency
+// with the FromRef trait system.
+fn generate_from_ref_conversion(field_name: &Ident, ty: &Type, import_location: &Path) -> TokenStream {
     match ty {
         Type::Path(TypePath { path, .. }) => {
             let segment = path.segments.last().unwrap();
@@ -307,14 +273,10 @@ fn generate_from_ref_conversion(field_name: &Ident, ty: &Type) -> TokenStream {
             if is_string_like(ty) {
                 if ident_str == "String" {
                     return quote! { #field_name: reference.#field_name.to_string() };
-                } else if ident_str == "Arc" {
-                    return quote! { #field_name: std::sync::Arc::from(reference.#field_name) };
-                } else if ident_str == "Box" {
-                    return quote! { #field_name: std::boxed::Box::from(reference.#field_name) };
+                } else if matches!(ident_str.as_str(), "Arc" | "Box" | "Rc") {
+                    return quote! { #field_name: #import_location::format::FromRef::from_ref(*reference.#field_name) };
                 } else if ident_str == "Cow" {
                     return quote! { #field_name: std::borrow::Cow::Owned(reference.#field_name.to_string()) };
-                } else if ident_str == "Rc" {
-                    return quote! { #field_name: std::rc::Rc::from(reference.#field_name) };
                 }
             }
 
@@ -338,19 +300,15 @@ fn generate_from_ref_conversion(field_name: &Ident, ty: &Type) -> TokenStream {
                                         } else {
                                             "".to_string()
                                         };
-                                    if inner_ident == "Arc" {
-                                        quote! { #field_name: reference.#field_name.iter().map(|x| std::sync::Arc::from(*x)).collect() }
-                                    } else if inner_ident == "Box" {
-                                        quote! { #field_name: reference.#field_name.iter().map(|x| std::boxed::Box::from(*x)).collect() }
-                                    } else if inner_ident == "Rc" {
-                                        quote! { #field_name: reference.#field_name.iter().map(|x| std::rc::Rc::from(*x)).collect() }
+                                    if matches!(inner_ident.as_str(), "Arc" | "Box" | "Rc") {
+                                        quote! { #field_name: reference.#field_name.iter().map(|x| #import_location::format::FromRef::from_ref(*x)).collect() }
                                     } else {
-                                        quote! { #field_name: reference.#field_name.iter().map(|x| std::sync::Arc::from(*x)).collect() }
+                                        quote! { #field_name: reference.#field_name.iter().map(|x| #import_location::format::FromRef::from_ref(*x)).collect() }
                                     }
                                 }
                             } else {
                                 quote! {
-                                    #field_name: reference.#field_name.iter().map(|x| #inner_ty::from(x)).collect()
+                                    #field_name: reference.#field_name.iter().map(|x| #import_location::format::FromRef::from_ref(x.clone())).collect()
                                 }
                             }
                         } else {
@@ -375,18 +333,14 @@ fn generate_from_ref_conversion(field_name: &Ident, ty: &Type) -> TokenStream {
                                         } else {
                                             "".to_string()
                                         };
-                                    if inner_ident == "Arc" {
-                                        quote! { #field_name: reference.#field_name.map(|x| std::sync::Arc::from(x)) }
-                                    } else if inner_ident == "Box" {
-                                        quote! { #field_name: reference.#field_name.map(|x| std::boxed::Box::from(x)) }
-                                    } else if inner_ident == "Rc" {
-                                        quote! { #field_name: reference.#field_name.map(|x| std::rc::Rc::from(x)) }
+                                    if matches!(inner_ident.as_str(), "Arc" | "Box" | "Rc") {
+                                        quote! { #field_name: reference.#field_name.map(|x| #import_location::format::FromRef::from_ref(x)) }
                                     } else {
-                                        quote! { #field_name: reference.#field_name.map(|x| std::sync::Arc::from(x)) }
+                                        quote! { #field_name: reference.#field_name.map(|x| #import_location::format::FromRef::from_ref(x)) }
                                     }
                                 }
                             } else {
-                                quote! { #field_name: reference.#field_name.as_ref().map(|x| x.into()) }
+                                quote! { #field_name: reference.#field_name.as_ref().map(|x| #import_location::format::FromRef::from_ref(x.clone())) }
                             }
                         } else {
                             quote! { #field_name: None }
@@ -396,12 +350,12 @@ fn generate_from_ref_conversion(field_name: &Ident, ty: &Type) -> TokenStream {
                     }
                 }
                 _ => {
-                    quote! { #field_name: #ident::from(&reference.#field_name) }
+                    quote! { #field_name: #import_location::format::FromRef::from_ref(reference.#field_name.as_deep_ref()) }
                 }
             }
         }
         _ => {
-            quote! { #field_name: #ty::from(&reference.#field_name) }
+            quote! { #field_name: #import_location::format::FromRef::from_ref(reference.#field_name.as_deep_ref()) }
         }
     }
 }
