@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use half::f16;
+
 /// A trait for types that can be converted into a "deep reference".
 /// This is used to create zero-copy views of data.
 ///
@@ -14,6 +16,82 @@ pub trait DeepRef {
         Self: 'a;
 
     fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a>;
+}
+
+pub trait FromRef<S> {
+    fn from_ref(val: S) -> Self;
+}
+
+// =========================================================================
+// Primitives (identity, since primitives are Copy)
+// =========================================================================
+
+macro_rules! impl_from_ref_primitive {
+    ($($t:ty),*) => {
+        $(
+            impl FromRef<$t> for $t {
+                fn from_ref(val: $t) -> $t {
+                    val
+                }
+            }
+
+            impl FromRef<&$t> for $t {
+                fn from_ref(val: &$t) -> $t {
+                    *val
+                }
+            }
+        )*
+    };
+}
+
+impl_from_ref_primitive!(
+    u8, u16, u32, u64, u128, usize,
+    i8, i16, i32, i64, i128, isize,
+    f32, f64,
+    bool, char
+);
+
+// =========================================================================
+// &str → String
+// =========================================================================
+
+impl FromRef<&str> for String {
+    fn from_ref(val: &str) -> String {
+        val.to_owned()
+    }
+}
+
+// =========================================================================
+// &[T] → Vec<T> for primitive types
+// =========================================================================
+
+macro_rules! impl_from_ref_primitive_slice {
+    ($($t:ty),*) => {
+        $(
+            impl FromRef<&[$t]> for Vec<$t> {
+                fn from_ref(val: &[$t]) -> Vec<$t> {
+                    val.to_vec()
+                }
+            }
+        )*
+    };
+}
+
+impl_from_ref_primitive_slice!(
+    u8, u16, u32, u64, u128, usize,
+    i8, i16, i32, i64, i128, isize,
+    f16, f32, f64,
+    bool, char
+);
+
+// =========================================================================
+// &String → String  (String doesn't impl DeepRef, so needs explicit impl)
+// =========================================================================
+
+impl FromRef<&String> for String {
+    fn from_ref(val: &String) -> String {
+        val.clone()
+    }
 }
 
 impl DeepRef for Vec<String> {
@@ -32,6 +110,25 @@ impl DeepRef for Vec<&String> {
 
     fn as_deep_ref<'a>(&'a self) -> Self::Ref<'a> {
         self.iter().map(|s| s.as_str()).collect()
+    }
+}
+
+
+impl<T, S: FromRef<T>> FromRef<Option<T>> for Option<S> {
+    fn from_ref(val: Option<T>) -> Self {
+        match val {
+            Some(t) => Some(FromRef::from_ref(t)),
+            None => None,
+        }
+    }
+}
+
+impl<T, S: FromRef<T>, E, U: FromRef<E>> FromRef<Result<T, E>> for Result<S, U> {
+    fn from_ref(val: Result<T, E>) -> Self {
+        match val {
+            Ok(t) => Ok(FromRef::from_ref(t)),
+            Err(e) => Err(FromRef::from_ref(e)),
+        }
     }
 }
 

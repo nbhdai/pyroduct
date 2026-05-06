@@ -1,6 +1,7 @@
 //! Bridgeable trait and BridgeableResult extension.
 
 use std::fmt;
+use std::ops::Deref;
 
 use crate::PyroError;
 use crate::format::PyroRef;
@@ -9,6 +10,7 @@ use crate::format::{
     ParseError, PyroVec, PyroView,
     header::{DataStatus, PyroHeader, PyroHeaderMut},
 };
+
 // =============================================================================
 // Encoder / Decoder Traits
 // =============================================================================
@@ -35,11 +37,15 @@ pub struct TypedView<T> {
     pub(super) inner: T,
 }
 
-impl<T> TypedView<T> {
-    pub fn inner(&self) -> &T {
+impl<T> Deref for TypedView<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
         &self.inner
     }
+}
 
+impl<T> TypedView<T> {
     pub fn view(&self) -> &PyroView {
         &self.view
     }

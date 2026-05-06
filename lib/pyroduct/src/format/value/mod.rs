@@ -24,7 +24,7 @@ pub use typeable::{Typeable, TypeableRow};
 pub mod arrow;
 
 pub mod deep_ref;
-pub use deep_ref::DeepRef;
+pub use deep_ref::{DeepRef, FromRef};
 pub use time::{ArchivedTime, Time};
 
 pub trait ToRow {

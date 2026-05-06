@@ -114,11 +114,29 @@ pub fn deep_ref(
         }
     };
 
+    let from_ref_conversions = fields.iter().map(|f| {
+        let field_name = f.ident.as_ref().unwrap();
+        let ty = &f.ty;
+        generate_from_ref_conversion(field_name, ty)
+    });
+
+
+    let impl_ref_from_ref_ref = quote! {
+        impl<'a> #import_location::format::FromRef<#ref_struct_name<'a>> for #struct_name {
+            fn from_ref(reference: #ref_struct_name<'a>) -> Self {
+                Self {
+                    #(#from_ref_conversions,)*
+                }
+            }
+        }
+    };
+
     Ok(quote! {
         #struct_def
         #impl_owned
         #impl_from_ref
         #impl_from_ref_ref
+        #impl_ref_from_ref_ref
     })
 }
 

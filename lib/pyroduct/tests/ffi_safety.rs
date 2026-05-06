@@ -202,7 +202,7 @@ fn test_serialize_output_primitive() {
     let vec = serialize_output(42u64);
     assert_eq!(vec.status(), Ok(DataStatus::Valid));
 
-    let restored: u64 = u64::expose(vec).expect("Should parse u64").clone_into();
+    let restored: u64 = *u64::expose(vec).expect("Should parse u64");
     assert_eq!(restored, 42);
 }
 
