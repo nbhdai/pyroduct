@@ -716,8 +716,37 @@ impl<'a> PyroRef<'a> {
         PyroRefPtr::new(self.data.as_ptr())
     }
 
-    /// Creates a `PyroRef` from a byte slice.
+        ///
+    /// The slice must contain the 16-byte header followed by the payload.
+    pub unsafe fn try_from_ptr(data: PyroRefPtr) -> Result<Self, PyroError> {
+        // Validate the raw pointer and header fields
+        if let Err(parse_error) = unsafe { PyroParser::check_raw(data.0) } {
+            tracing::error!(?parse_error, "Checks failed for PyroRef slice");
+            let error = CapturedError::new(format!(
+                "CRITICAL ERROR: Unable to construct a PyroRef due to {}",
+                parse_error
+            ))
+            .with_location(std::panic::Location::caller())
+            .with_backtrace(std::backtrace::Backtrace::force_capture());
+            return Err(PyroError::HeaderFfi(error.into()));
+        }
 
+        // Validate total bounds match the claimed payload length
+        let header = unsafe { &*(data.as_ptr() as *const [u8; 16]) };
+        let payload_len = PyroHeader::header_len(header) as usize;
+        let total_required = PyroParser::HEADER_SIZE + payload_len;
+
+        let data = unsafe {
+            std::slice::from_raw_parts(data.0, total_required)
+        };
+
+        Ok(Self {
+            // Narrow the slice to exactly the header + payload to prevent trailing garbage
+            data,
+        })
+    }
+
+    /// Creates a `PyroRef` from a byte slice.
     ///
     /// The slice must contain the 16-byte header followed by the payload.
     pub fn try_from_slice(data: &'a [u8]) -> Result<Self, PyroError> {

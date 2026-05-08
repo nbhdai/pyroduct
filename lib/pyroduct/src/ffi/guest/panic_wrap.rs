@@ -20,9 +20,10 @@ use tracing::Instrument;
 
 use crate::ffi::FuturePyroView;
 use crate::ffi::guest::logger::object_span;
+use crate::format::{PyroRef, PyroRefPtr};
 use crate::format::header::PyroData;
 use crate::format::{
-    Bridgeable, BridgeableResult, PyroVec, PyroViewPtr, PyroView, Receiver,
+    Bridgeable, BridgeableResult, PyroViewPtr, PyroView, Receiver,
     bridgeable::BridgeableZeroCopy, format::PyroZeroCopyFormat,
 };
 use crate::panic::{clear_last_panic, recover_panic_info, register_ffi_panic_hook};
@@ -36,7 +37,7 @@ use crate::{CapturedError, PyroError};
 #[track_caller]
 pub fn execute_safe<F>(func: F, object_id: u64) -> PyroViewPtr
 where
-    F: FnOnce() -> PyroVec,
+    F: FnOnce() -> PyroView,
 {
     let span = object_span(object_id);
     let _guard = span.enter();
@@ -46,7 +47,7 @@ where
     let result = panic::catch_unwind(AssertUnwindSafe(func));
 
     match result {
-        Ok(output_obj) => output_obj.view().into_ptr(),
+        Ok(output_obj) => output_obj.into_ptr(),
         Err(_) => {
             let panic_info = recover_panic_info();
             PyroError::CodePanic(panic_info).encode().view().into_ptr()
@@ -56,14 +57,14 @@ where
 
 /// Helper to deserialize input from a raw PyroViewPtr.
 pub fn deserialize_input<I: Bridgeable + BridgeableZeroCopy>(
-    data: PyroViewPtr,
+    data: PyroRefPtr,
 ) -> Result<I, PyroError>
 where
     <I as Bridgeable>::Format: PyroZeroCopyFormat<I>,
 {
     tracing::trace!("Deserializing view");
     let guard = panic::catch_unwind(AssertUnwindSafe(|| {
-        let vec = unsafe { PyroView::from_ptr(data) }?;
+        let vec = unsafe { PyroRef::try_from_ptr(data) }?;
         let typed = I::expose_view(vec.py_ref())?;
         let mut receiver = <I as BridgeableZeroCopy>::receiver();
         receiver.receive(&typed)
@@ -79,7 +80,7 @@ where
 }
 
 /// Helper to serialize a successful output object.
-pub fn serialize_output<T>(val: T) -> PyroVec
+pub fn serialize_output<T>(val: T) -> PyroView
 where
     T: Bridgeable,
 {
@@ -87,17 +88,17 @@ where
     let guard = panic::catch_unwind(AssertUnwindSafe(|| val.ship()));
 
     match guard {
-        Ok(Ok(vec)) => vec,
-        Ok(Err(e)) => e.encode(),
+        Ok(Ok(vec)) => vec.view(),
+        Ok(Err(e)) => e.encode().view(),
         Err(_) => {
             let panic_info = recover_panic_info().with_source("Panic");
-            PyroError::serialization(panic_info).encode()
+            PyroError::serialization(panic_info).encode().view()
         }
     }
 }
 
 /// Helper to serialize a Result into a PyroVec.
-pub fn serialize_result<T, E>(result: Result<T, E>) -> PyroVec
+pub fn serialize_result<T, E>(result: Result<T, E>) -> PyroView
 where
     T: Bridgeable,
     E: Bridgeable,
@@ -106,11 +107,11 @@ where
     let guard = panic::catch_unwind(AssertUnwindSafe(|| result.ship()));
 
     match guard {
-        Ok(Ok(vec)) => vec,
-        Ok(Err(e)) => e.encode(),
+        Ok(Ok(vec)) => vec.view(),
+        Ok(Err(e)) => e.encode().view(),
         Err(_) => {
             let panic_info = recover_panic_info().with_source("Panic");
-            PyroError::serialization(panic_info).encode()
+            PyroError::serialization(panic_info).encode().view()
         }
     }
 }
