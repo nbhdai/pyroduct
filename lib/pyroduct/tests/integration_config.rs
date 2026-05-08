@@ -1,13 +1,33 @@
 use indexmap::IndexMap;
 use pyro_artifacts::{
-    artifacts::{Artifacts, Playbook},
+    artifacts::{ModuleDependencies, ModuleSource, Playbook},
     cache::CacheManager,
-    environment::Environment,
+    cargo::ResolvedCapability,
 };
 use pyroduct::{PyroRow, pipeline::PipelineConfig};
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+
+const CODE: &'static str = r#"
+//! The behavior of this module changes based on the configuration 
+//! of the linked capability
+
+use config::{TransformClient, TransformClientMethods};
+
+#[pyroduct::module(output = (original, transformed, transform_count))]
+pub fn call(input: &str) -> Result<(String, String, u64)> {
+    let client = TransformClient {
+        prefix: "[TEST] ".to_string(),
+    }.register()?;
+
+    let original = input.to_string();
+    let transformed = client.transform(input.to_string())?;
+    let transform_count = client.get_transform_count()? as u64;
+
+    Ok((original, transformed, transform_count))
+}
+"#;
 
 /// Test that capability configurations (passed via PipelineDef) are correctly respected by the server.
 #[tokio::test]
@@ -21,24 +41,28 @@ async fn test_capability_configuration_respect() {
         .with(filter)
         .init();
     let cache = CacheManager::from_env().await.unwrap();
-
-    let env = Environment::new("../../modules/cap_config/".into())
-        .await
-        .unwrap();
-    let artifacts = env.package(false).await.unwrap();
-    for artifact in &artifacts {
-        cache.write_artifacts(artifact).await.unwrap();
-    }
-    let hash = match &artifacts[0] {
-        Artifacts::Module(module) => module.hash(),
-        _ => panic!("Not a module!"),
+    let source = ModuleSource {
+        dependencies: ModuleDependencies {
+            dependencies: BTreeMap::new(),
+            capabilities: vec![ResolvedCapability {
+                package: "config".to_string(),
+                author: "nbhdai".to_string(),
+                version: "0.1.0".to_string(),
+            }],
+        },
+        source: CODE.to_string(),
     };
+
+    let binary = cache
+        .compile(&source)
+        .await
+        .expect("Valid module should compile");
 
     let config = PipelineConfig {
         pipeline: IndexMap::from([(
             "config".to_string(),
             Playbook {
-                hash,
+                hash: binary.hash,
                 configurations: HashMap::from([(
                     "config".to_string(),
                     Some(json!({

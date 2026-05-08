@@ -249,7 +249,7 @@ mod tests {
     use super::*;
     use crate::format::{
         PyroVec,
-        header::{PyroHeader, PyroHeaderMut, DataStatus},
+        header::{DataStatus, PyroHeader, PyroHeaderMut},
     };
     use std::io::Cursor;
 
@@ -289,12 +289,22 @@ mod tests {
         vec.set_fn_id(vec_fn_id);
         vec.set_mux_id(vec_mux_id);
         vec.set_client_id(vec_client_id);
-        if let Some(s) = vec_status { vec.set_status(s); }
+        if let Some(s) = vec_status {
+            vec.set_status(s);
+        }
         let mut request: Request = vec.into();
-        if let Some(v) = override_class_id { request.class_id = Some(v); }
-        if let Some(v) = override_fn_id { request.fn_id = Some(v); }
-        if let Some(v) = override_mux_id { request.mux_id = Some(v); }
-        if let Some(v) = override_client_id { request.client_id = Some(v); }
+        if let Some(v) = override_class_id {
+            request.class_id = Some(v);
+        }
+        if let Some(v) = override_fn_id {
+            request.fn_id = Some(v);
+        }
+        if let Some(v) = override_mux_id {
+            request.mux_id = Some(v);
+        }
+        if let Some(v) = override_client_id {
+            request.client_id = Some(v);
+        }
         request
     }
 
@@ -358,7 +368,11 @@ mod tests {
         // Fall back to view (None)
         let request = make_request_with(b"test", 0x11, 0, 0, 0, None, None, None, None, None);
         let recovered = roundtrip(&request).await;
-        assert_eq!(recovered.class_id(), 0x11, "View value should be used when Some is absent");
+        assert_eq!(
+            recovered.class_id(),
+            0x11,
+            "View value should be used when Some is absent"
+        );
     }
 
     #[tokio::test]
@@ -374,7 +388,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_override_mux_id() {
-        let request = make_request_with(b"test", 0, 0, 0xAAAAAAAA, 0, None, None, Some(0xDEADBEEF), None, None);
+        let request = make_request_with(
+            b"test",
+            0,
+            0,
+            0xAAAAAAAA,
+            0,
+            None,
+            None,
+            Some(0xDEADBEEF),
+            None,
+            None,
+        );
         let recovered = roundtrip(&request).await;
         assert_eq!(recovered.mux_id(), 0xDEADBEEF);
 
@@ -385,7 +410,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_override_client_id() {
-        let request = make_request_with(b"test", 0, 0, 0, 0x12345678, None, None, None, Some(0xFEDCBA98), None);
+        let request = make_request_with(
+            b"test",
+            0,
+            0,
+            0,
+            0x12345678,
+            None,
+            None,
+            None,
+            Some(0xFEDCBA98),
+            None,
+        );
         let recovered = roundtrip(&request).await;
         assert_eq!(recovered.client_id(), 0xFEDCBA98);
 
@@ -398,8 +434,15 @@ mod tests {
     async fn test_override_all_fields_at_once() {
         // vec_* values are the fallback; override_* values should win
         let request = make_request_with(
-            b"alloverride", 0x11, 0x22, 0xAAAAAAAA, 0xBBBBBBBB,
-            Some(0xDD), Some(0xEE), Some(0x11223344), Some(0xCCCCCCCC),
+            b"alloverride",
+            0x11,
+            0x22,
+            0xAAAAAAAA,
+            0xBBBBBBBB,
+            Some(0xDD),
+            Some(0xEE),
+            Some(0x11223344),
+            Some(0xCCCCCCCC),
             Some(DataStatus::RemoteUtf8),
         );
 
@@ -450,7 +493,10 @@ mod tests {
         let result = read_from_stream(&mut cursor, None, &mut recovered).await;
 
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(
+            result.unwrap_err().kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
     }
 
     #[tokio::test]
@@ -466,7 +512,10 @@ mod tests {
         let result = read_from_stream(&mut cursor, None, &mut recovered).await;
 
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(
+            result.unwrap_err().kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
     }
 
     #[tokio::test]

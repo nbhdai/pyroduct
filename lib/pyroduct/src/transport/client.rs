@@ -123,7 +123,7 @@ impl PyroClient {
         // The server returns the client_id using .ship(), which means it's a Bridgeable u32.
         let typed = <u32 as crate::format::Bridgeable>::expose(resp)?;
         let id = typed.to_native();
-        
+
         self.client_hashes.insert(hash, id);
         Ok(id)
     }

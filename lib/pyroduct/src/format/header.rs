@@ -93,7 +93,7 @@ pub enum ParseError {
 
 // --- Sealing Module ---
 mod private {
-    use crate::format::{PyroVec, PyroView, PyroRef};
+    use crate::format::{PyroRef, PyroVec, PyroView};
 
     pub trait Sealed {}
     // The primitive array is the base sealed type.
@@ -210,10 +210,10 @@ pub trait PyroHeader: private::Sealed {
     fn is_pyro_err(&self) -> bool;
 }
 
-impl PyroHeader for [u8;16] {
+impl PyroHeader for [u8; 16] {
     #[inline]
     fn header_len(&self) -> u32 {
-        let bytes: [u8;4] = self[PyroParser::OFFSET_LEN..PyroParser::OFFSET_LEN + 4]
+        let bytes: [u8; 4] = self[PyroParser::OFFSET_LEN..PyroParser::OFFSET_LEN + 4]
             .try_into()
             .unwrap();
         u32::from_le_bytes(bytes)

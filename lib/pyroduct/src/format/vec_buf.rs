@@ -49,7 +49,7 @@ impl PyroInner {
             ref_count: AtomicU32::new(0),
             capacity,
             _padding: 0,
-            header: [0;16],
+            header: [0; 16],
             data: [],
         }
     }
@@ -236,12 +236,9 @@ impl PyroVec {
         }
         unsafe {
             // Extract the payload pointer directly from the allocation
-            let payload_ptr = (self.view.as_ptr() as *mut u8).add(INNER_HEADER + PyroParser::HEADER_SIZE);
-            ptr::copy_nonoverlapping(
-                other.as_ptr(),
-                payload_ptr.add(current_len),
-                required,
-            );
+            let payload_ptr =
+                (self.view.as_ptr() as *mut u8).add(INNER_HEADER + PyroParser::HEADER_SIZE);
+            ptr::copy_nonoverlapping(other.as_ptr(), payload_ptr.add(current_len), required);
             self.set_len((current_len + required) as u32);
         }
     }
@@ -289,7 +286,7 @@ impl PyroVec {
         }
     }
 
-pub fn ok() -> Self {
+    pub fn ok() -> Self {
         let vec = Self::with_capacity(0);
         unsafe {
             // Use the outer vec.data_ptr() instead of going through inner
@@ -314,17 +311,17 @@ pub fn ok() -> Self {
         unsafe {
             let inner = self.view.as_ref();
             let ref_count = (&inner.ref_count) as *const AtomicU32;
-            
+
             (*ref_count).fetch_add(1, Ordering::Relaxed);
 
             let data = self.raw_ptr();
             let dropper = self.dropper;
-            
+
             // Explicitly capture the allocation pointer and capacity
             let drop_ptr = self.view.as_ptr() as *mut u8;
             let capacity = inner.capacity;
 
-            std::mem::forget(self); 
+            std::mem::forget(self);
 
             PyroView {
                 ref_count,
@@ -607,7 +604,7 @@ pub unsafe fn make_view(
     reference: PyroRef<'_>,
 ) -> Result<PyroView, PyroError> {
     counter.fetch_add(1, Ordering::Relaxed);
-    
+
     Ok(PyroView {
         ref_count: counter as *const AtomicU32,
         data: reference.data.as_ptr(),
@@ -716,7 +713,7 @@ impl<'a> PyroRef<'a> {
         PyroRefPtr::new(self.data.as_ptr())
     }
 
-        ///
+    ///
     /// The slice must contain the 16-byte header followed by the payload.
     pub unsafe fn try_from_ptr(data: PyroRefPtr) -> Result<Self, PyroError> {
         // Validate the raw pointer and header fields
@@ -736,9 +733,7 @@ impl<'a> PyroRef<'a> {
         let payload_len = PyroHeader::header_len(header) as usize;
         let total_required = PyroParser::HEADER_SIZE + payload_len;
 
-        let data = unsafe {
-            std::slice::from_raw_parts(data.0, total_required)
-        };
+        let data = unsafe { std::slice::from_raw_parts(data.0, total_required) };
 
         Ok(Self {
             // Narrow the slice to exactly the header + payload to prevent trailing garbage

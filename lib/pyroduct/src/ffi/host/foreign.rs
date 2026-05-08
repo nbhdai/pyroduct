@@ -274,11 +274,19 @@ impl ForeignObject {
     ) -> Result<PyroView, PyroError> {
         match method.pointer {
             Function::Sync(f) => unsafe {
-                PyroView::from_ptr((f)(self.obj.ref_ptr(), client_data.as_ptr(), input_data.as_ptr()))
+                PyroView::from_ptr((f)(
+                    self.obj.ref_ptr(),
+                    client_data.as_ptr(),
+                    input_data.as_ptr(),
+                ))
             },
             Function::Async(f) => {
                 MethodCallFuture::from_async(unsafe {
-                    (f)(self.obj.ref_ptr(), client_data.as_ptr(), input_data.as_ptr())
+                    (f)(
+                        self.obj.ref_ptr(),
+                        client_data.as_ptr(),
+                        input_data.as_ptr(),
+                    )
                 })
                 .await
             }

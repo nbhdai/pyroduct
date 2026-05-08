@@ -76,12 +76,7 @@ async fn test_pyro_server_capability_call() {
     call_req.set_fn_id(4);
 
     let call_resp = socket
-        .request(
-            Some(client_id),
-            Some(0),
-            Some(4),
-            call_req.view(),
-        )
+        .request(Some(client_id), Some(0), Some(4), call_req.view())
         .await
         .expect("Failed to call method");
     assert!(call_resp.is_ok(), "Method call should be successful");

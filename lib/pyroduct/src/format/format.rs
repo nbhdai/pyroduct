@@ -6,9 +6,7 @@ use crate::error::ErrorKind;
 use crate::format::{PyroRef, PyroView};
 use crate::format::{
     PyroVec,
-    header::{
-        DataStatus, MutPyroData, PROTOCOL_VERSION, PyroData, PyroHeader, PyroHeaderMut,
-    },
+    header::{DataStatus, MutPyroData, PROTOCOL_VERSION, PyroData, PyroHeader, PyroHeaderMut},
 };
 use crate::{CapturedError, PyroError, PyroResult};
 
@@ -308,7 +306,6 @@ where
     type Receiver: Receiver<<Self::Parser as Parser<PyroView, T>>::ParsedType, T>;
     fn receiver() -> Self::Receiver;
 }
-
 
 // =============================================================================
 // SpecWire

@@ -22,7 +22,7 @@ use wasmtime::{
 
 use crate::ffi::host::ForeignObject;
 use crate::format::{
-    ParseError, PyroRow, PyroView, PyroFailure, PyroLogs, PyroSuccess,
+    ParseError, PyroFailure, PyroLogs, PyroRow, PyroSuccess, PyroView,
     header::{DataStatus, PyroData, PyroHeader},
 };
 use crate::module::call::PyroCallIo;
@@ -418,8 +418,7 @@ impl PyroInstance {
         let pyref = result_view.py_ref();
         match result_view.status() {
             Ok(DataStatus::RkyvValid) => {
-                let row =
-                    PyroRow::parse_wire(&pyref).map_err(|err| self.pack_pyro_error(err))?;
+                let row = PyroRow::parse_wire(&pyref).map_err(|err| self.pack_pyro_error(err))?;
                 Ok(self.pack_success(row.to_static()))
             }
             Ok(DataStatus::RkyvError) => match serde_json::from_slice(&result_view) {

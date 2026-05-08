@@ -1,6 +1,6 @@
 use pyroduct::format::header::PyroData;
-use pyroduct::format::{PyroRow, PyroValue, PyroView, PyroLogs, PyroSuccess, PyroFailure};
 use pyroduct::format::wal::{WalReader, WalRecord, WalWriter};
+use pyroduct::format::{PyroFailure, PyroLogs, PyroRow, PyroSuccess, PyroValue, PyroView};
 use std::collections::HashMap;
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -104,9 +104,7 @@ fn test_wal_roundtrip_success_data() {
     let base = dir.path().join("rt_success");
 
     let mut writer = WalWriter::open(&base).unwrap();
-    writer
-        .append(&make_success_record(42))
-        .unwrap();
+    writer.append(&make_success_record(42)).unwrap();
     drop(writer);
 
     let reader = WalReader::open(&base).unwrap();
@@ -127,9 +125,7 @@ fn test_wal_roundtrip_failure_data() {
     let base = dir.path().join("rt_failure");
 
     let mut writer = WalWriter::open(&base).unwrap();
-    writer
-        .append(&make_failure_record(7))
-        .unwrap();
+    writer.append(&make_failure_record(7)).unwrap();
     drop(writer);
 
     let reader = WalReader::open(&base).unwrap();
@@ -140,7 +136,13 @@ fn test_wal_roundtrip_failure_data() {
         WalRecord::Failure { row_index, failure } => {
             assert_eq!(*row_index, 7);
             assert!(failure.result.is_err());
-            assert!(failure.result.as_ref().unwrap_err().contains("row 7 failed"));
+            assert!(
+                failure
+                    .result
+                    .as_ref()
+                    .unwrap_err()
+                    .contains("row 7 failed")
+            );
         }
         _ => panic!("expected Failure"),
     }
@@ -483,9 +485,7 @@ fn test_wal_logs_survive_recovery() {
     let base = dir.path().join("with_logs");
 
     let mut writer = WalWriter::open(&base).unwrap();
-    writer
-        .append(&make_success_record(42))
-        .unwrap();
+    writer.append(&make_success_record(42)).unwrap();
     drop(writer);
 
     let reader = WalReader::open(&base).unwrap();
@@ -497,10 +497,7 @@ fn test_wal_logs_survive_recovery() {
     if let WalRecord::Success { row_index, success } = &recovered[0] {
         assert_eq!(*row_index, 42);
         assert!(!success.logs.module_logs.is_empty());
-        assert_eq!(
-            success.logs.module_logs[0],
-            "processing row 42"
-        );
+        assert_eq!(success.logs.module_logs[0], "processing row 42");
     } else {
         panic!("expected Success");
     }

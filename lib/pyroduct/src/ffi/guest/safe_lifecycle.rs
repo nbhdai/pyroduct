@@ -8,7 +8,7 @@ use crate::ffi::guest::panic_wrap::get_runtime;
 use crate::ffi::{FutureInitResult, InitResult};
 use crate::format::{
     PyroRefPtr,
-    header::{DataStatus, PyroHeader, ParseError},
+    header::{DataStatus, ParseError, PyroHeader},
 };
 use crate::panic::{clear_last_panic, recover_panic_info, register_ffi_panic_hook};
 use crate::{CapturedError, PyroError};
@@ -26,7 +26,7 @@ pub fn deserialize_config<C: serde::de::DeserializeOwned>(
     let view = match unsafe { config.try_ref() } {
         Err(PyroError::Header(ParseError::NullPointer)) => return Ok(None),
         Err(err) => return Err(err),
-        Ok(ok) => ok, 
+        Ok(ok) => ok,
     };
     if let Ok(DataStatus::Empty) = view.status() {
         return Ok(None);

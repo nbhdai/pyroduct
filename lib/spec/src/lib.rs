@@ -12,9 +12,9 @@
 #[cfg(feature = "arrow")]
 mod arrow;
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt;
-use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 

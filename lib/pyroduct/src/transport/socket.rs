@@ -107,7 +107,10 @@ impl PyroSocket {
                                 let _ = sender.send(vec.view());
                                 continue;
                             }
-                            tracing::debug!("READ TASK: mux_id={} not in pending, routing to unmatched", id);
+                            tracing::debug!(
+                                "READ TASK: mux_id={} not in pending, routing to unmatched",
+                                id
+                            );
                         }
                         // Unmatched or mux_id == 0
                         tracing::debug!("READ TASK: sending to unmatched");
@@ -116,7 +119,10 @@ impl PyroSocket {
                             break;
                         }
                     }
-                    Err(e) => { tracing::debug!("READ TASK: read error: {:?}", e); break; }
+                    Err(e) => {
+                        tracing::debug!("READ TASK: read error: {:?}", e);
+                        break;
+                    }
                 }
             }
             tracing::debug!("READ TASK: exited");
@@ -349,7 +355,10 @@ mod tests {
                 tracing::debug!("Server: reading request");
                 let req = match conn.recv().await {
                     Ok(r) => r,
-                    Err(e) => { tracing::debug!("Server: recv error: {:?}", e); break; }
+                    Err(e) => {
+                        tracing::debug!("Server: recv error: {:?}", e);
+                        break;
+                    }
                 };
                 tracing::debug!("Server: read req mux_id={}", req.mux_id());
                 let mut resp = PyroVec::with_capacity(req.len());

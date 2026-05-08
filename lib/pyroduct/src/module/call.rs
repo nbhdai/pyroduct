@@ -7,9 +7,7 @@
 use wasmtime::{AsContextMut, Caller, Extern, Memory};
 
 use crate::{
-    format::{
-        PyroRef, PyroVec, PyroView, get_ref, header::PyroParser
-    },
+    format::{PyroRef, PyroVec, PyroView, get_ref, header::PyroParser},
     module::{PyroState, WasmError},
 };
 
@@ -94,7 +92,7 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
     /// full PyroView (header + payload) into it. Returns the wasm pointer.
     pub async fn new_input(&mut self, data: &PyroView) -> Result<i32, WasmError> {
         let data_len = data.len(); // payload only
-        let total_len = PyroParser::HEADER_SIZE + crate::format::vec_buf::INNER_HEADER;
+        let total_len = PyroParser::HEADER_SIZE + data.len();
 
         let new_input = self
             .ctx

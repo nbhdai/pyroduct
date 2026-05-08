@@ -2,7 +2,8 @@ use pyroduct::{
     CapturedError,
     ffi::guest::{deserialize_input, execute_safe, serialize_output, serialize_result},
     format::{
-        Bridgeable, BridgeableResult, HasReceiver, PyroView, Receiver, header::{DataStatus, PyroData, PyroHeader}
+        Bridgeable, BridgeableResult, HasReceiver, PyroView, Receiver,
+        header::{DataStatus, PyroData, PyroHeader},
     },
     magma,
     panic::register_ffi_panic_hook,

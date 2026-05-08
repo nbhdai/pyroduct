@@ -26,7 +26,8 @@ use rkyv::rancor::Error as RancorError;
 use crate::{
     CapturedError, PyroError,
     format::{
-        PyroRef, PyroVec, value::{ArchivedPyroRow, ArchivedPyroValue}
+        PyroRef, PyroVec,
+        value::{ArchivedPyroRow, ArchivedPyroValue},
     },
 };
 

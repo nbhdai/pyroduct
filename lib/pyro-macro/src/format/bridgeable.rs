@@ -1,9 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{
-    ItemStruct, Path,
-    parse_quote,
-};
+use syn::{ItemStruct, Path, parse_quote};
 
 use crate::format::BridgeableArgs;
 

@@ -64,7 +64,7 @@ impl PyroRouter {
                     .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                 self.clients.insert(id, request.clone_to_vec().view());
                 id.ship().map(|v| v.view())
-            },
+            }
             3 => {
                 let object = self.objects.get(&class_id).ok_or_else(|| {
                     PyroError::NotFound(format!("Object for class ID {} not configured", class_id))

@@ -1,12 +1,32 @@
 use indexmap::IndexMap;
 use pyro_artifacts::{
-    artifacts::{Artifacts, Playbook},
+    artifacts::{ModuleDependencies, ModuleSource, Playbook},
     cache::CacheManager,
-    environment::Environment,
+    cargo::ResolvedCapability,
 };
 use pyroduct::{PyroRow, pipeline::PipelineConfig};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+
+const CODE: &'static str = r#"
+//! Test module 1: Uses test_cap1 counter capability
+//!
+//! Simple module that increments a counter and returns the result.
+
+use state::{CounterClient, CounterClientMethods};
+
+#[pyroduct::module(output = (count, incremented))]
+pub fn call(input: &str) -> Result<(u64, u64)> {
+    let start: u64 = input.parse().map_err(|e| format!("Parse error: {}", e))?;
+
+    let client = CounterClient { start_value: start }.register()?;
+
+    let count = client.get_count()?;
+    let incremented = client.increment()?;
+
+    Ok((count, incremented))
+}
+"#;
 
 /// Test that capability state is preserved across multiple calls to the same module instance.
 #[tokio::test]
@@ -21,23 +41,28 @@ async fn test_capability_state_preservation() {
         .init();
     let cache = CacheManager::from_env().await.unwrap();
 
-    let env = Environment::new("../../modules/cap_state/".into())
-        .await
-        .unwrap();
-    let artifacts = env.package(false).await.unwrap();
-    for artifact in &artifacts {
-        cache.write_artifacts(artifact).await.unwrap();
-    }
-    let hash = match &artifacts[0] {
-        Artifacts::Module(module) => module.hash(),
-        _ => panic!("Not a module!"),
+    let source = ModuleSource {
+        dependencies: ModuleDependencies {
+            dependencies: BTreeMap::new(),
+            capabilities: vec![ResolvedCapability {
+                package: "state".to_string(),
+                author: "nbhdai".to_string(),
+                version: "0.1.0".to_string(),
+            }],
+        },
+        source: CODE.to_string(),
     };
+
+    let binary = cache
+        .compile(&source)
+        .await
+        .expect("Valid module should compile");
 
     let config = PipelineConfig {
         pipeline: IndexMap::from([(
             "step".to_string(),
             Playbook {
-                hash,
+                hash: binary.hash,
                 configurations: HashMap::from([("state".to_string(), None)]),
             },
         )]),

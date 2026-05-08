@@ -1,6 +1,11 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Ident, ItemStruct, Meta, Path, Token, parse::{Parse, ParseStream}, punctuated::Punctuated, token::Comma};
+use syn::{
+    Ident, ItemStruct, Meta, Path, Token,
+    parse::{Parse, ParseStream},
+    punctuated::Punctuated,
+    token::Comma,
+};
 
 /// Defines the documentation requirements for the configuration struct.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

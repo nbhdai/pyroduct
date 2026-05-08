@@ -353,7 +353,11 @@ impl Artifact for CapabilityBinary {
             )
         })?;
 
-        Ok(CapabilityBinary { libs, ident, interface })
+        Ok(CapabilityBinary {
+            libs,
+            ident,
+            interface,
+        })
     }
 }
 

@@ -20,12 +20,12 @@ use tracing::Instrument;
 
 use crate::ffi::FuturePyroView;
 use crate::ffi::guest::logger::object_span;
-use crate::format::{PyroRef, PyroRefPtr};
 use crate::format::header::PyroData;
 use crate::format::{
-    Bridgeable, BridgeableResult, PyroViewPtr, PyroView, Receiver,
-    bridgeable::BridgeableZeroCopy, format::PyroZeroCopyFormat,
+    Bridgeable, BridgeableResult, PyroView, PyroViewPtr, Receiver, bridgeable::BridgeableZeroCopy,
+    format::PyroZeroCopyFormat,
 };
+use crate::format::{PyroRef, PyroRefPtr};
 use crate::panic::{clear_last_panic, recover_panic_info, register_ffi_panic_hook};
 use crate::{CapturedError, PyroError};
 
@@ -179,7 +179,8 @@ impl Future for SafeMethodHandle {
             Poll::Ready(Err(join_error)) => Poll::Ready(
                 PyroError::CodePanic(CapturedError::new(join_error).into())
                     .encode()
-                    .view().into_ptr()
+                    .view()
+                    .into_ptr(),
             ),
             Poll::Pending => Poll::Pending,
         }
