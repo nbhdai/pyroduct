@@ -31,7 +31,7 @@ use tracing::{info, warn};
 use crate::PyroRow;
 use crate::format::header::PyroHeaderMut;
 use crate::format::vec_buf::PyroRef;
-use crate::format::{PyroFailure, PyroLogs, PyroSuccess, PyroView, get_ref};
+use crate::format::{Bridgeable, PyroFailure, PyroLogs, PyroSuccess, PyroView, get_ref};
 
 // =============================================================================
 // Log record (.pyrolog) — per-row logs, JSON framed
@@ -232,7 +232,7 @@ impl WalWriter {
         let packet = match record {
             WalRecord::Success { success, .. } => success
                 .row
-                .to_wire()
+                .ship()
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?,
             WalRecord::Failure { failure, .. } => {
                 let msg = match &failure.result {
@@ -240,7 +240,7 @@ impl WalWriter {
                     Err(msg) => msg.clone(),
                 };
                 let mut packet = crate::PyroValue::from(msg)
-                    .to_wire()
+                    .ship()
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
                 packet.set_status_u8(1);
                 packet
@@ -506,7 +506,8 @@ impl WalRecord {
         }
 
         if status == 0 {
-            let row = PyroRow::parse_wire(&pkt).ok()?.to_static();
+            let row = PyroRow::expose_view(pkt).ok()?;
+            let row = (&*row).into();
             Some(WalRecord::Success {
                 row_index: frame.row_index,
                 success: PyroSuccess {
@@ -667,7 +668,7 @@ mod tests {
             .expect("Should get view");
         let pyref = view.py_ref();
 
-        let recovered_row = PyroRow::parse_wire(&pyref).expect("parse should work");
+        let recovered_row: PyroRow = (&*PyroRow::expose_view(pyref).expect("parse should work")).into();
         assert_eq!(recovered_row.get("id"), Some(&PyroValue::from(42i32)));
     }
 }

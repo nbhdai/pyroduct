@@ -1,3 +1,4 @@
+use pyro_artifacts::cache::CacheManager;
 use pyroduct::format::PyroVec;
 use pyroduct::format::header::{PyroHeader, PyroHeaderMut};
 use pyroduct::transport::{PyroListener, PyroRouter, PyroServer, PyroSocket};
@@ -6,9 +7,10 @@ use pyroduct::transport::{PyroListener, PyroRouter, PyroServer, PyroSocket};
 async fn test_pyro_server_capability_call() {
     // 1. Setup Router and Server
     // Using one of the existing test dylibs for capability
-    let lib_path = "./test/capabilities/nbhdai/state/0.1.0/lib.dylib";
+    let cache = CacheManager::from_env().await.unwrap();
+    let lib_path = cache.capability_binary_path("nbhdai", "state", "0.1.0").await.unwrap();
     let router =
-        PyroRouter::load("state".into(), lib_path).expect("Failed to load capability library");
+        PyroRouter::load("state".into(), &lib_path).expect("Failed to load capability library");
 
     let server = PyroServer::new(router);
     let listener = PyroListener::bind_tcp("127.0.0.1:0")

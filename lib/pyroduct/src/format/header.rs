@@ -25,6 +25,18 @@ macro_rules! define_data_status {
                     other => Err(other),
                 }
             }
+
+            pub fn is_ok(&self) -> bool {
+                matches!(self, DataStatus::Empty | DataStatus::RkyvValid | DataStatus::JsonValid | DataStatus::InterfaceSchema)
+            }
+
+            pub fn is_user_err(&self) -> bool {
+                matches!(self, DataStatus::CodeError)
+            }
+
+            pub fn is_pyro_err(&self) -> bool {
+                !self.is_ok() && !self.is_user_err()
+            }
         }
 
         impl Into<u8> for DataStatus {
@@ -262,16 +274,15 @@ impl PyroHeader for [u8; 16] {
     }
 
     fn is_ok(&self) -> bool {
-        self.status_u8() == 0
+        self.status().map(|s| s.is_ok()).unwrap_or(false)
     }
 
     fn is_user_err(&self) -> bool {
-        self.status_u8() == 1
+        self.status().map(|s| s.is_user_err()).unwrap_or(false)
     }
 
     fn is_pyro_err(&self) -> bool {
-        let s = self.status_u8();
-        s != 0 && s != 1
+        self.status().map(|s| s.is_pyro_err()).unwrap_or(true)
     }
 }
 
@@ -476,16 +487,15 @@ impl<T: PyroData> PyroHeader for T {
     }
 
     fn is_ok(&self) -> bool {
-        self.status_u8() == 0
+        self.status().map(|s| s.is_ok()).unwrap_or(false)
     }
 
     fn is_user_err(&self) -> bool {
-        self.status_u8() == 1
+        self.status().map(|s| s.is_user_err()).unwrap_or(false)
     }
 
     fn is_pyro_err(&self) -> bool {
-        let s = self.status_u8();
-        s != 0 && s != 1
+        self.status().map(|s| s.is_pyro_err()).unwrap_or(true)
     }
 }
 

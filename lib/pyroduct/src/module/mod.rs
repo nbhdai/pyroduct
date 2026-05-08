@@ -21,6 +21,7 @@ use wasmtime::{
 };
 
 use crate::ffi::host::ForeignObject;
+use crate::format::Bridgeable;
 use crate::format::{
     ParseError, PyroFailure, PyroLogs, PyroRow, PyroSuccess, PyroView,
     header::{DataStatus, PyroData, PyroHeader},
@@ -374,7 +375,7 @@ impl PyroInstance {
         // Ship the input row via rkyv into a PyroVec
         let input_row_owned = input.to_static();
         let input_vec = input_row_owned
-            .to_wire()
+            .ship()
             .map_err(|err| self.pack_pyro_error(err))?;
         let input_view: PyroView = input_vec.view();
 
@@ -418,8 +419,8 @@ impl PyroInstance {
         let pyref = result_view.py_ref();
         match result_view.status() {
             Ok(DataStatus::RkyvValid) => {
-                let row = PyroRow::parse_wire(&pyref).map_err(|err| self.pack_pyro_error(err))?;
-                Ok(self.pack_success(row.to_static()))
+                let row = PyroRow::expose_view(pyref).map_err(|err| self.pack_pyro_error(err))?;
+                Ok(self.pack_success(PyroRow::from(&*row).to_static()))
             }
             Ok(DataStatus::RkyvError) => match serde_json::from_slice(&result_view) {
                 Ok(error) => Err(self.pack_user_error(error)),

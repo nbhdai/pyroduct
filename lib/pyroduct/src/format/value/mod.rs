@@ -8,7 +8,6 @@ mod value;
 pub use value::*;
 pub mod coerce;
 mod repair;
-mod rkyv;
 // mod bow;
 mod bridgeable;
 mod schema;

@@ -1,6 +1,6 @@
 use pyroduct::format::header::PyroData;
 use pyroduct::format::wal::{WalReader, WalRecord, WalWriter};
-use pyroduct::format::{PyroFailure, PyroLogs, PyroRow, PyroSuccess, PyroValue, PyroView};
+use pyroduct::format::{Bridgeable, PyroFailure, PyroLogs, PyroRow, PyroSuccess, PyroValue, PyroView};
 use std::collections::HashMap;
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -115,7 +115,8 @@ fn test_wal_roundtrip_success_data() {
     // Verify the packet can be parsed back as a PyroRow
     let view = reader.view_at(frames[0].packet_offset).expect("view_at ok");
     let ref_ = view.py_ref();
-    let row = PyroRow::parse_wire(&ref_).expect("parse ok");
+    let row = PyroRow::expose_view(ref_).expect("parse ok");
+    let row: PyroRow = (&*row).into();
     assert_eq!(row.get("id"), Some(&PyroValue::from(42i32)));
 }
 
@@ -253,7 +254,8 @@ fn test_wal_large_payload() {
 
     let view = reader.view_at(frames[0].packet_offset).expect("view_at");
     let ref_ = view.py_ref();
-    let row = PyroRow::parse_wire(&ref_).expect("parse ok");
+    let row = PyroRow::expose_view(ref_).expect("parse ok");
+    let row: PyroRow = (&*row).into();
     let restored: String = row.get_value("payload").expect("payload is a string");
     assert_eq!(restored, big);
 }
@@ -285,7 +287,9 @@ fn test_wal_multiple_views_from_same_reader() {
     // All views should be live and readable
     for (i, view) in views.iter().enumerate() {
         let ref_ = view.py_ref();
-        let row = PyroRow::parse_wire(&ref_).expect("parse");
+        let row = PyroRow::expose_view(ref_).expect("parse ok");
+        let row: PyroRow = (&*row).into();
+        
         assert_eq!(row.get("id"), Some(&PyroValue::from(i as i32)));
     }
 
@@ -310,16 +314,19 @@ fn test_wal_view_data_independence() {
     let v2 = reader.view_at(frames[1].packet_offset).expect("v2");
 
     let r1_ref = v1.py_ref();
-    let r1 = PyroRow::parse_wire(&r1_ref).expect("r1");
+    let r1 = PyroRow::expose_view(r1_ref).expect("r1");
+    let r1: PyroRow = (&*r1).into(); 
     let r2_ref = v2.py_ref();
-    let r2 = PyroRow::parse_wire(&r2_ref).expect("r2");
+    let r2 = PyroRow::expose_view(r2_ref).expect("r2");
+    let r2: PyroRow = (&*r2).into(); 
     assert_eq!(r1.get("id"), Some(&PyroValue::from(1i32)));
     assert_eq!(r2.get("id"), Some(&PyroValue::from(2i32)));
 
     // Views should be independent
     drop(v1);
     let r2_still_ref = v2.py_ref();
-    let r2_still = PyroRow::parse_wire(&r2_still_ref).expect("r2 still valid");
+    let r2_still = PyroRow::expose_view(r2_still_ref).expect("r2 still valid");
+    let r2_still: PyroRow = (&*r2_still).into(); 
     assert_eq!(r2_still.get("id"), Some(&PyroValue::from(2i32)));
 }
 

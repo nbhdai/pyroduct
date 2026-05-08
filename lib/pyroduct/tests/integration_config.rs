@@ -79,6 +79,32 @@ async fn test_capability_configuration_respect() {
 
     let input = PyroRow::from([("input", "hello".into())]);
     let result = pipeline.process(&input).await;
+
+    for (i, step) in result.steps.iter().enumerate() {
+        println!("--- Step {} logs ---", i);
+        for log in &step.logs.module_logs {
+            println!("{}", log);
+        }
+        for ((cap, ver), logs) in &step.logs.capability_logs {
+            for log in logs {
+                println!("[{} v{}]: {}", cap, ver, log);
+            }
+        }
+    }
+
+    if let Some(failure) = &result.failure {
+        println!("--- Failure logs ---");
+        for log in &failure.logs.module_logs {
+            println!("{}", log);
+        }
+        for ((cap, ver), logs) in &failure.logs.capability_logs {
+            for log in logs {
+                println!("[{} v{}]: {}", cap, ver, log);
+            }
+        }
+        println!("Failure: {:?}", failure.result);
+    }
+
     let row = result.row().unwrap();
     let transformed = row.get_str("transformed").unwrap();
     // Result should be (count: 0, incremented: 0) since fetch_add returns previous

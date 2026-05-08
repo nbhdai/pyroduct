@@ -21,7 +21,7 @@ use super::{PipelineError, PipelineResult};
 // Pipeline
 // =============================================================================
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PipelineExecution {
     pub row_index: usize,
     pub steps: Vec<PyroSuccess>,

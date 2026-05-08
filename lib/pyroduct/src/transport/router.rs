@@ -34,7 +34,7 @@ impl PyroRouter {
         Ok(Self {
             library,
             objects: DashMap::new(),
-            client_id: AtomicU32::new(0),
+            client_id: AtomicU32::new(1),
             clients: DashMap::new(),
         })
     }
