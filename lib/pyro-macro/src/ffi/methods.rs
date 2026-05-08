@@ -202,7 +202,7 @@ impl ImplMethod {
         let state_retrieval = quote! {
             let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                 Ok(state) => state,
-                Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
+                Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode().view(),
             };
             let state = state_ptr.as_ref::<#state_tn>();
         };
@@ -210,7 +210,7 @@ impl ImplMethod {
         let client_retrieval = quote! {
             let client: #client_tn = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
                 Ok(buf) => buf,
-                Err(err) => return err.encode(),
+                Err(err) => return err.encode().view(),
             };
         };
         call_args.push(quote! { &client });
@@ -220,7 +220,7 @@ impl ImplMethod {
                 quote! {
                     let input: #ty = match ::pyroduct::ffi::guest::deserialize_input(input_ptr) {
                         Ok(buf) => buf,
-                        Err(err) => return err.encode(),
+                        Err(err) => return err.encode().view(),
                     };
                 }
             }
@@ -231,7 +231,7 @@ impl ImplMethod {
                 quote! {
                     let input: #input_struct_name = match ::pyroduct::ffi::guest::deserialize_input(input_ptr) {
                         Ok(buf) => buf,
-                        Err(err) => return err.encode(),
+                        Err(err) => return err.encode().view(),
                     };
                 }
             }
@@ -574,13 +574,13 @@ mod tests {
                 ::pyroduct::ffi::guest::execute_safe_async(|| async move {
                     let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                         Ok(state) => state,
-                        Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
+                        Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode().view(),
                     };
                     let state = state_ptr.as_ref::<MockServer>();
 
                     let client: MockClient = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
                         Ok(buf) => buf,
-                        Err(err) => return err.encode(),
+                        Err(err) => return err.encode().view(),
                     };
                     ::pyroduct::ffi::guest::serialize_output(state.test_async_client(&client).await)
                 }, capability_state_ptr.object_id)
@@ -641,18 +641,18 @@ mod tests {
                 ::pyroduct::ffi::guest::execute_safe(|| {
                     let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                         Ok(state) => state,
-                        Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
+                        Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode().view(),
                     };
                     let state = state_ptr.as_ref::<MockServer>();
 
                     let client: MockClient = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
                         Ok(buf) => buf,
-                        Err(err) => return err.encode(),
+                        Err(err) => return err.encode().view(),
                     };
 
                     let input: i32 = match ::pyroduct::ffi::guest::deserialize_input(input_ptr) {
                         Ok(buf) => buf,
-                        Err(err) => return err.encode(),
+                        Err(err) => return err.encode().view(),
                     };
                     ::pyroduct::ffi::guest::serialize_result(state.test_sync_client_input(&client, input))
                 }, capability_state_ptr.object_id)
@@ -723,18 +723,18 @@ mod tests {
                 ::pyroduct::ffi::guest::execute_safe_async(|| async move {
                     let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                         Ok(state) => state,
-                        Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
+                        Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode().view(),
                     };
                     let state = state_ptr.as_ref::<MockServer>();
 
                     let client: MockClient = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
                         Ok(buf) => buf,
-                        Err(err) => return err.encode(),
+                        Err(err) => return err.encode().view(),
                     };
 
                     let input: p__MockServer__TestSciMulti__Input = match ::pyroduct::ffi::guest::deserialize_input(input_ptr) {
                         Ok(buf) => buf,
-                        Err(err) => return err.encode(),
+                        Err(err) => return err.encode().view(),
                     };
                     ::pyroduct::ffi::guest::serialize_output(state.test_sci_multi(&client, input.a, input.b).await)
                 }, capability_state_ptr.object_id)

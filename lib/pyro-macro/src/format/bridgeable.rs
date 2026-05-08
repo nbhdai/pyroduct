@@ -7,9 +7,6 @@ use syn::{
 
 use crate::format::BridgeableArgs;
 
-/// Whitelist of derives that are safe to forward to the rkyv `Archived` type.
-const DERIVE_WHITELIST: &[&str] = &["Debug", "PartialEq", "Eq", "PartialOrd", "Ord"];
-
 /// Attribute macro that adds rkyv serialization, the `Bridgeable` trait, and
 /// optionally the `Documented` trait for generating a JSON type spec.
 ///

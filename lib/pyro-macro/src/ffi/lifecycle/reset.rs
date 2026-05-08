@@ -98,7 +98,7 @@ impl ResetFn {
                     ::pyroduct::ffi::guest::execute_safe_async(|| async move {
                         let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                             Ok(state) => state,
-                            Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
+                            Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode().view(),
                         };
                         let state = state_ptr.as_ref::<#server>();
                         state.reset().await;
@@ -115,7 +115,7 @@ impl ResetFn {
                     ::pyroduct::ffi::guest::execute_safe(|| {
                         let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                             Ok(state) => state,
-                            Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
+                            Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode().view(),
                         };
                         let state = state_ptr.as_ref::<#server>();
                         state.reset();
@@ -181,7 +181,7 @@ mod tests {
                         ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr)
                     } {
                         Ok(state) => state,
-                        Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
+                        Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode().view(),
                     };
                     let state = state_ptr.as_ref::<GreeterServer>();
                     state.reset();
@@ -214,7 +214,7 @@ mod tests {
                         ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr)
                     } {
                         Ok(state) => state,
-                        Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode(),
+                        Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode().view(),
                     };
                     let state = state_ptr.as_ref::<GreeterServer>();
                     state.reset().await;

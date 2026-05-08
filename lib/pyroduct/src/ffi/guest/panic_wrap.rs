@@ -125,7 +125,7 @@ pub fn get_runtime() -> &'static Runtime {
 pub fn execute_safe_async<F, Fut>(f: F, object_id: u64) -> FuturePyroView
 where
     F: FnOnce() -> Fut + Send,
-    Fut: std::future::Future<Output = PyroVec> + Send + 'static,
+    Fut: std::future::Future<Output = PyroView> + Send + 'static,
 {
     let fut = f();
     FuturePyroView::Future(BorrowingFfiFuture::<'static>::new(SafeMethodHandle::new(
@@ -143,7 +143,7 @@ where
                 .await;
 
             match result {
-                Ok(val) => val.view().into_ptr(),
+                Ok(val) => val.into_ptr(),
                 Err(_) => {
                     let panic_info = recover_panic_info();
                     PyroError::CodePanic(panic_info).encode().view().into_ptr()

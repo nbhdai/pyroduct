@@ -9,7 +9,7 @@ use rkyv::{
 };
 
 use crate::format::{
-    PyroRef, PyroVec, PyroView, TypedPyroRef, format::{Parser, UserHeaderValues, Wrapper}, header::PyroData, rkyv_8::TypedBuf
+    PyroRef, PyroView, TypedPyroRef, format::{Parser, UserHeaderValues, Wrapper}, header::PyroData, rkyv_8::TypedBuf
 };
 use crate::{CapturedError, PyroError, PyroResult};
 pub struct RkyvParser<BD, T> {
