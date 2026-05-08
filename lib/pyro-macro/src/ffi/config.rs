@@ -4,7 +4,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Attribute, ItemStruct, Result, Visibility, parse_quote};
 
-use crate::format::bridgeable::DocRec;
+use crate::format::DocRec;
 
 #[derive(Debug, Clone)]
 pub struct CapConfig {

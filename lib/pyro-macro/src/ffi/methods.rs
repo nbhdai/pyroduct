@@ -243,7 +243,7 @@ impl ImplMethod {
         // Return type and body wrapper
         let (ffi_ret, body) = match (self.is_async, &self.class.error_tn) {
             (true, Some(_)) => (
-                quote!(::pyroduct::ffi::FuturePyroVec),
+                quote!(::pyroduct::ffi::FuturePyroView),
                 quote! {
                     ::pyroduct::ffi::guest::execute_safe_async(|| async move {
                         #state_retrieval
@@ -254,7 +254,7 @@ impl ImplMethod {
                 },
             ),
             (false, Some(_)) => (
-                quote!(::pyroduct::format::PyroVecPtr),
+                quote!(::pyroduct::format::PyroViewPtr),
                 quote! {
                     ::pyroduct::ffi::guest::execute_safe(|| {
                         #state_retrieval
@@ -265,7 +265,7 @@ impl ImplMethod {
                 },
             ),
             (true, None) => (
-                quote!(::pyroduct::ffi::FuturePyroVec),
+                quote!(::pyroduct::ffi::FuturePyroView),
                 quote! {
                     ::pyroduct::ffi::guest::execute_safe_async(|| async move {
                         #state_retrieval
@@ -276,7 +276,7 @@ impl ImplMethod {
                 },
             ),
             (false, None) => (
-                quote!(::pyroduct::format::PyroVecPtr),
+                quote!(::pyroduct::format::PyroViewPtr),
                 quote! {
                     ::pyroduct::ffi::guest::execute_safe(|| {
                         #state_retrieval
@@ -294,8 +294,8 @@ impl ImplMethod {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn #fn_ffi_name (
                 capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
-                client_state_ptr: ::pyroduct::format::PyroViewPtr,
-                input_ptr: ::pyroduct::format::PyroViewPtr,
+                client_state_ptr: ::pyroduct::format::PyroRefPtr,
+                input_ptr: ::pyroduct::format::PyroRefPtr,
             ) -> #ffi_ret {
                 #body
             }
@@ -568,9 +568,9 @@ mod tests {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn p__mock_server__test_async_client__ffi(
                 capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
-                client_state_ptr: ::pyroduct::format::PyroViewPtr,
-                input_ptr: ::pyroduct::format::PyroViewPtr,
-            ) -> ::pyroduct::ffi::FuturePyroVec {
+                client_state_ptr: ::pyroduct::format::PyroRefPtr,
+                input_ptr: ::pyroduct::format::PyroRefPtr,
+            ) -> ::pyroduct::ffi::FuturePyroView {
                 ::pyroduct::ffi::guest::execute_safe_async(|| async move {
                     let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                         Ok(state) => state,
@@ -635,9 +635,9 @@ mod tests {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn p__mock_server__test_sync_client_input__ffi(
                 capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
-                client_state_ptr: ::pyroduct::format::PyroViewPtr,
-                input_ptr: ::pyroduct::format::PyroViewPtr,
-            ) -> ::pyroduct::format::PyroVecPtr {
+                client_state_ptr: ::pyroduct::format::PyroRefPtr,
+                input_ptr: ::pyroduct::format::PyroRefPtr,
+            ) -> ::pyroduct::format::PyroViewPtr {
                 ::pyroduct::ffi::guest::execute_safe(|| {
                     let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                         Ok(state) => state,
@@ -717,9 +717,9 @@ mod tests {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn p__mock_server__test_sci_multi__ffi(
                 capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
-                client_state_ptr: ::pyroduct::format::PyroViewPtr,
-                input_ptr: ::pyroduct::format::PyroViewPtr,
-            ) -> ::pyroduct::ffi::FuturePyroVec {
+                client_state_ptr: ::pyroduct::format::PyroRefPtr,
+                input_ptr: ::pyroduct::format::PyroRefPtr,
+            ) -> ::pyroduct::ffi::FuturePyroView {
                 ::pyroduct::ffi::guest::execute_safe_async(|| async move {
                     let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                         Ok(state) => state,

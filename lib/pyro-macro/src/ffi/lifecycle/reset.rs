@@ -94,7 +94,7 @@ impl ResetFn {
                 #[unsafe(no_mangle)]
                 pub unsafe extern "C" fn #reset_name(
                     capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
-                ) -> ::pyroduct::ffi::FuturePyroVec {
+                ) -> ::pyroduct::ffi::FuturePyroView {
                     ::pyroduct::ffi::guest::execute_safe_async(|| async move {
                         let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                             Ok(state) => state,
@@ -102,7 +102,7 @@ impl ResetFn {
                         };
                         let state = state_ptr.as_ref::<#server>();
                         state.reset().await;
-                        ::pyroduct::format::PyroVec::ok()
+                        ::pyroduct::format::PyroVec::ok().view()
                     }, capability_state_ptr.object_id)
                 }
             }
@@ -111,7 +111,7 @@ impl ResetFn {
                 #[unsafe(no_mangle)]
                 pub unsafe extern "C" fn #reset_name(
                     capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
-                ) -> ::pyroduct::format::PyroVecPtr {
+                ) -> ::pyroduct::format::PyroViewPtr {
                     ::pyroduct::ffi::guest::execute_safe(|| {
                         let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                             Ok(state) => state,
@@ -119,7 +119,7 @@ impl ResetFn {
                         };
                         let state = state_ptr.as_ref::<#server>();
                         state.reset();
-                        ::pyroduct::format::PyroVec::ok()
+                        ::pyroduct::format::PyroVec::ok().view()
                     }, capability_state_ptr.object_id)
                 }
             }
@@ -175,7 +175,7 @@ mod tests {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn p__greeter_server__ffi_reset(
                 capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
-            ) -> ::pyroduct::format::PyroVecPtr {
+            ) -> ::pyroduct::format::PyroViewPtr {
                 ::pyroduct::ffi::guest::execute_safe(|| {
                     let state_ptr = match unsafe {
                         ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr)
@@ -185,7 +185,7 @@ mod tests {
                     };
                     let state = state_ptr.as_ref::<GreeterServer>();
                     state.reset();
-                    ::pyroduct::format::PyroVec::ok()
+                    ::pyroduct::format::PyroVec::ok().view()
                 }, capability_state_ptr.object_id)
             }
         };
@@ -208,7 +208,7 @@ mod tests {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn p__greeter_server__ffi_reset(
                 capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
-            ) -> ::pyroduct::ffi::FuturePyroVec {
+            ) -> ::pyroduct::ffi::FuturePyroView {
                 ::pyroduct::ffi::guest::execute_safe_async(|| async move {
                     let state_ptr = match unsafe {
                         ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr)
@@ -218,7 +218,7 @@ mod tests {
                     };
                     let state = state_ptr.as_ref::<GreeterServer>();
                     state.reset().await;
-                    ::pyroduct::format::PyroVec::ok()
+                    ::pyroduct::format::PyroVec::ok().view()
                 }, capability_state_ptr.object_id)
             }
         };

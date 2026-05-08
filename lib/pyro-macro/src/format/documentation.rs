@@ -1,6 +1,7 @@
-use crate::format::bridgeable::DocRec;
 use quote::{format_ident, quote};
 use syn::{Fields, ItemStruct, Path, Type, parse_quote};
+
+use crate::format::DocRec;
 
 /// Holds the parsed structure data required to generate the API docs.
 pub struct MagmaDocumentation {

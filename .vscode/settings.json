@@ -18,4 +18,5 @@
   "rust-analyzer.server.extraEnv": {
     "RUST_ANALYZER_SLOW_OP_THRESHOLD": "500"
   },
+  "nixEnvSelector.suggestion": false,
 }
