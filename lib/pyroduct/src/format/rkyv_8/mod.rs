@@ -13,7 +13,7 @@ pub use deserialize::RkyvReceiver;
 pub use parse::RkyvParser;
 pub use serialize::RkyvWriter;
 
-pub use buffers::{TypedBuf, TypedPyroView};
+pub use buffers::{TypedBuf, TypedPyroRef};
 pub struct RkyvHeader;
 
 impl PyroHeaderValues for RkyvHeader {

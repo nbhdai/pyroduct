@@ -415,7 +415,7 @@ mod tests {
         let val: u64 = 42;
         let vec = val.ship().unwrap();
         println!("{vec:?}");
-        let raw_slice = vec.as_packet_slice();
+        let raw_slice = vec.as_raw_slice();
         println!("{raw_slice:?}");
     }
 
@@ -425,10 +425,10 @@ mod tests {
         // we can encode it into a type:
         let vec = val.ship().unwrap();
         println!("{vec:?}");
-        let raw_slice = vec.as_packet_slice();
+        let raw_slice = vec.as_raw_slice();
         println!("{raw_slice:?}");
         assert_eq!(vec.wire_format(), 1);
-        let typed = u64::expose(vec).unwrap();
+        let typed = u64::expose(vec.view()).unwrap();
         // We now have zero copy access to the data
         let mut receiver = typed.receiver();
         let recovered = receiver.receive(&typed).unwrap();
@@ -440,7 +440,7 @@ mod tests {
     fn test_string_roundtrip() {
         let val = "Hello, World!".to_string();
         let vec = val.ship().unwrap();
-        let typed = String::expose(vec).unwrap();
+        let typed = String::expose(vec.view()).unwrap();
         let mut receiver = typed.receiver();
         let recovered = receiver.receive(&typed).unwrap();
         assert_eq!(val, recovered);
@@ -450,7 +450,7 @@ mod tests {
     fn test_vec_roundtrip() {
         let val: Vec<u32> = vec![1, 2, 3, 4, 5];
         let vec = val.ship().unwrap();
-        let typed = Vec::<u32>::expose(vec).unwrap();
+        let typed = Vec::<u32>::expose(vec.view()).unwrap();
         let mut receiver = typed.receiver();
         let recovered = receiver.receive(&typed).unwrap();
         assert_eq!(val, recovered);
@@ -463,7 +463,7 @@ mod tests {
         val.insert("b".to_string(), 2);
 
         let vec = val.ship().unwrap();
-        let typed = HashMap::<String, i32>::expose(vec).unwrap();
+        let typed = HashMap::<String, i32>::expose(vec.view()).unwrap();
         let mut receiver = typed.receiver();
         let recovered = receiver.receive(&typed).unwrap();
         assert_eq!(val, recovered);
@@ -473,14 +473,14 @@ mod tests {
     fn test_option_roundtrip() {
         let val: Option<String> = Some("test".to_string());
         let vec = val.ship().unwrap();
-        let typed = Option::<String>::expose(vec).unwrap();
+        let typed = Option::<String>::expose(vec.view()).unwrap();
         let mut receiver = typed.receiver();
         let recovered = receiver.receive(&typed).unwrap();
         assert_eq!(val, recovered);
 
         let none_val: Option<String> = None;
         let vec = none_val.ship().unwrap();
-        let typed = Option::<String>::expose(vec).unwrap();
+        let typed = Option::<String>::expose(vec.view()).unwrap();
         let mut receiver = typed.receiver();
         let recovered = receiver.receive(&typed).unwrap();
         assert_eq!(none_val, recovered);
@@ -490,7 +490,7 @@ mod tests {
     fn test_tuple_roundtrip() {
         let val: (u32, String, bool) = (42, "hello".to_string(), true);
         let vec = val.ship().unwrap();
-        let typed = <(u32, String, bool)>::expose(vec).unwrap();
+        let typed = <(u32, String, bool)>::expose(vec.view()).unwrap();
         let mut receiver = typed.receiver();
         let recovered = receiver.receive(&typed).unwrap();
         assert_eq!(val, recovered);
@@ -500,7 +500,7 @@ mod tests {
     fn test_array_roundtrip() {
         let val: [u8; 4] = [1, 2, 3, 4];
         let vec = val.ship().unwrap();
-        let typed = <[u8; 4]>::expose(vec).unwrap();
+        let typed = <[u8; 4]>::expose(vec.view()).unwrap();
         let mut receiver = typed.receiver();
         let recovered = receiver.receive(&typed).unwrap();
         assert_eq!(val, recovered);

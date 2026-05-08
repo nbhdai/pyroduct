@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
+use fs_err as fs;
 use pyro_artifacts::{
     artifacts::{Artifact, Artifacts, Module},
     debug::CapSymbols,
     environment::Environment,
 };
-use fs_err as fs;
 use pyro_macro::{ffi::generate_capability, module::generate_module};
 use std::path::Path;
 
@@ -128,14 +128,12 @@ pub async fn expand_single(path: &Path) -> Result<bool> {
                 fs::create_dir_all(&output_dir)?;
                 fs::write(output_dir.join("cap.rs"), code)?;
             }
-            Artifacts::Module(Module::Binary(binary)) => {
-                match pyro_artifacts::debug::wat(binary) {
-                    Ok(wat) => fs::write(output_dir.join("mod.wat"), wat)?,
-                    Err(error) => {
-                        tracing::error!(error, "Unable to create wat");
-                    }
+            Artifacts::Module(Module::Binary(binary)) => match pyro_artifacts::debug::wat(binary) {
+                Ok(wat) => fs::write(output_dir.join("mod.wat"), wat)?,
+                Err(error) => {
+                    tracing::error!(error, "Unable to create wat");
                 }
-            }
+            },
             _ => {}
         }
     }

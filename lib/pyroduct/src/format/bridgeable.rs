@@ -7,8 +7,7 @@ use crate::format::format::{
     Parser, PyroFormat, PyroHeaderValues, PyroZeroCopyFormat, UserHeaderValues,
 };
 use crate::format::header::{PyroData, PyroHeader, PyroHeaderMut};
-use crate::format::view::PyroView;
-use crate::format::{ParseError, PyroVec};
+use crate::format::{ParseError, PyroRef, PyroVec, PyroView};
 // =============================================================================
 // Bridgeable — default-format convenience (every format)
 // =============================================================================
@@ -53,16 +52,15 @@ pub trait Bridgeable: UserHeaderValues + Sized {
 
     /// Parse an owned `PyroVec` using the default format.
     fn expose(
-        vec: PyroVec,
+        vec: PyroView,
     ) -> Result<
-        <<Self::Format as PyroFormat<Self>>::VecParser as Parser<PyroVec, Self>>::TypedWrapper,
+        <<Self::Format as PyroFormat<Self>>::Parser as Parser<PyroView, Self>>::TypedWrapper,
         PyroError,
     > {
         trace!(
             type_name = std::any::type_name::<Self>(),
             len = vec.len(),
             status = ?vec.status(),
-            version = vec.version(),
             "exposing PyroVec"
         );
         let result = <Self as Bridgeable>::Format::parse(vec);
@@ -76,13 +74,13 @@ pub trait Bridgeable: UserHeaderValues + Sized {
         result
     }
 
-    /// Parse a borrowed `PyroView` without taking ownership.
+    /// Parse a borrowed `PyroRef` without taking ownership.
     /// Only available for zero-copy formats (rkyv, zerovec, …).
     fn expose_view<'a>(
-        vec: PyroView<'a>,
+        vec: PyroRef<'a>,
     ) -> Result<
-        <<Self::Format as PyroFormat<Self>>::ViewParser<'a> as Parser<
-            PyroView<'a>,
+        <<Self::Format as PyroFormat<Self>>::RefParser<'a> as Parser<
+            PyroRef<'a>,
             Self,
         >>::TypedWrapper,
         PyroError,
@@ -91,8 +89,7 @@ pub trait Bridgeable: UserHeaderValues + Sized {
             type_name = std::any::type_name::<Self>(),
             len = vec.len(),
             status = ?vec.status(),
-            version = vec.version(),
-            "exposing PyroView (zero-copy)"
+            "exposing PyroRef (zero-copy)"
         );
         let result = <Self::Format as PyroFormat<Self>>::parse_view(vec);
         match &result {
@@ -147,11 +144,11 @@ where
     fn ship(&self) -> Result<PyroVec, PyroError>;
 
     fn expose(
-        vec: PyroVec,
+        vec: PyroView,
     ) -> Result<
         Result<
-            <<T::Format as PyroFormat<T>>::VecParser as Parser<PyroVec, T>>::TypedWrapper,
-            <<E::Format as PyroFormat<E>>::VecParser as Parser<PyroVec, E>>::TypedWrapper,
+            <<T::Format as PyroFormat<T>>::Parser as Parser<PyroView, T>>::TypedWrapper,
+            <<E::Format as PyroFormat<E>>::Parser as Parser<PyroView, E>>::TypedWrapper,
         >,
         PyroError,
     >;
@@ -174,7 +171,6 @@ where
 
                 let mut vec = T::ship(value)?;
                 vec.set_status(<<T as Bridgeable>::Format as PyroFormat<T>>::HeaderValues::OK_CODE);
-                vec.set_version(<T as UserHeaderValues>::VERSION);
                 Ok(vec)
             }
             Err(error) => {
@@ -188,18 +184,17 @@ where
                 vec.set_status(
                     <<E as Bridgeable>::Format as PyroFormat<E>>::HeaderValues::ERR_CODE,
                 );
-                vec.set_error_version(<E as UserHeaderValues>::VERSION);
                 Ok(vec)
             }
         }
     }
 
     fn expose(
-        vec: PyroVec,
+        vec: PyroView,
     ) -> Result<
         Result<
-            <<T::Format as PyroFormat<T>>::VecParser as Parser<PyroVec, T>>::TypedWrapper,
-            <<E::Format as PyroFormat<E>>::VecParser as Parser<PyroVec, E>>::TypedWrapper,
+            <<T::Format as PyroFormat<T>>::Parser as Parser<PyroView, T>>::TypedWrapper,
+            <<E::Format as PyroFormat<E>>::Parser as Parser<PyroView, E>>::TypedWrapper,
         >,
         PyroError,
     > {
@@ -217,13 +212,13 @@ where
         match status {
             Ok(s) if s == ok_code => {
                 trace!("Parser::parse_result matched OK_CODE, parsing as success type");
-                let parser = <T as Bridgeable>::Format::vec_parser(vec);
+                let parser = <T as Bridgeable>::Format::parser(vec);
                 let buf = parser.unchecked_parse()?;
                 Ok(Ok(buf))
             }
             Ok(s) if s == err_code => {
                 trace!("Parser::parse_result matched ERR_CODE, parsing as error type");
-                let parser = <E as Bridgeable>::Format::vec_parser(vec);
+                let parser = <E as Bridgeable>::Format::parser(vec);
                 let buf = parser.unchecked_parse()?;
                 Ok(Err(buf))
             }

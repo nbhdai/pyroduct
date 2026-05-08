@@ -68,7 +68,7 @@ mod tests {
         assert!(vec.len() > 0);
 
         // Expose
-        let typed = PyroRowOwned::expose(vec).expect("expose failed");
+        let typed = PyroRowOwned::expose(vec.view()).expect("expose failed");
 
         // Receive (deserialize back to owned)
         let mut receiver = typed.receiver();
@@ -82,7 +82,7 @@ mod tests {
         let val = PyroValue::from(42i32).into_owned();
 
         let vec = val.ship().expect("ship failed");
-        let typed = PyroValue::<'static>::expose(vec).expect("expose failed");
+        let typed = PyroValue::<'static>::expose(vec.view()).expect("expose failed");
         let mut receiver = typed.receiver();
         let recovered = receiver.receive(&typed).expect("receive failed");
 
@@ -98,7 +98,7 @@ mod tests {
 
         let vec = rows.ship().expect("ship failed");
         let typed: crate::format::TypedBuf<Vec<PyroRow<'static>>> =
-            Vec::<PyroRowOwned>::expose(vec).expect("expose failed");
+            Vec::<PyroRowOwned>::expose(vec.view()).expect("expose failed");
         let mut receiver = typed.receiver();
         let recovered = receiver.receive(&typed).expect("receive failed");
 
@@ -117,7 +117,7 @@ mod tests {
         .into_owned();
 
         let vec = outer.ship().expect("ship failed");
-        let typed = PyroRowOwned::expose(vec).expect("expose failed");
+        let typed = PyroRowOwned::expose(vec.view()).expect("expose failed");
         let mut receiver = typed.receiver();
         let recovered = receiver.receive(&typed).expect("receive failed");
 
@@ -133,7 +133,7 @@ mod tests {
         ]);
 
         let vec = val.ship().expect("ship failed");
-        let typed = PyroValue::<'static>::expose(vec).expect("expose failed");
+        let typed = PyroValue::<'static>::expose(vec.view()).expect("expose failed");
         let mut receiver = typed.receiver();
         let recovered = receiver.receive(&typed).expect("receive failed");
 

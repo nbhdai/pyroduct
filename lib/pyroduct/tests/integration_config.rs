@@ -1,10 +1,10 @@
-use pyro_artifacts::{artifacts::Artifacts, cache::CacheManager, environment::Environment};
 use indexmap::IndexMap;
-use pyroduct::{
-    PyroRow,
-    module::ModuleConfig,
-    pipeline::{PipelineConfig, PipelineFactory},
+use pyro_artifacts::{
+    artifacts::{Artifacts, Playbook},
+    cache::CacheManager,
+    environment::Environment,
 };
+use pyroduct::{PyroRow, pipeline::PipelineConfig};
 use serde_json::json;
 use std::collections::HashMap;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
@@ -22,7 +22,9 @@ async fn test_capability_configuration_respect() {
         .init();
     let cache = CacheManager::from_env().await.unwrap();
 
-    let env = Environment::new("../../modules/cap_config/".into()).await.unwrap();
+    let env = Environment::new("../../modules/cap_config/".into())
+        .await
+        .unwrap();
     let artifacts = env.package(false).await.unwrap();
     for artifact in &artifacts {
         cache.write_artifacts(artifact).await.unwrap();
@@ -35,8 +37,8 @@ async fn test_capability_configuration_respect() {
     let config = PipelineConfig {
         pipeline: IndexMap::from([(
             "config".to_string(),
-            ModuleConfig {
-                module: pyroduct::module::Module::Hash(hash),
+            Playbook {
+                hash,
                 configurations: HashMap::from([(
                     "config".to_string(),
                     Some(json!({
@@ -47,7 +49,8 @@ async fn test_capability_configuration_respect() {
             },
         )]),
     };
-    let mut factory = PipelineFactory::load(&config).await.unwrap();
+    let config = config.load(&cache).await.unwrap();
+    let factory = config.factory().unwrap();
     let mut pipeline = factory.build().await.unwrap();
 
     let input = PyroRow::from([("input", "hello".into())]);

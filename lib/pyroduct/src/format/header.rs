@@ -1,16 +1,17 @@
 use crate::error::ErrorKind;
+use crate::format::PyroRef;
+use crate::format::vec_buf::PyroRefPtr;
 use crate::{CapturedError, PyroError};
 use std::convert::TryInto;
 use std::ops::{Deref, DerefMut};
 use std::ptr;
 use thiserror::Error;
 
-pub const MAGIC_VAL: u32 = 0x7079726F; // "pyro"
 pub const PROTOCOL_VERSION: u8 = 1;
 
 macro_rules! define_data_status {
     ($( $name:ident = $val:expr ),* $(,)?) => {
-        /// Status codes located at Offset 0x0F in the header.
+        /// Status codes located at Offset 0x09 in the header.
         #[repr(u8)]
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         pub enum DataStatus {
@@ -25,6 +26,14 @@ macro_rules! define_data_status {
                 }
             }
         }
+
+        impl Into<u8> for DataStatus {
+            fn into(self) -> u8 {
+                match self {
+                    $( DataStatus::$name => $val, )*
+                }
+            }
+        }
     };
 }
 
@@ -35,6 +44,7 @@ define_data_status! {
     RkyvError = 3,
     JsonValid = 4,
     JsonError = 5,
+    InterfaceSchema = 10,
 
     // A ffi pyro was unable to parse a header indicating a critical error.
     PyroFfiFail        = 99,
@@ -83,22 +93,15 @@ pub enum ParseError {
 
 // --- Sealing Module ---
 mod private {
-    use rkyv::Archive;
-
-    use crate::format::{
-        PyroBuf, PyroVec, TypedBuf, TypedPyroView,
-        view::{PyroMutView, PyroView},
-    };
+    use crate::format::{PyroVec, PyroView, PyroRef};
 
     pub trait Sealed {}
     // The primitive array is the base sealed type.
     impl Sealed for [u8; 16] {}
+    impl Sealed for &[u8; 16] {}
     impl Sealed for PyroVec {}
-    impl Sealed for PyroBuf {}
-    impl<T: Archive> Sealed for TypedBuf<T> {}
-    impl Sealed for PyroView<'_> {}
-    impl<T: Archive> Sealed for TypedPyroView<'_, T> {}
-    impl Sealed for PyroMutView<'_> {}
+    impl Sealed for PyroView {}
+    impl Sealed for PyroRef<'_> {}
 }
 
 /// A specialized parser for the 16-byte PyroVec header.
@@ -108,14 +111,15 @@ pub struct PyroParser;
 impl PyroParser {
     pub const ALIGN: usize = 16;
     pub const HEADER_SIZE: usize = 16;
+    pub const OFFSET_LEN: usize = 0;
 
     // Offsets
-    pub const OFFSET_MAGIC: usize = 0;
-    pub const OFFSET_LEN: usize = 4;
+    pub const OFFSET_CLIENT: usize = 4;
     pub const OFFSET_WIRE: usize = 8;
     pub const OFFSET_STATUS: usize = 9;
-    pub const OFFSET_ERR_VER: usize = 10;
-    pub const OFFSET_USER_VER: usize = 11;
+    pub const OFFSET_CLASS_ID: usize = 10;
+    pub const OFFSET_FN_ID: usize = 11;
+    pub const OFFSET_MUX_ID: usize = 12;
 
     pub fn check_strict(slice: &[u8]) -> Result<(), ParseError> {
         Self::check(slice)?;
@@ -142,11 +146,6 @@ impl PyroParser {
             return Err(ParseError::MisalignedPointer);
         }
 
-        let magic = Self::read_u32(slice, Self::OFFSET_MAGIC);
-        if magic != MAGIC_VAL {
-            return Err(ParseError::InvalidMagic);
-        }
-
         let len = Self::read_u32(slice, Self::OFFSET_LEN);
         if len as usize > slice.len() {
             return Err(ParseError::LengthExceedsCapacity);
@@ -163,11 +162,6 @@ impl PyroParser {
             return Err(ParseError::MisalignedPointer);
         }
 
-        let magic = unsafe { ptr::read(ptr.add(Self::OFFSET_MAGIC) as *const u32) };
-        if magic != MAGIC_VAL {
-            return Err(ParseError::InvalidMagic);
-        }
-
         Ok(())
     }
 
@@ -177,11 +171,6 @@ impl PyroParser {
         }
         if (ptr as usize) % Self::ALIGN != 0 {
             return Err(ParseError::MisalignedPointer);
-        }
-
-        let magic = unsafe { ptr::read(ptr.add(Self::OFFSET_MAGIC) as *const u32) };
-        if magic != MAGIC_VAL {
-            return Err(ParseError::InvalidMagic);
         }
 
         let len = unsafe { ptr::read(ptr.add(Self::OFFSET_LEN) as *const u32) };
@@ -207,11 +196,12 @@ impl PyroParser {
 // --- Trait Definitions ---
 
 pub trait PyroHeader: private::Sealed {
-    fn magic(&self) -> u32;
     fn header_len(&self) -> u32;
     fn wire_format(&self) -> u8;
-    fn version(&self) -> u8;
-    fn error_version(&self) -> u8;
+    fn client_id(&self) -> u32;
+    fn fn_id(&self) -> u8;
+    fn class_id(&self) -> u8;
+    fn mux_id(&self) -> u32;
     fn status_u8(&self) -> u8;
 
     fn status(&self) -> Result<DataStatus, u8>;
@@ -220,12 +210,78 @@ pub trait PyroHeader: private::Sealed {
     fn is_pyro_err(&self) -> bool;
 }
 
+impl PyroHeader for [u8;16] {
+    #[inline]
+    fn header_len(&self) -> u32 {
+        let bytes: [u8;4] = self[PyroParser::OFFSET_LEN..PyroParser::OFFSET_LEN + 4]
+            .try_into()
+            .unwrap();
+        u32::from_le_bytes(bytes)
+    }
+
+    #[inline]
+    fn wire_format(&self) -> u8 {
+        self[PyroParser::OFFSET_WIRE]
+    }
+
+    #[inline]
+    fn client_id(&self) -> u32 {
+        let h = self;
+        let bytes = h[PyroParser::OFFSET_CLIENT..PyroParser::OFFSET_CLIENT + 4]
+            .try_into()
+            .unwrap();
+        u32::from_le_bytes(bytes)
+    }
+
+    #[inline]
+    fn fn_id(&self) -> u8 {
+        self[PyroParser::OFFSET_FN_ID]
+    }
+
+    #[inline]
+    fn class_id(&self) -> u8 {
+        self[PyroParser::OFFSET_CLASS_ID]
+    }
+
+    #[inline]
+    fn mux_id(&self) -> u32 {
+        let h = self;
+        let bytes = h[PyroParser::OFFSET_MUX_ID..PyroParser::OFFSET_MUX_ID + 4]
+            .try_into()
+            .unwrap();
+        u32::from_le_bytes(bytes)
+    }
+
+    #[inline]
+    fn status_u8(&self) -> u8 {
+        self[PyroParser::OFFSET_STATUS]
+    }
+
+    fn status(&self) -> Result<DataStatus, u8> {
+        DataStatus::parse(self.status_u8())
+    }
+
+    fn is_ok(&self) -> bool {
+        self.status_u8() == 0
+    }
+
+    fn is_user_err(&self) -> bool {
+        self.status_u8() == 1
+    }
+
+    fn is_pyro_err(&self) -> bool {
+        let s = self.status_u8();
+        s != 0 && s != 1
+    }
+}
+
 pub trait PyroHeaderMut: private::Sealed {
-    fn set_magic(&mut self, magic: u32);
     unsafe fn set_len(&mut self, len: u32);
     fn set_wire_format(&mut self, wire_fmt: u8);
-    fn set_version(&mut self, version: u8);
-    fn set_error_version(&mut self, err_version: u8);
+    fn set_client_id(&mut self, fn_id: u32);
+    fn set_fn_id(&mut self, fn_id: u8);
+    fn set_class_id(&mut self, class_id: u8);
+    fn set_mux_id(&mut self, mux_id: u32);
 
     #[inline]
     fn set_status(&mut self, status: DataStatus) {
@@ -239,6 +295,10 @@ pub trait PyroHeaderMut: private::Sealed {
 pub trait PyroData: private::Sealed + Deref<Target = [u8]> + Sized {
     fn header(&self) -> &[u8; 16];
     fn capacity(&self) -> usize;
+
+    fn py_ref(&self) -> PyroRef<'_>;
+
+    fn py_ptr(&self) -> PyroRefPtr;
 
     /// Consumes the PyroVec and converts it into the appropriate PyroError
     /// based on the Status header.
@@ -256,7 +316,10 @@ pub trait PyroData: private::Sealed + Deref<Target = [u8]> + Sized {
                 | Ok(DataStatus::RkyvValid)
                 | Ok(DataStatus::RkyvError)
                 | Ok(DataStatus::JsonValid)
-                | Ok(DataStatus::JsonError) => return Ok(()),
+                | Ok(DataStatus::JsonError)
+                | Ok(DataStatus::InterfaceSchema) => {
+                    return Ok(());
+                }
                 Err(_) => return Ok(()),
 
                 // Remote errors (150-156, 3)
@@ -362,15 +425,6 @@ impl<T: OwnedPyroData> MutPyroData for T {
 
 impl<T: PyroData> PyroHeader for T {
     #[inline]
-    fn magic(&self) -> u32 {
-        let h = self.header();
-        let bytes = h[PyroParser::OFFSET_MAGIC..PyroParser::OFFSET_MAGIC + 4]
-            .try_into()
-            .unwrap();
-        u32::from_le_bytes(bytes)
-    }
-
-    #[inline]
     fn header_len(&self) -> u32 {
         let h = self.header();
         let bytes = h[PyroParser::OFFSET_LEN..PyroParser::OFFSET_LEN + 4]
@@ -385,13 +439,31 @@ impl<T: PyroData> PyroHeader for T {
     }
 
     #[inline]
-    fn version(&self) -> u8 {
-        self.header()[PyroParser::OFFSET_USER_VER]
+    fn client_id(&self) -> u32 {
+        let h = self.header();
+        let bytes = h[PyroParser::OFFSET_CLIENT..PyroParser::OFFSET_CLIENT + 4]
+            .try_into()
+            .unwrap();
+        u32::from_le_bytes(bytes)
     }
 
     #[inline]
-    fn error_version(&self) -> u8 {
-        self.header()[PyroParser::OFFSET_ERR_VER]
+    fn fn_id(&self) -> u8 {
+        self.header()[PyroParser::OFFSET_FN_ID]
+    }
+
+    #[inline]
+    fn class_id(&self) -> u8 {
+        self.header()[PyroParser::OFFSET_CLASS_ID]
+    }
+
+    #[inline]
+    fn mux_id(&self) -> u32 {
+        let h = self.header();
+        let bytes = h[PyroParser::OFFSET_MUX_ID..PyroParser::OFFSET_MUX_ID + 4]
+            .try_into()
+            .unwrap();
+        u32::from_le_bytes(bytes)
     }
 
     #[inline]
@@ -419,13 +491,6 @@ impl<T: PyroData> PyroHeader for T {
 
 impl<T: MutPyroData> PyroHeaderMut for T {
     #[inline]
-    fn set_magic(&mut self, magic: u32) {
-        let bytes = magic.to_le_bytes();
-        let h = self.header_mut();
-        h[PyroParser::OFFSET_MAGIC..PyroParser::OFFSET_MAGIC + 4].copy_from_slice(&bytes);
-    }
-
-    #[inline]
     unsafe fn set_len(&mut self, len: u32) {
         let bytes = len.to_le_bytes();
         let h = self.header_mut();
@@ -438,13 +503,27 @@ impl<T: MutPyroData> PyroHeaderMut for T {
     }
 
     #[inline]
-    fn set_version(&mut self, version: u8) {
-        self.header_mut()[PyroParser::OFFSET_USER_VER] = version;
+    fn set_client_id(&mut self, client_id: u32) {
+        let bytes = client_id.to_le_bytes();
+        let h = self.header_mut();
+        h[PyroParser::OFFSET_CLIENT..PyroParser::OFFSET_CLIENT + 4].copy_from_slice(&bytes);
     }
 
     #[inline]
-    fn set_error_version(&mut self, err_version: u8) {
-        self.header_mut()[PyroParser::OFFSET_ERR_VER] = err_version;
+    fn set_fn_id(&mut self, fn_id: u8) {
+        self.header_mut()[PyroParser::OFFSET_FN_ID] = fn_id;
+    }
+
+    #[inline]
+    fn set_class_id(&mut self, class_id: u8) {
+        self.header_mut()[PyroParser::OFFSET_CLASS_ID] = class_id;
+    }
+
+    #[inline]
+    fn set_mux_id(&mut self, mux_id: u32) {
+        let bytes = mux_id.to_le_bytes();
+        let h = self.header_mut();
+        h[PyroParser::OFFSET_MUX_ID..PyroParser::OFFSET_MUX_ID + 4].copy_from_slice(&bytes);
     }
 
     #[inline]
@@ -454,13 +533,13 @@ impl<T: MutPyroData> PyroHeaderMut for T {
 }
 
 pub const UNIT_BYTES: [u8; 16] = [
-    0x6F, 0x72, 0x79, 0x70, // Magic
     0x00, 0x00, 0x00, 0x00, // Len (0)
+    0x00, 0x00, 0x00, 0x00, // Client ID
     0x01, // WireFormat (1)
-    0x00, // Status (ValidData)
-    0x00, // UserVer
-    0x00, // ErrVer
-    0x00, 0x00, 0x00, 0x00, // Padding (0)
+    0x00, // Status (Empty)
+    0x00, // ClassID
+    0x00, // FnID
+    0x00, 0x00, 0x00, 0x00, // MuxID
 ];
 
 #[repr(C, align(16))]

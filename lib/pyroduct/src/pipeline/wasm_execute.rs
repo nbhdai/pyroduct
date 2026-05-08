@@ -6,11 +6,13 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, error, info, instrument, warn};
 
-use crate::format::value::{
+use crate::format::{
+    PyroFailure, PyroLogs, PyroSuccess,
+    value::{
     PyroRow, ValueError,
     arrow::{PreBatch, Rowable},
-};
-use crate::module::{PyroFailure, PyroInstance, PyroLogs, PyroSuccess};
+}};
+use crate::module::PyroInstance;
 
 use super::{PipelineError, PipelineResult};
 

@@ -72,7 +72,7 @@ pub enum ManifestError {
     CapabilitySectionMissing,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ResolvedCapability {
     pub author: String,
     pub package: String,

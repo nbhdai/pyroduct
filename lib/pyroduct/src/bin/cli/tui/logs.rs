@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent};
-use pyroduct::module::PyroLogs;
+use pyroduct::format::PyroLogs;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -142,4 +142,3 @@ impl HotkeyProvider for LogsView {
         ]
     }
 }
-

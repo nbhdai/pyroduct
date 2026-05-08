@@ -1,7 +1,7 @@
 use arrow::array::RecordBatch;
 use arrow::datatypes::Schema;
 use crossterm::event::{KeyCode, KeyEvent};
-use pyroduct::module::PyroLogs;
+use pyroduct::format::PyroLogs;
 use pyroduct::pipeline::wasm_execute::PipelineExecution;
 use pyroduct::pipeline::wasm_execute::extract_upto_batch;
 use ratatui::{

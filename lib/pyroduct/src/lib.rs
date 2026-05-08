@@ -14,6 +14,8 @@ pub mod wasm;
 
 #[cfg(feature = "host")]
 pub mod pipeline;
+#[cfg(feature = "host")]
+pub mod transport;
 
 #[cfg(any(feature = "host", feature = "capability"))]
 pub mod ffi;

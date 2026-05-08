@@ -173,13 +173,19 @@ impl PyroModule {
                         )));
                     }
                 }
-                _ => return Err(WasmError::SignatureMismatch(format!(
-                    "{}::{} is not a function",
-                    import.module(),
-                    import.name()
-                ))),
+                _ => {
+                    return Err(WasmError::SignatureMismatch(format!(
+                        "{}::{} is not a function",
+                        import.module(),
+                        import.name()
+                    )));
+                }
             }
-            tracing::debug!(class=import.module(), name=import.name(), "Function is of the correct type.")
+            tracing::debug!(
+                class = import.module(),
+                name = import.name(),
+                "Function is of the correct type."
+            )
         }
         Ok(())
     }

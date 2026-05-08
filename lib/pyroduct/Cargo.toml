@@ -31,6 +31,7 @@ host = [
     "dep:pyro-artifacts",
     "pyro-spec/arrow",
 ]
+transport = ["host"]
 module = []
 
 cli = [
@@ -75,6 +76,8 @@ tokio = { workspace = true, optional = true }
 async-ffi = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
 wasmtime = { workspace = true, optional = true }
+lazy_static = "1.4.0"
+sha2 = "0.10.9"
 
 # Arrow
 arrow = { workspace = true, optional = true }
@@ -97,6 +100,7 @@ fs-err = { workspace = true, optional = true }
 toml = { workspace = true, optional = true }
 pyro-macro = { workspace = true, optional = true }
 prettyplease = { workspace = true, optional = true }
+memmap2.workspace = true
 
 [[bin]]
 name = "pyroduct"
@@ -118,10 +122,6 @@ name = "logs"
 required-features = ["host"]
 
 [[test]]
-name = "tokio_safety"
-required-features = ["host"]
-
-[[test]]
 name = "integration_state"
 required-features = ["host"]
 
@@ -132,3 +132,7 @@ required-features = ["host"]
 [[test]]
 name = "ffi_safety"
 required-features = ["host", "capability"]
+
+[[test]]
+name = "test_pyro_server"
+required-features = ["transport"]

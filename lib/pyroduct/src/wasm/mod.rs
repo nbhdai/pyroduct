@@ -53,7 +53,7 @@ fn get_output_registry() -> std::sync::MutexGuard<'static, Option<HashMap<Stored
 #[unsafe(no_mangle)]
 pub extern "C" fn new_input(capacity: u32) -> *mut u8 {
     let mut vec = PyroVec::with_capacity(capacity as usize);
-    let raw = vec.as_packet_slice_mut();
+    let raw = vec.as_raw_slice_mut();
     let ptr = raw.as_mut_ptr();
 
     get_input_registry()
@@ -74,7 +74,7 @@ pub extern "C" fn grow_input(ptr: *mut u8, new_capacity: u32) -> *mut u8 {
         if (new_capacity as usize) > current_cap {
             vec.grow(new_capacity as usize);
         }
-        let raw = vec.as_packet_slice_mut();
+        let raw = vec.as_raw_slice_mut();
         let new_ptr = raw.as_mut_ptr();
 
         // Re-insert under the (potentially new) pointer — same lock guard.
@@ -95,7 +95,7 @@ pub fn get_input(ptr: *mut u8) -> Option<PyroVec> {
 
 /// Lend a read-only pointer to data owned inside wasm, for the host to read.
 pub unsafe fn lend(vec: &PyroVec) -> *const u8 {
-    let raw = vec.as_packet_slice();
+    let raw = vec.as_raw_slice();
     raw.as_ptr()
 }
 
@@ -108,7 +108,7 @@ pub fn store_error(error: PyroError) {
 
 /// Consume a PyroVec and register it for the host to pick up.
 pub fn to_output(vec: PyroVec) -> *const u8 {
-    let raw = vec.as_packet_slice();
+    let raw = vec.as_raw_slice();
     let ptr = raw.as_ptr();
 
     get_output_registry()
@@ -180,7 +180,7 @@ where
     if let Err(err) = input_vec.parse_as_error() {
         return to_output(err.encode());
     };
-    let input_row = match PyroRow::expose(input_vec) {
+    let input_row = match PyroRow::expose(input_vec.view()) {
         Ok(vec) => vec,
         Err(err) => return to_output(err.encode()),
     };
@@ -317,7 +317,7 @@ impl<T> Client<T> {
             Some(result_vec) => result_vec,
             None => panic!("Host registration failed with no returned"),
         };
-        let result = O::expose(result_vec).and_then(|r| O::receiver().receive(&r));
+        let result = O::expose(result_vec.view()).and_then(|r| O::receiver().receive(&r));
         match result {
             Ok(result) => result,
             Err(err) => {
@@ -349,7 +349,7 @@ impl<T> Client<T> {
             Some(result_vec) => result_vec,
             None => panic!("Host registration failed with no returned"),
         };
-        let result = Result::<O, E>::expose(result_vec).and_then(|r| {
+        let result = Result::<O, E>::expose(result_vec.view()).and_then(|r| {
             let res = match r {
                 Ok(o) => Ok(O::receiver().receive(&o)?),
                 Err(e) => Err(E::receiver().receive(&e)?),

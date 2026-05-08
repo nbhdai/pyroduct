@@ -1,6 +1,10 @@
 use anyhow::{Result, bail};
-use pyro_artifacts::{artifacts::{Artifacts, Module}, cache::CacheManager, environment::Environment};
 use fs_err as fs;
+use pyro_artifacts::{
+    artifacts::{Artifacts, Module},
+    cache::CacheManager,
+    environment::Environment,
+};
 use std::path::Path;
 
 pub async fn ship_single(cache: &CacheManager, path: &Path, debug: bool) -> Result<()> {

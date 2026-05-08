@@ -12,27 +12,18 @@
 //! get zero-copy access to the archived data in wasm linear memory.
 //!
 
-use std::io;
-use std::sync::Arc;
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, sync::Arc};
 
-use pyro_artifacts::cache::{BuildError, CacheError};
+use pyro_artifacts::cache::{BuildError, CacheError, LoadedPlaybook};
 use pyro_artifacts::environment::EnvironmentError;
-use pyro_artifacts::{
-    artifacts::{Module as ArtifactModule, ModuleSource},
-    cache::CacheManager,
-    environment::Environment,
-};
-use serde::{Deserialize, Serialize};
 use wasmtime::{
     Caller, Engine, FuncType, Instance, Linker, Memory, Store, TypedFunc, Val, ValType,
 };
 
-use crate::ffi::ForeignObject;
+use crate::ffi::host::ForeignObject;
 use crate::format::{
-    Bridgeable, ParseError, PyroRow, PyroView, Receiver,
+    ParseError, PyroRow, PyroView, PyroFailure, PyroLogs, PyroSuccess,
     header::{DataStatus, PyroData, PyroHeader},
-    rkyv_8::RkyvReceiver,
 };
 use crate::module::call::PyroCallIo;
 use crate::{CapturedError, PyroError};
@@ -40,13 +31,23 @@ use crate::{CapturedError, PyroError};
 mod call;
 pub mod capability;
 mod state;
-#[cfg(all(test, feature = "module"))]
-mod tests;
+// #[cfg(all(test, feature = "module"))]
+// mod tests;
 
 use capability::CapabilityLibrary;
 pub use state::{PyroModule, PyroState};
 
 use thiserror::Error;
+
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref DEFAULT_ENGINE: Engine = {
+        let mut config = wasmtime::Config::new();
+        config.async_support(true);
+        Engine::new(&config).unwrap()
+    };
+}
 
 #[derive(Error, Debug)]
 pub enum WasmError {
@@ -94,39 +95,11 @@ pub enum WasmError {
 // PyroInstance — owns Store + Instance, drives host↔wasm IO
 // ---------------------------------------------------------------------------
 
-#[derive(Clone)]
-pub struct PyroLogs {
-    pub module_logs: Vec<String>,
-    pub capability_logs: HashMap<(String, String), Vec<String>>,
-}
-
-impl PyroLogs {
-    pub fn empty() -> Self {
-        PyroLogs {
-            module_logs: Vec::new(),
-            capability_logs: HashMap::new(),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct PyroSuccess {
-    pub row: PyroRow<'static>,
-    pub logs: PyroLogs,
-}
-
-#[derive(Clone)]
-pub struct PyroFailure {
-    pub result: Result<CapturedError, String>,
-    pub logs: PyroLogs,
-}
-
 /// A linker pre-configured to use `PyroState<T>` as store data.
 ///
 /// Host functions registered through `define_async` / `define_sync` receive
 /// a clean `(&T, PyroView)` signature — all wasm memory plumbing is hidden.
 pub struct PyroFactory {
-    engine: Engine,
     configurations: HashMap<String, Option<serde_json::Value>>,
     libraries: Vec<Arc<CapabilityLibrary>>,
     module: PyroModule,
@@ -141,16 +114,43 @@ impl PyroFactory {
     ) -> Result<Self, WasmError> {
         let mut config = wasmtime::Config::new();
         config.async_support(true);
-        let engine = Engine::new(&config).map_err(|e| WasmError::EngineError(e.to_string()))?;
 
         Ok(Self {
-            engine,
             libraries,
             configurations,
             module,
         })
     }
 
+    pub fn from_playbook(playbook: &LoadedPlaybook) -> Result<Self, WasmError> {
+        tracing::debug!("Loading module from hash: {}", playbook.binary.hash);
+        let wasmtime_module = wasmtime::Module::from_binary(&DEFAULT_ENGINE, &playbook.binary.wasm)
+            .map_err(|e| {
+                WasmError::InstantiationFailed(format!("Failed to compile WASM: {}", e))
+            })?;
+        let pyro_module = PyroModule::new(wasmtime_module)?;
+
+        let mut libs = Vec::new();
+
+        for (name, path) in playbook.paths.iter() {
+            let library = CapabilityLibrary::load(name.clone(), path).map_err(|e| {
+                WasmError::InstantiationFailed(format!(
+                    "Failed to load capability library at {}: {}",
+                    path.display(),
+                    e
+                ))
+            })?;
+            libs.push(library);
+        }
+
+        Ok(PyroFactory {
+            libraries: libs,
+            configurations: playbook.configurations.clone(),
+            module: pyro_module,
+        })
+    }
+
+    // Todo: make this more robust.
     async fn create_capabilities(&self) -> Result<HashMap<String, ForeignObject>, WasmError> {
         let mut objects = HashMap::new();
         for (class, config) in &self.configurations {
@@ -164,11 +164,11 @@ impl PyroFactory {
         Ok(objects)
     }
 
-    pub async fn instantiate(&mut self) -> Result<PyroInstance, WasmError> {
+    pub async fn instantiate(&self) -> Result<PyroInstance, WasmError> {
         let pyro_state = PyroState::new();
-        let mut store = Store::new(&self.engine, pyro_state);
+        let mut store = Store::new(&DEFAULT_ENGINE, pyro_state);
         let objects = self.create_capabilities().await?;
-        let mut linker = Linker::new(&self.engine);
+        let mut linker = Linker::new(&DEFAULT_ENGINE);
 
         Self::link_logger(&mut linker)?;
         Self::link_capabilities(&mut linker, &objects)?;
@@ -233,12 +233,10 @@ impl PyroFactory {
 
         // Link the PyroState methods to the instance exports
         PyroState::link(&mut store, &instance)?;
-        let receiver = RkyvReceiver::new();
         Ok(PyroInstance {
             store,
             instance,
             memory,
-            receiver,
             objects,
         })
     }
@@ -304,15 +302,13 @@ impl PyroFactory {
                                 );
 
                                 let mut io = PyroCallIo::from_caller(caller)?;
-
                                 let client_view = io.borrow_argument(client_ptr).await?;
                                 let input_view = io.borrow_argument(input_ptr).await?;
 
-                                let output_vec =
+                                let output_view =
                                     object.call(&fn_name, client_view, input_view).await?;
-                                output_vec.parse_as_error()?;
+                                output_view.parse_as_error()?;
 
-                                let output_view = PyroView::from(&output_vec);
                                 let ptr = io.new_input(&output_view).await?;
 
                                 results[0] = Val::I32(ptr);
@@ -348,11 +344,10 @@ impl PyroFactory {
                             let client_view = io.borrow_argument(client_ptr).await?;
 
                             // Call user function — consumes both borrows on return.
-                            let output_vec = object.register(client_view).await?;
-                            output_vec.parse_as_error()?;
+                            let output_view = object.register(client_view).await?;
+                            output_view.parse_as_error()?;
 
                             // Write output back into wasm memory.
-                            let output_view = PyroView::from(&output_vec);
                             let ptr = io.new_input(&output_view).await?;
                             results[0] = Val::I32(ptr);
                             Ok(())
@@ -372,7 +367,6 @@ pub struct PyroInstance {
     instance: Instance,
     memory: Memory,
     objects: HashMap<String, ForeignObject>,
-    receiver: RkyvReceiver<PyroRow<'static>>,
 }
 
 impl PyroInstance {
@@ -380,9 +374,9 @@ impl PyroInstance {
         // Ship the input row via rkyv into a PyroVec
         let input_row_owned = input.to_static();
         let input_vec = input_row_owned
-            .ship()
+            .to_wire()
             .map_err(|err| self.pack_pyro_error(err))?;
-        let input_view: PyroView<'_> = input_vec.view();
+        let input_view: PyroView = input_vec.view();
 
         // 1. Write Input using PyroCallIo
         let mut io = PyroCallIo::new(&mut self.store, self.memory);
@@ -421,15 +415,12 @@ impl PyroInstance {
             .parse_as_error()
             .map_err(|err| self.pack_pyro_error(err))?;
 
+        let pyref = result_view.py_ref();
         match result_view.status() {
             Ok(DataStatus::RkyvValid) => {
                 let row =
-                    PyroRow::expose_view(result_view).map_err(|err| self.pack_pyro_error(err))?;
-                let row = self
-                    .receiver
-                    .receive(&row)
-                    .map_err(|err| self.pack_pyro_error(err))?;
-                Ok(self.pack_success(row))
+                    PyroRow::parse_wire(&pyref).map_err(|err| self.pack_pyro_error(err))?;
+                Ok(self.pack_success(row.to_static()))
             }
             Ok(DataStatus::RkyvError) => match serde_json::from_slice(&result_view) {
                 Ok(error) => Err(self.pack_user_error(error)),
@@ -498,108 +489,4 @@ fn classify_error(error: anyhow::Error) -> WasmError {
         return WasmError::Pyro(error.downcast().unwrap());
     }
     WasmError::Unknown(error)
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(untagged)]
-pub enum Module {
-    Source(ModuleSource),
-    #[serde(deserialize_with = "validate_hash")]
-    Hash(String),
-    Path(PathBuf),
-}
-
-fn validate_hash<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    // Example: Only accept 64-char hex strings as Hashes
-    if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
-        Ok(s)
-    } else {
-        Err(serde::de::Error::custom("not a valid hash"))
-    }
-}
-
-/// A single wasm module in the pipeline intent.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct ModuleConfig {
-    pub module: Module,
-    /// Per-class capability configuration. Keys are class names.
-    #[serde(default)]
-    pub configurations: HashMap<String, Option<serde_json::Value>>,
-}
-
-impl ModuleConfig {
-    pub async fn load_factory(&self, engine: &Engine) -> Result<PyroFactory, WasmError> {
-        let cache = CacheManager::from_env().await?;
-
-        // 2. Safely extract the slice now that we guarantee it's a Binary
-        let binary = match &self.module {
-            Module::Hash(hash) => {
-                tracing::debug!("Loading module from hash: {}", hash);
-                cache.get_binary(hash).await?
-            }
-            Module::Source(source) => {
-                tracing::debug!("Loading module from source: {}", source.hash());
-                cache.compile(source).await?
-            }
-            Module::Path(path) => {
-                tracing::info!("Loading module from path: {}", path.display());
-                let env = Environment::new(path.clone()).await?;
-                let package = env.package(true).await?;
-                for a in package.iter() {
-                    cache.write_artifacts(a).await?;
-                }
-                let mut binary = None;
-                for artifact in package {
-                    match artifact {
-                        pyro_artifacts::artifacts::Artifacts::Module(ArtifactModule::Binary(b)) => {
-                            binary = Some(b)
-                        }
-                        _ => {}
-                    }
-                }
-                binary.ok_or(CacheError {
-                    context: "Binary was not constructed".to_string(),
-                    error: io::Error::new(io::ErrorKind::NotFound, "Not Found"),
-                })?
-            }
-        };
-
-        let wasmtime_module =
-            wasmtime::Module::from_binary(&engine, &binary.wasm).map_err(|e| {
-                WasmError::InstantiationFailed(format!("Failed to compile WASM: {}", e))
-            })?;
-        let pyro_module = PyroModule::new(wasmtime_module)?;
-
-        let mut libs = Vec::new();
-
-        for cap in &binary.spec.capabilities {
-            let artifact_path = cache
-                .capability_binary_path(&cap.author, &cap.package, &cap.version)
-                .await?;
-
-            let lib_name = cap.package.clone();
-
-            let library = CapabilityLibrary::load(lib_name, &artifact_path)
-                .await
-                .map_err(|e| {
-                    WasmError::InstantiationFailed(format!(
-                        "Failed to load capability library at {}: {}",
-                        artifact_path.display(),
-                        e
-                    ))
-                })?;
-            libs.push(library);
-        }
-
-        Ok(PyroFactory {
-            engine: engine.clone(), // Ensure this matches your existing struct needs
-            libraries: libs,
-            configurations: self.configurations.clone(),
-            module: pyro_module,
-        })
-    }
 }

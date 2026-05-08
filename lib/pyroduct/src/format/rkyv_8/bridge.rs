@@ -11,11 +11,11 @@ use rkyv::validation::Validator;
 use rkyv::validation::archive::ArchiveValidator;
 use rkyv::validation::shared::SharedValidator;
 
+use crate::format::{PyroRef, PyroView};
 use crate::format::{
     PyroVec,
     format::{PyroFormat, PyroZeroCopyFormat, UserHeaderValues},
     header::PROTOCOL_VERSION,
-    view::PyroView,
 };
 
 /// Acts as the factory and configuration source for Rkyv-based PyroVecs.
@@ -40,29 +40,29 @@ where
     type HeaderValues = super::RkyvHeader;
     type ParsedType = <T as rkyv::Archive>::Archived;
 
-    type VecParser = super::RkyvParser<PyroVec, T>;
-    type VecWriter = super::RkyvWriter<PyroVec, T>;
-    type ViewParser<'a> = super::RkyvParser<PyroView<'a>, T>;
+    type Parser = super::RkyvParser<PyroView, T>;
+    type Writer = super::RkyvWriter<PyroVec, T>;
+    type RefParser<'a> = super::RkyvParser<PyroRef<'a>, T>;
 
     fn new() -> Self {
         Self { tpe: PhantomData }
     }
 
-    fn new_writer(data: PyroVec) -> Self::VecWriter {
+    fn new_writer(data: PyroVec) -> Self::Writer {
         super::RkyvWriter {
             data,
             phantom: PhantomData,
         }
     }
 
-    fn vec_parser(data: PyroVec) -> Self::VecParser {
+    fn parser(data: PyroView) -> Self::Parser {
         super::RkyvParser {
             data,
             phantom: PhantomData,
         }
     }
 
-    fn view_parser<'a>(data: PyroView<'a>) -> Self::ViewParser<'a> {
+    fn view_parser<'a>(data: PyroRef<'a>) -> Self::RefParser<'a> {
         super::RkyvParser {
             data,
             phantom: PhantomData,

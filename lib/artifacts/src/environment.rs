@@ -1,6 +1,4 @@
-use crate::artifacts::{
-    Artifacts, CapBinary, CapabilityBinary, CapabilitySource, Interface,
-};
+use crate::artifacts::{Artifacts, CapBinary, CapabilityBinary, CapabilitySource, Interface};
 use crate::build::{CommandError, format_syn_error, run_command};
 use crate::cache::{BuildError, CacheError};
 use crate::cargo::{CapabilityIdent, CapabilityManifest};
@@ -55,7 +53,6 @@ impl From<serde_json::Error> for EnvironmentError {
 }
 
 pub type EnvResult<T> = std::result::Result<T, EnvironmentError>;
-
 
 /// Central context to manage cargo compilation environment
 pub struct Environment {
@@ -219,11 +216,10 @@ impl Environment {
             String::new()
         };
 
-
         let (interface_rs, interface) =
-            pyro_macro::ffi::generate_interface(&src_lib_rs, &name, &version).map_err(
-                |r| EnvironmentError::InterfaceGeneration(format_syn_error(&src_lib_rs, r)),
-            )?;
+            pyro_macro::ffi::generate_interface(&src_lib_rs, &name, &version).map_err(|r| {
+                EnvironmentError::InterfaceGeneration(format_syn_error(&src_lib_rs, r))
+            })?;
 
         let interface_rs = prettyplease::unparse(&interface_rs);
 
@@ -241,12 +237,13 @@ impl Environment {
                     author,
                 },
                 libs: vec![lib],
+                interface: interface.clone(),
             }),
             Artifacts::Interface(Interface {
                 manifest: self.manifest.clone(),
                 src_lib_rs: interface_rs,
                 interface,
-            })
+            }),
         ])
     }
 }

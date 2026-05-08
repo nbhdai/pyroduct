@@ -3,14 +3,14 @@ use std::ops::Deref;
 use tracing::trace;
 
 use crate::error::ErrorKind;
+use crate::format::{PyroRef, PyroView};
 use crate::format::{
     PyroVec,
     header::{
-        DataStatus, MAGIC_VAL, MutPyroData, PROTOCOL_VERSION, PyroData, PyroHeader, PyroHeaderMut,
+        DataStatus, MutPyroData, PROTOCOL_VERSION, PyroData, PyroHeader, PyroHeaderMut,
     },
-    view::PyroView,
 };
-use crate::{PyroError, PyroResult};
+use crate::{CapturedError, PyroError, PyroResult};
 
 // =============================================================================
 // Foundational wrapper / typed-wrapper traits (unchanged)
@@ -117,7 +117,6 @@ where
     fn update_header(&mut self, len: u32, status: DataStatus) {
         trace!(len, ?status, "Writer::update_header setting header fields");
         let bd = self.data_mut();
-        bd.set_magic(MAGIC_VAL);
         bd.set_wire_format(PROTOCOL_VERSION);
         bd.set_status(status);
         trace!("Writer::update_header completed");
@@ -171,8 +170,8 @@ where
 /// Base format trait implemented by every pyro format (JSON, rkyv, zerovec, …).
 ///
 /// Provides:
-/// - Serialization (`ship`) via `VecWriter`
-/// - Owned-buffer parsing (`parse`) via `VecParser`
+/// - Serialization (`ship`) via `Writer`
+/// - Owned-buffer parsing (`parse`) via `Parser`
 /// - A `Receiver` to extract `T` from the parsed representation
 ///
 /// The `ParsedType` is format-dependent:
@@ -196,12 +195,12 @@ where
     /// - Zero-copy formats: `T::Archived` (or similar)
     type ParsedType;
 
-    type VecParser: Parser<PyroVec, T, HeaderValues = Self::HeaderValues, ParsedType = Self::ParsedType>;
-    type VecWriter: Writer<PyroVec, T, HeaderValues = Self::HeaderValues>;
+    type Parser: Parser<PyroView, T, HeaderValues = Self::HeaderValues, ParsedType = Self::ParsedType>;
+    type Writer: Writer<PyroVec, T, HeaderValues = Self::HeaderValues>;
 
     fn new() -> Self;
-    fn vec_parser(data: PyroVec) -> Self::VecParser;
-    fn new_writer(data: PyroVec) -> Self::VecWriter;
+    fn parser(data: PyroView) -> Self::Parser;
+    fn new_writer(data: PyroVec) -> Self::Writer;
 
     /// Serialize `T` into a new `PyroVec`.
     fn ship(input: &T) -> Result<PyroVec, PyroError> {
@@ -225,15 +224,15 @@ where
 
     /// Parse an owned `PyroVec` into a typed wrapper.
     fn parse(
-        vec: PyroVec,
-    ) -> Result<<Self::VecParser as Parser<PyroVec, T>>::TypedWrapper, PyroError> {
+        vec: PyroView,
+    ) -> Result<<Self::Parser as Parser<PyroView, T>>::TypedWrapper, PyroError> {
         trace!(
             type_name = std::any::type_name::<T>(),
             len = vec.len(),
             status = ?vec.status(),
             "PyroFormat::parse starting"
         );
-        match Self::vec_parser(vec).parse() {
+        match Self::parser(vec).parse() {
             Ok(typed) => {
                 trace!("PyroFormat::parse succeeded");
                 Ok(typed)
@@ -251,19 +250,19 @@ where
         }
     }
 
-    type ViewParser<'a>: Parser<
-            PyroView<'a>,
+    type RefParser<'a>: Parser<
+            PyroRef<'a>,
             T,
             HeaderValues = <Self as PyroFormat<T>>::HeaderValues,
             ParsedType = <Self as PyroFormat<T>>::ParsedType,
         >;
 
-    fn view_parser<'a>(data: PyroView<'a>) -> Self::ViewParser<'a>;
+    fn view_parser<'a>(data: PyroRef<'a>) -> Self::RefParser<'a>;
 
-    /// Parse a borrowed `PyroView` into a typed view wrapper.
+    /// Parse a borrowed `PyroRef` into a typed view wrapper.
     fn parse_view<'a>(
-        vec: PyroView<'a>,
-    ) -> Result<<Self::ViewParser<'a> as Parser<PyroView<'a>, T>>::TypedWrapper, PyroError> {
+        vec: PyroRef<'a>,
+    ) -> Result<<Self::RefParser<'a> as Parser<PyroRef<'a>, T>>::TypedWrapper, PyroError> {
         trace!(
             type_name = std::any::type_name::<T>(),
             len = vec.len(),
@@ -296,7 +295,7 @@ where
 /// Extension trait for formats that support **zero-copy borrowed access**.
 ///
 /// This adds:
-/// - `ViewParser` — parsing a `PyroView<'a>` without taking ownership
+/// - `RefParser` — parsing a `PyroRef<'a>` without taking ownership
 /// - `parse_view` — the borrowed-view counterpart of `PyroFormat::parse`
 ///
 /// Only formats where the parsed representation is a reference into the buffer
@@ -306,6 +305,47 @@ pub trait PyroZeroCopyFormat<T>: PyroFormat<T>
 where
     T: UserHeaderValues,
 {
-    type Receiver: Receiver<<Self::VecParser as Parser<PyroVec, T>>::ParsedType, T>;
+    type Receiver: Receiver<<Self::Parser as Parser<PyroView, T>>::ParsedType, T>;
     fn receiver() -> Self::Receiver;
+}
+
+
+// =============================================================================
+// SpecWire
+// =============================================================================
+
+/// Trait for types that can be encoded as a specification on the wire.
+pub trait SpecWire: Sized {
+    fn to_wire(&self) -> PyroResult<PyroView>;
+    fn parse_wire(view: PyroRef) -> PyroResult<Self>;
+}
+
+impl SpecWire for pyro_spec::InterfaceSpec<'_> {
+    fn to_wire(&self) -> PyroResult<PyroView> {
+        let bytes = serde_json::to_vec(self).map_err(|e| {
+            PyroError::serialization(
+                CapturedError::new("Unable to serialize interface spec").with_source(e),
+            )
+        })?;
+
+        let mut vec = PyroVec::with_capacity(bytes.len());
+        vec.extend_from_slice(&bytes);
+        vec.set_status(crate::format::header::DataStatus::InterfaceSchema);
+        Ok(vec.view())
+    }
+
+    fn parse_wire(view: PyroRef<'_>) -> PyroResult<Self> {
+        if let Ok(DataStatus::InterfaceSchema) = view.status() {
+            let interface = serde_json::from_slice(&view).map_err(|e| {
+                PyroError::serialization(
+                    CapturedError::new("Unable to deserialize interface spec").with_source(e),
+                )
+            })?;
+            Ok(interface)
+        } else {
+            Err(PyroError::Header(super::ParseError::UnknownStatus(
+                view.status_u8(),
+            )))
+        }
+    }
 }
