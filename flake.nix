@@ -95,9 +95,11 @@
           export RUST_BACKTRACE=1
           echo "Running Miri tests for vec_buf_safety..."
           cargo miri test --manifest-path lib/pyroduct/Cargo.toml --all-features --test vec_buf_safety
-          cargo miri test --manifest-path lib/pyroduct/Cargo.toml --all-features --test logs
+          echo "Running Miri tests for log..."
+          MIRIFLAGS=-Zmiri-disable-isolation cargo miri test --manifest-path lib/pyroduct/Cargo.toml --all-features --test logs
           echo "Running Miri tests for ffi_safety..."
           MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-tree-borrows" cargo miri test --manifest-path lib/pyroduct/Cargo.toml --all-features --test ffi_safety
+          echo "Running Miri tests for wal..."
           MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-tree-borrows" cargo miri test --manifest-path lib/pyroduct/Cargo.toml --all-features --test wal_safety
         '';
         test-rust = pkgs.writeShellScriptBin "test-rust" ''
