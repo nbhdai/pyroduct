@@ -146,6 +146,7 @@ impl ForeignClass {
                     msg = log_channel.recv() => {
                         match msg {
                             Some(entry) => {
+                                tracing::trace!("INTERNAL: {}", entry.message);
                                 // Forward to server
                                 // let _ = task_log_tx.send(entry.clone()).await;
                                 // Also keep in buffer
