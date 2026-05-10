@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
@@ -28,7 +29,8 @@ pub struct PyroRouter {
 
 impl PyroRouter {
     /// Load a library and create a new [`PyroRouter`].
-    pub fn load(name: String, path: impl AsRef<Path>) -> Result<Self, PyroError> {
+    pub fn load(name: String, path: impl AsRef<Path> + fmt::Debug) -> Result<Self, PyroError> {
+        tracing::info!(%name, ?path, "Loading capability library");
         let library = CapabilityLibrary::load(name, path.as_ref())
             .map_err(|e| PyroError::NotFound(e.to_string()))?;
         Ok(Self {
@@ -46,9 +48,12 @@ impl PyroRouter {
         let class_id = request.class_id();
         let fn_id = request.fn_id();
 
+        tracing::debug!(%class_id, %fn_id, "Handling request");
+
         match fn_id {
             0 => self.library.interface.to_wire(),
             1 => {
+                tracing::info!(%class_id, "Instantiating class");
                 let object = self
                     .library
                     .instantiate_class_raw(class_id, request)
@@ -59,6 +64,7 @@ impl PyroRouter {
                 Ok(PyroVec::ok().view())
             }
             2 => {
+                tracing::info!("Registering new client");
                 let id = self
                     .client_id
                     .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
@@ -66,8 +72,11 @@ impl PyroRouter {
                 id.ship().map(|v| v.view())
             }
             3 => {
+                tracing::info!(%class_id, "Resetting object");
                 let object = self.objects.get(&class_id).ok_or_else(|| {
-                    PyroError::NotFound(format!("Object for class ID {} not configured", class_id))
+                    let err = format!("Object for class ID {} not configured", class_id);
+                    tracing::warn!(%err);
+                    PyroError::NotFound(err)
                 })?;
 
                 object.reset().await?;
@@ -76,17 +85,23 @@ impl PyroRouter {
             other => {
                 // Routing: Dispatch to the already-instantiated object.
                 let object = self.objects.get(&(class_id as u8)).ok_or_else(|| {
-                    PyroError::NotFound(format!("Object for class ID {} not configured", class_id))
+                    let err = format!("Object for class ID {} not configured", class_id);
+                    tracing::warn!(%err);
+                    PyroError::NotFound(err)
                 })?;
                 // fn_id 4 maps to methods[0], etc.
                 let method_index = (other - 4) as usize;
                 let client_id = request.client_id();
 
+                tracing::debug!(%class_id, %method_index, %client_id, "Dispatching method call");
+
                 let client_data = self.clients.get(&client_id).ok_or_else(|| {
-                    PyroError::NotFound(format!(
+                    let err = format!(
                         "Object for client ID {} not configured",
                         client_id
-                    ))
+                    );
+                    tracing::warn!(%err);
+                    PyroError::NotFound(err)
                 })?;
                 object
                     .call_index(method_index, client_data.py_ref(), request.py_ref())

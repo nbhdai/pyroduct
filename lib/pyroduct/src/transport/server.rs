@@ -27,6 +27,7 @@ impl PyroServer {
 
         loop {
             let socket = listener.accept().await?;
+            tracing::info!("Accepted new connection");
             let server_clone = server.clone();
 
             tokio::spawn(async move {
@@ -42,6 +43,8 @@ impl PyroServer {
             // Receive the next request/notification
             let req = socket.recv().await?;
             let mux_id = req.mux_id();
+
+            tracing::debug!(%mux_id, "Received request");
 
             let router = self.router.clone();
             let socket_clone = socket.clone();
@@ -67,6 +70,8 @@ impl PyroServer {
 
                 if let Err(e) = socket_clone.send(response).await {
                     tracing::error!("Failed to send response for mux_id {}: {:?}", mux_id, e);
+                } else {
+                    tracing::debug!(%mux_id, "Response sent successfully");
                 }
             });
         }

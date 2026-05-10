@@ -1,4 +1,5 @@
 use sha2::{Digest, Sha256};
+use std::fmt;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -24,7 +25,8 @@ pub struct PyroClient {
 
 impl PyroClient {
     /// Connect to a TCP address (e.g. `"127.0.0.1:9000"`).
-    pub async fn connect_tcp(addr: impl tokio::net::ToSocketAddrs) -> Result<Self, PyroError> {
+    pub async fn connect_tcp(addr: impl tokio::net::ToSocketAddrs + fmt::Debug) -> Result<Self, PyroError> {
+        tracing::info!(?addr, "Connecting via TCP");
         let socket = PyroSocket::connect_tcp(addr)
             .await
             .capture("Failed to connect via TCP")
@@ -39,7 +41,8 @@ impl PyroClient {
     }
 
     /// Connect to a Unix domain socket path.
-    pub async fn connect_unix(path: impl AsRef<Path>) -> Result<Self, PyroError> {
+    pub async fn connect_unix(path: impl AsRef<Path> + fmt::Debug) -> Result<Self, PyroError> {
+        tracing::info!(?path, "Connecting via Unix socket");
         let socket = PyroSocket::connect_unix(path)
             .await
             .capture("Failed to connect via Unix socket")
@@ -57,6 +60,7 @@ impl PyroClient {
     ///
     /// Sends a request with `fn_id = 0`.
     async fn fetch_interface(socket: &PyroSocket) -> Result<InterfaceSpec<'static>, PyroError> {
+        tracing::debug!("Fetching capability interface");
         let mut req = PyroVec::ok();
         req.set_fn_id(0);
 
@@ -73,6 +77,7 @@ impl PyroClient {
     ///
     /// Sends a request with `fn_id = 1` and the provided data.
     pub async fn configure_class(&mut self, class_id: u8, data: PyroView) -> Result<(), PyroError> {
+        tracing::info!(%class_id, "Configuring remote class");
         let mut req = data.clone_to_vec();
         req.set_fn_id(1);
 
@@ -104,9 +109,11 @@ impl PyroClient {
 
         // Check cache first
         if let Some(&id) = self.client_hashes.get(&hash) {
+            tracing::debug!(%id, "Client ID cache hit");
             return Ok(id);
         }
 
+        tracing::debug!("Registering new client ID with server");
         // Register with server to get a new client_id
         let mut req = PyroVec::ok();
         req.set_fn_id(2);
@@ -139,6 +146,7 @@ impl PyroClient {
     ///
     /// Sends a request with `fn_id = 3`.
     pub async fn reset_class(&mut self, class_id: u8) -> Result<(), PyroError> {
+        tracing::info!(%class_id, "Resetting remote class");
         let mut req = PyroVec::ok();
         req.set_fn_id(3);
 
@@ -169,6 +177,7 @@ impl PyroClient {
         client_id: u32,
         data: PyroView,
     ) -> Result<PyroView, PyroError> {
+        tracing::debug!(%class_id, %method_index, %client_id, "Calling remote method");
         let fn_id = (method_index + 4) as u8;
         let mut req = data.clone_to_vec();
         req.set_fn_id(fn_id);
@@ -200,6 +209,7 @@ impl PyroClient {
         client_data: PyroView,
         data: PyroView,
     ) -> Result<PyroView, PyroError> {
+        tracing::info!(%class_name, %method_name, "Calling remote method");
         let class_id = self
             .interface
             .classes
