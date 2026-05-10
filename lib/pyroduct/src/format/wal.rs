@@ -34,6 +34,26 @@ use crate::format::vec_buf::PyroRef;
 use crate::format::{Bridgeable, PyroFailure, PyroLogs, PyroSuccess, PyroView, get_ref};
 
 // =============================================================================
+// WAL Writer Trait
+// =============================================================================
+
+pub trait WalWriterInner: Write {
+    fn sync_data(&self) -> io::Result<()>;
+}
+
+impl WalWriterInner for File {
+    fn sync_data(&self) -> io::Result<()> {
+        self.sync_data()
+    }
+}
+
+impl WalWriterInner for Vec<u8> {
+    fn sync_data(&self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+// =============================================================================
 // Log record (.pyrolog) — per-row logs, JSON framed
 // =============================================================================
 
@@ -78,19 +98,22 @@ fn align16(n: usize) -> usize {
 // Log file writer/reader (JSON framed, internal use)
 // =============================================================================
 
-struct LogFrameWriter {
-    writer: BufWriter<File>,
+struct LogFrameWriter<L: Write> {
+    writer: BufWriter<L>,
 }
 
-impl LogFrameWriter {
-    fn open(path: &Path) -> io::Result<Self> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
+impl<L: Write> LogFrameWriter<L> {
+    fn new(writer: L) -> Self {
+        Self {
+            writer: BufWriter::new(writer),
         }
-        let file = OpenOptions::new().create(true).append(true).open(path)?;
-        Ok(Self {
-            writer: BufWriter::new(file),
-        })
+    }
+
+    fn into_inner(self) -> L {
+        match self.writer.into_inner() {
+            Ok(w) => w,
+            Err(_) => panic!("failed to flush log writer"),
+        }
     }
 
     fn write_frame(&mut self, payload: &[u8]) -> io::Result<()> {
@@ -104,16 +127,27 @@ impl LogFrameWriter {
     }
 }
 
-struct LogFrameReader {
-    reader: BufReader<File>,
+impl LogFrameWriter<File> {
+    fn open(path: &Path) -> io::Result<Self> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        Ok(Self {
+            writer: BufWriter::new(file),
+        })
+    }
 }
 
-impl LogFrameReader {
-    fn open(path: &Path) -> io::Result<Self> {
-        let file = File::open(path)?;
-        Ok(Self {
-            reader: BufReader::new(file),
-        })
+pub struct LogFrameReader<R: Read> {
+    reader: BufReader<R>,
+}
+
+impl<R: Read> LogFrameReader<R> {
+    pub fn new(reader: R) -> Self {
+        Self {
+            reader: BufReader::new(reader),
+        }
     }
 
     fn next_frame(&mut self) -> Option<Vec<u8>> {
@@ -142,7 +176,7 @@ impl LogFrameReader {
         Some(payload)
     }
 
-    fn read_all_indexed(&mut self) -> HashMap<usize, LogRecord> {
+    pub fn read_all_indexed(&mut self) -> HashMap<usize, LogRecord> {
         let mut map = HashMap::new();
         while let Some(payload) = self.next_frame() {
             if let Ok(rec) = serde_json::from_slice::<LogRecord>(&payload) {
@@ -150,6 +184,15 @@ impl LogFrameReader {
             }
         }
         map
+    }
+}
+
+impl LogFrameReader<File> {
+    fn open(path: &Path) -> io::Result<Self> {
+        let file = File::open(path)?;
+        Ok(Self {
+            reader: BufReader::new(file),
+        })
     }
 }
 
@@ -182,41 +225,23 @@ impl WalRecord {
 // WalWriter
 // =============================================================================
 
-pub struct WalWriter {
-    wal_file: BufWriter<File>,
-    log_writer: LogFrameWriter,
-    wal_path: PathBuf,
-    log_path: PathBuf,
+pub struct WalWriter<W: WalWriterInner, L: Write> {
+    wal_writer: BufWriter<W>,
+    log_writer: LogFrameWriter<L>,
+    wal_path: Option<PathBuf>,
+    log_path: Option<PathBuf>,
     records_written: u64,
 }
 
-impl WalWriter {
-    pub fn open(base_path: impl Into<PathBuf>) -> io::Result<Self> {
-        let base = base_path.into();
-        let wal_path = base.with_extension("pyrowal");
-        let log_path = base.with_extension("pyrolog");
-
-        if let Some(parent) = wal_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        let wal_file = BufWriter::new(
-            OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&wal_path)?,
-        );
-        let log_writer = LogFrameWriter::open(&log_path)?;
-
-        info!(wal = %wal_path.display(), log = %log_path.display(), "WAL opened for writing");
-
-        Ok(Self {
-            wal_file,
-            log_writer,
-            wal_path,
-            log_path,
+impl<W: WalWriterInner, L: Write> WalWriter<W, L> {
+    pub fn new(wal_writer: W, log_writer: L) -> Self {
+        Self {
+            wal_writer: BufWriter::new(wal_writer),
+            log_writer: LogFrameWriter::new(log_writer),
+            wal_path: None,
+            log_path: None,
             records_written: 0,
-        })
+        }
     }
 
     pub fn append(&mut self, record: &WalRecord) -> io::Result<()> {
@@ -226,7 +251,7 @@ impl WalWriter {
         // This ensures the packet that follows is naturally 16-byte aligned.
         let mut prefix = [0u8; 16];
         prefix[0..4].copy_from_slice(&row_index.to_le_bytes());
-        self.wal_file.write_all(&prefix)?;
+        self.wal_writer.write_all(&prefix)?;
 
         // 2. Ship the record into a PyroVec packet
         let packet = match record {
@@ -253,10 +278,10 @@ impl WalWriter {
         let mut buf = Vec::with_capacity(padded);
         buf.extend_from_slice(raw);
         buf.resize(padded, 0);
-        self.wal_file.write_all(&buf)?;
+        self.wal_writer.write_all(&buf)?;
 
-        self.wal_file.flush()?;
-        self.wal_file.get_ref().sync_data()?;
+        self.wal_writer.flush()?;
+        self.wal_writer.get_ref().sync_data()?;
 
         // 3. Write logs
         if let Some(log_record) = LogRecord::from_record(record) {
@@ -272,11 +297,47 @@ impl WalWriter {
     pub fn records_written(&self) -> u64 {
         self.records_written
     }
-    pub fn wal_path(&self) -> &Path {
-        &self.wal_path
+    pub fn wal_path(&self) -> Option<&Path> {
+        self.wal_path.as_deref()
     }
-    pub fn log_path(&self) -> &Path {
-        &self.log_path
+    pub fn log_path(&self) -> Option<&Path> {
+        self.log_path.as_deref()
+    }
+
+    pub fn into_inner(self) -> (W, L) {
+        let w = match self.wal_writer.into_inner() {
+            Ok(inner) => inner,
+            Err(e) => panic!("failed to flush wal writer"),
+        };
+        (w, self.log_writer.into_inner())
+    }
+}
+
+impl WalWriter<File, File> {
+    pub fn open(base_path: impl Into<PathBuf>) -> io::Result<Self> {
+        let base = base_path.into();
+        let wal_path = base.with_extension("pyrowal");
+        let log_path = base.with_extension("pyrolog");
+
+        if let Some(parent) = wal_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let wal_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&wal_path)?;
+        let log_writer = LogFrameWriter::open(&log_path)?;
+
+        info!(wal = %wal_path.display(), log = %log_path.display(), "WAL opened for writing");
+
+        Ok(Self {
+            wal_writer: BufWriter::new(wal_file),
+            log_writer,
+            wal_path: Some(wal_path),
+            log_path: Some(log_path),
+            records_written: 0,
+        })
     }
 }
 

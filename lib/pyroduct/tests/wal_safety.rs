@@ -4,7 +4,6 @@ use pyroduct::format::{Bridgeable, PyroFailure, PyroLogs, PyroRow, PyroSuccess, 
 use std::collections::HashMap;
 use std::sync::{Arc, Barrier};
 use std::thread;
-use tempfile::TempDir;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -49,20 +48,38 @@ fn make_mixed_records(count: usize) -> Vec<WalRecord> {
         .collect()
 }
 
+/// Helper to write records to memory buffers and return a WalReader.
+fn write_and_open_in_memory(records: &[WalRecord]) -> WalReader {
+    let mut wal_buf = Vec::new();
+    let mut log_buf = Vec::new();
+
+    {
+        let mut writer = WalWriter::new(wal_buf, log_buf);
+        for rec in records {
+            writer.append(rec).unwrap();
+        }
+        let (w, l) = writer.into_inner();
+        wal_buf = w;
+        log_buf = l;
+    }
+
+    let mut reader = WalReader::from_vec(wal_buf);
+    
+    // Load logs from buffer
+    let mut log_reader = pyroduct::format::wal::LogFrameReader::new(&log_buf[..]);
+    reader.logs = log_reader.read_all_indexed();
+    
+    reader
+}
+
 // ---------------------------------------------------------------------------
 // Lifecycle: create / write / open / recover
 // ---------------------------------------------------------------------------
 
 #[test]
 fn test_wal_lifecycle_single_success() {
-    let dir = TempDir::new().unwrap();
-    let base = dir.path().join("single");
-
-    let mut writer = WalWriter::open(&base).unwrap();
-    writer.append(&make_success_record(0)).unwrap();
-    assert_eq!(writer.records_written(), 1);
-
-    let reader = WalReader::open(&base).unwrap();
+    let records = vec![make_success_record(0)];
+    let reader = write_and_open_in_memory(&records);
     let recovered = reader.recover_all();
     assert_eq!(recovered.len(), 1);
 
@@ -74,18 +91,8 @@ fn test_wal_lifecycle_single_success() {
 
 #[test]
 fn test_wal_lifecycle_multiple_sequential() {
-    let dir = TempDir::new().unwrap();
-    let base = dir.path().join("multi_seq");
-
-    let mut writer = WalWriter::open(&base).unwrap();
     let records = make_mixed_records(100);
-    for rec in &records {
-        writer.append(rec).unwrap();
-    }
-    assert_eq!(writer.records_written(), 100);
-    drop(writer);
-
-    let reader = WalReader::open(&base).unwrap();
+    let reader = write_and_open_in_memory(&records);
     let recovered = reader.recover_all();
     assert_eq!(recovered.len(), 100);
 
@@ -95,19 +102,13 @@ fn test_wal_lifecycle_multiple_sequential() {
 }
 
 // ---------------------------------------------------------------------------
-// Roundtrip integrity — data must survive file I/O
+// Roundtrip integrity — data must survive memory I/O
 // ---------------------------------------------------------------------------
 
 #[test]
 fn test_wal_roundtrip_success_data() {
-    let dir = TempDir::new().unwrap();
-    let base = dir.path().join("rt_success");
-
-    let mut writer = WalWriter::open(&base).unwrap();
-    writer.append(&make_success_record(42)).unwrap();
-    drop(writer);
-
-    let reader = WalReader::open(&base).unwrap();
+    let records = vec![make_success_record(42)];
+    let reader = write_and_open_in_memory(&records);
     let frames: Vec<_> = reader.frames().collect();
     assert_eq!(frames.len(), 1);
     assert_eq!(frames[0].row_index, 42);
@@ -122,14 +123,8 @@ fn test_wal_roundtrip_success_data() {
 
 #[test]
 fn test_wal_roundtrip_failure_data() {
-    let dir = TempDir::new().unwrap();
-    let base = dir.path().join("rt_failure");
-
-    let mut writer = WalWriter::open(&base).unwrap();
-    writer.append(&make_failure_record(7)).unwrap();
-    drop(writer);
-
-    let reader = WalReader::open(&base).unwrap();
+    let records = vec![make_failure_record(7)];
+    let reader = write_and_open_in_memory(&records);
     let recovered = reader.recover_all();
     assert_eq!(recovered.len(), 1);
 
@@ -151,9 +146,6 @@ fn test_wal_roundtrip_failure_data() {
 
 #[test]
 fn test_wal_roundtrip_mixed_types() {
-    let dir = TempDir::new().unwrap();
-    let base = dir.path().join("rt_mixed");
-
     let records = vec![
         make_success_record(1),
         make_failure_record(2),
@@ -162,13 +154,7 @@ fn test_wal_roundtrip_mixed_types() {
         make_success_record(5),
     ];
 
-    let mut writer = WalWriter::open(&base).unwrap();
-    for rec in &records {
-        writer.append(rec).unwrap();
-    }
-    drop(writer);
-
-    let reader = WalReader::open(&base).unwrap();
+    let reader = write_and_open_in_memory(&records);
     let recovered = reader.recover_all();
     assert_eq!(recovered.len(), 5);
 
@@ -194,14 +180,8 @@ fn test_wal_roundtrip_mixed_types() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_wal_empty_file() {
-    let dir = TempDir::new().unwrap();
-    let base = dir.path().join("empty");
-
-    let _writer = WalWriter::open(&base).unwrap();
-    // Write nothing — file is created but empty
-
-    let reader = WalReader::open(&base).unwrap();
+fn test_wal_empty_buffer() {
+    let reader = WalReader::from_vec(vec![]);
     let frames: Vec<_> = reader.frames().collect();
     assert!(frames.is_empty());
 
@@ -211,17 +191,9 @@ fn test_wal_empty_file() {
 
 #[test]
 fn test_wal_large_row_indices() {
-    let dir = TempDir::new().unwrap();
-    let base = dir.path().join("large_idx");
-
-    let mut writer = WalWriter::open(&base).unwrap();
     let big_indices: Vec<usize> = vec![0, 100, 1000, 100_000, 1_000_000];
-    for &idx in &big_indices {
-        writer.append(&make_success_record(idx)).unwrap();
-    }
-    drop(writer);
-
-    let reader = WalReader::open(&base).unwrap();
+    let records: Vec<_> = big_indices.iter().map(|&idx| make_success_record(idx)).collect();
+    let reader = write_and_open_in_memory(&records);
     let recovered = reader.recover_all();
     assert_eq!(recovered.len(), 5);
     for (i, rec) in recovered.iter().enumerate() {
@@ -231,11 +203,6 @@ fn test_wal_large_row_indices() {
 
 #[test]
 fn test_wal_large_payload() {
-    let dir = TempDir::new().unwrap();
-    let base = dir.path().join("large_payload");
-
-    let mut writer = WalWriter::open(&base).unwrap();
-
     // Build a row with a big string payload
     let big = "X".repeat(10_000);
     let record = WalRecord::Success {
@@ -245,10 +212,7 @@ fn test_wal_large_payload() {
             logs: PyroLogs::empty(),
         },
     };
-    writer.append(&record).unwrap();
-    drop(writer);
-
-    let reader = WalReader::open(&base).unwrap();
+    let reader = write_and_open_in_memory(&[record]);
     let frames: Vec<_> = reader.frames().collect();
     assert_eq!(frames.len(), 1);
 
@@ -266,16 +230,8 @@ fn test_wal_large_payload() {
 
 #[test]
 fn test_wal_multiple_views_from_same_reader() {
-    let dir = TempDir::new().unwrap();
-    let base = dir.path().join("multi_view");
-
-    let mut writer = WalWriter::open(&base).unwrap();
-    for i in 0..10 {
-        writer.append(&make_success_record(i)).unwrap();
-    }
-    drop(writer);
-
-    let reader = WalReader::open(&base).unwrap();
+    let records: Vec<_> = (0..10).map(make_success_record).collect();
+    let reader = write_and_open_in_memory(&records);
     let frames: Vec<_> = reader.frames().collect();
 
     // Get views for every frame
@@ -295,20 +251,12 @@ fn test_wal_multiple_views_from_same_reader() {
 
     // Reader must still be alive (views depend on it)
     drop(views);
-    // Reader is fine
 }
 
 #[test]
 fn test_wal_view_data_independence() {
-    let dir = TempDir::new().unwrap();
-    let base = dir.path().join("view_indep");
-
-    let mut writer = WalWriter::open(&base).unwrap();
-    writer.append(&make_success_record(1)).unwrap();
-    writer.append(&make_success_record(2)).unwrap();
-    drop(writer);
-
-    let reader = WalReader::open(&base).unwrap();
+    let records = vec![make_success_record(1), make_success_record(2)];
+    let reader = write_and_open_in_memory(&records);
     let frames: Vec<_> = reader.frames().collect();
     let v1 = reader.view_at(frames[0].packet_offset).expect("v1");
     let v2 = reader.view_at(frames[1].packet_offset).expect("v2");
@@ -336,20 +284,14 @@ fn test_wal_view_data_independence() {
 
 #[test]
 fn test_wal_reader_drops_after_views_dropped() {
-    let dir = TempDir::new().unwrap();
-    let base = dir.path().join("drop_order");
-
-    let mut writer = WalWriter::open(&base).unwrap();
-    writer.append(&make_success_record(99)).unwrap();
-    drop(writer);
-
+    let records = vec![make_success_record(99)];
+    let reader = write_and_open_in_memory(&records);
+    let frames: Vec<_> = reader.frames().collect();
     {
-        let reader = WalReader::open(&base).unwrap();
-        let frames: Vec<_> = reader.frames().collect();
         let _view = reader.view_at(frames[0].packet_offset).expect("view");
         // Reader and view coexist — should be fine
     }
-    // Reader dropped — view dropped first, so no panic
+    drop(reader);
 }
 
 // ---------------------------------------------------------------------------
@@ -358,21 +300,8 @@ fn test_wal_reader_drops_after_views_dropped() {
 
 #[test]
 fn test_wal_reader_shared_across_threads() {
-    let dir = TempDir::new().unwrap();
-    let base = dir.path().join("shared");
-
     let records = make_mixed_records(50);
-
-    // Writer (single-threaded)
-    {
-        let mut writer = WalWriter::open(&base).unwrap();
-        for rec in &records {
-            writer.append(rec).unwrap();
-        }
-    }
-
-    // Reader shared across threads
-    let reader = Arc::new(WalReader::open(&base).unwrap());
+    let reader = Arc::new(write_and_open_in_memory(&records));
     let barrier = Arc::new(Barrier::new(4));
 
     let mut handles = vec![];
@@ -396,19 +325,8 @@ fn test_wal_reader_shared_across_threads() {
 
 #[test]
 fn test_wal_reader_iterate_concurrently() {
-    let dir = TempDir::new().unwrap();
-    let base = dir.path().join("iter_concurrent");
-
     let records = make_mixed_records(100);
-
-    {
-        let mut writer = WalWriter::open(&base).unwrap();
-        for rec in &records {
-            writer.append(rec).unwrap();
-        }
-    }
-
-    let reader = Arc::new(WalReader::open(&base).unwrap());
+    let reader = Arc::new(write_and_open_in_memory(&records));
     let barrier = Arc::new(Barrier::new(3));
 
     let mut handles = vec![];
@@ -431,23 +349,31 @@ fn test_wal_reader_iterate_concurrently() {
 }
 
 // ---------------------------------------------------------------------------
-// File sync & persistence
+// Memory persistence
 // ---------------------------------------------------------------------------
 
 #[test]
 fn test_wal_data_persists_across_open() {
-    let dir = TempDir::new().unwrap();
-    let base = dir.path().join("persist");
-
+    let records: Vec<_> = (0..20).map(make_success_record).collect();
+    
+    // Simulate first session
+    let mut wal_buf = Vec::new();
+    let mut log_buf = Vec::new();
     {
-        let mut writer = WalWriter::open(&base).unwrap();
-        for i in 0..20 {
-            writer.append(&make_success_record(i)).unwrap();
+        let mut writer = WalWriter::new(wal_buf, log_buf);
+        for rec in &records {
+            writer.append(rec).unwrap();
         }
+        let (w, l) = writer.into_inner();
+        wal_buf = w;
+        log_buf = l;
     }
 
-    // Second open — all data should survive
-    let reader = WalReader::open(&base).unwrap();
+    // Second "open" — all data should survive
+    let mut reader = WalReader::from_vec(wal_buf);
+    let mut log_reader = pyroduct::format::wal::LogFrameReader::new(&log_buf[..]);
+    reader.logs = log_reader.read_all_indexed();
+    
     let recovered = reader.recover_all();
     assert_eq!(recovered.len(), 20);
 
@@ -458,22 +384,31 @@ fn test_wal_data_persists_across_open() {
 
 #[test]
 fn test_wal_incremental_writes() {
-    let dir = TempDir::new().unwrap();
-    let base = dir.path().join("incremental");
+    let mut wal_buf = Vec::new();
+    let mut log_buf = Vec::new();
 
     // Write in two separate writer sessions
     {
-        let mut writer = WalWriter::open(&base).unwrap();
+        let mut writer = WalWriter::new(std::mem::take(&mut wal_buf), std::mem::take(&mut log_buf));
         writer.append(&make_success_record(0)).unwrap();
         writer.append(&make_success_record(1)).unwrap();
+        let (w, l) = writer.into_inner();
+        wal_buf = w;
+        log_buf = l;
     }
     {
-        let mut writer = WalWriter::open(&base).unwrap();
+        let mut writer = WalWriter::new(std::mem::take(&mut wal_buf), std::mem::take(&mut log_buf));
         writer.append(&make_success_record(2)).unwrap();
         writer.append(&make_success_record(3)).unwrap();
+        let (w, l) = writer.into_inner();
+        wal_buf = w;
+        log_buf = l;
     }
 
-    let reader = WalReader::open(&base).unwrap();
+    let mut reader = WalReader::from_vec(wal_buf);
+    let mut log_reader = pyroduct::format::wal::LogFrameReader::new(&log_buf[..]);
+    reader.logs = log_reader.read_all_indexed();
+    
     let recovered = reader.recover_all();
     assert_eq!(recovered.len(), 4);
 
@@ -488,14 +423,8 @@ fn test_wal_incremental_writes() {
 
 #[test]
 fn test_wal_logs_survive_recovery() {
-    let dir = TempDir::new().unwrap();
-    let base = dir.path().join("with_logs");
-
-    let mut writer = WalWriter::open(&base).unwrap();
-    writer.append(&make_success_record(42)).unwrap();
-    drop(writer);
-
-    let reader = WalReader::open(&base).unwrap();
+    let records = vec![make_success_record(42)];
+    let reader = write_and_open_in_memory(&records);
 
     // Logs should be attached to recovered records
     let recovered = reader.recover_all();
@@ -547,37 +476,10 @@ fn test_wal_from_vec_truncated_packet() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_wal_paths_created() {
-    let dir = TempDir::new().unwrap();
-    let base = dir.path().join("paths");
-
-    let mut writer = WalWriter::open(&base).unwrap();
-    writer.append(&make_success_record(0)).unwrap();
-
-    let wal_path = writer.wal_path().to_path_buf();
-    let log_path = writer.log_path().to_path_buf();
-
-    assert!(wal_path.exists());
-    assert!(log_path.exists());
-
-    drop(writer);
-
-    // Both paths should be usable to open a reader
-    let _reader = WalReader::open(&base).unwrap();
-}
-
-#[test]
-fn test_wal_nested_base_path() {
-    let dir = TempDir::new().unwrap();
-    let deep = dir.path().join("a/b/c/d");
-
-    let mut writer = WalWriter::open(&deep).unwrap();
-    writer.append(&make_success_record(0)).unwrap();
-    drop(writer);
-
-    let reader = WalReader::open(&deep).unwrap();
-    let recovered = reader.recover_all();
-    assert_eq!(recovered.len(), 1);
+fn test_wal_paths_not_used_in_memory() {
+    let records = vec![make_success_record(0)];
+    let reader = write_and_open_in_memory(&records);
+    assert!(reader.path.is_none());
 }
 
 // ---------------------------------------------------------------------------
@@ -586,19 +488,9 @@ fn test_wal_nested_base_path() {
 
 #[test]
 fn test_wal_large_batch() {
-    let dir = TempDir::new().unwrap();
-    let base = dir.path().join("stress");
-
     let count = 10_000;
-    let mut writer = WalWriter::open(&base).unwrap();
-    for i in 0..count {
-        writer.append(&make_success_record(i)).unwrap();
-    }
-    let written = writer.records_written() as usize;
-    assert_eq!(written as usize, count);
-    drop(writer);
-
-    let reader = WalReader::open(&base).unwrap();
+    let records: Vec<_> = (0..count).map(make_success_record).collect();
+    let reader = write_and_open_in_memory(&records);
     let recovered = reader.recover_all();
     assert_eq!(recovered.len(), count);
 

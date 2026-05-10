@@ -683,6 +683,10 @@ impl PyroRefPtr {
 /// The `PyroRefPtr` must point to a valid 16-byte Pyro header.
 pub unsafe fn get_ref_ids(ptr: PyroRefPtr) -> (u32, u32, u8, u8) {
     let p = ptr.as_ptr();
+    if p.is_null() {
+        tracing::error!("Getting references from a null pointer");
+        return (0, 0, 0, 0);
+    }
     unsafe {
         let client_id = u32::from_le_bytes(*(p.add(PyroParser::OFFSET_CLIENT) as *const [u8; 4]));
         let mux_id = u32::from_le_bytes(*(p.add(PyroParser::OFFSET_MUX_ID) as *const [u8; 4]));

@@ -1,4 +1,4 @@
-use pyroduct::format::{PyroVec, PyroView};
+use pyroduct::format::{get_ref_ids, PyroVec, PyroView, PyroRefPtr};
 use std::sync::Arc;
 use std::thread;
 
@@ -97,4 +97,30 @@ fn test_pyro_vec_zero_capacity() {
     vec.push(1);
     assert_eq!(vec.len(), 1);
     assert_eq!(vec.as_slice(), &[1]);
+}
+
+#[test]
+fn test_get_ref_ids_null() {
+    let ptr = PyroRefPtr::new(std::ptr::null());
+    let ids = unsafe { get_ref_ids(ptr) };
+    assert_eq!(ids, (0, 0, 0, 0));
+}
+
+#[test]
+fn test_get_ref_ids_valid() {
+    let mut vec = PyroVec::with_capacity(16);
+    // Manually set some values in the header to verify get_ref_ids
+    // OFFSET_CLIENT = 4
+    // OFFSET_MUX_ID = 12
+    // OFFSET_FN_ID = 11
+    // OFFSET_CLASS_ID = 10
+    let raw = vec.as_raw_slice_mut();
+    raw[4..8].copy_from_slice(&100u32.to_le_bytes());
+    raw[12..16].copy_from_slice(&200u32.to_le_bytes());
+    raw[11] = 10;
+    raw[10] = 20;
+    
+    let ptr = PyroRefPtr::new(raw.as_ptr());
+    let ids = unsafe { get_ref_ids(ptr) };
+    assert_eq!(ids, (100, 200, 10, 20));
 }
