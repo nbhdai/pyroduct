@@ -16,7 +16,8 @@ let
     set -e
     export PATH="${miriToolchain}/bin:$PATH"
     export RUST_BACKTRACE=1
-  '' + test-str;
+    ${test-str}
+  '';
 in
 {
   check = craneLib.cargoBuild (commonArgs // {
@@ -30,7 +31,8 @@ in
 
     checkPhase = ''
       export RUST_BACKTRACE=1
-    '' + test-str;
+      ${test-str}
+    '';
 
     buildPhase = "true";
     installPhase = "mkdir -p $out";
