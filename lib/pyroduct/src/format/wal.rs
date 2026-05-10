@@ -307,7 +307,7 @@ impl<W: WalWriterInner, L: Write> WalWriter<W, L> {
     pub fn into_inner(self) -> (W, L) {
         let w = match self.wal_writer.into_inner() {
             Ok(inner) => inner,
-            Err(e) => panic!("failed to flush wal writer"),
+            Err(e) => panic!("failed to flush wal writer: {e}"),
         };
         (w, self.log_writer.into_inner())
     }
