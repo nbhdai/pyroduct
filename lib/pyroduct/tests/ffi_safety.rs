@@ -30,6 +30,7 @@ struct UserError {
 // execute_safe
 // =============================================================================
 
+#[tracing_test::traced_test]
 #[test]
 fn test_execute_safe_success() {
     let vec = unsafe {
@@ -52,6 +53,7 @@ fn test_execute_safe_success() {
     assert_eq!(typed.payload.as_str(), "Success");
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_execute_safe_large_payload() {
     let vec = unsafe {
@@ -74,6 +76,7 @@ fn test_execute_safe_large_payload() {
     assert_eq!(typed.payload.len(), 10_000);
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_execute_safe_catches_panic() {
     register_ffi_panic_hook();
@@ -95,6 +98,7 @@ fn test_execute_safe_catches_panic() {
     assert!(error.message.contains("Intentional test panic"));
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_execute_safe_panic_captures_location() {
     register_ffi_panic_hook();
@@ -115,6 +119,7 @@ fn test_execute_safe_panic_captures_location() {
     assert!(error.line > 0);
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_execute_safe_panic_then_success() {
     register_ffi_panic_hook();
@@ -151,6 +156,7 @@ fn test_execute_safe_panic_then_success() {
     assert_eq!(typed.id, 999);
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_execute_safe_multiple_sequential() {
     for i in 0..10u32 {
@@ -177,6 +183,7 @@ fn test_execute_safe_multiple_sequential() {
 // serialize_output
 // =============================================================================
 
+#[tracing_test::traced_test]
 #[test]
 fn test_serialize_output_struct() {
     let vec = serialize_output(UserData {
@@ -190,6 +197,7 @@ fn test_serialize_output_struct() {
     assert_eq!(typed.payload.as_str(), "hello");
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_serialize_output_empty_string() {
     let vec = serialize_output(UserData {
@@ -203,6 +211,7 @@ fn test_serialize_output_empty_string() {
     assert!(typed.payload.is_empty());
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_serialize_output_primitive() {
     let vec = serialize_output(42u64);
@@ -212,6 +221,7 @@ fn test_serialize_output_primitive() {
     assert_eq!(*typed, 42);
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_serialize_output_vec() {
     let vec = serialize_output(vec![1u32, 2, 3, 4, 5]);
@@ -222,6 +232,7 @@ fn test_serialize_output_vec() {
     assert_eq!(receiver.receive(&typed).unwrap(), vec![1, 2, 3, 4, 5]);
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_serialize_output_option_some() {
     let vec = serialize_output(Some("hello".to_string()));
@@ -232,6 +243,7 @@ fn test_serialize_output_option_some() {
     assert_eq!(receiver.receive(&typed).unwrap(), Some("hello".to_string()));
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_serialize_output_option_none() {
     let vec = serialize_output(Option::<String>::None);
@@ -246,6 +258,7 @@ fn test_serialize_output_option_none() {
 // serialize_result
 // =============================================================================
 
+#[tracing_test::traced_test]
 #[test]
 fn test_serialize_result_ok() {
     let vec = serialize_result::<UserData, UserError>(Ok(UserData {
@@ -259,6 +272,7 @@ fn test_serialize_result_ok() {
     assert_eq!(typed.payload.as_str(), "ok");
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_serialize_result_err() {
     let vec = serialize_result::<UserData, UserError>(Err(UserError {
@@ -278,6 +292,7 @@ fn test_serialize_result_err() {
 // deserialize_input
 // =============================================================================
 
+#[tracing_test::traced_test]
 #[test]
 fn test_deserialize_input_roundtrip() {
     let original = UserData {
@@ -291,6 +306,7 @@ fn test_deserialize_input_roundtrip() {
     assert_eq!(recovered, original);
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_deserialize_input_primitive() {
     let shipped = 123u32.ship().unwrap();
@@ -304,6 +320,7 @@ fn test_deserialize_input_primitive() {
 // Roundtrip: serialize_output → from_raw → expose → receive
 // =============================================================================
 
+#[tracing_test::traced_test]
 #[test]
 fn test_full_roundtrip_user_data() {
     let original = UserData {
@@ -322,6 +339,7 @@ fn test_full_roundtrip_user_data() {
     assert_eq!(original, recovered);
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_full_roundtrip_user_error() {
     let original = UserError {
@@ -345,6 +363,7 @@ fn test_full_roundtrip_user_error() {
 // Panic hook idempotency
 // =============================================================================
 
+#[tracing_test::traced_test]
 #[test]
 fn test_panic_hook_idempotent() {
     register_ffi_panic_hook();

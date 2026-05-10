@@ -3,6 +3,7 @@ use pyroduct::format::PyroVec;
 use pyroduct::format::header::{PyroHeader, PyroHeaderMut};
 use pyroduct::transport::{PyroListener, PyroRouter, PyroServer, PyroSocket};
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_pyro_server_capability_call() {
     // 1. Setup Router and Server

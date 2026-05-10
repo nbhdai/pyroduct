@@ -76,6 +76,7 @@ fn write_and_open_in_memory(records: &[WalRecord]) -> WalReader {
 // Lifecycle: create / write / open / recover
 // ---------------------------------------------------------------------------
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_lifecycle_single_success() {
     let records = vec![make_success_record(0)];
@@ -89,6 +90,7 @@ fn test_wal_lifecycle_single_success() {
     }
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_lifecycle_multiple_sequential() {
     let records = make_mixed_records(100);
@@ -105,6 +107,7 @@ fn test_wal_lifecycle_multiple_sequential() {
 // Roundtrip integrity — data must survive memory I/O
 // ---------------------------------------------------------------------------
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_roundtrip_success_data() {
     let records = vec![make_success_record(42)];
@@ -121,6 +124,7 @@ fn test_wal_roundtrip_success_data() {
     assert_eq!(row.get("id"), Some(&PyroValue::from(42i32)));
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_roundtrip_failure_data() {
     let records = vec![make_failure_record(7)];
@@ -144,6 +148,7 @@ fn test_wal_roundtrip_failure_data() {
     }
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_roundtrip_mixed_types() {
     let records = vec![
@@ -179,6 +184,7 @@ fn test_wal_roundtrip_mixed_types() {
 // Frame iteration edge cases
 // ---------------------------------------------------------------------------
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_empty_buffer() {
     let reader = WalReader::from_vec(vec![]);
@@ -189,6 +195,7 @@ fn test_wal_empty_buffer() {
     assert!(recovered.is_empty());
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_large_row_indices() {
     let big_indices: Vec<usize> = vec![0, 100, 1000, 100_000, 1_000_000];
@@ -201,6 +208,7 @@ fn test_wal_large_row_indices() {
     }
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_large_payload() {
     // Build a row with a big string payload
@@ -228,6 +236,7 @@ fn test_wal_large_payload() {
 // View safety — ref counting and lifetime binding
 // ---------------------------------------------------------------------------
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_multiple_views_from_same_reader() {
     let records: Vec<_> = (0..10).map(make_success_record).collect();
@@ -253,6 +262,7 @@ fn test_wal_multiple_views_from_same_reader() {
     drop(views);
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_view_data_independence() {
     let records = vec![make_success_record(1), make_success_record(2)];
@@ -282,6 +292,7 @@ fn test_wal_view_data_independence() {
 // Drop safety — reader must not drop while views exist
 // ---------------------------------------------------------------------------
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_reader_drops_after_views_dropped() {
     let records = vec![make_success_record(99)];
@@ -298,6 +309,7 @@ fn test_wal_reader_drops_after_views_dropped() {
 // Concurrent access safety
 // ---------------------------------------------------------------------------
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_reader_shared_across_threads() {
     let records = make_mixed_records(50);
@@ -323,6 +335,7 @@ fn test_wal_reader_shared_across_threads() {
     }
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_reader_iterate_concurrently() {
     let records = make_mixed_records(100);
@@ -352,6 +365,7 @@ fn test_wal_reader_iterate_concurrently() {
 // Memory persistence
 // ---------------------------------------------------------------------------
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_data_persists_across_open() {
     let records: Vec<_> = (0..20).map(make_success_record).collect();
@@ -382,6 +396,7 @@ fn test_wal_data_persists_across_open() {
     }
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_incremental_writes() {
     let mut wal_buf = Vec::new();
@@ -421,6 +436,7 @@ fn test_wal_incremental_writes() {
 // Logs integration
 // ---------------------------------------------------------------------------
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_logs_survive_recovery() {
     let records = vec![make_success_record(42)];
@@ -443,6 +459,7 @@ fn test_wal_logs_survive_recovery() {
 // Corruption / edge cases
 // ---------------------------------------------------------------------------
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_from_vec_empty() {
     let reader = WalReader::from_vec(vec![]);
@@ -450,6 +467,7 @@ fn test_wal_from_vec_empty() {
     assert!(frames.is_empty());
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_from_vec_partial_prefix() {
     // Just 4 bytes — not enough for a full 16-byte prefix
@@ -458,6 +476,7 @@ fn test_wal_from_vec_partial_prefix() {
     assert!(frames.is_empty());
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_from_vec_truncated_packet() {
     // Write a 16-byte prefix, then only a few bytes of payload
@@ -475,6 +494,7 @@ fn test_wal_from_vec_truncated_packet() {
 // Path handling
 // ---------------------------------------------------------------------------
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_paths_not_used_in_memory() {
     let records = vec![make_success_record(0)];
@@ -486,6 +506,7 @@ fn test_wal_paths_not_used_in_memory() {
 // Large-scale stress
 // ---------------------------------------------------------------------------
 
+#[tracing_test::traced_test]
 #[test]
 fn test_wal_large_batch() {
     let count = 10_000;

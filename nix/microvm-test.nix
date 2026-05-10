@@ -26,25 +26,29 @@ let
   # This expression returns the configuration. 
   # To actually build a VM, one would typically use 'nixos-rebuild build-vm' 
   # or a tool like 'microvm.nix'.
+  drv = pkgs.stdenv.mkDerivation {
+    pname = "pyroduct-microvm-test-script";
+    version = "0.1.0";
+    src = ./..;
+    phases = [ "installPhase" ];
+    installPhase = ''
+      mkdir -p $out/bin
+      cat << 'EOF' > $out/bin/test-install-sh
+      set -e
+      echo "=== Starting Pyroduct Install Test ==="
+      echo "This script describes the test process."
+      echo "To execute this in a real VM:"
+      echo "  1. Build the VM image using the provided vmConfig."
+      echo "  2. Boot the VM."
+      echo "  3. Run: scp -r . root@vm:/tmp/pyroduct"
+      echo "  4. Run: ssh root@vm 'cd /tmp/pyroduct && ./install.sh --default'"
+      echo "  5. Run: ssh root@vm 'pyroduct --version'"
+      EOF
+      chmod +x $out/bin/test-install-sh
+    '';
+  };
 in
-pkgs.stdenv.mkDerivation {
-  pname = "pyroduct-microvm-test-script";
-  version = "0.1.0";
-  src = ./..;
-  phases = [ "installPhase" ];
-  installPhase = ''
-    mkdir -p $out/bin
-    cat << 'EOF' > $out/bin/test-install-sh
-    set -e
-    echo "=== Starting Pyroduct Install Test ==="
-    echo "This script describes the test process."
-    echo "To execute this in a real VM:"
-    echo "  1. Build the VM image using the provided vmConfig."
-    echo "  2. Boot the VM."
-    echo "  3. Run: scp -r . root@vm:/tmp/pyroduct"
-    echo "  4. Run: ssh root@vm 'cd /tmp/pyroduct && ./install.sh --default'"
-    echo "  5. Run: ssh root@vm 'pyroduct --version'"
-    EOF
-    chmod +x $out/bin/test-install-sh
-  '';
+{
+  check = drv;
+  bin = drv;
 }

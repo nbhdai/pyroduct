@@ -20,6 +20,7 @@ unsafe fn send_log(lib_id: i64, span_id: u64, msg: &str) {
 // Basic delivery
 // =============================================================================
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_log_delivery_single_message() {
     let lib_id: i64 = 10_000;
@@ -34,6 +35,7 @@ async fn test_log_delivery_single_message() {
     destroy_log(lib_id, span_id);
 }
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_log_delivery_multiple_messages() {
     let lib_id: i64 = 10_001;
@@ -56,6 +58,7 @@ async fn test_log_delivery_multiple_messages() {
 // Routing: different span IDs go to different receivers
 // =============================================================================
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_log_routing_by_span_id() {
     let lib_id: i64 = 10_002;
@@ -74,6 +77,7 @@ async fn test_log_routing_by_span_id() {
     destroy_log(lib_id, 200);
 }
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_log_routing_by_library_id() {
     let span_id: u64 = 1;
@@ -96,6 +100,7 @@ async fn test_log_routing_by_library_id() {
 // Destroy / channel lifecycle
 // =============================================================================
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_destroy_log_closes_receiver() {
     let lib_id: i64 = 10_010;
@@ -108,6 +113,7 @@ async fn test_destroy_log_closes_receiver() {
     assert!(rx.recv().await.is_none());
 }
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_log_after_destroy_does_not_panic() {
     let lib_id: i64 = 10_011;
@@ -119,12 +125,14 @@ async fn test_log_after_destroy_does_not_panic() {
     unsafe { send_log(lib_id, span_id, "ghost message\n") };
 }
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_log_to_nonexistent_channel_does_not_panic() {
     // No channel was ever created for this ID pair
     unsafe { send_log(99_999, 99_999, "nowhere\n") };
 }
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_double_destroy_does_not_panic() {
     let lib_id: i64 = 10_012;
@@ -139,6 +147,7 @@ async fn test_double_destroy_does_not_panic() {
 // Back-pressure: channel full
 // =============================================================================
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_log_channel_full_drops_message() {
     let lib_id: i64 = 10_013;
@@ -185,6 +194,7 @@ async fn test_log_channel_full_drops_message() {
 // Concurrent safety: hammer from multiple threads
 // =============================================================================
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_log_concurrent_writes() {
     let lib_id: i64 = 10_015;
@@ -230,6 +240,7 @@ async fn test_log_concurrent_writes() {
 // Zero-length pointer safety
 // =============================================================================
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_log_zero_length_slice() {
     let lib_id: i64 = 10_016;
