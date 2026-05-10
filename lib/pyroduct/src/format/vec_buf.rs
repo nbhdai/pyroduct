@@ -677,6 +677,21 @@ impl PyroRefPtr {
     }
 }
 
+/// Extracts the client, mux, function, and class IDs from a `PyroRefPtr`.
+///
+/// # Safety
+/// The `PyroRefPtr` must point to a valid 16-byte Pyro header.
+pub unsafe fn get_ref_ids(ptr: PyroRefPtr) -> (u32, u32, u8, u8) {
+    let p = ptr.as_ptr();
+    unsafe {
+        let client_id = u32::from_le_bytes(*(p.add(PyroParser::OFFSET_CLIENT) as *const [u8; 4]));
+        let mux_id = u32::from_le_bytes(*(p.add(PyroParser::OFFSET_MUX_ID) as *const [u8; 4]));
+        let fn_id = *p.add(PyroParser::OFFSET_FN_ID);
+        let class_id = *p.add(PyroParser::OFFSET_CLASS_ID);
+        (client_id, mux_id, fn_id, class_id)
+    }
+}
+
 /// A safe, lifetime-bound view into a Pyro data structure.
 ///
 /// Unlike `PyroView`, this does not participate in reference counting and is

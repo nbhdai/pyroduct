@@ -16,6 +16,7 @@ use crate::{
         host::{ClientRegisterFuture, MethodCallFuture, ObjectInitFuture, ObjectResetFuture},
     },
     format::{PyroRef, PyroVec, PyroView, header::PyroData},
+    module::capability::LogEntry,
 };
 
 pub struct ForeignClass {
@@ -122,7 +123,7 @@ impl ForeignClass {
         self: &Arc<Self>,
         config: PyroRef<'_>,
         object_id: u64,
-        mut log_channel: tokio::sync::mpsc::Receiver<String>,
+        mut log_channel: tokio::sync::mpsc::Receiver<LogEntry>,
     ) -> Result<ForeignObject, PyroError> {
         let obj = match self.init {
             ClassInitFn::Sync(f) => unsafe { (f)(config.as_ptr(), object_id) }.process(),
@@ -133,6 +134,7 @@ impl ForeignClass {
 
         let log_buffer = Arc::new(Mutex::new(Vec::new()));
         let task_buffer = Arc::clone(&log_buffer);
+        //let task_log_tx = log_tx.clone();
 
         // 1. Create the oneshot channel for the kill signal
         let (kill_tx, mut kill_rx) = oneshot::channel::<()>();
@@ -143,9 +145,12 @@ impl ForeignClass {
                 tokio::select! {
                     msg = log_channel.recv() => {
                         match msg {
-                            Some(log_msg) => {
+                            Some(entry) => {
+                                // Forward to server
+                                // let _ = task_log_tx.send(entry.clone()).await;
+                                // Also keep in buffer
                                 if let Ok(mut buffer) = task_buffer.lock() {
-                                    buffer.push(log_msg);
+                                    buffer.push(entry.message);
                                 }
                             }
                             None => break, // Exit if the log channel naturally closes

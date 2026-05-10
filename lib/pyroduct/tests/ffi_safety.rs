@@ -40,6 +40,7 @@ fn test_execute_safe_success() {
                 })
             },
             0,
+            0,
         ))
         .unwrap()
     };
@@ -61,6 +62,7 @@ fn test_execute_safe_large_payload() {
                 })
             },
             0,
+            0,
         ))
         .unwrap()
     };
@@ -80,6 +82,7 @@ fn test_execute_safe_catches_panic() {
             || -> PyroView {
                 panic!("Intentional test panic");
             },
+            0,
             0,
         ))
         .unwrap()
@@ -101,6 +104,7 @@ fn test_execute_safe_panic_captures_location() {
                 panic!("Location test");
             },
             0,
+            0,
         ))
         .unwrap()
     };
@@ -121,6 +125,7 @@ fn test_execute_safe_panic_then_success() {
                 panic!("boom");
             },
             0,
+            0,
         ))
         .unwrap()
     };
@@ -135,6 +140,7 @@ fn test_execute_safe_panic_then_success() {
                     payload: "Recovery".into(),
                 })
             },
+            0,
             0,
         ))
         .unwrap()
@@ -155,6 +161,7 @@ fn test_execute_safe_multiple_sequential() {
                         payload: format!("Call {i}"),
                     })
                 },
+                0,
                 0,
             ))
             .unwrap()
@@ -304,7 +311,7 @@ fn test_full_roundtrip_user_data() {
     };
 
     let vec = unsafe {
-        PyroView::from_ptr(execute_safe(|| serialize_output(original.clone()), 0)).unwrap()
+        PyroView::from_ptr(execute_safe(|| serialize_output(original.clone()), 0, 0)).unwrap()
     };
     assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
 
@@ -322,7 +329,7 @@ fn test_full_roundtrip_user_error() {
     };
 
     let vec = unsafe {
-        PyroView::from_ptr(execute_safe(|| serialize_output(original.clone()), 0)).unwrap()
+        PyroView::from_ptr(execute_safe(|| serialize_output(original.clone()), 0, 0)).unwrap()
     };
     assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
 
@@ -347,6 +354,7 @@ fn test_panic_hook_idempotent() {
             || -> PyroView {
                 panic!("After multiple registrations");
             },
+            0,
             0,
         ))
         .unwrap()

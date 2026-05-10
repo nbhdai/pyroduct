@@ -250,7 +250,7 @@ impl ImplMethod {
                         #client_retrieval
                         #input_retrieval
                         ::pyroduct::ffi::guest::serialize_result(#method_call.await)
-                    }, capability_state_ptr.object_id)
+                    }, capability_state_ptr.object_id, mux_id)
                 },
             ),
             (false, Some(_)) => (
@@ -261,7 +261,7 @@ impl ImplMethod {
                         #client_retrieval
                         #input_retrieval
                         ::pyroduct::ffi::guest::serialize_result(#method_call)
-                    }, capability_state_ptr.object_id)
+                    }, capability_state_ptr.object_id, mux_id)
                 },
             ),
             (true, None) => (
@@ -272,7 +272,7 @@ impl ImplMethod {
                         #client_retrieval
                         #input_retrieval
                         ::pyroduct::ffi::guest::serialize_output(#method_call.await)
-                    }, capability_state_ptr.object_id)
+                    }, capability_state_ptr.object_id, mux_id)
                 },
             ),
             (false, None) => (
@@ -283,7 +283,7 @@ impl ImplMethod {
                         #client_retrieval
                         #input_retrieval
                         ::pyroduct::ffi::guest::serialize_output(#method_call)
-                    }, capability_state_ptr.object_id)
+                    }, capability_state_ptr.object_id, mux_id)
                 },
             ),
         };
@@ -297,6 +297,7 @@ impl ImplMethod {
                 client_state_ptr: ::pyroduct::format::PyroRefPtr,
                 input_ptr: ::pyroduct::format::PyroRefPtr,
             ) -> #ffi_ret {
+                let (_client_id, mux_id, _class_id, _fn_id) = ::pyroduct::format::get_ref_ids(input_ptr);
                 #body
             }
         }
@@ -571,6 +572,7 @@ mod tests {
                 client_state_ptr: ::pyroduct::format::PyroRefPtr,
                 input_ptr: ::pyroduct::format::PyroRefPtr,
             ) -> ::pyroduct::ffi::FuturePyroView {
+                let (_client_id, mux_id, _class_id, _fn_id) = ::pyroduct::format::get_ref_ids(input_ptr);
                 ::pyroduct::ffi::guest::execute_safe_async(|| async move {
                     let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                         Ok(state) => state,
@@ -583,7 +585,7 @@ mod tests {
                         Err(err) => return err.encode().view(),
                     };
                     ::pyroduct::ffi::guest::serialize_output(state.test_async_client(&client).await)
-                }, capability_state_ptr.object_id)
+                }, capability_state_ptr.object_id, mux_id)
             }
         };
 
@@ -638,6 +640,7 @@ mod tests {
                 client_state_ptr: ::pyroduct::format::PyroRefPtr,
                 input_ptr: ::pyroduct::format::PyroRefPtr,
             ) -> ::pyroduct::format::PyroViewPtr {
+                let (_client_id, mux_id, _class_id, _fn_id) = ::pyroduct::format::get_ref_ids(input_ptr);
                 ::pyroduct::ffi::guest::execute_safe(|| {
                     let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                         Ok(state) => state,
@@ -655,7 +658,7 @@ mod tests {
                         Err(err) => return err.encode().view(),
                     };
                     ::pyroduct::ffi::guest::serialize_result(state.test_sync_client_input(&client, input))
-                }, capability_state_ptr.object_id)
+                }, capability_state_ptr.object_id, mux_id)
             }
         };
 
@@ -720,6 +723,7 @@ mod tests {
                 client_state_ptr: ::pyroduct::format::PyroRefPtr,
                 input_ptr: ::pyroduct::format::PyroRefPtr,
             ) -> ::pyroduct::ffi::FuturePyroView {
+                let (_client_id, mux_id, _class_id, _fn_id) = ::pyroduct::format::get_ref_ids(input_ptr);
                 ::pyroduct::ffi::guest::execute_safe_async(|| async move {
                     let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                         Ok(state) => state,
@@ -737,7 +741,7 @@ mod tests {
                         Err(err) => return err.encode().view(),
                     };
                     ::pyroduct::ffi::guest::serialize_output(state.test_sci_multi(&client, input.a, input.b).await)
-                }, capability_state_ptr.object_id)
+                }, capability_state_ptr.object_id, mux_id)
             }
         };
 

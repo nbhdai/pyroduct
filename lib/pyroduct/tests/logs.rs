@@ -13,7 +13,7 @@ use pyroduct::module::capability::{create_log, destroy_log, log_callback};
 
 /// Call `log_callback` with a Rust string — wraps the unsafe pointer dance.
 unsafe fn send_log(lib_id: i64, span_id: u64, msg: &str) {
-    unsafe { log_callback(lib_id, span_id, msg.as_ptr(), msg.len()) };
+    unsafe { log_callback(lib_id, span_id, 0, msg.as_ptr(), msg.len()) };
 }
 
 // =============================================================================
@@ -29,7 +29,7 @@ async fn test_log_delivery_single_message() {
     unsafe { send_log(lib_id, span_id, "hello from ffi\n") };
 
     let msg = rx.recv().await.expect("should receive a message");
-    assert_eq!(msg, "hello from ffi");
+    assert_eq!(msg.message, "hello from ffi");
 
     destroy_log(lib_id, span_id);
 }
@@ -46,7 +46,7 @@ async fn test_log_delivery_multiple_messages() {
 
     for i in 0..10 {
         let msg = rx.recv().await.expect("should receive message");
-        assert_eq!(msg, format!("msg {i}"));
+        assert_eq!(msg.message, format!("msg {i}"));
     }
 
     destroy_log(lib_id, span_id);
@@ -67,8 +67,8 @@ async fn test_log_routing_by_span_id() {
         send_log(lib_id, 200, "for B\n");
     }
 
-    assert_eq!(rx_a.recv().await.unwrap(), "for A");
-    assert_eq!(rx_b.recv().await.unwrap(), "for B");
+    assert_eq!(rx_a.recv().await.unwrap().message, "for A");
+    assert_eq!(rx_b.recv().await.unwrap().message, "for B");
 
     destroy_log(lib_id, 100);
     destroy_log(lib_id, 200);
@@ -85,8 +85,8 @@ async fn test_log_routing_by_library_id() {
         send_log(10_004, span_id, "lib 2\n");
     }
 
-    assert_eq!(rx_1.recv().await.unwrap(), "lib 1");
-    assert_eq!(rx_2.recv().await.unwrap(), "lib 2");
+    assert_eq!(rx_1.recv().await.unwrap().message, "lib 1");
+    assert_eq!(rx_2.recv().await.unwrap().message, "lib 2");
 
     destroy_log(10_003, span_id);
     destroy_log(10_004, span_id);
@@ -155,8 +155,8 @@ async fn test_log_channel_full_drops_message() {
 
     let m1 = rx.recv().await.unwrap();
     let m2 = rx.recv().await.unwrap();
-    assert_eq!(m1, "msg 1");
-    assert_eq!(m2, "msg 2");
+    assert_eq!(m1.message, "msg 1");
+    assert_eq!(m2.message, "msg 2");
 
     destroy_log(lib_id, span_id);
 }
@@ -238,10 +238,10 @@ async fn test_log_zero_length_slice() {
 
     // Pass a valid pointer but zero length — from_raw_parts(ptr, 0) is safe
     let dummy: u8 = 0;
-    unsafe { log_callback(lib_id, span_id, &dummy as *const u8, 0) };
+    unsafe { log_callback(lib_id, span_id, 0, &dummy as *const u8, 0) };
 
     let msg = rx.recv().await.unwrap();
-    assert_eq!(msg, "");
+    assert_eq!(msg.message, "");
 
     destroy_log(lib_id, span_id);
 }

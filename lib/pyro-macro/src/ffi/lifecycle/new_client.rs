@@ -158,11 +158,12 @@ impl NewClientFn {
                     Err(e) => return e.encode().view().into_ptr(),
                 };
 
+                let (_client_id, mux_id, _class_id, _fn_id) = ::pyroduct::format::get_ref_ids(client_state_ptr);
                 ::pyroduct::ffi::guest::execute_safe(|| {
                     // Reconstruct state from raw pointer
                     let state = unsafe { &*(capability_state_ptr.state as *const #state_type) };
                     ::pyroduct::ffi::guest::serialize_result(state.new_client(&client))
-                }, capability_state_ptr.object_id)
+                }, capability_state_ptr.object_id, mux_id)
             }
         } else {
             quote! {
@@ -171,10 +172,11 @@ impl NewClientFn {
                     Err(e) => return e.encode().view().into_ptr(),
                 };
 
+                let (_client_id, mux_id, _class_id, _fn_id) = ::pyroduct::format::get_ref_ids(client_state_ptr);
                 ::pyroduct::ffi::guest::execute_safe(|| {
                     let state = unsafe { &*(capability_state_ptr.state as *const #state_type) };
                     ::pyroduct::ffi::guest::serialize_output(state.new_client(&client))
-                }, capability_state_ptr.object_id)
+                }, capability_state_ptr.object_id, mux_id)
             }
         };
 

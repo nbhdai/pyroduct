@@ -6,7 +6,7 @@ use crate::format::vec_buf::PyroRefPtr;
 use crate::format::{PyroVec, PyroViewPtr, header::PyroData};
 use crate::{CapturedError, PyroError};
 
-pub type LogCallback = unsafe extern "C" fn(i64, u64, *const u8, usize);
+pub type LogCallback = unsafe extern "C" fn(i64, u64, u32, *const u8, usize);
 
 // ============================================================================
 // Function pointer types

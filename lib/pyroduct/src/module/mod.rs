@@ -386,6 +386,8 @@ impl PyroInstance {
             .await
             .map_err(|err| self.pack_pyro_error(err))?;
 
+        tracing::debug!("input_ptr = {:#x}", input_ptr);
+
         // 2. Call the export
         let entry: TypedFunc<i32, i32> = self
             .instance
@@ -397,18 +399,22 @@ impl PyroInstance {
             })
             .map_err(|err| self.pack_pyro_error(err))?;
 
+        tracing::debug!("calling call_extern...");
         let output_ptr = entry
             .call_async(&mut self.store, input_ptr)
             .await
             .map_err(classify_error)
             .map_err(|err| self.pack_pyro_error(err))?;
+        tracing::debug!("output_ptr = {:#x}", output_ptr);
 
         // 3. Read Output using PyroCallIo
         let mut io = PyroCallIo::new(&mut self.store, self.memory);
+        tracing::debug!("getting output...");
         let output_vec = io
             .get_output(output_ptr)
             .await
             .map_err(|err| self.pack_pyro_error(err))?;
+        tracing::debug!("output_vec received");
 
         // 4. Parse the result (Zero-copy view of the host-owned vector)
         let result_view = output_vec.view();

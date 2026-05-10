@@ -241,7 +241,7 @@ pub use format::{HasReceiver, Receiver, SpecWire};
 pub use header::ParseError;
 pub use rkyv_8::{Rkyv, RkyvParser, RkyvWriter, TypedBuf, TypedPyroRef};
 pub use value::{DeepRef, PyroRow, PyroValue, ToRow};
-pub use vec_buf::{PyroRef, PyroRefPtr, PyroVec, PyroView, PyroViewPtr, get_ref, make_view};
+pub use vec_buf::{PyroRef, PyroRefPtr, PyroVec, PyroView, PyroViewPtr, get_ref, make_view, get_ref_ids};
 
 // Async is not supported for wasm
 #[cfg(any(feature = "host", feature = "capability"))]

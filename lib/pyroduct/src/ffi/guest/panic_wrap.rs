@@ -35,11 +35,11 @@ use crate::{CapturedError, PyroError};
 
 /// Safe entry point for FFI operations returning a PyroViewPtr.
 #[track_caller]
-pub fn execute_safe<F>(func: F, object_id: u64) -> PyroViewPtr
+pub fn execute_safe<F>(func: F, object_id: u64, mux_id: u32) -> PyroViewPtr
 where
     F: FnOnce() -> PyroView,
 {
-    let span = object_span(object_id);
+    let span = object_span(object_id, mux_id);
     let _guard = span.enter();
     register_ffi_panic_hook();
     clear_last_panic();
@@ -123,7 +123,7 @@ pub fn get_runtime() -> &'static Runtime {
 }
 
 #[track_caller]
-pub fn execute_safe_async<F, Fut>(f: F, object_id: u64) -> FuturePyroView
+pub fn execute_safe_async<F, Fut>(f: F, object_id: u64, mux_id: u32) -> FuturePyroView
 where
     F: FnOnce() -> Fut + Send,
     Fut: std::future::Future<Output = PyroView> + Send + 'static,
@@ -131,7 +131,7 @@ where
     let fut = f();
     FuturePyroView::Future(BorrowingFfiFuture::<'static>::new(SafeMethodHandle::new(
         get_runtime().spawn(async move {
-            let span = object_span(object_id);
+            let span = object_span(object_id, mux_id);
             {
                 let _guard = span.enter();
                 register_ffi_panic_hook();

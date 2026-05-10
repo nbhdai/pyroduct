@@ -10,7 +10,10 @@ use tracing_subscriber::{
 use crate::ffi::interface::LogCallback;
 
 /// Stored in a span's extensions to mark it as belonging to a specific object.
-pub struct ObjectId(pub u64);
+pub struct ObjectContext {
+    pub object_id: u64,
+    pub mux_id: u32,
+}
 
 // Global storage for the log callback
 static LOG_CALLBACK: OnceLock<(i64, LogCallback)> = OnceLock::new();
@@ -45,7 +48,7 @@ pub fn init_logging(id: i64, callback: LogCallback) {
 /// let _guard = span.enter();
 /// tracing::info!("routed to object 42");
 /// ```
-pub fn object_span(object_id: u64) -> tracing::Span {
+pub fn object_span(object_id: u64, mux_id: u32) -> tracing::Span {
     let client_spans = CLIENT_SPAN.get_or_init(|| RwLock::new(HashMap::new()));
     {
         let cs = client_spans.read().unwrap();
@@ -60,7 +63,10 @@ pub fn object_span(object_id: u64) -> tracing::Span {
             if let Some(id) = span.id() {
                 if let Some(reg) = dispatch.downcast_ref::<Registry>() {
                     if let Some(span_ref) = reg.span(&id) {
-                        span_ref.extensions_mut().insert(ObjectId(object_id));
+                        span_ref.extensions_mut().insert(ObjectContext {
+                            object_id,
+                            mux_id,
+                        });
                     }
                 }
             }
@@ -79,11 +85,12 @@ impl<'a> MakeWriter<'a> for FfiWriterFactory {
     type Writer = FfiProxy;
 
     fn make_writer(&'a self) -> Self::Writer {
-        FfiProxy { object_id: None }
+        FfiProxy { object_id: None, mux_id: None }
     }
 
     fn make_writer_for(&'a self, _meta: &Metadata<'_>) -> Self::Writer {
         let mut target_id = None;
+        let mut target_mux = None;
 
         let current = tracing::Span::current();
         if let Some(current_id) = current.id() {
@@ -91,8 +98,9 @@ impl<'a> MakeWriter<'a> for FfiWriterFactory {
                 if let Some(reg) = dispatch.downcast_ref::<Registry>() {
                     if let Some(span_ref) = reg.span(&current_id) {
                         for ancestor in span_ref.scope() {
-                            if let Some(oid) = ancestor.extensions().get::<ObjectId>() {
-                                target_id = Some(oid.0);
+                            if let Some(ctx) = ancestor.extensions().get::<ObjectContext>() {
+                                target_id = Some(ctx.object_id);
+                                target_mux = Some(ctx.mux_id);
                                 break;
                             }
                         }
@@ -103,6 +111,7 @@ impl<'a> MakeWriter<'a> for FfiWriterFactory {
 
         FfiProxy {
             object_id: target_id,
+            mux_id: target_mux,
         }
     }
 }
@@ -113,6 +122,7 @@ impl<'a> MakeWriter<'a> for FfiWriterFactory {
 
 struct FfiProxy {
     object_id: Option<u64>,
+    mux_id: Option<u32>,
 }
 
 impl Write for FfiProxy {
@@ -126,6 +136,7 @@ impl Write for FfiProxy {
             (call)(
                 *lib_id,
                 self.object_id.unwrap_or(0),
+                self.mux_id.unwrap_or(0),
                 buf.as_ptr(),
                 buf.len(),
             );

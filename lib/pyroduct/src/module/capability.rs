@@ -66,8 +66,17 @@ pub enum CapabilityError {
 // Logging
 // =============================================================================
 
-static CATCH_LOG_SENDER: LazyLock<DashMap<i64, mpsc::Sender<String>>> = LazyLock::new(DashMap::new);
-static LOG_SENDERS: LazyLock<DashMap<(i64, u64), mpsc::Sender<String>>> =
+#[derive(Debug, Clone)]
+pub struct LogEntry {
+    pub library_id: i64,
+    pub object_id: u64,
+    pub mux_id: u32,
+    pub message: String,
+    pub timestamp: std::time::SystemTime,
+}
+
+static CATCH_LOG_SENDER: LazyLock<DashMap<i64, mpsc::Sender<LogEntry>>> = LazyLock::new(DashMap::new);
+static LOG_SENDERS: LazyLock<DashMap<(i64, u64), mpsc::Sender<LogEntry>>> =
     LazyLock::new(DashMap::new);
 static NEXT_LIB_ID: AtomicI64 = AtomicI64::new(1);
 static NEXT_OBJECT_ID: AtomicU64 = AtomicU64::new(1);
@@ -76,7 +85,7 @@ static NEXT_OBJECT_ID: AtomicU64 = AtomicU64::new(1);
 /// and a receiver you can poll to build up your logs.
 ///
 /// `buffer` controls how many messages can queue before back-pressure kicks in.
-pub fn create_log(library_id: i64, span_id: u64, buffer: usize) -> mpsc::Receiver<String> {
+pub fn create_log(library_id: i64, span_id: u64, buffer: usize) -> mpsc::Receiver<LogEntry> {
     let (tx, rx) = mpsc::channel(buffer);
     LOG_SENDERS.insert((library_id, span_id), tx);
     rx
@@ -93,14 +102,23 @@ pub fn destroy_log(library_id: i64, span_id: u64) {
 pub unsafe extern "C" fn log_callback(
     library_id: i64,
     span_id: u64,
+    mux_id: u32,
     msg: *const u8,
     msg_len: usize,
 ) {
     let data = unsafe { std::slice::from_raw_parts(msg, msg_len) };
     let log_msg = String::from_utf8_lossy(data).trim_end().to_string();
+    let entry = LogEntry {
+        library_id,
+        object_id: span_id,
+        mux_id,
+        message: log_msg,
+        timestamp: std::time::SystemTime::now(),
+    };
+
     if span_id == 0 {
         if let Some(tx) = CATCH_LOG_SENDER.get(&library_id) {
-            match tx.try_send(log_msg) {
+            match tx.try_send(entry) {
                 Ok(()) => {}
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     eprintln!(
@@ -110,11 +128,11 @@ pub unsafe extern "C" fn log_callback(
                 Err(mpsc::error::TrySendError::Closed(_)) => {}
             }
         } else {
-            tracing::debug!(log_msg, "Uncaught Capability Log");
+            tracing::debug!(log_msg=entry.message, "Uncaught Capability Log");
         }
     } else {
         if let Some(tx) = LOG_SENDERS.get(&(library_id, span_id)) {
-            match tx.try_send(log_msg) {
+            match tx.try_send(entry) {
                 Ok(()) => {}
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     eprintln!(
@@ -126,7 +144,7 @@ pub unsafe extern "C" fn log_callback(
                 }
             }
         } else {
-            tracing::debug!(log_msg, "Uncaught Capability Log");
+            tracing::debug!(log_msg=entry.message, "Uncaught Capability Log");
         }
     }
 }
