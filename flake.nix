@@ -99,6 +99,7 @@
           inherit pkgs;
           craneLib = craneLibNative;
           commonArgs = commonPyroArgs;
+          pyroduct = pyroduct;
         };
 
       in

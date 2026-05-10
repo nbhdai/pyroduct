@@ -1,4 +1,4 @@
-{ pkgs, craneLib, commonArgs }:
+{ pkgs, craneLib, commonArgs, pyroduct }:
 
 let
   test-rust = pkgs.writeShellScriptBin "test-rust" ''
@@ -15,9 +15,11 @@ in
 
     doCheck = true;
     
+    nativeBuildInputs = (commonArgs.nativeBuildInputs or []) ++ [ pyroduct test-rust ];
+
     checkPhase = ''
       export RUST_BACKTRACE=1
-      cargo test --manifest-path lib/Cargo.toml --all-features
+      pyroduct clean ./capabilities && pyroduct ship ./capabilities -d && pyroduct expand ./capabilities && test-rust
     '';
 
     buildPhase = "true";

@@ -1,6 +1,5 @@
-use pyro_artifacts::cache::CacheManager;
+use pyroduct::format::header::{DataStatus, PyroHeader, PyroHeaderMut};
 use pyroduct::format::PyroVec;
-use pyroduct::format::header::{PyroHeader, PyroHeaderMut};
 use pyroduct::transport::{PyroListener, PyroRouter, PyroServer, PyroSocket};
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, fmt};
@@ -19,8 +18,17 @@ async fn test_pyro_server_capability_call() {
 
     // 1. Setup Router and Server
     // Using one of the existing test dylibs for capability
-    let cache = CacheManager::from_env().await.unwrap();
-    let lib_path = cache.capability_binary_path("nbhdai", "state", "0.1.0").await.unwrap();
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+    let lib_path = std::path::PathBuf::from(manifest_dir)
+        .join("..")
+        .join("..")
+        .join("test")
+        .join("capabilities")
+        .join("nbhdai")
+        .join("state")
+        .join("0.1.0")
+        .join("lib.dylib");
+    let lib_path = lib_path.canonicalize().expect("Failed to canonicalize lib_path");
     let router =
         PyroRouter::load("state".into(), &lib_path).expect("Failed to load capability library");
 
@@ -64,6 +72,8 @@ async fn test_pyro_server_capability_call() {
     // 5. Register Client (fn_id = 2) - returns client_id
     let mut reg_req = PyroVec::ok();
     reg_req.set_fn_id(2);
+    reg_req.extend_from_slice(&0u64.to_le_bytes());
+    reg_req.set_status(DataStatus::RkyvValid);
 
     let reg_resp = socket
         .request(None, None, Some(2), reg_req.view())
