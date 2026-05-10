@@ -2,10 +2,21 @@ use pyro_artifacts::cache::CacheManager;
 use pyroduct::format::PyroVec;
 use pyroduct::format::header::{PyroHeader, PyroHeaderMut};
 use pyroduct::transport::{PyroListener, PyroRouter, PyroServer, PyroSocket};
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{EnvFilter, fmt};
+use tracing_subscriber::layer::SubscriberExt;
 
-#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_pyro_server_capability_call() {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        "trace,cranelift_frontend=off,cranelift_codegen=off,wasmtime=off,mio=off".into()
+    });
+
+    tracing_subscriber::registry()
+        .with(fmt::layer().with_target(true).pretty())
+        .with(filter)
+        .init();
+
     // 1. Setup Router and Server
     // Using one of the existing test dylibs for capability
     let cache = CacheManager::from_env().await.unwrap();

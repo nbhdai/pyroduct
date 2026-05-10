@@ -17,9 +17,24 @@ impl ::pyroduct::format::ToRow for WithVec {
 }
 fn main() {
     let data = WithVec {
-        scores: <[_]>::into_vec(::alloc::boxed::box_new([1, 2, 3])),
-        values: <[_]>::into_vec(::alloc::boxed::box_new([1.1, 2.2])),
-        strs: <[_]>::into_vec(::alloc::boxed::box_new(["hi".to_string()])),
+        scores: ::alloc::boxed::box_assume_init_into_vec_unsafe(
+            ::alloc::intrinsics::write_box_via_move(
+                ::alloc::boxed::Box::new_uninit(),
+                [1, 2, 3],
+            ),
+        ),
+        values: ::alloc::boxed::box_assume_init_into_vec_unsafe(
+            ::alloc::intrinsics::write_box_via_move(
+                ::alloc::boxed::Box::new_uninit(),
+                [1.1, 2.2],
+            ),
+        ),
+        strs: ::alloc::boxed::box_assume_init_into_vec_unsafe(
+            ::alloc::intrinsics::write_box_via_move(
+                ::alloc::boxed::Box::new_uninit(),
+                ["hi".to_string()],
+            ),
+        ),
     };
     let row = data.to_row();
     if let Some(PyroValue::PrimitiveList(PrimitiveValueList::I32(list))) = row

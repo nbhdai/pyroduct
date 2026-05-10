@@ -9,39 +9,42 @@ impl ::pyroduct::format::value::TypeableRow for Address {
     fn schema() -> ::pyroduct::format::value::PyroSchema<'static> {
         ::pyroduct::format::value::PyroSchema {
             fields: ::std::borrow::Cow::Owned(
-                <[_]>::into_vec(
-                    ::alloc::boxed::box_new([
-                        {
-                            let field = ::pyroduct::format::value::PyroField::<
-                                'static,
-                            >::new(
-                                "street",
-                                <String as ::pyroduct::format::value::Typeable>::pyro_type(),
-                                <String as ::pyroduct::format::value::Typeable>::is_nullable(),
-                            );
-                            field
-                        },
-                        {
-                            let field = ::pyroduct::format::value::PyroField::<
-                                'static,
-                            >::new(
-                                "city",
-                                <String as ::pyroduct::format::value::Typeable>::pyro_type(),
-                                <String as ::pyroduct::format::value::Typeable>::is_nullable(),
-                            );
-                            field
-                        },
-                        {
-                            let field = ::pyroduct::format::value::PyroField::<
-                                'static,
-                            >::new(
-                                "zip",
-                                <u32 as ::pyroduct::format::value::Typeable>::pyro_type(),
-                                <u32 as ::pyroduct::format::value::Typeable>::is_nullable(),
-                            );
-                            field
-                        },
-                    ]),
+                ::alloc::boxed::box_assume_init_into_vec_unsafe(
+                    ::alloc::intrinsics::write_box_via_move(
+                        ::alloc::boxed::Box::new_uninit(),
+                        [
+                            {
+                                let field = ::pyroduct::format::value::PyroField::<
+                                    'static,
+                                >::new(
+                                    "street",
+                                    <String as ::pyroduct::format::value::Typeable>::pyro_type(),
+                                    <String as ::pyroduct::format::value::Typeable>::is_nullable(),
+                                );
+                                field
+                            },
+                            {
+                                let field = ::pyroduct::format::value::PyroField::<
+                                    'static,
+                                >::new(
+                                    "city",
+                                    <String as ::pyroduct::format::value::Typeable>::pyro_type(),
+                                    <String as ::pyroduct::format::value::Typeable>::is_nullable(),
+                                );
+                                field
+                            },
+                            {
+                                let field = ::pyroduct::format::value::PyroField::<
+                                    'static,
+                                >::new(
+                                    "zip",
+                                    <u32 as ::pyroduct::format::value::Typeable>::pyro_type(),
+                                    <u32 as ::pyroduct::format::value::Typeable>::is_nullable(),
+                                );
+                                field
+                            },
+                        ],
+                    ),
                 ),
             ),
             documentation: None,
@@ -137,43 +140,46 @@ impl ::pyroduct::format::value::TypeableRow for Person {
     fn schema() -> ::pyroduct::format::value::PyroSchema<'static> {
         ::pyroduct::format::value::PyroSchema {
             fields: ::std::borrow::Cow::Owned(
-                <[_]>::into_vec(
-                    ::alloc::boxed::box_new([
-                        {
-                            let field = ::pyroduct::format::value::PyroField::<
-                                'static,
-                            >::new(
-                                "name",
-                                <String as ::pyroduct::format::value::Typeable>::pyro_type(),
-                                <String as ::pyroduct::format::value::Typeable>::is_nullable(),
-                            );
-                            field
-                        },
-                        {
-                            let field = ::pyroduct::format::value::PyroField::<
-                                'static,
-                            >::new(
-                                "age",
-                                <i32 as ::pyroduct::format::value::Typeable>::pyro_type(),
-                                <i32 as ::pyroduct::format::value::Typeable>::is_nullable(),
-                            );
-                            field
-                        },
-                        {
-                            let field = ::pyroduct::format::value::PyroField::<
-                                'static,
-                            >::new(
-                                "address",
-                                <Vec<
-                                    Address,
-                                > as ::pyroduct::format::value::Typeable>::pyro_type(),
-                                <Vec<
-                                    Address,
-                                > as ::pyroduct::format::value::Typeable>::is_nullable(),
-                            );
-                            field
-                        },
-                    ]),
+                ::alloc::boxed::box_assume_init_into_vec_unsafe(
+                    ::alloc::intrinsics::write_box_via_move(
+                        ::alloc::boxed::Box::new_uninit(),
+                        [
+                            {
+                                let field = ::pyroduct::format::value::PyroField::<
+                                    'static,
+                                >::new(
+                                    "name",
+                                    <String as ::pyroduct::format::value::Typeable>::pyro_type(),
+                                    <String as ::pyroduct::format::value::Typeable>::is_nullable(),
+                                );
+                                field
+                            },
+                            {
+                                let field = ::pyroduct::format::value::PyroField::<
+                                    'static,
+                                >::new(
+                                    "age",
+                                    <i32 as ::pyroduct::format::value::Typeable>::pyro_type(),
+                                    <i32 as ::pyroduct::format::value::Typeable>::is_nullable(),
+                                );
+                                field
+                            },
+                            {
+                                let field = ::pyroduct::format::value::PyroField::<
+                                    'static,
+                                >::new(
+                                    "address",
+                                    <Vec<
+                                        Address,
+                                    > as ::pyroduct::format::value::Typeable>::pyro_type(),
+                                    <Vec<
+                                        Address,
+                                    > as ::pyroduct::format::value::Typeable>::is_nullable(),
+                                );
+                                field
+                            },
+                        ],
+                    ),
                 ),
             ),
             documentation: None,
@@ -288,7 +294,12 @@ fn main() {
         (
             "address",
             PyroValue::List(
-                <[_]>::into_vec(::alloc::boxed::box_new([PyroValue::Group(addr_row)])),
+                ::alloc::boxed::box_assume_init_into_vec_unsafe(
+                    ::alloc::intrinsics::write_box_via_move(
+                        ::alloc::boxed::Box::new_uninit(),
+                        [PyroValue::Group(addr_row)],
+                    ),
+                ),
             ),
         ),
     ]);
