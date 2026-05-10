@@ -141,10 +141,10 @@
                 shift
 
                 echo "Building test binary for: $TEST_NAME"
-                cargo test --manifest-path lib/pyroduct/Cargo.toml --no-run --test "$TEST_NAME" 2>&1 
+                cargo test --manifest-path lib/pyroduct/Cargo.toml --all-features --no-run --test "$TEST_NAME" 2>&1 
 
                 # Find the compiled test binary
-                BIN=$(cargo test --manifest-path lib/pyroduct/Cargo.toml --no-run --test "$TEST_NAME" --message-format=json 2>/dev/null \
+                BIN=$(cargo test --manifest-path lib/pyroduct/Cargo.toml --all-features --no-run --test "$TEST_NAME" --message-format=json 2>/dev/null \
                   | ${pkgs.jq}/bin/jq -r 'select(.executable != null) | .executable' \
                   | tail -1)
 
