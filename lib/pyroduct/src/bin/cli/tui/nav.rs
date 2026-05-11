@@ -21,10 +21,10 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let mut items = vec![ListItem::new("Input Table")];
     items.extend(
         app.pipeline
-            .steps
+            .pipelines
             .iter()
             .enumerate()
-            .map(|(i, _)| ListItem::new(format!("Step: {}", i))),
+            .map(|(_, p)| ListItem::new(format!("Pipeline: {}", p.name))),
     );
     items.push(ListItem::new("Output Table"));
 

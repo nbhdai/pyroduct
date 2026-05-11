@@ -11,7 +11,7 @@ pub struct CodeState {
     pub editing: bool,
     pub area: Rect,
     pub editor: Editor,
-    pub selected_step: usize,
+    pub selected_pipeline: usize,
 }
 
 pub fn render(f: &mut Frame, state: &mut CodeState, area: Rect) {
@@ -23,7 +23,7 @@ pub fn render(f: &mut Frame, state: &mut CodeState, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" Code: {}", state.selected_step))
+        .title(format!(" Code: Pipeline {}", state.selected_pipeline))
         .border_style(Style::default().fg(border_color));
 
     let inner = block.inner(area);

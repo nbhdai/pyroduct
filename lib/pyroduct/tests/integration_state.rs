@@ -1,4 +1,3 @@
-use indexmap::IndexMap;
 use pyro_artifacts::{
     artifacts::{ModuleDependencies, ModuleSource, Playbook},
     cache::CacheManager,
@@ -59,13 +58,14 @@ async fn test_capability_state_preservation() {
         .expect("Valid module should compile");
 
     let config = PipelineConfig {
-        pipeline: IndexMap::from([(
-            "step".to_string(),
-            Playbook {
-                hash: binary.hash,
-                configurations: HashMap::from([("state".to_string(), None)]),
-            },
-        )]),
+        playbook: Playbook {
+            hash: binary.hash,
+            configurations: HashMap::from([("state".to_string(), None)]),
+        },
+        wal_capacity: 1000,
+        success_log_retention_secs: 3600,
+        error_log_retention_secs: 86400 * 7,
+        output_dir: std::env::current_dir().unwrap(),
     };
 
     let config = config.load(&cache).await.unwrap();

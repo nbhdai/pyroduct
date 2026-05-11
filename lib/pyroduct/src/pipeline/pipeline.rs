@@ -1,4 +1,3 @@
-use indexmap::IndexMap;
 use pyro_artifacts::{
     artifacts::Playbook,
     cache::{CacheManager, LoadedPlaybook},
@@ -103,6 +102,8 @@ impl PipelineFactory {
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,
             output_dir: self.output_dir.clone(),
+            wal_writer: None,
+            current_wal_id: 0,
         })
     }
 }

@@ -1,4 +1,3 @@
-use indexmap::IndexMap;
 use pyro_artifacts::{
     artifacts::{ModuleDependencies, ModuleSource, Playbook},
     cache::CacheManager,
@@ -66,17 +65,18 @@ async fn test_playbook_server_client() {
         .expect("Valid module should compile");
 
     let config = PipelineConfig {
-        pipeline: IndexMap::from([(
-            "step".to_string(),
-            Playbook {
-                hash: binary.hash,
-                configurations: HashMap::from([("state".to_string(), None)]),
-            },
-        )]),
+        playbook: Playbook {
+            hash: binary.hash,
+            configurations: HashMap::from([("state".to_string(), None)]),
+        },
+        wal_capacity: 1000,
+        success_log_retention_secs: 3600,
+        error_log_retention_secs: 86400 * 7,
+        output_dir: std::env::current_dir().unwrap(),
     };
 
     let config = config.load(&cache).await.unwrap();
-    let loaded_playbook = config.pipeline.get("step").unwrap();
+    let loaded_playbook = &config.playbook;
 
     let server = PlaybookServer::new(loaded_playbook)
         .await
@@ -104,7 +104,7 @@ async fn test_playbook_server_client() {
         .call(&PyroRow::from([("input", "0".into())]))
         .await
         .expect("Failed to call playbook");
-    
+
     // Result should be (count: 0, incremented: 0)
     assert_eq!(result1.row.get_u64("incremented").unwrap(), 0);
 

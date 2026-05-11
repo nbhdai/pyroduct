@@ -48,8 +48,8 @@ impl ModuleView {
         }
     }
 
-    pub fn selected_step(&self) -> usize {
-        self.code.selected_step
+    pub fn selected_pipeline(&self) -> usize {
+        self.code.selected_pipeline
     }
 
     pub fn render(&mut self, f: &mut Frame<'_>, area: Rect) {
