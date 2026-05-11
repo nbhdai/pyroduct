@@ -18,35 +18,56 @@ use super::PipelineError;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct PipelineConfig {
-    pub pipeline: IndexMap<String, Playbook>,
+    pub playbook: Playbook,
+    #[serde(default = "default_wal_capacity")]
+    pub wal_capacity: usize,
+    #[serde(default = "default_success_retention")]
+    pub success_log_retention_secs: u64,
+    #[serde(default = "default_error_retention")]
+    pub error_log_retention_secs: u64,
+    pub output_dir: std::path::PathBuf,
+}
+
+fn default_wal_capacity() -> usize {
+    1000
+}
+fn default_success_retention() -> u64 {
+    3600
+}
+fn default_error_retention() -> u64 {
+    86400 * 7
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct LoadedPipelineConfig {
-    pub pipeline: IndexMap<String, LoadedPlaybook>,
+    pub playbook: LoadedPlaybook,
+    pub wal_capacity: usize,
+    pub success_log_retention_secs: u64,
+    pub error_log_retention_secs: u64,
+    pub output_dir: std::path::PathBuf,
 }
 
 impl PipelineConfig {
     pub async fn load(self, cache: &CacheManager) -> Result<LoadedPipelineConfig, WasmError> {
-        let mut loaded_pipeline = LoadedPipelineConfig {
-            pipeline: IndexMap::new(),
-        };
-        for (key, playbook) in self.pipeline {
-            let loaded_playbook = cache.load_playbook(playbook).await?;
-            loaded_pipeline.pipeline.insert(key, loaded_playbook);
-        }
-        Ok(loaded_pipeline)
+        let loaded_playbook = cache.load_playbook(self.playbook).await?;
+        Ok(LoadedPipelineConfig {
+            playbook: loaded_playbook,
+            wal_capacity: self.wal_capacity,
+            success_log_retention_secs: self.success_log_retention_secs,
+            error_log_retention_secs: self.error_log_retention_secs,
+            output_dir: self.output_dir,
+        })
     }
 }
 
 impl LoadedPipelineConfig {
     pub fn factory(&self) -> Result<PipelineFactory, PipelineError> {
         Ok(PipelineFactory {
-            pipeline: self
-                .pipeline
-                .values()
-                .map(|p| PyroFactory::from_playbook(p).map_err(PipelineError::Wasm))
-                .collect::<Result<Vec<_>, _>>()?,
+            factory: PyroFactory::from_playbook(&self.playbook).map_err(PipelineError::Wasm)?,
+            wal_capacity: self.wal_capacity,
+            success_log_retention_secs: self.success_log_retention_secs,
+            error_log_retention_secs: self.error_log_retention_secs,
+            output_dir: self.output_dir.clone(),
         })
     }
 }
@@ -55,10 +76,13 @@ impl LoadedPipelineConfig {
 // Runtime structures
 // =============================================================================
 
-/// A loaded pipeline definition: the ordered list of modules with their
-/// individually instantiated capabilities.
+/// A loaded pipeline definition for a single playbook.
 pub struct PipelineFactory {
-    pub pipeline: Vec<PyroFactory>,
+    pub factory: PyroFactory,
+    pub wal_capacity: usize,
+    pub success_log_retention_secs: u64,
+    pub error_log_retention_secs: u64,
+    pub output_dir: std::path::PathBuf,
 }
 
 // =============================================================================
@@ -66,19 +90,19 @@ pub struct PipelineFactory {
 // =============================================================================
 
 impl PipelineFactory {
-    /// Build a pipeline from a fully-loaded `PipelineDef`.
+    /// Build a pipeline from a fully-loaded `PipelineFactory`.
     ///
-    /// Creates one `PyroEngine` and one `PyroLinker` (with all capabilities
-    /// linked), then compiles and instantiates each wasm module in order.
+    /// Compiles and instantiates the single wasm module, configuring it with WAL.
     pub async fn build(&self) -> Result<Pipeline, PipelineError> {
-        let mut steps = Vec::with_capacity(self.pipeline.len());
+        tracing::debug!("Building wasm module for playbook");
+        let instance = self.factory.instantiate().await?;
 
-        for (index, mod_factory) in self.pipeline.iter().enumerate() {
-            tracing::debug!(index, "Building wasm module");
-            let instance = mod_factory.instantiate().await?;
-            steps.push(instance);
-        }
-
-        Ok(Pipeline { steps })
+        Ok(Pipeline {
+            step: instance,
+            wal_capacity: self.wal_capacity,
+            success_log_retention_secs: self.success_log_retention_secs,
+            error_log_retention_secs: self.error_log_retention_secs,
+            output_dir: self.output_dir.clone(),
+        })
     }
 }

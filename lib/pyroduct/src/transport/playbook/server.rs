@@ -21,8 +21,16 @@ impl PlaybookServer {
     pub async fn new(playbook: &LoadedPlaybook) -> Result<Self, crate::pipeline::PipelineError> {
         let factory = PyroFactory::from_playbook(playbook)?;
         let instance = factory.instantiate().await?;
+        let output_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let wal_writer = crate::format::wal::WalWriter::open(output_dir.join("wal_0")).ok();
         let pipeline = Pipeline {
-            steps: vec![instance],
+            step: instance,
+            wal_capacity: 1000,
+            success_log_retention_secs: 3600,
+            error_log_retention_secs: 86400 * 7,
+            output_dir,
+            wal_writer,
+            current_wal_id: 0,
         };
         Ok(Self {
             pipeline: Arc::new(Mutex::new(pipeline)),
