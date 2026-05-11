@@ -1,6 +1,6 @@
 pub mod artifacts;
 #[cfg(feature = "compiler")]
-pub mod build;
+pub mod command;
 pub mod cache;
 pub mod cargo;
 pub mod debug;

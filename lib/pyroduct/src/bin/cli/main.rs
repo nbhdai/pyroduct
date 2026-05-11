@@ -36,6 +36,10 @@ enum Commands {
 
         #[arg(short, long)]
         debug: bool,
+
+        /// Output directory for artifacts.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
     },
     /// Cleans generated artifacts (Cargo.toml, artifacts/, interface/, target/)
     Clean {
@@ -109,7 +113,7 @@ async fn main() -> Result<()> {
     match args.command {
         Commands::Init { path, cap } => commands::init::init(path, cap),
         Commands::Expand { path } => commands::expand::expand(&path).await,
-        Commands::Ship { path, debug } => commands::ship::ship(&path, debug).await,
+        Commands::Ship { path, debug, out } => commands::ship::ship(&path, debug, out.as_deref()).await,
         Commands::Clean { path } => commands::clean::clean(&path),
         Commands::Replay { input, socket } => commands::replay::replay(&input, &socket).await,
         Commands::Run {

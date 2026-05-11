@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 use fs_err as fs;
 use pyro_artifacts::{
     artifacts::{Artifacts, Module},
-    cache::CacheManager,
+    cache::{CacheManager, PyroductConfig},
     environment::Environment,
 };
 use std::path::Path;
@@ -37,10 +37,29 @@ pub async fn ship_single(cache: &CacheManager, path: &Path, debug: bool) -> Resu
     Ok(())
 }
 
-pub async fn ship(path: &Path, debug: bool) -> Result<()> {
+pub async fn ship(path: &Path, debug: bool, out: Option<&Path>) -> Result<()> {
     let is_cap = path.join("Capability.toml").exists();
     let is_mod = path.join("Module.toml").exists();
-    let cache = CacheManager::from_env().await?;
+
+    let cache = if let Some(out_path) = out {
+        let root = out_path.to_path_buf();
+        let config_path = root.join("config.toml");
+        let config = if config_path.exists() {
+            let content = fs::read_to_string(&config_path).await?;
+            toml::from_str(&content)?
+        } else {
+            PyroductConfig {
+                author: None,
+                target: None,
+                pyroduct: None,
+                build_slots: None,
+            }
+        };
+        CacheManager::new(&root, config).await?
+    } else {
+        CacheManager::from_env().await?
+    };
+
     // 1. Direct package mode
     if is_cap || is_mod {
         return ship_single(&cache, path, debug).await;

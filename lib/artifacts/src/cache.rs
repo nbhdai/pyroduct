@@ -4,7 +4,7 @@ use crate::artifacts::{
 };
 
 #[cfg(feature = "compiler")]
-use crate::build::{CommandError, format_syn_error, run_command};
+use crate::command::{CommandError, format_syn_error, run_command};
 
 use crate::debug::{self, CapabilityDebug, ModuleDebug};
 use cargo_toml::Dependency;
