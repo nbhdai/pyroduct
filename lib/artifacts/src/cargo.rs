@@ -179,7 +179,8 @@ impl CapabilityManifest {
     pub fn to_interface_manifest(self) -> Manifest {
         let mut final_deps = BTreeMap::new();
 
-        let pyroduct = self.pyroduct.clone();
+        // Use a simple version dependency for pyroduct to allow patching by the builder
+        let pyroduct = Dependency::Simple("*".to_string());
 
         // 1. Shared Dependencies (Required)
         final_deps.extend(self.dependencies.shared.clone().into_iter());
