@@ -1,6 +1,6 @@
 use crate::artifacts::{Artifacts, CapBinary, CapabilityBinary, CapabilitySource, Interface};
-use crate::command::{CommandError, format_syn_error, run_command};
-use crate::cache::{BuildError, CacheError};
+use crate::{command::{CommandError, format_syn_error, run_command}, build::BuildError};
+use crate::cache::CacheError;
 use crate::cargo::{CapabilityIdent, CapabilityManifest};
 use std::path::{Path, PathBuf};
 use thiserror::Error;

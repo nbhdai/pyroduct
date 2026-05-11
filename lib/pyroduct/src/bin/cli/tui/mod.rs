@@ -17,7 +17,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use pyro_artifacts::{cache::CacheManager, cargo::ResolvedCapability};
+use pyro_artifacts::{build::Builder, cache::CacheManager, cargo::ResolvedCapability};
 use pyroduct::pipeline::{PipelinePool, wasm_execute::PipelineExecution};
 use ratatui::{
     Frame, Terminal,
@@ -79,7 +79,8 @@ pub enum ViewState {
 }
 
 pub struct App {
-    pub cache: CacheManager,
+    pub cache: Arc<CacheManager>,
+    pub builder: Builder,
     pub pipeline: PipelineState,
     pub view: ViewState,
     pub status_msg: String,
@@ -88,7 +89,8 @@ pub struct App {
 
 impl App {
     pub async fn load(yaml_path: &Path, input_path: &Path) -> Result<Self> {
-        let cache = CacheManager::from_env().await?;
+        let cache = Arc::new(CacheManager::from_env().await?);
+        let builder = Builder::from_env(cache.clone()).await.context("Failed to initialize builder")?;
 
         let tui_path = yaml_path.with_extension("tui.json");
         let pipelines: Vec<SourcePipeline> = if tui_path.exists() {
@@ -172,6 +174,7 @@ impl App {
 
         Ok(App {
             cache,
+            builder,
             pipeline: PipelineState {
                 yaml_path: yaml_path.to_path_buf(),
                 pipelines,
@@ -244,7 +247,7 @@ impl App {
             };
 
             let binary = self
-                .cache
+                .builder
                 .compile(&module_source)
                 .await
                 .context(format!("Compilation failed for pipeline {}", i))?;
@@ -263,7 +266,7 @@ impl App {
             };
 
             let loaded = pipeline_config
-                .load(&self.cache)
+                .load(self.cache.as_ref())
                 .await
                 .map_err(|e| anyhow::anyhow!("Load failed: {:?}", e))?;
             let factory = loaded.factory()?;
@@ -496,11 +499,11 @@ async fn handle_event(app: &mut App) -> Result<()> {
 
                         // Proactively refresh config if that tab is visible
                         if mv.bottom_tab == module::BottomTab::Config {
-                            mv.cap_config.refresh_available_caps(&app.cache).await;
+                            mv.cap_config.refresh_available_caps(app.cache.as_ref()).await;
                             if mv.cap_config.selected_tab < mv.cap_config.editors.len() {
                                 let name =
                                     mv.cap_config.editors[mv.cap_config.selected_tab].0.clone();
-                                mv.cap_config.load_interface(&app.cache, &name).await;
+                                mv.cap_config.load_interface(app.cache.as_ref(), &name).await;
                             }
                         }
                     }
@@ -525,7 +528,7 @@ async fn handle_event(app: &mut App) -> Result<()> {
         // Forward event to currently active widget
         match &mut app.view {
             ViewState::Module(mv) => {
-                mv.handle_event(key, &app.cache).await?;
+                mv.handle_event(key, app.cache.as_ref()).await?;
             }
             ViewState::InputTable(t) => t.handle_event(key),
             ViewState::OutputTable(t) => t.handle_event(key),

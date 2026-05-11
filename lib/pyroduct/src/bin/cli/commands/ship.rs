@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 use fs_err as fs;
 use pyro_artifacts::{
     artifacts::{Artifacts, Module},
-    cache::{CacheManager, PyroductConfig},
+    cache::CacheManager,
     environment::Environment,
 };
 use std::path::Path;
@@ -43,19 +43,7 @@ pub async fn ship(path: &Path, debug: bool, out: Option<&Path>) -> Result<()> {
 
     let cache = if let Some(out_path) = out {
         let root = out_path.to_path_buf();
-        let config_path = root.join("config.toml");
-        let config = if config_path.exists() {
-            let content = fs::read_to_string(&config_path).await?;
-            toml::from_str(&content)?
-        } else {
-            PyroductConfig {
-                author: None,
-                target: None,
-                pyroduct: None,
-                build_slots: None,
-            }
-        };
-        CacheManager::new(&root, config).await?
+        CacheManager::new(&root).await?
     } else {
         CacheManager::from_env().await?
     };

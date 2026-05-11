@@ -1,5 +1,6 @@
 use pyro_artifacts::{
     artifacts::{ModuleDependencies, ModuleSource, Playbook},
+    build::Builder,
     cache::CacheManager,
     cargo::ResolvedCapability,
 };
@@ -45,7 +46,8 @@ async fn test_playbook_server_client() {
         .with(filter)
         .try_init();
 
-    let cache = CacheManager::from_env().await.unwrap();
+    let cache = std::sync::Arc::new(CacheManager::from_env().await.unwrap());
+    let builder = Builder::from_env(cache.clone()).await.unwrap();
 
     let source = ModuleSource {
         dependencies: ModuleDependencies {
@@ -59,7 +61,7 @@ async fn test_playbook_server_client() {
         source: CODE.to_string(),
     };
 
-    let binary = cache
+    let binary = builder
         .compile(&source)
         .await
         .expect("Valid module should compile");

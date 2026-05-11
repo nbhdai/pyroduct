@@ -8,12 +8,14 @@
 use crate::artifacts::{
     Artifact, Artifacts, CapabilityBinary, ModuleDependencies, ModuleSource, Playbook,
 };
+use crate::build::Builder;
 use crate::cache::{CacheManager, PyroductConfig};
 use crate::cargo::ResolvedCapability;
 use crate::environment::Environment;
 use cargo_toml::Dependency;
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tempfile::TempDir;
 
 const BASIC_MODULE: &str = r#"
@@ -93,7 +95,7 @@ pub fn test_config() -> PyroductConfig {
 #[tokio::test]
 async fn ship_httpc_capability_to_cache() {
     let dir = TempDir::new().unwrap();
-    let cache = CacheManager::new(dir.path(), test_config()).await.unwrap();
+    let cache = Arc::new(CacheManager::new(dir.path()).await.unwrap());
 
     let httpc_path = repo_root().join("capabilities/httpc");
     assert!(
@@ -131,7 +133,8 @@ async fn ship_httpc_capability_to_cache() {
 #[tokio::test]
 async fn test_anon_compile_with_interface() {
     let dir = TempDir::new().unwrap();
-    let cache = CacheManager::new(dir.path(), test_config()).await.unwrap();
+    let cache = Arc::new(CacheManager::new(dir.path()).await.unwrap());
+    let builder = Builder::new(&dir.path().join("build"), test_config(), Arc::clone(&cache)).await.unwrap();
 
     // 1. Generate the interface for httpc to compile against
     let httpc_path = repo_root().join("capabilities/httpc");
@@ -154,7 +157,7 @@ async fn test_anon_compile_with_interface() {
         },
         source: HTTPC_MODULE.to_string(),
     };
-    let anon = cache.compile(&mod_source).await.unwrap();
+    let anon = builder.compile(&mod_source).await.unwrap();
 
     assert!(!anon.wasm.is_empty());
     assert!(
@@ -189,7 +192,8 @@ async fn test_anon_compile_with_interface() {
 #[tokio::test]
 async fn test_module_wasm_exact_match() {
     let dir = TempDir::new().unwrap();
-    let cache = CacheManager::new(dir.path(), test_config()).await.unwrap();
+    let cache = Arc::new(CacheManager::new(dir.path()).await.unwrap());
+    let builder = Builder::new(&dir.path().join("build"), test_config(), Arc::clone(&cache)).await.unwrap();
 
     let source = ModuleSource {
         dependencies: ModuleDependencies {
@@ -199,7 +203,7 @@ async fn test_module_wasm_exact_match() {
         source: BASIC_MODULE.to_string(),
     };
     cache.write_artifacts(&source.clone().into()).await.unwrap();
-    let binary = cache.compile(&source).await.unwrap();
+    let binary = builder.compile(&source).await.unwrap();
     let original_wasm = binary.wasm.clone();
     cache.write_artifacts(&binary.clone().into()).await.unwrap();
 
@@ -216,7 +220,7 @@ async fn test_module_wasm_exact_match() {
 #[tokio::test]
 async fn test_capability_lib_exact_match() {
     let dir = TempDir::new().unwrap();
-    let cache = CacheManager::new(dir.path(), test_config()).await.unwrap();
+    let cache = Arc::new(CacheManager::new(dir.path()).await.unwrap());
 
     let httpc_path = repo_root().join("capabilities/httpc");
     let env = Environment::new(httpc_path).await.unwrap();
@@ -251,7 +255,8 @@ async fn test_capability_lib_exact_match() {
 #[tokio::test]
 async fn test_load_playbook() {
     let dir = TempDir::new().unwrap();
-    let cache = CacheManager::new(dir.path(), test_config()).await.unwrap();
+    let cache = Arc::new(CacheManager::new(dir.path()).await.unwrap());
+    let builder = Builder::new(&dir.path().join("build"), test_config(), Arc::clone(&cache)).await.unwrap();
 
     // 1. Setup a module with a capability
     let httpc_path = repo_root().join("capabilities/httpc");
@@ -274,7 +279,7 @@ async fn test_load_playbook() {
         },
         source: HTTPC_MODULE.to_string(),
     };
-    let binary = cache.compile(&mod_source).await.unwrap();
+    let binary = builder.compile(&mod_source).await.unwrap();
 
     // 2. Create a Playbook
     let playbook = Playbook {

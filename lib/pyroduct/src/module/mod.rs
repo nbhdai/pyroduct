@@ -14,7 +14,8 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use pyro_artifacts::cache::{BuildError, CacheError, LoadedPlaybook};
+use pyro_artifacts::cache::{CacheError, LoadedPlaybook};
+use pyro_artifacts::build::BuildError;
 use pyro_artifacts::environment::EnvironmentError;
 use wasmtime::{
     Caller, Engine, FuncType, Instance, Linker, Memory, Store, TypedFunc, Val, ValType,
