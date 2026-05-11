@@ -55,21 +55,20 @@ impl PlaybookClient {
                 logs: crate::format::PyroLogs::empty(),
             })?;
 
-        match resp.status_u8() {
-            0 => {
-                let row_ref = PyroRow::expose_view(resp.py_ref()).map_err(|e| PyroFailure {
-                    result: Err(e.to_string()),
-                    logs: crate::format::PyroLogs::empty(),
-                })?;
-                Ok(PyroSuccess {
-                    row: PyroRow::from(&*row_ref).to_static(),
-                    logs: crate::format::PyroLogs::empty(),
-                })
-            }
-            _ => Err(PyroFailure {
+        if resp.is_ok() {
+            let row_ref = PyroRow::expose_view(resp.py_ref()).map_err(|e| PyroFailure {
+                result: Err(e.to_string()),
+                logs: crate::format::PyroLogs::empty(),
+            })?;
+            Ok(PyroSuccess {
+                row: PyroRow::from(&*row_ref).to_static(),
+                logs: crate::format::PyroLogs::empty(),
+            })
+        } else {
+            Err(PyroFailure {
                 result: Err(format!("Request failed with status: {}", resp.status_u8())),
                 logs: crate::format::PyroLogs::empty(),
-            }),
+            })
         }
     }
 

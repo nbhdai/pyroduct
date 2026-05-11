@@ -551,11 +551,10 @@ impl WalRecord {
         use crate::format::header::PyroHeader;
 
         let pkt = frame.packet;
-        let status = pkt.status_u8();
 
         let mut extracted_logs = PyroLogs::empty();
         if let Some(l) = logs {
-            if status == 0 {
+            if pkt.is_ok() {
                 if let Some(entry) = l.step_logs.first() {
                     extracted_logs.module_logs = entry.module_logs.clone();
                     extracted_logs.capability_logs = entry.capability_logs.clone();
@@ -566,7 +565,7 @@ impl WalRecord {
             }
         }
 
-        if status == 0 {
+        if pkt.is_ok() {
             let row = PyroRow::expose_view(pkt).ok()?;
             let row = (&*row).into();
             Some(WalRecord::Success {

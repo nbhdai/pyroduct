@@ -1,5 +1,7 @@
 use std::io::{BufWriter, Write};
 use std::path::Path;
+use tokio::io::AsyncReadExt;
+use tokio::net::{UnixListener, TcpListener};
 
 use anyhow::{Context, Result, anyhow};
 use clap::ValueEnum;
@@ -11,7 +13,7 @@ use pyroduct::pipeline::pipeline::LoadedPipelineConfig;
 use pyroduct::{
     PyroRow,
     format::value::arrow::PreBatch,
-    pipeline::{PipelineConfig, PipelinePool},
+    pipeline::{Pipeline, PipelineConfig, PipelinePool},
 };
 
 use pyro_arrow_file::{
@@ -61,6 +63,63 @@ pub async fn run(config_path: &Path, input_json: &str) -> Result<()> {
     let factory = loaded.factory()?;
     let mut pipeline = factory.build().await?;
 
+    process_and_print(&mut pipeline, input_json).await
+}
+
+pub async fn run_socket(config_path: &Path, socket_addr: &str) -> Result<()> {
+    let loaded = load_config(config_path).await?;
+    let factory = loaded.factory()?;
+    let mut pipeline = factory.build().await?;
+
+    if let Ok(addr) = socket_addr.parse::<std::net::SocketAddr>() {
+        let listener = TcpListener::bind(addr).await.context("Failed to bind to TCP socket")?;
+        tracing::info!("Listening on TCP socket {}", addr);
+
+        loop {
+            let (mut socket, _) = listener.accept().await?;
+            let mut buffer = String::new();
+            if let Err(e) = socket.read_to_string(&mut buffer).await {
+                tracing::error!("Failed to read from socket: {}", e);
+                continue;
+            }
+
+            if buffer.is_empty() {
+                continue;
+            }
+
+            if let Err(e) = process_and_print(&mut pipeline, &buffer).await {
+                tracing::error!("Failed to process input from socket: {}", e);
+            }
+        }
+    } else {
+        let socket_path = Path::new(socket_addr);
+        if socket_path.exists() {
+            fs::remove_file(socket_path).context("Failed to remove existing socket file")?;
+        }
+
+        let listener = UnixListener::bind(socket_path).context("Failed to bind to Unix socket")?;
+        tracing::info!("Listening on Unix socket {:?}", socket_path);
+
+        loop {
+            let (mut socket, _) = listener.accept().await?;
+            let mut buffer = String::new();
+            if let Err(e) = socket.read_to_string(&mut buffer).await {
+                tracing::error!("Failed to read from socket: {}", e);
+                continue;
+            }
+
+            if buffer.is_empty() {
+                continue;
+            }
+
+            if let Err(e) = process_and_print(&mut pipeline, &buffer).await {
+                tracing::error!("Failed to process input from socket: {}", e);
+            }
+        }
+    }
+}
+
+async fn process_and_print(pipeline: &mut Pipeline, input_json: &str) -> Result<()> {
     tracing::debug!("Parsing input JSON directly to PyroRow");
     let input_row: PyroRow<'static> =
         serde_json::from_str(input_json).context("Failed to deserialize input JSON to PyroRow")?;

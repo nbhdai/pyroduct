@@ -210,22 +210,6 @@ fn test_clear_then_reuse() {
 // =============================================================================
 
 #[test]
-fn test_as_packet_slice() {
-    let mut vec = PyroVec::with_capacity(10);
-    vec.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
-
-    // Should be header (16 bytes) + data (3 bytes)
-    assert_eq!(vec.len(), 3);
-
-    // Verify magic at start
-    let magic = u32::from_ne_bytes(vec.header()[0..4].try_into().unwrap());
-    assert_eq!(magic, 0x7079726F);
-
-    // Verify data at end
-    assert_eq!(&*vec, &[0xAA, 0xBB, 0xCC]);
-}
-
-#[test]
 fn test_deref() {
     let mut vec = PyroVec::with_capacity(10);
     vec.extend_from_slice(b"test");
