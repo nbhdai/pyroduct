@@ -4,7 +4,7 @@ use std::sync::Arc;
 use arrow::array::RecordBatch;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc};
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{error, instrument, warn};
 
 use crate::format::{
     PyroFailure, PyroLogs, PyroSuccess,
