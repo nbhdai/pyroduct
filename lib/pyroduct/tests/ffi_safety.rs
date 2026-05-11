@@ -4,7 +4,6 @@ use pyroduct::{
     format::{
         Bridgeable, BridgeableResult, HasReceiver, PyroView, Receiver,
         header::{DataStatus, PyroData, PyroHeader},
-        get_ref, get_ref_ids, PyroRefPtr,
     },
     magma,
     panic::register_ffi_panic_hook,

@@ -136,3 +136,7 @@ required-features = ["host", "capability"]
 [[test]]
 name = "test_pyro_server"
 required-features = ["transport"]
+
+[[test]]
+name = "test_playbook_server"
+required-features = ["transport", "host"]
