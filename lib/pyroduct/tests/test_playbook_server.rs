@@ -68,7 +68,7 @@ async fn test_playbook_server_client() {
 
     let config = PipelineConfig {
         playbook: Playbook {
-            hash: binary.hash,
+            hash: binary.hash(),
             configurations: HashMap::from([("state".to_string(), None)]),
         },
         wal_capacity: 1000,

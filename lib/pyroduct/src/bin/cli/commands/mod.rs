@@ -4,3 +4,4 @@ pub mod init;
 pub mod replay;
 pub mod run;
 pub mod ship;
+pub mod spec;

@@ -61,7 +61,7 @@ async fn test_capability_configuration_respect() {
 
     let config = PipelineConfig {
         playbook: Playbook {
-            hash: binary.hash,
+            hash: binary.hash(),
             configurations: HashMap::from([(
                 "config".to_string(),
                 Some(json!({

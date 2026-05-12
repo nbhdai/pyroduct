@@ -259,11 +259,12 @@ name = "mod_slot"
                 "Module main functions is missing".to_string(),
             ))?;
         let spec = ModuleSpec {
+            hash,
             func,
             capabilities: source.dependencies.capabilities.clone(),
         };
 
-        let binary = ModuleBinary { hash, wasm, spec };
+        let binary = ModuleBinary { wasm, spec };
 
         // Save to cache
         let _ = self.cache_manager.write_artifacts(&source.clone().into()).await;

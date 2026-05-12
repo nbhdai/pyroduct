@@ -4,6 +4,7 @@ use crate::cache::{CacheError, CacheManager};
 use crate::cargo::{CapabilityIdent, ProjectManifest};
 use crate::debug::{self, CapabilityDebug, ModuleDebug};
 use pyro_macro::{ffi::generate_capability, module::generate_module};
+use pyro_spec::InterfaceSpec;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
@@ -278,13 +279,13 @@ impl Environment {
                     let spec = pyro_macro::module::generate_module_spec(&src_lib_rs)
                         .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
                         .map(|func| crate::artifacts::ModuleSpec {
+                            hash,
                             func,
                             capabilities: module_manifest.capabilities.values().cloned().collect(),
                         })
                         .ok_or_else(|| EnvironmentError::InterfaceGeneration("Module main function missing".to_string()))?;
 
                     let binary = crate::artifacts::ModuleBinary {
-                        hash,
                         wasm: fs::read(path).await?,
                         spec,
                     };
@@ -386,13 +387,13 @@ impl Environment {
                 let spec = pyro_macro::module::generate_module_spec(&src_lib_rs)
                     .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
                     .map(|func| crate::artifacts::ModuleSpec {
+                        hash,
                         func,
                         capabilities: module_manifest.capabilities.values().cloned().collect(),
                     })
                     .ok_or_else(|| EnvironmentError::InterfaceGeneration("Module main function missing".to_string()))?;
 
                 let binary = crate::artifacts::ModuleBinary {
-                    hash,
                     wasm: fs::read(wasm_artifact).await?,
                     spec,
                 };
@@ -443,7 +444,7 @@ impl Environment {
                 let debug_info = CapabilityDebug { symbols, cap_rs };
                 debug_info.write_to_directory(&debug_dir).await?;
             }
-            crate::cargo::ProjectManifest::Module(_) => {
+            crate::cargo::ProjectManifest::Module(module_manifest) => {
                 tracing::info!("Generating debug info for module: {}", self.name());
                 let name = self.name();
                 
@@ -458,10 +459,19 @@ impl Environment {
                     .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
                     .ok_or_else(|| EnvironmentError::InterfaceGeneration("Module main function missing".to_string()))?;
 
+                let source = crate::artifacts::ModuleSource {
+                    dependencies: crate::artifacts::ModuleDependencies {
+                        dependencies: module_manifest.dependencies.clone(),
+                        capabilities: module_manifest.capabilities.values().cloned().collect(),
+                    },
+                    source: src_lib_rs.clone(),
+                };
+                let hash = source.hash();
+
                 let binary = crate::artifacts::ModuleBinary {
-                    hash: "debug".to_string(),
                     wasm: wasm_bytes,
                     spec: crate::artifacts::ModuleSpec {
+                        hash,
                         func: spec,
                         capabilities: vec![], // Capabilities not needed for WAT/RS generation
                     },
@@ -480,6 +490,56 @@ impl Environment {
         }
 
         Ok(())
+    }
+
+    pub async fn capability_spec(&self) -> EnvResult<InterfaceSpec<'static>> {
+        let name = self.name();
+        let version = self.version();
+        let src_path = self.root.join("src").join("lib.rs");
+        let src_lib_rs = fs::read_to_string(&src_path).await
+            .map_err(|_| EnvironmentError::SourceNotFound(src_path))?;
+
+        match &self.manifest {
+            crate::cargo::ProjectManifest::Capability(_) => {
+                let (_, interface) = pyro_macro::ffi::generate_interface(&src_lib_rs, &name, &version)
+                    .map_err(|r| EnvironmentError::InterfaceGeneration(format_syn_error(&src_lib_rs, r)))?;
+                Ok(interface)
+            }
+            crate::cargo::ProjectManifest::Module(_) => {
+                Err(EnvironmentError::InterfaceGeneration("Capability spec is only supported for capabilities".to_string()))
+            }
+        }
+    }
+
+    pub async fn module_spec(&self) -> EnvResult<crate::artifacts::ModuleSpec> {
+        let src_path = self.root.join("src").join("lib.rs");
+        let src_lib_rs = fs::read_to_string(&src_path).await
+            .map_err(|_| EnvironmentError::SourceNotFound(src_path))?;
+
+        match &self.manifest {
+            crate::cargo::ProjectManifest::Module(module_manifest) => {
+                let source = crate::artifacts::ModuleSource {
+                    dependencies: crate::artifacts::ModuleDependencies {
+                        dependencies: module_manifest.dependencies.clone(),
+                        capabilities: module_manifest.capabilities.values().cloned().collect(),
+                    },
+                    source: src_lib_rs.clone(),
+                };
+                let hash = source.hash();
+
+                pyro_macro::module::generate_module_spec(&src_lib_rs)
+                    .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
+                    .map(|func| crate::artifacts::ModuleSpec {
+                        hash,
+                        func,
+                        capabilities: module_manifest.capabilities.values().cloned().collect(),
+                    })
+                    .ok_or_else(|| EnvironmentError::InterfaceGeneration("Module main function missing".to_string()))
+            }
+            crate::cargo::ProjectManifest::Capability(_) => {
+                Err(EnvironmentError::InterfaceGeneration("Module spec is only supported for modules".to_string()))
+            }
+        }
     }
 }
 

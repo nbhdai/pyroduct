@@ -253,7 +253,7 @@ impl App {
                 .context(format!("Compilation failed for pipeline {}", i))?;
 
             let playbook = pyro_artifacts::artifacts::Playbook {
-                hash: binary.hash,
+                hash: binary.hash(),
                 configurations,
             };
 

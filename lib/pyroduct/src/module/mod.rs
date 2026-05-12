@@ -125,7 +125,7 @@ impl PyroFactory {
     }
 
     pub fn from_playbook(playbook: &LoadedPlaybook) -> Result<Self, WasmError> {
-        tracing::debug!("Loading module from hash: {}", playbook.binary.hash);
+        tracing::debug!("Loading module from hash: {}", playbook.binary.hash());
         let wasmtime_module = wasmtime::Module::from_binary(&DEFAULT_ENGINE, &playbook.binary.wasm)
             .map_err(|e| {
                 WasmError::InstantiationFailed(format!("Failed to compile WASM: {}", e))

@@ -361,7 +361,7 @@ impl CacheManager {
                     })
             }
             Artifacts::Module(Module::Binary(binary)) => {
-                let path = self.root.join("anon").join(&binary.hash);
+                let path = self.root.join("anon").join(&binary.spec.hash);
                 binary
                     .write_to_directory(&path)
                     .await

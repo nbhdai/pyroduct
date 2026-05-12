@@ -61,7 +61,7 @@ async fn test_capability_state_preservation() {
 
     let config = PipelineConfig {
         playbook: Playbook {
-            hash: binary.hash,
+            hash: binary.hash(),
             configurations: HashMap::from([("state".to_string(), None)]),
         },
         wal_capacity: 1000,

@@ -264,7 +264,7 @@ async fn test_load_playbook() {
 
     // 2. Create a Playbook
     let playbook = Playbook {
-        hash: binary.hash.clone(),
+        hash: binary.spec.hash.clone(),
         configurations: HashMap::from([(
             "httpc".to_string(),
             Some(serde_json::json!({"timeout": 30})),
@@ -275,7 +275,7 @@ async fn test_load_playbook() {
     let loaded = cache.load_playbook(playbook.clone()).await.unwrap();
 
     // 4. Verify
-    assert_eq!(loaded.binary.hash, binary.hash);
+    assert_eq!(loaded.binary.spec.hash, binary.spec.hash);
     assert_eq!(loaded.configurations, playbook.configurations);
     assert!(loaded.paths.contains_key("httpc"));
     let cap_path = loaded.paths.get("httpc").unwrap();

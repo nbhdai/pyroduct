@@ -65,13 +65,13 @@ pub struct ModuleSource {
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct ModuleSpec {
+    pub hash: String,
     pub func: ModuleFunc<'static>,
     pub capabilities: Vec<ResolvedCapability>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct ModuleBinary {
-    pub hash: String,
     pub wasm: Vec<u8>,
     pub spec: ModuleSpec,
 }
@@ -132,7 +132,7 @@ impl ModuleSource {
 
 impl ModuleBinary {
     pub fn hash(&self) -> String {
-        self.hash.clone()
+        self.spec.hash.clone()
     }
 }
 
@@ -661,7 +661,6 @@ impl Artifact for ModuleSource {
 impl Artifact for ModuleBinary {
     async fn write_to_directory(&self, path: &Path) -> io::Result<()> {
         fs::create_dir_all(path).await?;
-        fs::write(path.join("hash.txt"), self.hash.as_bytes()).await?;
         fs::write(path.join("mod.wasm"), &self.wasm).await?;
         let spec = serde_json::to_string_pretty(&self.spec).map_err(|e| {
             io::Error::new(
@@ -676,7 +675,6 @@ impl Artifact for ModuleBinary {
     fn to_tarball(&self) -> Result<Vec<u8>, io::Error> {
         let encoder = GzEncoder::new(Vec::new(), Compression::default());
         let mut tar = Builder::new(encoder);
-        append_file(&mut tar, "hash.txt", self.hash.as_bytes())?;
         append_file(&mut tar, "mod.wasm", &self.wasm)?;
         let spec = serde_json::to_string_pretty(&self.spec).map_err(|e| {
             io::Error::new(
@@ -693,7 +691,6 @@ impl Artifact for ModuleBinary {
         let mut archive = tar::Archive::new(tar);
         let mut wasm = None;
         let mut spec = None;
-        let mut hash = None;
 
         for file in archive.entries()? {
             let mut file = file?;
@@ -702,14 +699,6 @@ impl Artifact for ModuleBinary {
             file.read_to_end(&mut content)?;
 
             match path.to_string_lossy().as_ref() {
-                "hash.txt" => {
-                    hash = Some(String::from_utf8(content).map_err(|e| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("Unable to deserialize hash: {}", e),
-                        )
-                    })?)
-                }
                 "mod.wasm" => wasm = Some(content),
                 "spec.json" => {
                     spec = serde_json::from_slice(&content).map_err(|e| {
@@ -724,8 +713,6 @@ impl Artifact for ModuleBinary {
         }
 
         Ok(ModuleBinary {
-            hash: hash
-                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Missing hash.txt"))?,
             wasm: wasm
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Missing mod.wasm"))?,
             spec: spec
@@ -742,7 +729,6 @@ impl Artifact for ModuleBinary {
             )
         })?;
         Ok(ModuleBinary {
-            hash: fs::read_to_string(path.join("hash.txt")).await?,
             wasm: fs::read(path.join("mod.wasm")).await?,
             spec,
         })
