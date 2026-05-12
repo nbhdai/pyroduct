@@ -27,10 +27,10 @@ let
     version = "0.1.0";
     buildPhase = ''
       mkdir -p $out/capabilities/state/0.1.0
-      cp -r ${stateCap}/capabilities/state/0.1.0/* $out/capabilities/state/0.1.0/
+      cp -r ${stateCap.drv}/capabilities/state/0.1.0/* $out/capabilities/state/0.1.0/
       
       mkdir -p $out/modules/cap_state
-      cp -r ${stateMod}/artifacts/* $out/modules/cap_state/
+      cp -r ${stateMod.drv}/artifacts/* $out/modules/cap_state/
     '';
   };
 

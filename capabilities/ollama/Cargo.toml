@@ -1,0 +1,35 @@
+[package]
+name = "ollama"
+version = "0.1.0"
+edition = "2024"
+authors = ["nbhdai"]
+
+[dependencies.pyroduct]
+path = "../../lib/pyroduct"
+features = ["capability"]
+
+[dependencies.reqwest]
+version = "0.13.1"
+features = ["json"]
+optional = true
+
+[dependencies.serde]
+version = "1.0.228"
+features = ["derive"]
+
+[dependencies.tokio]
+version = "1.49.0"
+features = ["full"]
+optional = true
+
+[features]
+capability = [
+    "dep:reqwest",
+    "dep:tokio",
+]
+default = []
+module = []
+
+[lib]
+crate-type = ["cdylib"]
+required-features = []
