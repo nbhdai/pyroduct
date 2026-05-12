@@ -20,9 +20,9 @@ pub async fn ship_single(cache: &CacheManager, path: &Path, debug: bool) -> Resu
                 Artifacts::CapabilitySource(capability) => {
                     let _ = cache
                         .debug_capabilities(
-                            &capability.manifest.capability.author,
-                            &capability.manifest.capability.name,
-                            &capability.manifest.capability.version,
+                            &capability.manifest.ident().author,
+                            &capability.manifest.ident().name,
+                            &capability.manifest.ident().version,
                         )
                         .await;
                 }

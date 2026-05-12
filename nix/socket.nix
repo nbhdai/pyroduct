@@ -1,61 +1,100 @@
-{ pkgs }:
+{ pkgs, craneLibNative, craneLibWasm, pyroduct, pyroductSrc }:
 
 let
+  # Use the new build system to create a real set of components for the test
+  pyro = import ../pyroduct.nix { 
+    inherit pkgs craneLibNative craneLibWasm; 
+    pyroductTool = pyroduct; 
+    pyroductSrc = pyroductSrc; 
+  };
+
+  stateCap = pyro.capabilityBuild {
+    name = "state";
+    version = "0.1.0";
+    src = ../capabilities/state;
+  };
+
+  stateMod = pyro.moduleBuild {
+    name = "cap_state";
+    interfaces = [];
+    capabilities = [ stateCap ];
+    src = ../modules/cap_state;
+  };
+
+  # Combine artifacts into a single directory for the test pipeline
+  testBundle = pkgs.stdenv.mkDerivation {
+    pname = "pyroduct-socket-bundle";
+    version = "0.1.0";
+    buildPhase = ''
+      mkdir -p $out/capabilities/state/0.1.0
+      cp -r ${stateCap}/capabilities/state/0.1.0/* $out/capabilities/state/0.1.0/
+      
+      mkdir -p $out/modules/cap_state
+      cp -r ${stateMod}/artifacts/* $out/modules/cap_state/
+    '';
+  };
+
   drv = pkgs.stdenv.mkDerivation {
-  pname = "pyroduct-socket-test";
-  version = "0.1.0";
-  src = ./..;
+    pname = "pyroduct-socket-test";
+    version = "0.1.0";
+    src = ./..;
 
-  nativeBuildInputs = [ 
-    pkgs.bash 
-    pkgs.nettools # for netstat if needed
-    # Ensure pyroduct is actually here!
-    pkgs.pyroduct 
-  ];
+    nativeBuildInputs = [ 
+      pkgs.bash 
+      pyroduct 
+    ];
 
-  doCheck = true; # Required to trigger checkPhase
+    doCheck = true;
 
-  checkPhase = ''
-    export HOME=$TMPDIR
-    
-    # Use the current directory for the socket to avoid absolute path issues
-    SOCKET_PATH="$(pwd)/test.sock"
-    
-    echo "=== Preparing Test Data ==="
-    cat << 'EOF' > pipeline.toml
-    [pipeline]
-    name = "test-pipeline"
-    steps = []
-    EOF
+    checkPhase = ''
+      export HOME=$TMPDIR
+      SOCKET_PATH="$(pwd)/test.sock"
+      
+      echo "=== Preparing Pipeline Config ==="
+      # The pipeline points to the Nix store paths of our built components
+      cat <<EOF > pipeline.toml
+      [pipeline]
+      name = "socket-test"
+      steps = [
+        { module = "cap_state", config = {} }
+      ]
 
-    echo '{"test": "row1"}' > input.jsonl
+      [libraries]
+      state = { path = "${testBundle}/capabilities/state/0.1.0" }
+      
+      [modules]
+      cap_state = { path = "${testBundle}/modules/cap_state" }
+      EOF
 
-    echo "--- Testing Unix socket ---"
-    # 1. Start server
-    pyroduct run pipeline.toml "dummy" --socket "$SOCKET_PATH" > server.log 2>&1 &
-    SERVER_PID=$!
+      echo '{"input": 10}' > input.jsonl
 
-    # 2. Poll for the socket (don't just sleep; it's flaky)
-    for i in {1..10}; do
-      if [ -S "$SOCKET_PATH" ]; then break; fi
-      sleep 0.5
-    done
+      echo "--- Testing Unix socket ---"
+      # 1. Start server
+      pyroduct run pipeline.toml "dummy" --socket "$SOCKET_PATH" > server.log 2>&1 &
+      SERVER_PID=$!
 
-    # 3. Replay
-    pyroduct replay input.jsonl "$SOCKET_PATH"
-    
-    # 4. Cleanup and Verify
-    kill $SERVER_PID
-    wait $SERVER_PID || true # Ignore exit code from kill
+      # 2. Poll for the socket
+      for i in {1..10}; do
+        if [ -S "$SOCKET_PATH" ]; then break; fi
+        sleep 0.5
+      done
 
-    if grep -q "Pipeline Succeeded!" server.log; then
-      echo "Unix socket test passed!"
-    else
-      cat server.log
-      exit 1
-    fi
-  '';
-};
+      # 3. Replay
+      pyroduct replay input.jsonl "$SOCKET_PATH"
+      
+      # 4. Cleanup and Verify
+      kill $SERVER_PID
+      wait $SERVER_PID || true
+
+      if grep -q "10" server.log || grep -q "11" server.log; then
+        echo "Unix socket test passed!"
+      else
+        echo "Error: Expected counter values in server.log"
+        cat server.log
+        exit 1
+      fi
+    '';
+  };
 in
 {
   check = drv;

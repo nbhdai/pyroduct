@@ -8,11 +8,11 @@ use pyro_artifacts::{
 use pyro_macro::{ffi::generate_capability, module::generate_module};
 use std::path::Path;
 
-pub async fn expand(path: &Path) -> Result<()> {
+pub async fn expand(path: &Path, no_compile: bool) -> Result<()> {
     let is_cap = path.join("Capability.toml").exists();
     let is_mod = path.join("Module.toml").exists();
     if is_cap || is_mod {
-        expand_single(path).await?;
+        expand_single(path, no_compile).await?;
         return Ok(());
     }
 
@@ -37,7 +37,7 @@ pub async fn expand(path: &Path) -> Result<()> {
         if !is_cap && !is_mod {
             continue;
         }
-        match expand_single(&subpath).await {
+        match expand_single(&subpath, no_compile).await {
             Ok(true) => found_any = true,
             Ok(false) => {}
             Err(error) => errors.push((subpath, error)),
@@ -71,11 +71,17 @@ pub async fn expand(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub async fn expand_single(path: &Path) -> Result<bool> {
+pub async fn expand_single(path: &Path, no_compile: bool) -> Result<bool> {
     let output_dir = path.join("artifacts");
 
     let env = Environment::new(path.to_path_buf()).await?;
-    let artifacts = env.package(false).await?;
+    let artifacts = if no_compile {
+        // Try to load artifacts from target/release
+        let target_dir = Environment::get_target_dir(&path).await?;
+        env.load_artifacts_from_target(&target_dir).await?
+    } else {
+        env.package(false).await?
+    };
     for artifact in &artifacts {
         artifact.write_to_directory(&output_dir).await?;
     }
@@ -114,8 +120,8 @@ pub async fn expand_single(path: &Path) -> Result<bool> {
 
                 let code = generate_capability(
                     &source.src_lib_rs,
-                    &source.manifest.capability.name,
-                    &source.manifest.capability.version,
+                    &source.manifest.ident().name,
+                    &source.manifest.ident().version,
                 )
                 .context("Capability code")?;
                 let code = prettyplease::unparse(&code);

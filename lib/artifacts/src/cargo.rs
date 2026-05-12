@@ -26,6 +26,36 @@ impl CapabilityIdent {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ProjectManifest {
+    Capability(CapabilityManifest),
+    Module(ModuleManifest),
+}
+
+impl ProjectManifest {
+    pub fn ident(&self) -> &CapabilityIdent {
+        match self {
+            ProjectManifest::Capability(c) => &c.capability,
+            ProjectManifest::Module(m) => &m.module,
+        }
+    }
+
+    pub fn to_cargo_manifest(self) -> Manifest {
+        match self {
+            ProjectManifest::Capability(c) => c.to_capability_manifest(),
+            ProjectManifest::Module(m) => m.to_cargo(),
+        }
+    }
+
+    pub fn to_interface_manifest(self) -> Manifest {
+        match self {
+            ProjectManifest::Capability(c) => c.to_interface_manifest(),
+            ProjectManifest::Module(m) => m.to_cargo(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct CapabilityManifest<Metadata = Value> {
     pub capability: CapabilityIdent,

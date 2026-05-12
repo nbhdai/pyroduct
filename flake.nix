@@ -101,7 +101,68 @@
           commonArgs = commonPyroArgs;
           pyroduct = pyroduct;
         };
+        socketTests = import ./nix/socket.nix {
+          inherit pkgs craneLibNative craneLibWasm pyroduct;
+          pyroductSrc = pyroSrc;
+        };
 
+        pyroBuildTest = 
+          let
+            pyro = import ./pyroduct.nix { 
+              inherit pkgs craneLibNative craneLibWasm; 
+              pyroductTool = pyroduct; 
+              pyroductSrc = pyroSrc;
+            };
+            myInterface = pyro.interfaceBuild {
+              name = "hello-iface";
+              version = "0.1.0";
+              code = ''
+                pub trait Hello {
+                    fn say_hello(&self, name: String) -> String;
+                }
+              '';
+            };
+            myCap = pyro.capabilityBuild {
+              name = "hello-cap";
+              version = "0.1.0";
+              code = ''
+                use pyroduct::capability;
+                pub struct HelloServer;
+                #[pyroduct::capability]
+                impl HelloServer {
+                    type Client = ();
+                    type Config = ();
+                    type Error = String;
+                    async fn new(_config: Option<()>) -> Self { Self }
+                    async fn reset(&mut self) {}
+                    fn register(&self, _client: &()) -> Result<(), String> { Ok(()) }
+                    async fn say_hello(&self, _client: &(), name: String) -> Result<String, String> {
+                        Ok(format!("Hello, {}!", name))
+                    }
+                }
+              '';
+              interfaces = [ myInterface ];
+            };
+            myMod = pyro.moduleBuild {
+              name = "hello-mod";
+              interfaces = [];
+              capabilities = [ myCap ];
+              code = ''
+                use pyroduct::module;
+                #[module(output = "res")]
+                fn call(input: &str) -> Result<String, String> {
+                    Ok(format!("Module received: {}", input))
+                }
+              '';
+            };
+          in
+          pkgs.stdenv.mkDerivation {
+            pname = "pyro-build-test";
+            version = "0.1.0";
+            buildPhase = "ls -R ${myMod}";
+            installPhase = "mkdir -p $out && cp -r ${myMod} $out";
+          };
+        
       in
       {
         packages = {
@@ -113,6 +174,8 @@
           microvm-test = microvmTests.check;
           miri-tests = miriTests.check;
           rust-tests = rustTests.check;
+          socket-test = socketTests.check;
+          pyro-build-test = pyroBuildTest;
         };
 
         apps = {

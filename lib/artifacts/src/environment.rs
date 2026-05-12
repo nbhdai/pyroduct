@@ -1,7 +1,7 @@
 use crate::artifacts::{Artifacts, CapBinary, CapabilityBinary, CapabilitySource, Interface};
 use crate::{command::{CommandError, format_syn_error, run_command}, build::BuildError};
 use crate::cache::CacheError;
-use crate::cargo::{CapabilityIdent, CapabilityManifest};
+use crate::cargo::{CapabilityIdent, CapabilityManifest, ProjectManifest};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use tokio::fs;
@@ -58,7 +58,7 @@ pub type EnvResult<T> = std::result::Result<T, EnvironmentError>;
 pub struct Environment {
     pub root: PathBuf,
     pub target_dir: PathBuf,
-    pub manifest: CapabilityManifest,
+    pub manifest: crate::cargo::ProjectManifest,
 }
 
 impl Environment {
@@ -75,39 +75,46 @@ impl Environment {
     }
 
     /// Write Cargo.toml from Module.toml or Capability.toml if it doesn't exist
-    async fn ensure_cargo_toml(root: &Path, manifest: &CapabilityManifest) -> EnvResult<()> {
+    async fn ensure_cargo_toml(root: &Path, manifest: &crate::cargo::ProjectManifest) -> EnvResult<()> {
         let cargo_toml_path = root.join("Cargo.toml");
         if cargo_toml_path.exists() {
             return Ok(());
         }
-        let cargo_manifest = manifest.clone().to_capability_manifest();
-        let contents = toml::to_string_pretty(&cargo_manifest)
+        let contents = toml::to_string_pretty(&manifest.clone().to_cargo_manifest())
             .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
         fs::write(&cargo_toml_path, contents).await?;
         Ok(())
     }
 
     pub fn name(&self) -> String {
-        self.manifest.capability.name.clone()
+        self.manifest.ident().name.clone()
     }
 
     pub fn version(&self) -> String {
-        self.manifest.capability.version.clone()
+        self.manifest.ident().version.clone()
     }
 
     pub fn author(&self) -> String {
-        self.manifest.capability.author.clone()
+        self.manifest.ident().author.clone()
     }
 
-    /// Detect Capability.toml to extract name and version
-    async fn load_manifest(root: &Path) -> EnvResult<CapabilityManifest> {
+    /// Detect Capability.toml or Module.toml to extract name and version
+    async fn load_manifest(root: &Path) -> EnvResult<ProjectManifest> {
         tracing::debug!("Loading manifest from {:?}", root);
         let capability_toml = root.join("Capability.toml");
         if capability_toml.exists() {
             let content = tokio::fs::read_to_string(&capability_toml).await?;
-            let manifest: CapabilityManifest = toml::from_str(&content)
+            let manifest: crate::cargo::CapabilityManifest = toml::from_str(&content)
                 .map_err(|e| EnvironmentError::ParseManifest(format!("Capability.toml: {}", e)))?;
-            return Ok(manifest);
+            return Ok(crate::cargo::ProjectManifest::Capability(manifest));
+        }
+
+        let module_toml = root.join("Module.toml");
+        if module_toml.exists() {
+            let content = tokio::fs::read_to_string(&module_toml).await?;
+            let manifest: crate::cargo::ModuleManifest = toml::from_str(&content)
+                .map_err(|e| EnvironmentError::ParseManifest(format!("Module.toml: {}", e)))?;
+            return Ok(crate::cargo::ProjectManifest::Module(manifest));
         }
 
         // Default for anon compilations or when no package section is found
@@ -117,7 +124,7 @@ impl Environment {
     }
 
     /// Run `cargo metadata` to find the target directory
-    async fn get_target_dir(path: &Path) -> EnvResult<PathBuf> {
+    pub async fn get_target_dir(path: &Path) -> EnvResult<PathBuf> {
         let output = Command::new("cargo")
             .args(["metadata", "--format-version=1", "--no-deps"])
             .current_dir(path)
@@ -186,6 +193,67 @@ impl Environment {
         }
     }
 
+    /// Load artifacts from an existing target directory without compiling
+    pub async fn load_artifacts_from_target(&self, target_dir: &Path) -> EnvResult<Vec<Artifacts>> {
+        tracing::info!("Loading artifacts from target directory: {:?}", target_dir);
+        
+        let name = self.name();
+        let version = self.version();
+        let author = self.author();
+
+        let lib = self.get_library_artifact(&name).await.ok();
+
+        let lock_path = self.root.join("Cargo.lock");
+        let cargo_lock = if lock_path.exists() {
+            fs::read_to_string(&lock_path).await?
+        } else {
+            String::new()
+        };
+
+        let src_path = self.root.join("src").join("lib.rs");
+        let src_lib_rs = if src_path.exists() {
+            fs::read_to_string(&src_path).await?
+        } else {
+            String::new()
+        };
+
+        let (interface_rs, interface) =
+            pyro_macro::ffi::generate_interface(&src_lib_rs, &name, &version).map_err(|r| {
+                EnvironmentError::InterfaceGeneration(format_syn_error(&src_lib_rs, r))
+            })?;
+
+        let interface_rs = prettyplease::unparse(&interface_rs);
+
+        let mut artifacts = vec![
+            Artifacts::CapabilitySource(CapabilitySource {
+                manifest: self.manifest.clone(),
+                cargo_toml: toml::to_string_pretty(&self.manifest.clone().to_cargo_manifest())
+                    .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?,
+                cargo_lock,
+                src_lib_rs,
+            }),
+            Artifacts::Interface(Interface {
+                manifest: self.manifest.clone(),
+                src_lib_rs: interface_rs,
+                interface: interface.clone(),
+            }),
+        ];
+
+        if let Some(lib) = lib {
+            artifacts.push(Artifacts::CapabilityBinary(CapabilityBinary {
+                ident: CapabilityIdent {
+                    name,
+                    version,
+                    author,
+                },
+                libs: vec![lib],
+                interface: interface.clone(),
+            }));
+        }
+
+        Ok(artifacts)
+    }
+
     pub async fn package(&self, capture: bool) -> EnvResult<Vec<Artifacts>> {
         let name = self.name();
         let version = self.version();
@@ -193,7 +261,7 @@ impl Environment {
 
         tracing::info!("Packaging capability: {:?}", self.root);
 
-        let cargo_toml = toml::to_string_pretty(&self.manifest.clone().to_capability_manifest())
+        let cargo_toml = toml::to_string_pretty(&self.manifest.clone().to_cargo_manifest())
             .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
 
         tracing::info!("Compiling capability binary...");
@@ -242,7 +310,7 @@ impl Environment {
             Artifacts::Interface(Interface {
                 manifest: self.manifest.clone(),
                 src_lib_rs: interface_rs,
-                interface,
+                interface: interface.clone(),
             }),
         ])
     }
