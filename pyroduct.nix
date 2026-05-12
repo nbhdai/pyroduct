@@ -68,6 +68,7 @@ path = \"${pyroductSrc}/pyroduct\"
       export PYRODUCT=$out/cache
       mkdir -p $out/cache
       pyroduct expand --no-compile .
+      cargo generate-lockfile
     '';
 
 in
@@ -179,6 +180,7 @@ in
         pname = "mod-${name}";
         version = "0.1.0";
         src = src_expanded;
+        cargoVendorDir = null;
       };
     in
 

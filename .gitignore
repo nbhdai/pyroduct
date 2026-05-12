@@ -4,10 +4,10 @@ target
 result
 
 capabilities/**/interface
-capabilities/**/Cargo.*
+capabilities/**/Cargo.toml
 capabilities/**/*.json
 capabilities/**/artifacts
-modules/**/Cargo.*
+modules/**/Cargo.toml
 modules/**/artifacts
 examples/**/logs
 .antigravity
