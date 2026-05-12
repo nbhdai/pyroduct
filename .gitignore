@@ -15,6 +15,9 @@ examples/**/logs
 **/test/capabilities
 **/test/interfaces
 **/test/modules
-**/test/build
+**/test/0
+**/test/1
+**/test/2
+**/test/3
 *.pyrolog
 *.pyrowal

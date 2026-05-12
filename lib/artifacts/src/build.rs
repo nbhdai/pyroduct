@@ -63,6 +63,7 @@ impl Builder {
             error: e,
         })?;
 
+
         let pyroduct_dep = if let Some(dep) = &mut config.pyroduct {
             crate::cache::resolve_dependency_path(dep, root);
             dep.clone()
@@ -81,6 +82,7 @@ impl Builder {
         };
 
         let build_slots = config.build_slots.unwrap_or(4).max(1);
+        tracing::info!(?root, "Setup Build directory");
 
         let builder = Self {
             root: root.to_path_buf(),
@@ -106,7 +108,6 @@ impl Builder {
                 home.join(".pyroduct")
             });
 
-        let build_root = root.join("build");
         let config_path = root.join("config.toml");
         let content = tfs::read_to_string(&config_path)
             .await
@@ -119,7 +120,7 @@ impl Builder {
             error: io::Error::new(io::ErrorKind::InvalidData, error),
         })?;
 
-        Self::new(&build_root, config, cache_manager).await
+        Self::new(&root, config, cache_manager).await
     }
 
     fn build_base_dir(&self) -> &Path {

@@ -1,7 +1,4 @@
-use crate::{artifacts::{
-    Artifact, Artifacts, Module, ModuleBinary, ModuleSource,
-    Playbook,
-}};
+use crate::artifacts::{Artifact, Artifacts, Module, ModuleBinary, ModuleSource, Playbook};
 
 use cargo_toml::Dependency;
 use std::path::{Path, PathBuf};
@@ -15,7 +12,6 @@ pub struct CacheError {
     #[source]
     pub error: std::io::Error,
 }
-
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct PyroductConfig {
@@ -52,7 +48,6 @@ impl CacheManager {
             root: root.to_path_buf(),
         };
 
-        manager.init().await?;
         Ok(manager)
     }
 
@@ -69,8 +64,6 @@ impl CacheManager {
 
         Self::new(&root).await
     }
-
-
 
     pub async fn init(&self) -> Result<(), CacheError> {
         fs::create_dir_all(self.capabilities_base_dir())
@@ -297,7 +290,6 @@ impl CacheManager {
             })
         }
     }
-
 
     pub async fn write_artifacts(&self, artifacts: &Artifacts) -> Result<(), CacheError> {
         match &artifacts {

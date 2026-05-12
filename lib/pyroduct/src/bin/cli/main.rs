@@ -49,6 +49,8 @@ enum Commands {
         #[arg(value_name = "DIRECTORY", default_value = ".")]
         path: PathBuf,
     },
+    /// Initializes the Pyroduct cache
+    Setup,
     /// Generates the interface.json for a capability
     Spec {
         #[arg(value_name = "DIRECTORY", default_value = ".")]
@@ -127,6 +129,7 @@ async fn main() -> Result<()> {
         Commands::Expand { path, no_compile } => commands::expand::expand(&path, no_compile).await,
         Commands::Ship { path, debug, out } => commands::ship::ship(&path, debug, out.as_deref()).await,
         Commands::Clean { path } => commands::clean::clean(&path),
+        Commands::Setup => commands::cache::init().await,
         Commands::Spec { path, out } => commands::spec::spec(&path, out.as_deref()).await,
         Commands::Replay { input, socket } => commands::replay::replay(&input, &socket).await,
         Commands::Run {

@@ -1,22 +1,30 @@
-{ pkgs, craneLibNative, craneLibWasm, pyroduct, pyroductSrc }:
+{
+  pkgs,
+  craneLibNative,
+  craneLibWasm,
+  pyroduct,
+  pyroductSrc,
+}:
 
 let
   # Use the new build system to create a real set of components for the test
-  pyro = import ../pyroduct.nix { 
-    inherit pkgs craneLibNative craneLibWasm; 
-    pyroductTool = pyroduct; 
-    pyroductSrc = pyroductSrc; 
+  pyro = import ../pyroduct.nix {
+    inherit pkgs craneLibNative craneLibWasm;
+    pyroductTool = pyroduct;
+    pyroductSrc = pyroductSrc;
   };
 
   stateCap = pyro.capabilityBuild {
+    author = "nbhdai";
     name = "state";
     version = "0.1.0";
     src = ../capabilities/state;
   };
 
   stateMod = pyro.moduleBuild {
+    author = "nbhdai";
     name = "cap_state";
-    interfaces = [];
+    interfaces = [ ];
     capabilities = [ stateCap ];
     src = ../modules/cap_state;
   };
@@ -28,7 +36,7 @@ let
     buildPhase = ''
       mkdir -p $out/capabilities/state/0.1.0
       cp -r ${stateCap.drv}/capabilities/state/0.1.0/* $out/capabilities/state/0.1.0/
-      
+
       mkdir -p $out/modules/cap_state
       cp -r ${stateMod.drv}/artifacts/* $out/modules/cap_state/
     '';
@@ -39,9 +47,9 @@ let
     version = "0.1.0";
     src = ./..;
 
-    nativeBuildInputs = [ 
-      pkgs.bash 
-      pyroduct 
+    nativeBuildInputs = [
+      pkgs.bash
+      pyroduct
     ];
 
     doCheck = true;
@@ -49,7 +57,7 @@ let
     checkPhase = ''
       export HOME=$TMPDIR
       SOCKET_PATH="$(pwd)/test.sock"
-      
+
       echo "=== Preparing Pipeline Config ==="
       # The pipeline points to the Nix store paths of our built components
       cat <<EOF > pipeline.toml
@@ -61,7 +69,7 @@ let
 
       [libraries]
       state = { path = "${testBundle}/capabilities/state/0.1.0" }
-      
+
       [modules]
       cap_state = { path = "${testBundle}/modules/cap_state" }
       EOF
@@ -81,7 +89,7 @@ let
 
       # 3. Replay
       pyroduct replay input.jsonl "$SOCKET_PATH"
-      
+
       # 4. Cleanup and Verify
       kill $SERVER_PID
       wait $SERVER_PID || true
