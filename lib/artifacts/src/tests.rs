@@ -103,7 +103,7 @@ async fn ship_httpc_capability_to_cache() {
         "Cannot find capabilities/httpc — run tests from the repo root"
     );
 
-    let env = Environment::new(httpc_path).await.unwrap();
+    let env = Environment::new(httpc_path, cache.clone()).await.unwrap();
 
     // 2. Build and ship the capability binary
     let cap_artifacts = env.package(true).await.unwrap();
@@ -138,7 +138,7 @@ async fn test_anon_compile_with_interface() {
 
     // 1. Generate the interface for httpc to compile against
     let httpc_path = repo_root().join("capabilities/httpc");
-    let env = Environment::new(httpc_path).await.unwrap();
+    let env = Environment::new(httpc_path, cache.clone()).await.unwrap();
     let capability = env.package(true).await.unwrap();
     for artifact in &capability {
         cache.write_artifacts(artifact).await.unwrap();
@@ -164,25 +164,6 @@ async fn test_anon_compile_with_interface() {
         anon.wasm.starts_with(&[0x00, 0x61, 0x73, 0x6D]),
         "Compiled output should be a valid WASM binary"
     );
-
-    let hash = mod_source.hash();
-
-    // 2. Test debug_module
-    let debug_mod = cache.debug_module(&mod_source.hash()).await.unwrap();
-    let mod_dir = cache.root.join("anon").join(&hash);
-    assert!(mod_dir.join("mod.wat").exists());
-    assert!(mod_dir.join("cap.rs").exists());
-    assert!(debug_mod.wat.is_some());
-    assert!(debug_mod.cap_rs.is_some());
-
-    // 3. Test debug_capabilities
-    let debug_cap = cache
-        .debug_capabilities("nbhdai", "httpc", "0.1.0")
-        .await
-        .unwrap();
-    let cap_dir = cache.capabilities_dir("nbhdai", "httpc", "0.1.0");
-    assert!(cap_dir.join("cap.rs").exists());
-    assert!(debug_cap.cap_rs.is_some());
 }
 
 // -----------------------------------------------------------------------------
@@ -223,7 +204,7 @@ async fn test_capability_lib_exact_match() {
     let cache = Arc::new(CacheManager::new(dir.path()).await.unwrap());
 
     let httpc_path = repo_root().join("capabilities/httpc");
-    let env = Environment::new(httpc_path).await.unwrap();
+    let env = Environment::new(httpc_path, cache.clone()).await.unwrap();
 
     let cap_artifacts = env.package(true).await.unwrap();
 
@@ -260,7 +241,7 @@ async fn test_load_playbook() {
 
     // 1. Setup a module with a capability
     let httpc_path = repo_root().join("capabilities/httpc");
-    let env = Environment::new(httpc_path).await.unwrap();
+    let env = Environment::new(httpc_path, cache.clone()).await.unwrap();
     let capability = env.package(true).await.unwrap();
     for artifact in &capability {
         cache.write_artifacts(artifact).await.unwrap();

@@ -1,37 +1,25 @@
 use anyhow::{Result, bail};
 use fs_err as fs;
 use pyro_artifacts::{
-    artifacts::{Artifacts, Module},
+    artifacts::Artifact,
     cache::CacheManager,
     environment::Environment,
 };
 use std::path::Path;
 
-pub async fn ship_single(cache: &CacheManager, path: &Path, debug: bool) -> Result<()> {
-    let env = Environment::new(path.to_path_buf()).await?;
+pub async fn ship_single(cache: std::sync::Arc<CacheManager>, path: &Path, debug: bool, out: Option<&Path>) -> Result<()> {
+    let env = Environment::new(path.to_path_buf(), cache.clone()).await?;
 
     let artifacts = env.package(false).await?;
     for artifact in &artifacts {
-        cache.write_artifacts(artifact).await?;
+        if let Some(out) = out {
+            artifact.write_to_directory(out).await?;
+        } else {
+            cache.write_artifacts(artifact).await?;
+        }
     }
     if debug {
-        for artifact in &artifacts {
-            match artifact {
-                Artifacts::CapabilitySource(capability) => {
-                    let _ = cache
-                        .debug_capabilities(
-                            &capability.manifest.ident().author,
-                            &capability.manifest.ident().name,
-                            &capability.manifest.ident().version,
-                        )
-                        .await;
-                }
-                Artifacts::Module(Module::Source(source)) => {
-                    let _ = cache.debug_module(&source.hash()).await;
-                }
-                _ => {}
-            }
-        }
+        env.expand_debug().await?;
     }
 
     Ok(())
@@ -41,16 +29,11 @@ pub async fn ship(path: &Path, debug: bool, out: Option<&Path>) -> Result<()> {
     let is_cap = path.join("Capability.toml").exists();
     let is_mod = path.join("Module.toml").exists();
 
-    let cache = if let Some(out_path) = out {
-        let root = out_path.to_path_buf();
-        CacheManager::new(&root).await?
-    } else {
-        CacheManager::from_env().await?
-    };
+    let cache = std::sync::Arc::new(CacheManager::from_env().await?);
 
     // 1. Direct package mode
     if is_cap || is_mod {
-        return ship_single(&cache, path, debug).await;
+        return ship_single(cache.clone(), path, debug, out).await;
     }
 
     let mut errors = Vec::new();
@@ -68,7 +51,7 @@ pub async fn ship(path: &Path, debug: bool, out: Option<&Path>) -> Result<()> {
 
         if is_cap || is_mod {
             found_any = true;
-            match ship_single(&cache, &subpath, debug).await {
+            match ship_single(cache.clone(), &subpath, debug, out).await {
                 Ok(()) => {}
                 Err(e) => errors.push((subpath, e)),
             }

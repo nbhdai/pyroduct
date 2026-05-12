@@ -1,17 +1,9 @@
 use crate::{artifacts::{
-    Artifact, Artifacts, CapabilityBinary, CapabilitySource, Module, ModuleBinary, ModuleSource,
+    Artifact, Artifacts, Module, ModuleBinary, ModuleSource,
     Playbook,
 }};
 
-#[cfg(feature = "compiler")]
-use crate::build::BuildError;
-
-use crate::debug::{self, CapabilityDebug, ModuleDebug};
 use cargo_toml::Dependency;
-use pyro_macro::{
-    ffi::generate_capability,
-    module::generate_module,
-};
 use std::path::{Path, PathBuf};
 use std::{collections::HashMap, io};
 use tokio::fs;
@@ -248,71 +240,6 @@ impl CacheManager {
         }
     }
 
-
-    #[cfg(feature = "compiler")]
-    pub async fn debug_capabilities(
-        &self,
-        author: &str,
-        name: &str,
-        version: &str,
-    ) -> Result<CapabilityDebug, BuildError> {
-        let path = self.capabilities_dir(author, name, version);
-        let binary = CapabilityBinary::from_dir(&path).await.map_err(|error| {
-            BuildError::io("failed to load capability binary from cache", error)
-        })?;
-
-        let symbols = debug::symbols(&binary);
-
-        let source = CapabilitySource::from_dir(&path).await.map_err(|error| {
-            BuildError::io("failed to load capability source from cache", error)
-        })?;
-
-        let code = generate_capability(
-            &source.src_lib_rs,
-            &source.manifest.capability.name,
-            &source.manifest.capability.version,
-        )
-        .map_err(|e| {
-            BuildError::Documentation(format!("Capability code generation error: {}", e))
-        })?;
-        let cap_rs = Some(prettyplease::unparse(&code));
-
-        let debug = CapabilityDebug { symbols, cap_rs };
-        debug.write_to_directory(&path).await?;
-
-        Ok(debug)
-    }
-
-    #[cfg(feature = "compiler")]
-    pub async fn debug_module(&self, hash: &str) -> Result<ModuleDebug, BuildError> {
-        let path = self.root.join("anon").join(hash);
-        let source = ModuleSource::from_dir(&path)
-            .await
-            .map_err(|error| BuildError::io("failed to load module source from cache", error))?;
-        let binary = ModuleBinary::from_dir(&path)
-            .await
-            .map_err(|error| BuildError::io("failed to load module binary from cache", error))?;
-
-        let wat = match debug::wat(&binary) {
-            Ok(wat) => Some(wat),
-            Err(error) => {
-                tracing::error!(error, "Unable to create wat");
-                None
-            }
-        };
-
-        let generated_code = generate_module(&source.source).map_err(|e| {
-            BuildError::Documentation(format!("Module code generation error: {}", e))
-        })?;
-        let cap_rs = Some(prettyplease::unparse(&generated_code));
-
-        let debug = ModuleDebug { wat, cap_rs };
-        debug.write_to_directory(&path).await?;
-
-        Ok(debug)
-    }
-
-    #[cfg(feature = "compiler")]
     pub async fn capability_config_spec(
         &self,
         author: &str,

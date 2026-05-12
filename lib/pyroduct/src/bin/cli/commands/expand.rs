@@ -1,9 +1,7 @@
 use anyhow::{Context, Result};
 use fs_err as fs;
 use pyro_artifacts::{
-    artifacts::{Artifact, Artifacts, Module},
-    debug::CapSymbols,
-    environment::Environment,
+    artifacts::{Artifact, Artifacts, Module}, cache::CacheManager, debug::CapSymbols, environment::Environment
 };
 use pyro_macro::{ffi::generate_capability, module::generate_module};
 use std::path::Path;
@@ -73,8 +71,9 @@ pub async fn expand(path: &Path, no_compile: bool) -> Result<()> {
 
 pub async fn expand_single(path: &Path, no_compile: bool) -> Result<bool> {
     let output_dir = path.join("artifacts");
+    let cache = std::sync::Arc::new(CacheManager::from_env().await?);
 
-    let env = Environment::new(path.to_path_buf()).await?;
+    let env = Environment::new(path.to_path_buf(), cache).await?;
     let artifacts = if no_compile {
         // Try to load artifacts from target/release
         let target_dir = Environment::get_target_dir(&path).await?;
@@ -120,8 +119,8 @@ pub async fn expand_single(path: &Path, no_compile: bool) -> Result<bool> {
 
                 let code = generate_capability(
                     &source.src_lib_rs,
-                    &source.manifest.ident().name,
-                    &source.manifest.ident().version,
+                    &source.manifest.capability.name,
+                    &source.manifest.capability.version,
                 )
                 .context("Capability code")?;
                 let code = prettyplease::unparse(&code);
