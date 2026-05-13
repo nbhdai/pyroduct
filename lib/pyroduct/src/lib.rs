@@ -6,6 +6,8 @@ pub mod error;
 pub mod format;
 pub mod panic;
 
+pub mod session;
+
 #[cfg(feature = "host")]
 pub mod module;
 
@@ -14,6 +16,7 @@ pub mod wasm;
 
 #[cfg(feature = "host")]
 pub mod pipeline;
+
 #[cfg(feature = "host")]
 pub mod transport;
 
