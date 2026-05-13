@@ -3,17 +3,17 @@ members = [
     "pyroduct",
     "pyro-macro",
     "pyro-derive",
-    "arrow-file",
-    "spec",
-    "artifacts",
+    "pyro-file",
+    "pyro-spec",
+    "pyro-artifacts",
 ]
 
 default-members = [
     "pyroduct",
     "pyro-macro",
-    "arrow-file",
-    "spec",
-    "artifacts",
+    "pyro-file",
+    "pyro-spec",
+    "pyro-artifacts",
 ]
 resolver = "2"
 
@@ -32,9 +32,9 @@ homepage = "nbhd.ai"
 pyro-macro = { path = "pyro-macro", version = "0.1.0" }
 pyro-derive = { path = "pyro-derive", version = "0.1.0" }
 pyroduct = { path = "pyroduct", version = "0.1.0" }
-pyro-arrow-file = { path = "arrow-file", version = "0.1.0" }
-pyro-spec = { path = "spec", version = "0.1.0" }
-pyro-artifacts = { path = "artifacts", version = "0.1.0" }
+pyro-file = { path = "pyro-file", version = "0.1.0" }
+pyro-spec = { path = "pyro-spec", version = "0.1.0" }
+pyro-artifacts = { path = "pyro-artifacts", version = "0.1.0" }
 
 # Errors and reporting
 anyhow = "1.0.100"

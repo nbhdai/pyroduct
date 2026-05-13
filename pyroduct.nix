@@ -54,8 +54,6 @@
       name,
       version,
       src,
-      interfaces ? [ ],
-      capabilities ? [ ],
       author,
     }:
     let
@@ -63,7 +61,7 @@
         pname = "lib-${name}";
         version = version;
         src = src;
-        preBuild = "cp -r $src/. .";
+        cargoVendorDir = null;
         cargoExtraArgs = "--lib";
       };
 
@@ -116,13 +114,6 @@
         version = c.version;
       }) capabilities;
 
-      wasmDerivation = craneLibWasm.buildPackage {
-        pname = "mod-${name}";
-        version = "0.1.0";
-        src = src;
-        preBuild = "cp -r $src/. .";
-      };
-
       drv = pkgs.stdenv.mkDerivation {
         pname = "module-${name}";
         version = "0.1.0";
@@ -166,7 +157,7 @@
 
           find $out/artifacts -name "target" -exec rm -rf {} + || true
 
-          WASM_FILE=$(find ${wasmDerivation} -name "*.wasm" | head -n 1)
+          WASM_FILE=$(find ./artifacts -name "*.wasm" | head -n 1)
           if [ -n "$WASM_FILE" ]; then
             cp "$WASM_FILE" $out/mod.wasm
           fi

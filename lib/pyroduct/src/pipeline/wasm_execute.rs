@@ -161,7 +161,7 @@ impl Pipeline {
                         let arrow_path = self.output_dir.join(format!("batch_{}.arrow", self.current_wal_id));
                         #[cfg(feature = "cli")]
                         {
-                            if let Ok(bytes) = pyro_arrow_file::record_batch_to_bytes(&batch) {
+                            if let Ok(bytes) = pyro_file::record_batch_to_bytes(&batch) {
                                 let _ = std::fs::write(&arrow_path, bytes);
                             }
                         }

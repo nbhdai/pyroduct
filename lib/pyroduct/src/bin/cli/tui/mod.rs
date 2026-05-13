@@ -193,7 +193,7 @@ impl App {
         }
         let bytes = fs::read(input_path)?;
         let filename = input_path.file_name().unwrap_or_default().to_string_lossy();
-        let batches = pyro_arrow_file::parse_data_to_batch(bytes, &filename).await?;
+        let batches = pyro_file::parse_data_to_batch(bytes, &filename).await?;
         if batches.is_empty() {
             Ok(RecordBatch::new_empty(Arc::new(Schema::empty())))
         } else {
