@@ -151,6 +151,7 @@ async fn test_anon_compile_with_interface() {
     };
 
     let mod_source = ModuleSource {
+        ident: None,
         dependencies: ModuleDependencies {
             dependencies: BTreeMap::new(),
             capabilities: vec![cap],
@@ -177,6 +178,7 @@ async fn test_module_wasm_exact_match() {
     let builder = Builder::new(&dir.path().join("build"), test_config(), Arc::clone(&cache)).await.unwrap();
 
     let source = ModuleSource {
+        ident: None,
         dependencies: ModuleDependencies {
             dependencies: BTreeMap::new(),
             capabilities: vec![],
@@ -254,6 +256,7 @@ async fn test_load_playbook() {
     };
 
     let mod_source = ModuleSource {
+        ident: None,
         dependencies: ModuleDependencies {
             dependencies: BTreeMap::new(),
             capabilities: vec![cap],

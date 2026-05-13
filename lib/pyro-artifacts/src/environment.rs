@@ -276,7 +276,14 @@ impl Environment {
             crate::cargo::ProjectManifest::Module(module_manifest) => {
                 let wasm_path = self.get_wasm_artifact(&name).ok();
 
+                let ident = crate::artifacts::ModuleIdent {
+                    author: self.author(),
+                    name: self.name(),
+                    version: self.version(),
+                };
+
                 let source = crate::artifacts::ModuleSource {
+                    ident: Some(ident.clone()),
                     dependencies: crate::artifacts::ModuleDependencies {
                         dependencies: module_manifest.dependencies.clone(),
                         capabilities: module_manifest.capabilities.values().cloned().collect(),
@@ -295,6 +302,7 @@ impl Environment {
                             hash,
                             func,
                             capabilities: module_manifest.capabilities.values().cloned().collect(),
+                            ident: Some(ident.clone()),
                         })
                         .ok_or_else(|| {
                             EnvironmentError::InterfaceGeneration(
@@ -303,6 +311,7 @@ impl Environment {
                         })?;
 
                     let binary = crate::artifacts::ModuleBinary {
+                        ident: Some(ident),
                         wasm: fs::read(path).await?,
                         spec,
                     };
@@ -393,7 +402,14 @@ impl Environment {
                     String::new()
                 };
 
+                let ident = crate::artifacts::ModuleIdent {
+                    author: self.author(),
+                    name: self.name(),
+                    version: self.version(),
+                };
+
                 let source = crate::artifacts::ModuleSource {
+                    ident: Some(ident.clone()),
                     dependencies: crate::artifacts::ModuleDependencies {
                         dependencies: module_manifest.dependencies.clone(),
                         capabilities: module_manifest.capabilities.values().cloned().collect(),
@@ -408,6 +424,7 @@ impl Environment {
                         hash,
                         func,
                         capabilities: module_manifest.capabilities.values().cloned().collect(),
+                        ident: Some(ident.clone()),
                     })
                     .ok_or_else(|| {
                         EnvironmentError::InterfaceGeneration(
@@ -416,6 +433,7 @@ impl Environment {
                     })?;
 
                 let binary = crate::artifacts::ModuleBinary {
+                    ident: Some(ident),
                     wasm: fs::read(wasm_artifact).await?,
                     spec,
                 };
@@ -486,6 +504,7 @@ impl Environment {
                     })?;
 
                 let source = crate::artifacts::ModuleSource {
+                    ident: None,
                     dependencies: crate::artifacts::ModuleDependencies {
                         dependencies: module_manifest.dependencies.clone(),
                         capabilities: module_manifest.capabilities.values().cloned().collect(),
@@ -495,11 +514,13 @@ impl Environment {
                 let hash = source.hash();
 
                 let binary = crate::artifacts::ModuleBinary {
+                    ident: None,
                     wasm: wasm_bytes,
                     spec: crate::artifacts::ModuleSpec {
                         hash,
                         func: spec,
                         capabilities: vec![], // Capabilities not needed for WAT/RS generation
+                        ident: None,
                     },
                 };
 
@@ -556,6 +577,7 @@ impl Environment {
         match &self.manifest {
             crate::cargo::ProjectManifest::Module(module_manifest) => {
                 let source = crate::artifacts::ModuleSource {
+                    ident: None,
                     dependencies: crate::artifacts::ModuleDependencies {
                         dependencies: module_manifest.dependencies.clone(),
                         capabilities: module_manifest.capabilities.values().cloned().collect(),
@@ -570,6 +592,11 @@ impl Environment {
                         hash,
                         func,
                         capabilities: module_manifest.capabilities.values().cloned().collect(),
+                        ident: Some(crate::artifacts::ModuleIdent {
+                            author: self.author(),
+                            name: self.name(),
+                            version: self.version(),
+                        }),
                     })
                     .ok_or_else(|| {
                         EnvironmentError::InterfaceGeneration(

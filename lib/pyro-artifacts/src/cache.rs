@@ -188,6 +188,85 @@ impl CacheManager {
             .join(version)
     }
 
+    // --- Named module directory helpers ---
+
+    pub fn modules_base_dir(&self) -> PathBuf {
+        self.root.join("modules")
+    }
+
+    pub fn module_dir(&self, author: &str, name: &str, version: &str) -> PathBuf {
+        self.modules_base_dir()
+            .join(author)
+            .join(name)
+            .join(version)
+    }
+
+    pub async fn list_available_modules(
+        &self,
+    ) -> Result<Vec<(String, String, String)>, CacheError> {
+        let base = self.modules_base_dir();
+        if !base.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut results = Vec::new();
+        let mut authors = fs::read_dir(&base).await.map_err(|e| CacheError {
+            context: "Failed to read modules base dir".to_string(),
+            error: e,
+        })?;
+
+        while let Some(author_entry) = authors.next_entry().await.map_err(|e| CacheError {
+            context: "Failed to read author entry".to_string(),
+            error: e,
+        })? {
+            let author_path = author_entry.path();
+            if !author_path.is_dir() {
+                continue;
+            }
+            let author_name = author_entry.file_name().to_string_lossy().to_string();
+
+            let mut names = fs::read_dir(&author_path).await.map_err(|e| CacheError {
+                context: format!("Failed to read author dir: {}", author_path.display()),
+                error: e,
+            })?;
+
+            while let Some(name_entry) = names.next_entry().await.map_err(|e| CacheError {
+                context: "Failed to read name entry".to_string(),
+                error: e,
+            })? {
+                let name_path = name_entry.path();
+                if !name_path.is_dir() {
+                    continue;
+                }
+                let mod_name = name_entry.file_name().to_string_lossy().to_string();
+
+                let mut versions = fs::read_dir(&name_path).await.map_err(|e| CacheError {
+                    context: format!("Failed to read name dir: {}", name_path.display()),
+                    error: e,
+                })?;
+
+                while let Some(version_entry) =
+                    versions.next_entry().await.map_err(|e| CacheError {
+                        context: "Failed to read version entry".to_string(),
+                        error: e,
+                    })?
+                {
+                    let version_path = version_entry.path();
+                    if !version_path.is_dir() {
+                        continue;
+                    }
+                    let version = version_entry.file_name().to_string_lossy().to_string();
+
+                    if version_path.join("spec.json").exists() {
+                        results.push((author_name.clone(), mod_name.clone(), version));
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
     pub fn interfaces_base_dir(&self) -> PathBuf {
         self.root.join("interfaces")
     }
@@ -293,6 +372,60 @@ impl CacheManager {
         }
     }
 
+    // --- Named module lookup ---
+
+    pub async fn get_named_binary(
+        &self,
+        author: &str,
+        name: &str,
+        version: &str,
+    ) -> Result<ModuleBinary, CacheError> {
+        let path = self.module_dir(author, name, version);
+        if path.exists() {
+            let binary = ModuleBinary::from_dir(&path)
+                .await
+                .map_err(|error| CacheError {
+                    context: "Unable to load named module binary".to_string(),
+                    error,
+                })?;
+            Ok(binary)
+        } else {
+            Err(CacheError {
+                context: format!(
+                    "Missing named module binary for {}/{}/{}",
+                    author, name, version
+                ),
+                error: io::Error::new(io::ErrorKind::NotFound, "Not Found"),
+            })
+        }
+    }
+
+    pub async fn get_named_source(
+        &self,
+        author: &str,
+        name: &str,
+        version: &str,
+    ) -> Result<ModuleSource, CacheError> {
+        let path = self.module_dir(author, name, version);
+        if path.exists() {
+            let source = ModuleSource::from_dir(&path)
+                .await
+                .map_err(|error| CacheError {
+                    context: "Unable to load named module source".to_string(),
+                    error,
+                })?;
+            Ok(source)
+        } else {
+            Err(CacheError {
+                context: format!(
+                    "Missing named module source for {}/{}/{}",
+                    author, name, version
+                ),
+                error: io::Error::new(io::ErrorKind::NotFound, "Not Found"),
+            })
+        }
+    }
+
     pub async fn write_artifacts(&self, artifacts: &Artifacts) -> Result<(), CacheError> {
         match &artifacts {
             Artifacts::CapabilityBinary(capability) => {
@@ -355,25 +488,59 @@ impl CacheManager {
                     })
             }
             Artifacts::Module(Module::Binary(binary)) => {
-                let path = self.root.join("anon").join(&binary.spec.hash);
-                binary
-                    .write_to_directory(&path)
-                    .await
-                    .map_err(|e| CacheError {
-                        context: format!("Failed to write artifacts to {}", path.display()),
+                if let Some(ref ident) = binary.ident {
+                    // Named module: store at modules/$author/$name/$version
+                    let path = self.module_dir(&ident.author, &ident.name, &ident.version);
+                    fs::create_dir_all(&path).await.map_err(|e| CacheError {
+                        context: format!("Failed to create module dir {}", path.display()),
                         error: e,
-                    })
+                    })?;
+                    binary
+                        .write_to_directory(&path)
+                        .await
+                        .map_err(|e| CacheError {
+                            context: format!("Failed to write artifacts to {}", path.display()),
+                            error: e,
+                        })
+                } else {
+                    // Anonymous module: store at anon/$hash
+                    let path = self.root.join("anon").join(&binary.spec.hash);
+                    binary
+                        .write_to_directory(&path)
+                        .await
+                        .map_err(|e| CacheError {
+                            context: format!("Failed to write artifacts to {}", path.display()),
+                            error: e,
+                        })
+                }
             }
             Artifacts::Module(Module::Source(source)) => {
-                let hash = source.hash();
-                let path = self.root.join("anon").join(hash);
-                source
-                    .write_to_directory(&path)
-                    .await
-                    .map_err(|e| CacheError {
-                        context: format!("Failed to write artifacts to {}", path.display()),
+                if let Some(ref ident) = source.ident {
+                    // Named module: store at modules/$author/$name/$version
+                    let path = self.module_dir(&ident.author, &ident.name, &ident.version);
+                    fs::create_dir_all(&path).await.map_err(|e| CacheError {
+                        context: format!("Failed to create module dir {}", path.display()),
                         error: e,
-                    })
+                    })?;
+                    source
+                        .write_to_directory(&path)
+                        .await
+                        .map_err(|e| CacheError {
+                            context: format!("Failed to write artifacts to {}", path.display()),
+                            error: e,
+                        })
+                } else {
+                    // Anonymous module: store at anon/$hash
+                    let hash = source.hash();
+                    let path = self.root.join("anon").join(hash);
+                    source
+                        .write_to_directory(&path)
+                        .await
+                        .map_err(|e| CacheError {
+                            context: format!("Failed to write artifacts to {}", path.display()),
+                            error: e,
+                        })
+                }
             }
         }
     }
@@ -392,6 +559,30 @@ impl CacheManager {
         Ok(LoadedPlaybook {
             binary,
             configurations: playbook.configurations,
+            paths,
+        })
+    }
+
+    /// Load a named module by author/name/version and return a LoadedPlaybook.
+    pub async fn load_named_playbook(
+        &self,
+        author: &str,
+        name: &str,
+        version: &str,
+    ) -> Result<LoadedPlaybook, CacheError> {
+        let binary = self.get_named_binary(author, name, version).await?;
+        let mut paths = HashMap::new();
+
+        for cap in &binary.spec.capabilities {
+            let path = self
+                .capability_binary_path(&cap.author, &cap.package, &cap.version)
+                .await?;
+            paths.insert(cap.package.clone(), path);
+        }
+
+        Ok(LoadedPlaybook {
+            binary,
+            configurations: Default::default(),
             paths,
         })
     }

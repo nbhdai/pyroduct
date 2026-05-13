@@ -244,6 +244,7 @@ impl App {
             let module_source = pyro_artifacts::artifacts::ModuleSource {
                 dependencies,
                 source: source_pipeline.source.clone(),
+                ident: None,
             };
 
             let binary = self

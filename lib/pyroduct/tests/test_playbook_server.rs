@@ -59,6 +59,7 @@ async fn test_playbook_server_client() {
             }],
         },
         source: CODE.to_string(),
+                ident: None,
     };
 
     let binary = builder

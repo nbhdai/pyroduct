@@ -57,8 +57,19 @@ pub struct ModuleDependencies {
     pub capabilities: Vec<ResolvedCapability>,
 }
 
+/// Identity for a named module (from Module.toml [module] section).
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+pub struct ModuleIdent {
+    pub author: String,
+    pub name: String,
+    pub version: String,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct ModuleSource {
+    /// Named module identity (author/name/version), if this is a named module.
+    #[serde(default)]
+    pub ident: Option<ModuleIdent>,
     pub dependencies: ModuleDependencies,
     pub source: String,
 }
@@ -68,10 +79,15 @@ pub struct ModuleSpec {
     pub hash: String,
     pub func: ModuleFunc<'static>,
     pub capabilities: Vec<ResolvedCapability>,
+    #[serde(default)]
+    pub ident: Option<ModuleIdent>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct ModuleBinary {
+    /// Named module identity (author/name/version), if this is a named module.
+    #[serde(default)]
+    pub ident: Option<ModuleIdent>,
     pub wasm: Vec<u8>,
     pub spec: ModuleSpec,
 }
@@ -635,6 +651,7 @@ impl Artifact for ModuleSource {
         }
 
         Ok(ModuleSource {
+            ident: None,
             source: source
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Missing source.rs"))?,
             dependencies: dependencies.ok_or_else(|| {
@@ -652,6 +669,7 @@ impl Artifact for ModuleSource {
             )
         })?;
         Ok(ModuleSource {
+            ident: None,
             source: fs::read_to_string(path.join("source.rs")).await?,
             dependencies,
         })
@@ -713,6 +731,7 @@ impl Artifact for ModuleBinary {
         }
 
         Ok(ModuleBinary {
+            ident: None,
             wasm: wasm
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Missing mod.wasm"))?,
             spec: spec
@@ -729,6 +748,7 @@ impl Artifact for ModuleBinary {
             )
         })?;
         Ok(ModuleBinary {
+            ident: None,
             wasm: fs::read(path.join("mod.wasm")).await?,
             spec,
         })

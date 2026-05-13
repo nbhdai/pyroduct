@@ -52,6 +52,7 @@ async fn test_capability_configuration_respect() {
             }],
         },
         source: CODE.to_string(),
+                ident: None,
     };
 
     let binary = builder

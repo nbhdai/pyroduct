@@ -263,9 +263,14 @@ name = "mod_slot"
             hash,
             func,
             capabilities: source.dependencies.capabilities.clone(),
+            ident: None,
         };
 
-        let binary = ModuleBinary { wasm, spec };
+        let binary = ModuleBinary {
+            ident: None,
+            wasm,
+            spec,
+        };
 
         // Save to cache
         let _ = self.cache_manager.write_artifacts(&source.clone().into()).await;
