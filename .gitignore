@@ -7,8 +7,10 @@ capabilities/**/interface
 capabilities/**/*.json
 capabilities/**/artifacts
 capabilities/**/debug
+capabilities/**/Cargo.*
 modules/**/artifacts
 modules/**/debug
+modules/**/Cargo.*
 examples/**/logs
 .antigravity
 
