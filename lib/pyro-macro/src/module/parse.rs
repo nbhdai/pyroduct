@@ -16,20 +16,48 @@ pub enum OutputSpec {
 
 /// Parsed attributes for #[module(...)]
 pub struct ModuleAttrs {
+    pub session: bool,
     pub output: OutputSpec,
 }
 
 impl Parse for ModuleAttrs {
     fn parse(input: ParseStream) -> Result<Self> {
-        // Expect: output = ...
-        let ident: Ident = input.parse()?;
-        if ident != "output" {
-            return Err(syn::Error::new(ident.span(), "Expected `output = ...`"));
+        let mut session = false;
+
+        // Check for optional 'session' flag at the start
+        if input.peek(Ident) {
+            let lookahead: Ident = input.parse()?;
+            if lookahead == "session" {
+                session = true;
+                // Expect comma after session
+                input.parse::<Token![,]>()?;
+            } else if lookahead != "output" {
+                // Unexpected identifier
+                return Err(syn::Error::new(
+                    lookahead.span(),
+                    "Unexpected attribute. Expected 'session' or 'output = ...'",
+                ));
+            }
+            // If lookahead == "output", we fall through to parse output = ...
         }
 
-        input.parse::<Token![=]>()?;
+        // Expect: output = (consumed if not already done above)
+        if !session {
+            // We already consumed "output" when lookahead was "output", skip to "="
+            input.parse::<Token![=]>()?;
+        } else {
+            // We need to parse "output" and then "="
+            let ident: Ident = input.parse()?;
+            if ident != "output" {
+                return Err(syn::Error::new(
+                    ident.span(),
+                    "Expected `output = ...`",
+                ));
+            }
+            input.parse::<Token![=]>()?;
+        }
 
-        // Determine which pattern based on what follows
+        // Now parse the output spec value
         let output = if input.peek(syn::token::Paren) {
             // Pattern 2: (field1, field2, ...)
             let content;
@@ -55,6 +83,6 @@ impl Parse for ModuleAttrs {
             }
         };
 
-        Ok(ModuleAttrs { output })
+        Ok(ModuleAttrs { session, output })
     }
 }
