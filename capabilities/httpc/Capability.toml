@@ -4,7 +4,7 @@ name = "httpc"
 version = "0.1.0"
 
 [pyroduct]
-path = "../../lib/pyroduct"
+version = "0.1.0"
   
 [dependencies.host]
 reqwest = { version = "0.13.1", features = [ "json" ] }

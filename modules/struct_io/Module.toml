@@ -4,7 +4,7 @@ name = "struct_io"
 version = "0.1.0"
 
 [pyroduct]
-path = "../../lib/pyroduct"
+version = "0.1.0"
 
 [capabilities]
 httpc = { package = "httpc", author = "nbhdai", version = "0.1.0" }

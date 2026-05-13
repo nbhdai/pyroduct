@@ -4,7 +4,7 @@ name = "basic"
 version = "0.1.0"
 
 [pyroduct]
-path = "../../lib/pyroduct"
+version = "0.1.0"
 
 [capabilities]
 
