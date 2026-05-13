@@ -40,10 +40,12 @@ pub struct CacheManager {
 
 impl CacheManager {
     pub async fn new(root: &Path) -> Result<Self, CacheError> {
-        fs::create_dir_all(&root).await.map_err(|e| CacheError {
-            context: "Failed to create cache root".to_string(),
-            error: e,
-        })?;
+        if !root.exists() {
+            fs::create_dir_all(&root).await.map_err(|e| CacheError {
+                context: "Failed to create cache root".to_string(),
+                error: e,
+            })?;
+        }
         let manager = Self {
             root: root.to_path_buf(),
         };

@@ -90,12 +90,14 @@ in
           pkgs.openssl
           pkgs.cacert
         ];
-
-        dontBuild = true;
+        
+        buildPhase = ''
+          pyroduct ship . --out ./artifacts/
+        '';
 
         installPhase = ''
           mkdir -p $out/${author}/${name}/${version}
-          pyroduct ship . --out $out/${author}/${name}/${version}
+          cp -r ./artifacts/* $out/${author}/${name}/${version}/
           find $out/${author}/${name}/${version} -name "target" -exec rm -rf {} + || true
         '';
       };
@@ -233,16 +235,16 @@ in
         '';
 
         installPhase = ''
-          mkdir -p $out/artifacts
+          mkdir -p $out/
           if [ -d ./artifacts ]; then
-            cp -r ./artifacts/* $out/artifacts/ || true
+            cp -r ./artifacts/* $out/ || true
           fi
 
           find $out/artifacts -name "target" -exec rm -rf {} + || true
 
           WASM_FILE=$(find ${wasmDerivation} -name "*.wasm" | head -n 1)
           if [ -n "$WASM_FILE" ]; then
-            cp "$WASM_FILE" $out/artifacts/mod.wasm
+            cp "$WASM_FILE" $out/mod.wasm
           fi
         '';
       };
