@@ -6,7 +6,9 @@ result
 capabilities/**/interface
 capabilities/**/*.json
 capabilities/**/artifacts
+capabilities/**/debug
 modules/**/artifacts
+modules/**/debug
 examples/**/logs
 .antigravity
 

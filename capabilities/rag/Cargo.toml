@@ -5,7 +5,7 @@ edition = "2024"
 authors = ["nbhdai"]
 
 [dependencies.pyroduct]
-path = "../../lib/pyroduct"
+version = "0.1.0"
 features = ["capability"]
 
 [dependencies.reqwest]

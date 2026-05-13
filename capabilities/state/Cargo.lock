@@ -537,6 +537,8 @@ dependencies = [
 [[package]]
 name = "pyro-derive"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "403e3f831955770db826b5633987aa1310c570b5a802d45b579a2667ceac6dc6"
 dependencies = [
  "pyro-macro",
  "quote",
@@ -546,6 +548,8 @@ dependencies = [
 [[package]]
 name = "pyro-macro"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9277f164331d5d72a9cd5d2f02ec19e5c11d013e776571728abe5f7826f8993e"
 dependencies = [
  "heck",
  "prettyplease",
@@ -560,6 +564,8 @@ dependencies = [
 [[package]]
 name = "pyro-spec"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c884efa6560486b770f8c960f949dc80ef1988f9d6384ada43fa5689b6ca467e"
 dependencies = [
  "serde",
  "thiserror",
@@ -568,6 +574,8 @@ dependencies = [
 [[package]]
 name = "pyroduct"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d94c6fcd7e476a3c2b2af84888a5177bdff55a23177cb0cc0a715c8b1e20ba10"
 dependencies = [
  "anyhow",
  "async-ffi",
