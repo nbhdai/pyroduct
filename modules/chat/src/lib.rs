@@ -3,9 +3,10 @@ use ollama::{OllamaClient, ChatMessage, ChatMessageRef, OllamaClientMethods};
 
 /// Takes an array of chat messages, sends them to the HF LLM capability,
 /// and returns the assistant's reply along with the full updated history.
-#[pyroduct::module(output = response)]
+#[pyroduct::module(session, output = response)]
 fn process<'a>(
-    input: Vec<ChatMessage>,
+    prior: Vec<ChatMessage>,
+    input: ChatMessage,
 ) -> Result<ChatMessage> {
 
     // 1. Register a client with the HF LLM capability
