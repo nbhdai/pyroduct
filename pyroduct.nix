@@ -6,62 +6,6 @@
   pyroductSrc,
 }:
 
-let
-  # Run pyroduct expand to generate Cargo.toml and FFI glue
-  expandProject =
-    {
-      type,
-      name,
-      version,
-      src,
-      interfaces ? [ ],
-      capabilities ? [ ],
-    }:
-    pkgs.runCommand "expanded-src-${type}-${name}-${version}"
-      {
-        nativeBuildInputs = [
-          pyroductTool
-          pkgs.cargo
-          pkgs.rustc
-        ];
-      }
-      ''
-        mkdir -p $out
-        cp -a ${src}/. $out/
-        chmod -R u+w $out/
-        cd $out
-
-        # Fix relative paths to pyroduct in manifest files
-        mkdir -p $out/pyroduct-src
-        cp -r ${pyroductSrc}/* $out/pyroduct-src/
-        for f in Capability.toml Module.toml Cargo.toml; do
-          if [ -f "$f" ]; then
-            sed -i 's|path = "[^"]*lib/pyroduct"|path = "./pyroduct-src/pyroduct"|g' "$f"
-          fi
-        done
-
-        # pyroduct expand needs a cache dir if dependencies are listed
-        export PYRODUCT=./cache
-        mkdir -p ./cache
-
-        # Populate cache with dependencies before expansion
-        ${builtins.concatStringsSep "\n" (
-          map (
-            dep:
-            "mkdir -p ./cache/interfaces/${dep.author}/${dep.name}/${dep.version} && cp -r ${dep.drv}/${dep.author}/${dep.name}/${dep.version}/* ./cache/interfaces/${dep.author}/${dep.name}/${dep.version}/ || true"
-          ) interfaces
-        )}
-        ${builtins.concatStringsSep "\n" (
-          map (
-            dep:
-            "mkdir -p ./cache/capabilities/${dep.author}/${dep.name}/${dep.version} && cp -r ${dep.drv}/${dep.author}/${dep.name}/${dep.version}/* ./cache/capabilities/${dep.author}/${dep.name}/${dep.version}/ || true"
-          ) capabilities
-        )}
-
-        pyroduct expand --no-compile .
-      '';
-
-in
 {
   interfaceBuild =
     {
@@ -71,16 +15,10 @@ in
       author,
     }:
     let
-      src_expanded = expandProject {
-        type = "interface";
-        name = name;
-        version = version;
-        src = src;
-      };
       drv = pkgs.stdenv.mkDerivation {
         pname = "interface-${name}";
         version = version;
-        src = src_expanded;
+        src = src;
 
         nativeBuildInputs = [
           pyroductTool
@@ -92,6 +30,8 @@ in
         ];
         
         buildPhase = ''
+          export PYRODUCT=./cache
+          mkdir -p ./cache
           pyroduct ship . --out ./artifacts/
         '';
 
@@ -119,19 +59,10 @@ in
       author,
     }:
     let
-      src_expanded = expandProject {
-        type = "capability";
-        name = name;
-        version = version;
-        src = src;
-        interfaces = interfaces;
-        capabilities = capabilities;
-      };
-
       libDerivation = craneLibNative.buildPackage {
         pname = "lib-${name}";
         version = version;
-        src = src_expanded;
+        src = src;
         preBuild = "cp -r $src/. .";
         cargoExtraArgs = "--lib";
       };
@@ -139,7 +70,7 @@ in
       drv = pkgs.stdenv.mkDerivation {
         pname = "capability-${name}";
         version = version;
-        src = src_expanded;
+        src = src;
 
         nativeBuildInputs = [
           pyroductTool
@@ -151,6 +82,7 @@ in
         ];
 
         installPhase = ''
+          export PYRODUCT=$TMPDIR
           mkdir -p $out/${author}/${name}/${version}
 
           LIB_FILE=$(find ${libDerivation} -name "*.dylib" -o -name "*.so" -o -name "*.dll" | head -n 1)
@@ -183,26 +115,18 @@ in
         name = c.name;
         version = c.version;
       }) capabilities;
-      src_expanded = expandProject {
-        type = "module";
-        name = name;
-        version = "0.1.0";
-        src = src;
-        interfaces = interfaces;
-        capabilities = capabilities;
-      };
 
       wasmDerivation = craneLibWasm.buildPackage {
         pname = "mod-${name}";
         version = "0.1.0";
-        src = src_expanded;
+        src = src;
         preBuild = "cp -r $src/. .";
       };
 
       drv = pkgs.stdenv.mkDerivation {
         pname = "module-${name}";
         version = "0.1.0";
-        src = src_expanded;
+        src = src;
 
         nativeBuildInputs = [
           pyroductTool
