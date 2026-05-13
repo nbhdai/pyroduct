@@ -143,7 +143,7 @@ fn test_roundtrip_via_bridgable() {
     };
 
     let vec = original.ship().expect("serialize failed");
-    let typed = SimpleStruct::expose(vec).expect("parse failed");
+    let typed = SimpleStruct::expose(vec.view()).expect("parse failed");
     let mut receiver = SimpleStruct::receiver();
     let recovered = receiver.receive(&typed).expect("deserialize failed");
 

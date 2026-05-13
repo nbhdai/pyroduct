@@ -1,13 +1,33 @@
-use pyro_artifacts::{artifacts::Artifacts, cache::CacheManager, environment::Environment};
-use indexmap::IndexMap;
-use pyroduct::{
-    PyroRow,
-    module::ModuleConfig,
-    pipeline::{PipelineConfig, PipelineFactory},
+use pyro_artifacts::{
+    artifacts::{ModuleDependencies, ModuleSource, Playbook},
+    build::Builder,
+    cache::CacheManager,
+    cargo::ResolvedCapability,
 };
+use pyroduct::{PyroRow, pipeline::PipelineConfig};
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+
+const CODE: &'static str = r#"
+//! The behavior of this module changes based on the configuration 
+//! of the linked capability
+
+use config::{TransformClient, TransformClientMethods};
+
+#[pyroduct::module(output = (original, transformed, transform_count))]
+pub fn call(input: &str) -> Result<(String, String, u64)> {
+    let client = TransformClient {
+        prefix: "[TEST] ".to_string(),
+    }.register()?;
+
+    let original = input.to_string();
+    let transformed = client.transform(input.to_string())?;
+    let transform_count = client.get_transform_count()? as u64;
+
+    Ok((original, transformed, transform_count))
+}
+"#;
 
 /// Test that capability configurations (passed via PipelineDef) are correctly respected by the server.
 #[tokio::test]
@@ -20,38 +40,74 @@ async fn test_capability_configuration_respect() {
         .with(fmt::layer().with_target(true).pretty())
         .with(filter)
         .init();
-    let cache = CacheManager::from_env().await.unwrap();
-
-    let env = Environment::new("../../modules/cap_config/".into()).await.unwrap();
-    let artifacts = env.package(false).await.unwrap();
-    for artifact in &artifacts {
-        cache.write_artifacts(artifact).await.unwrap();
-    }
-    let hash = match &artifacts[0] {
-        Artifacts::Module(module) => module.hash(),
-        _ => panic!("Not a module!"),
+    let cache = std::sync::Arc::new(CacheManager::from_env().await.unwrap());
+    let builder = Builder::from_env(cache.clone()).await.unwrap();
+    let source = ModuleSource {
+        dependencies: ModuleDependencies {
+            dependencies: BTreeMap::new(),
+            capabilities: vec![ResolvedCapability {
+                package: "config".to_string(),
+                author: "nbhdai".to_string(),
+                version: "0.1.0".to_string(),
+            }],
+        },
+        source: CODE.to_string(),
+                ident: None,
     };
+
+    let binary = builder
+        .compile(&source)
+        .await
+        .expect("Valid module should compile");
 
     let config = PipelineConfig {
-        pipeline: IndexMap::from([(
-            "config".to_string(),
-            ModuleConfig {
-                module: pyroduct::module::Module::Hash(hash),
-                configurations: HashMap::from([(
-                    "config".to_string(),
-                    Some(json!({
-                        "uppercase": true,
-                        "suffix": "!!!"
-                    })),
-                )]),
-            },
-        )]),
+        playbook: Playbook {
+            hash: binary.hash(),
+            configurations: HashMap::from([(
+                "config".to_string(),
+                Some(json!({
+                    "uppercase": true,
+                    "suffix": "!!!"
+                })),
+            )]),
+        },
+        wal_capacity: 1000,
+        success_log_retention_secs: 3600,
+        error_log_retention_secs: 86400 * 7,
+        output_dir: std::env::current_dir().unwrap(),
     };
-    let mut factory = PipelineFactory::load(&config).await.unwrap();
+    let config = config.load(&cache).await.unwrap();
+    let factory = config.factory().unwrap();
     let mut pipeline = factory.build().await.unwrap();
 
     let input = PyroRow::from([("input", "hello".into())]);
     let result = pipeline.process(&input).await;
+
+    for (i, step) in result.steps.iter().enumerate() {
+        println!("--- Step {} logs ---", i);
+        for log in &step.logs.module_logs {
+            println!("{}", log);
+        }
+        for ((cap, ver), logs) in &step.logs.capability_logs {
+            for log in logs {
+                println!("[{} v{}]: {}", cap, ver, log);
+            }
+        }
+    }
+
+    if let Some(failure) = &result.failure {
+        println!("--- Failure logs ---");
+        for log in &failure.logs.module_logs {
+            println!("{}", log);
+        }
+        for ((cap, ver), logs) in &failure.logs.capability_logs {
+            for log in logs {
+                println!("[{} v{}]: {}", cap, ver, log);
+            }
+        }
+        println!("Failure: {:?}", failure.result);
+    }
+
     let row = result.row().unwrap();
     let transformed = row.get_str("transformed").unwrap();
     // Result should be (count: 0, incremented: 0) since fetch_add returns previous

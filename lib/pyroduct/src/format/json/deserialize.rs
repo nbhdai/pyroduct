@@ -6,11 +6,10 @@ use tracing::trace;
 use crate::{CapturedError, PyroError, PyroResult};
 
 use crate::format::{
-    PyroVec,
+    PyroRef, PyroView,
     format::{Parser, UserHeaderValues, Wrapper},
     header::PyroData,
     json::buffers::JsonBuf,
-    view::PyroView,
 };
 
 // ─── Parser ──────────────────────────────────────────────────────────────────
@@ -32,14 +31,14 @@ impl<BD: PyroData, T> Wrapper for JsonParser<BD, T> {
 
 // ─── PyroVec (owned) ──────────────────────────────────────────────────────
 
-impl<T> Parser<PyroVec, T> for JsonParser<PyroVec, T>
+impl<T> Parser<PyroView, T> for JsonParser<PyroView, T>
 where
     T: UserHeaderValues + DeserializeOwned,
 {
     type HeaderValues = super::JsonHeader;
     /// For JSON the "parsed type" is just `T` — no archived form.
     type ParsedType = T;
-    type TypedWrapper = JsonBuf<PyroVec, T>;
+    type TypedWrapper = JsonBuf<PyroView, T>;
 
     fn unchecked_parse(self) -> PyroResult<Self::TypedWrapper> {
         let slice = &*self.data;
@@ -60,15 +59,15 @@ where
     }
 }
 
-// ─── PyroView (borrowed) ──────────────────────────────────────────────────
+// ─── PyroRef (borrowed) ──────────────────────────────────────────────────
 
-impl<'a, T> Parser<PyroView<'a>, T> for JsonParser<PyroView<'a>, T>
+impl<'a, T> Parser<PyroRef<'a>, T> for JsonParser<PyroRef<'a>, T>
 where
     T: UserHeaderValues + DeserializeOwned,
 {
     type HeaderValues = super::JsonHeader;
     type ParsedType = T;
-    type TypedWrapper = JsonBuf<PyroView<'a>, T>;
+    type TypedWrapper = JsonBuf<PyroRef<'a>, T>;
 
     fn unchecked_parse(self) -> PyroResult<Self::TypedWrapper> {
         let slice = &*self.data;

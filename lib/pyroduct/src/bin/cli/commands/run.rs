@@ -1,17 +1,22 @@
 use std::io::{BufWriter, Write};
 use std::path::Path;
+use tokio::io::AsyncReadExt;
+use tokio::net::{UnixListener, TcpListener};
 
 use anyhow::{Context, Result, anyhow};
 use clap::ValueEnum;
 use fs_err as fs;
 
+use pyro_artifacts::cache::CacheManager;
+use pyroduct::format::PyroLogs;
+use pyroduct::pipeline::pipeline::LoadedPipelineConfig;
 use pyroduct::{
     PyroRow,
     format::value::arrow::PreBatch,
-    pipeline::{PipelineConfig, PipelineFactory, PipelinePool},
+    pipeline::{Pipeline, PipelineConfig, PipelinePool},
 };
 
-use pyro_arrow_file::{
+use pyro_file::{
     parse_data_to_batch, record_batch_to_bytes, write_csv, write_jsonl, write_parquet,
 };
 
@@ -35,10 +40,10 @@ impl OutputFormat {
 }
 
 /// Helper to load config and resolve paths
-pub async fn load_config(config_path: &Path) -> Result<PipelineConfig> {
+async fn load_config(config_path: &Path) -> Result<LoadedPipelineConfig> {
     tracing::info!("Loading config from {:?}", config_path);
     let config_str = fs::read_to_string(config_path)?;
-    let mut pipeline: PipelineConfig = match config_path.extension().map(|s| s.as_encoded_bytes()) {
+    let pipeline: PipelineConfig = match config_path.extension().map(|s| s.as_encoded_bytes()) {
         Some(b"toml") => toml::from_str(&config_str).context("Failed to parse pipeline TOML")?,
         Some(b"yaml") => {
             serde_yaml::from_str(&config_str).context("Failed to parse pipeline yaml")?
@@ -48,27 +53,73 @@ pub async fn load_config(config_path: &Path) -> Result<PipelineConfig> {
         }
         _ => anyhow::bail!("Unknown extension, supports toml, yaml and json"),
     };
-    for (name, value) in pipeline.pipeline.iter_mut() {
-        match &mut value.module {
-            pyroduct::module::Module::Path(path) => {
-                if path.is_relative() {
-                    let base = config_path.parent().unwrap_or(Path::new("."));
-                    *path = base.join(&path);
-                }
-                tracing::debug!(step = name, path = ?path, "Resolved module path");
-            }
-            _ => {}
-        }
-    }
-    Ok(pipeline)
+    let cache = CacheManager::from_env().await?;
+    Ok(pipeline.load(&cache).await?)
 }
 
 /// Processes a single row from a JSON string and prints the result to stdout.
 pub async fn run(config_path: &Path, input_json: &str) -> Result<()> {
-    let config = load_config(config_path).await?;
-    let mut factory = PipelineFactory::load(&config).await?;
+    let loaded = load_config(config_path).await?;
+    let factory = loaded.factory()?;
     let mut pipeline = factory.build().await?;
 
+    process_and_print(&mut pipeline, input_json).await
+}
+
+pub async fn run_socket(config_path: &Path, socket_addr: &str) -> Result<()> {
+    let loaded = load_config(config_path).await?;
+    let factory = loaded.factory()?;
+    let mut pipeline = factory.build().await?;
+
+    if let Ok(addr) = socket_addr.parse::<std::net::SocketAddr>() {
+        let listener = TcpListener::bind(addr).await.context("Failed to bind to TCP socket")?;
+        tracing::info!("Listening on TCP socket {}", addr);
+
+        loop {
+            let (mut socket, _) = listener.accept().await?;
+            let mut buffer = String::new();
+            if let Err(e) = socket.read_to_string(&mut buffer).await {
+                tracing::error!("Failed to read from socket: {}", e);
+                continue;
+            }
+
+            if buffer.is_empty() {
+                continue;
+            }
+
+            if let Err(e) = process_and_print(&mut pipeline, &buffer).await {
+                tracing::error!("Failed to process input from socket: {}", e);
+            }
+        }
+    } else {
+        let socket_path = Path::new(socket_addr);
+        if socket_path.exists() {
+            fs::remove_file(socket_path).context("Failed to remove existing socket file")?;
+        }
+
+        let listener = UnixListener::bind(socket_path).context("Failed to bind to Unix socket")?;
+        tracing::info!("Listening on Unix socket {:?}", socket_path);
+
+        loop {
+            let (mut socket, _) = listener.accept().await?;
+            let mut buffer = String::new();
+            if let Err(e) = socket.read_to_string(&mut buffer).await {
+                tracing::error!("Failed to read from socket: {}", e);
+                continue;
+            }
+
+            if buffer.is_empty() {
+                continue;
+            }
+
+            if let Err(e) = process_and_print(&mut pipeline, &buffer).await {
+                tracing::error!("Failed to process input from socket: {}", e);
+            }
+        }
+    }
+}
+
+async fn process_and_print(pipeline: &mut Pipeline, input_json: &str) -> Result<()> {
     tracing::debug!("Parsing input JSON directly to PyroRow");
     let input_row: PyroRow<'static> =
         serde_json::from_str(input_json).context("Failed to deserialize input JSON to PyroRow")?;
@@ -105,7 +156,7 @@ pub async fn run(config_path: &Path, input_json: &str) -> Result<()> {
 
     if has_logs {
         println!("\n=== Logs ===");
-        let print_step_logs = |step_idx: usize, logs: &pyroduct::module::PyroLogs| {
+        let print_step_logs = |step_idx: usize, logs: &PyroLogs| {
             if logs.module_logs.is_empty() && logs.capability_logs.is_empty() {
                 return;
             }
@@ -146,7 +197,7 @@ pub async fn run_batch(
     format: OutputFormat,
 ) -> Result<()> {
     let config = load_config(config_path).await?;
-    let mut factory = PipelineFactory::load(&config).await?;
+    let factory = config.factory()?;
     let pipeline = factory.build().await?;
     let pool = PipelinePool::new(vec![pipeline]);
 

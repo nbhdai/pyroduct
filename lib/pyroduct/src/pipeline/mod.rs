@@ -1,6 +1,5 @@
 pub mod pipeline;
 pub mod wasm_execute;
-pub mod wal;
 
 pub use pipeline::{PipelineConfig, PipelineFactory};
 use thiserror::Error;

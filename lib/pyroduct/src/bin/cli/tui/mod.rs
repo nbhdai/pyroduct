@@ -1,5 +1,6 @@
 // lib/cli/src/tui/mod.rs
 use std::{
+    collections::HashMap,
     fs,
     io::stdout,
     path::{Path, PathBuf},
@@ -10,15 +11,13 @@ use std::{
 use arrow::array::RecordBatch;
 use arrow::datatypes::Schema;
 
-use crate::commands::run::load_config;
-use anyhow::Result;
-use pyro_artifacts::cache::CacheManager;
+use anyhow::{Context as _, Result};
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use pyroduct::pipeline::{PipelineConfig, PipelineFactory};
+use pyro_artifacts::{build::Builder, cache::CacheManager, cargo::ResolvedCapability};
 use pyroduct::pipeline::{PipelinePool, wasm_execute::PipelineExecution};
 use ratatui::{
     Frame, Terminal,
@@ -40,9 +39,35 @@ pub mod wasm;
 
 use keys::{Hotkey, HotkeyProvider};
 
+fn default_wal_capacity() -> usize {
+    1000
+}
+fn default_success_retention() -> u64 {
+    3600
+}
+fn default_error_retention() -> u64 {
+    86400 * 7
+}
+
+/// A single pipeline configuration in the TUI.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+pub struct SourcePipeline {
+    pub name: String,
+    pub source: String,
+    pub compile_error: Option<String>,
+    #[serde(default)]
+    pub capabilities: HashMap<ResolvedCapability, Option<serde_json::Value>>,
+    #[serde(default = "default_wal_capacity")]
+    pub wal_capacity: usize,
+    #[serde(default = "default_success_retention")]
+    pub success_log_retention_secs: u64,
+    #[serde(default = "default_error_retention")]
+    pub error_log_retention_secs: u64,
+}
+
 pub struct PipelineState {
     pub yaml_path: PathBuf,
-    pub tui: PipelineConfig,
+    pub pipelines: Vec<SourcePipeline>,
     pub input: RecordBatch,
     pub execution: Vec<PipelineExecution>,
 }
@@ -54,7 +79,8 @@ pub enum ViewState {
 }
 
 pub struct App {
-    pub cache: CacheManager,
+    pub cache: Arc<CacheManager>,
+    pub builder: Builder,
     pub pipeline: PipelineState,
     pub view: ViewState,
     pub status_msg: String,
@@ -63,42 +89,95 @@ pub struct App {
 
 impl App {
     pub async fn load(yaml_path: &Path, input_path: &Path) -> Result<Self> {
-        let cache = CacheManager::from_env().await?;
-        let mut pipeline_config = load_config(yaml_path).await?;
-        pipeline_config.load_sources(&cache).await?;
+        let cache = Arc::new(CacheManager::from_env().await?);
+        let builder = Builder::from_env(cache.clone()).await.context("Failed to initialize builder")?;
+
+        let tui_path = yaml_path.with_extension("tui.json");
+        let pipelines: Vec<SourcePipeline> = if tui_path.exists() {
+            let json = std::fs::read_to_string(&tui_path)?;
+            serde_json::from_str(&json).unwrap_or_default()
+        } else {
+            let config_str = fs::read_to_string(yaml_path)?;
+            // The yaml might be a single PipelineConfig or a Map of them
+            let mut configs = HashMap::new();
+            if let Ok(config) =
+                serde_yaml::from_str::<pyroduct::pipeline::PipelineConfig>(&config_str)
+            {
+                configs.insert("default".to_string(), config);
+            } else if let Ok(map) = serde_yaml::from_str::<
+                HashMap<String, pyroduct::pipeline::PipelineConfig>,
+            >(&config_str)
+            {
+                configs = map;
+            } else {
+                anyhow::bail!("Failed to parse pipeline configuration as single config or map");
+            }
+
+            let mut pipelines = Vec::new();
+            for (name, pipeline_config) in configs {
+                let playbook = pipeline_config.playbook;
+                if let Ok(source_module) = cache.get_source(&playbook.hash).await {
+                    let mut capabilities = HashMap::new();
+                    for cap in source_module.dependencies.capabilities {
+                        let config = playbook.configurations.get(&cap.package).cloned().flatten();
+                        capabilities.insert(cap, config);
+                    }
+                    pipelines.push(SourcePipeline {
+                        name,
+                        source: source_module.source,
+                        compile_error: None,
+                        capabilities,
+                        wal_capacity: pipeline_config.wal_capacity,
+                        success_log_retention_secs: pipeline_config.success_log_retention_secs,
+                        error_log_retention_secs: pipeline_config.error_log_retention_secs,
+                    });
+                } else {
+                    pipelines.push(SourcePipeline {
+                        name,
+                        source: String::new(),
+                        compile_error: Some("Failed to load source".to_string()),
+                        capabilities: HashMap::new(),
+                        wal_capacity: pipeline_config.wal_capacity,
+                        success_log_retention_secs: pipeline_config.success_log_retention_secs,
+                        error_log_retention_secs: pipeline_config.error_log_retention_secs,
+                    });
+                }
+            }
+            pipelines
+        };
 
         let input_batch = Self::load_input(input_path).await?;
 
-        // Get initial state from the first module if it exists
-        let (initial_code, initial_caps) =
-            if let Some((_, module)) = pipeline_config.pipeline.get_index(0) {
-                let code = match &module.module {
-                    pyroduct::module::Module::Source(s) => s.source.clone(),
-                    _ => String::new(),
-                };
-                let caps: Vec<(String, String)> = module
-                    .configurations
-                    .iter()
-                    .map(|(k, v)| (k.clone(), serde_json::to_string(v).unwrap_or_default()))
-                    .collect();
-                (code, caps)
-            } else {
-                (String::new(), Vec::new())
-            };
+        let (initial_code, initial_caps) = if let Some(pipeline) = pipelines.first() {
+            let caps: Vec<(String, String)> = pipeline
+                .capabilities
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.package.clone(),
+                        serde_json::to_string(v).unwrap_or_default(),
+                    )
+                })
+                .collect();
+            (pipeline.source.clone(), caps)
+        } else {
+            (String::new(), Vec::new())
+        };
 
         let code_state = wasm::CodeState {
             editing: false,
             area: Rect::default(),
             editor: Editor::new("rust", &initial_code, vesper()),
-            selected_step: 0,
+            selected_pipeline: 0,
         };
         let cap_state = cap_config::CapConfigState::new(initial_caps);
 
         Ok(App {
             cache,
+            builder,
             pipeline: PipelineState {
                 yaml_path: yaml_path.to_path_buf(),
-                tui: pipeline_config,
+                pipelines,
                 input: input_batch,
                 execution: Vec::new(),
             },
@@ -114,7 +193,7 @@ impl App {
         }
         let bytes = fs::read(input_path)?;
         let filename = input_path.file_name().unwrap_or_default().to_string_lossy();
-        let batches = pyro_arrow_file::parse_data_to_batch(bytes, &filename).await?;
+        let batches = pyro_file::parse_data_to_batch(bytes, &filename).await?;
         if batches.is_empty() {
             Ok(RecordBatch::new_empty(Arc::new(Schema::empty())))
         } else {
@@ -124,38 +203,18 @@ impl App {
 
     pub async fn save(&mut self) {
         if let ViewState::Module(mv) = &mut self.view {
-            let step_idx = mv.selected_step();
-            let Some((name, module)) = self.pipeline.tui.pipeline.get_index_mut(step_idx) else {
-                self.status_msg = "Error: selected module not found".into();
+            let pipeline_idx = mv.selected_pipeline();
+            if let Some(p) = self.pipeline.pipelines.get_mut(pipeline_idx) {
+                p.source = mv.code.editor.get_content();
+                self.status_msg = "Saved source code".into();
+            } else {
+                self.status_msg = "Error: selected pipeline not found".into();
                 return;
-            };
-
-            if let pyroduct::module::Module::Source(s) = &mut module.module {
-                s.source = mv.code.editor.get_content();
             }
-
-            // We need a way to compile from ModuleConfig directly or similar.
-            // For now, let's keep the logic of extracting bits.
-            match &module.module {
-                pyroduct::module::Module::Source(source) => {
-                    match self.cache.compile(&source).await {
-                        Ok(_) => {
-                            // module.artifact = Some(artifact); // ModuleConfig doesn't have artifact field now
-                            self.status_msg = format!("Compiled {}", name);
-                        }
-                        Err(e) => {
-                            self.status_msg = format!("Compilation failed: {}", e);
-                        }
-                    }
-                }
-                pyroduct::module::Module::Hash(_) | pyroduct::module::Module::Path(_) => {
-                    unreachable!()
-                }
-            };
 
             // Persistence
             let tui_path = self.pipeline.yaml_path.with_extension("tui.json");
-            let json = serde_json::to_string_pretty(&self.pipeline.tui).unwrap_or_default();
+            let json = serde_json::to_string_pretty(&self.pipeline.pipelines).unwrap_or_default();
             if let Err(e) = std::fs::write(&tui_path, json) {
                 self.status_msg = format!("Failed to save TUI state: {}", e);
             }
@@ -165,9 +224,57 @@ impl App {
     }
 
     async fn run_pipeline_inner(&mut self) -> Result<()> {
-        let mut factory = PipelineFactory::load(&self.pipeline.tui).await?;
-        let pipeline = factory.build().await?;
-        let pool = PipelinePool::new(vec![pipeline]);
+        let mut pipelines = Vec::new();
+        let output_dir = self.pipeline.yaml_path.parent().unwrap_or(Path::new("."));
+
+        for (i, source_pipeline) in self.pipeline.pipelines.iter().enumerate() {
+            let mut configurations: HashMap<String, Option<serde_json::Value>> = HashMap::new();
+            let mut capabilities = Vec::new();
+
+            for (cap, config) in &source_pipeline.capabilities {
+                capabilities.push(cap.clone());
+                configurations.insert(cap.package.clone(), config.clone());
+            }
+
+            let dependencies = pyro_artifacts::artifacts::ModuleDependencies {
+                dependencies: std::collections::BTreeMap::new(),
+                capabilities,
+            };
+
+            let module_source = pyro_artifacts::artifacts::ModuleSource {
+                dependencies,
+                source: source_pipeline.source.clone(),
+                ident: None,
+            };
+
+            let binary = self
+                .builder
+                .compile(&module_source)
+                .await
+                .context(format!("Compilation failed for pipeline {}", i))?;
+
+            let playbook = pyro_artifacts::artifacts::Playbook {
+                hash: binary.hash(),
+                configurations,
+            };
+
+            let pipeline_config = pyroduct::pipeline::PipelineConfig {
+                playbook,
+                wal_capacity: source_pipeline.wal_capacity,
+                success_log_retention_secs: source_pipeline.success_log_retention_secs,
+                error_log_retention_secs: source_pipeline.error_log_retention_secs,
+                output_dir: output_dir.to_path_buf(),
+            };
+
+            let loaded = pipeline_config
+                .load(self.cache.as_ref())
+                .await
+                .map_err(|e| anyhow::anyhow!("Load failed: {:?}", e))?;
+            let factory = loaded.factory()?;
+            pipelines.push(factory.build().await?);
+        }
+
+        let pool = PipelinePool::new(pipelines);
 
         let (successes, failures) = pool.process_batch(&self.pipeline.input).await?;
 
@@ -178,9 +285,9 @@ impl App {
 
         // If currently viewing the output table, refresh it seamlessly
         if let ViewState::OutputTable(ov) = &mut self.view {
-            let stage_idx = ov.step_index;
+            let pipeline_idx = ov.pipeline_idx;
             if let Ok(new_ov) =
-                crate::tui::output::OutputView::new(self.pipeline.execution.clone(), stage_idx)
+                crate::tui::output::OutputView::new(self.pipeline.execution.clone(), pipeline_idx)
             {
                 *ov = new_ov;
             }
@@ -202,24 +309,22 @@ impl App {
     pub fn current_nav_index(&self) -> usize {
         match &self.view {
             ViewState::InputTable(_) => 0,
-            ViewState::Module(mv) => (mv.selected_step() * 2) + 1,
-            ViewState::OutputTable(_) => self.pipeline.tui.pipeline.len() + 1,
+            ViewState::Module(mv) => (mv.selected_pipeline() * 2) + 1,
+            ViewState::OutputTable(_) => (self.pipeline.pipelines.len() * 2) + 1,
         }
     }
 
     pub fn nav_to(&mut self, new_idx: usize) {
-        let max_idx = self.pipeline.tui.pipeline.len() + 1;
+        let max_idx = (self.pipeline.pipelines.len() * 2) + 1;
         if new_idx > max_idx {
             return;
         }
 
         // Sync old code text to domain before navigating away
         if let ViewState::Module(mv) = &self.view {
-            let step_idx = mv.selected_step();
-            if let Some((_, module)) = self.pipeline.tui.pipeline.get_index_mut(step_idx) {
-                if let pyroduct::module::Module::Source(s) = &mut module.module {
-                    s.source = mv.code.editor.get_content();
-                }
+            let pipeline_idx = mv.selected_pipeline();
+            if let Some(p) = self.pipeline.pipelines.get_mut(pipeline_idx) {
+                p.source = mv.code.editor.get_content();
             }
         }
 
@@ -227,34 +332,36 @@ impl App {
         if new_idx == 0 {
             self.view = ViewState::InputTable(table::TableView::new(self.pipeline.input.clone()));
         } else {
-            let stage_idx = (new_idx - 1) / 2;
+            let pipeline_idx = (new_idx - 1) / 2;
             let is_code = new_idx % 2 == 1;
             if is_code {
-                let Some((_, module)) = self.pipeline.tui.pipeline.get_index(stage_idx) else {
+                let Some(pipeline) = self.pipeline.pipelines.get(pipeline_idx) else {
                     return;
                 };
-                let source = match &module.module {
-                    pyroduct::module::Module::Source(s) => s.source.clone(),
-                    _ => String::new(),
-                };
+                let source = pipeline.source.clone();
                 let code_state = wasm::CodeState {
                     editing: false,
                     area: Rect::default(),
                     editor: Editor::new("rust", &source, vesper()),
-                    selected_step: stage_idx,
+                    selected_pipeline: pipeline_idx,
                 };
 
-                let initial_caps: Vec<(String, String)> = module
-                    .configurations
+                let initial_caps: Vec<(String, String)> = pipeline
+                    .capabilities
                     .iter()
-                    .map(|(k, v)| (k.clone(), serde_json::to_string(v).unwrap_or_default()))
+                    .map(|(k, v)| {
+                        (
+                            k.package.clone(),
+                            serde_json::to_string(v).unwrap_or_default(),
+                        )
+                    })
                     .collect();
 
                 let cap_state = cap_config::CapConfigState::new(initial_caps);
                 self.view = ViewState::Module(module::ModuleView::new(code_state, cap_state));
             } else {
                 self.view = ViewState::OutputTable(
-                    output::OutputView::new(self.pipeline.execution.clone(), stage_idx + 1)
+                    output::OutputView::new(self.pipeline.execution.clone(), pipeline_idx + 1)
                         .unwrap(),
                 );
             }
@@ -280,7 +387,7 @@ fn ui(f: &mut Frame<'_>, app: &mut App) {
 
     match &mut app.view {
         ViewState::Module(mv) => {
-            mv.render(f, &app.pipeline, main_area);
+            mv.render(f, main_area);
         }
         ViewState::InputTable(table_view) => {
             table_view.render(f, main_area, "Input Table");
@@ -393,11 +500,11 @@ async fn handle_event(app: &mut App) -> Result<()> {
 
                         // Proactively refresh config if that tab is visible
                         if mv.bottom_tab == module::BottomTab::Config {
-                            mv.cap_config.refresh_available_caps(&app.cache).await;
+                            mv.cap_config.refresh_available_caps(app.cache.as_ref()).await;
                             if mv.cap_config.selected_tab < mv.cap_config.editors.len() {
                                 let name =
                                     mv.cap_config.editors[mv.cap_config.selected_tab].0.clone();
-                                mv.cap_config.load_interface(&app.cache, &name).await;
+                                mv.cap_config.load_interface(app.cache.as_ref(), &name).await;
                             }
                         }
                     }
@@ -422,7 +529,7 @@ async fn handle_event(app: &mut App) -> Result<()> {
         // Forward event to currently active widget
         match &mut app.view {
             ViewState::Module(mv) => {
-                mv.handle_event(key, &app.cache).await?;
+                mv.handle_event(key, app.cache.as_ref()).await?;
             }
             ViewState::InputTable(t) => t.handle_event(key),
             ViewState::OutputTable(t) => t.handle_event(key),

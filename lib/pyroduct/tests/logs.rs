@@ -13,13 +13,14 @@ use pyroduct::module::capability::{create_log, destroy_log, log_callback};
 
 /// Call `log_callback` with a Rust string — wraps the unsafe pointer dance.
 unsafe fn send_log(lib_id: i64, span_id: u64, msg: &str) {
-    unsafe { log_callback(lib_id, span_id, msg.as_ptr(), msg.len()) };
+    unsafe { log_callback(lib_id, span_id, 0, msg.as_ptr(), msg.len()) };
 }
 
 // =============================================================================
 // Basic delivery
 // =============================================================================
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_log_delivery_single_message() {
     let lib_id: i64 = 10_000;
@@ -29,11 +30,12 @@ async fn test_log_delivery_single_message() {
     unsafe { send_log(lib_id, span_id, "hello from ffi\n") };
 
     let msg = rx.recv().await.expect("should receive a message");
-    assert_eq!(msg, "hello from ffi");
+    assert_eq!(msg.message, "hello from ffi");
 
     destroy_log(lib_id, span_id);
 }
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_log_delivery_multiple_messages() {
     let lib_id: i64 = 10_001;
@@ -46,7 +48,7 @@ async fn test_log_delivery_multiple_messages() {
 
     for i in 0..10 {
         let msg = rx.recv().await.expect("should receive message");
-        assert_eq!(msg, format!("msg {i}"));
+        assert_eq!(msg.message, format!("msg {i}"));
     }
 
     destroy_log(lib_id, span_id);
@@ -56,6 +58,7 @@ async fn test_log_delivery_multiple_messages() {
 // Routing: different span IDs go to different receivers
 // =============================================================================
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_log_routing_by_span_id() {
     let lib_id: i64 = 10_002;
@@ -67,13 +70,14 @@ async fn test_log_routing_by_span_id() {
         send_log(lib_id, 200, "for B\n");
     }
 
-    assert_eq!(rx_a.recv().await.unwrap(), "for A");
-    assert_eq!(rx_b.recv().await.unwrap(), "for B");
+    assert_eq!(rx_a.recv().await.unwrap().message, "for A");
+    assert_eq!(rx_b.recv().await.unwrap().message, "for B");
 
     destroy_log(lib_id, 100);
     destroy_log(lib_id, 200);
 }
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_log_routing_by_library_id() {
     let span_id: u64 = 1;
@@ -85,8 +89,8 @@ async fn test_log_routing_by_library_id() {
         send_log(10_004, span_id, "lib 2\n");
     }
 
-    assert_eq!(rx_1.recv().await.unwrap(), "lib 1");
-    assert_eq!(rx_2.recv().await.unwrap(), "lib 2");
+    assert_eq!(rx_1.recv().await.unwrap().message, "lib 1");
+    assert_eq!(rx_2.recv().await.unwrap().message, "lib 2");
 
     destroy_log(10_003, span_id);
     destroy_log(10_004, span_id);
@@ -96,6 +100,7 @@ async fn test_log_routing_by_library_id() {
 // Destroy / channel lifecycle
 // =============================================================================
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_destroy_log_closes_receiver() {
     let lib_id: i64 = 10_010;
@@ -108,6 +113,7 @@ async fn test_destroy_log_closes_receiver() {
     assert!(rx.recv().await.is_none());
 }
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_log_after_destroy_does_not_panic() {
     let lib_id: i64 = 10_011;
@@ -119,12 +125,14 @@ async fn test_log_after_destroy_does_not_panic() {
     unsafe { send_log(lib_id, span_id, "ghost message\n") };
 }
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_log_to_nonexistent_channel_does_not_panic() {
     // No channel was ever created for this ID pair
     unsafe { send_log(99_999, 99_999, "nowhere\n") };
 }
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_double_destroy_does_not_panic() {
     let lib_id: i64 = 10_012;
@@ -139,6 +147,7 @@ async fn test_double_destroy_does_not_panic() {
 // Back-pressure: channel full
 // =============================================================================
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_log_channel_full_drops_message() {
     let lib_id: i64 = 10_013;
@@ -155,8 +164,8 @@ async fn test_log_channel_full_drops_message() {
 
     let m1 = rx.recv().await.unwrap();
     let m2 = rx.recv().await.unwrap();
-    assert_eq!(m1, "msg 1");
-    assert_eq!(m2, "msg 2");
+    assert_eq!(m1.message, "msg 1");
+    assert_eq!(m2.message, "msg 2");
 
     destroy_log(lib_id, span_id);
 }
@@ -185,6 +194,7 @@ async fn test_log_channel_full_drops_message() {
 // Concurrent safety: hammer from multiple threads
 // =============================================================================
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_log_concurrent_writes() {
     let lib_id: i64 = 10_015;
@@ -230,6 +240,7 @@ async fn test_log_concurrent_writes() {
 // Zero-length pointer safety
 // =============================================================================
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_log_zero_length_slice() {
     let lib_id: i64 = 10_016;
@@ -238,10 +249,10 @@ async fn test_log_zero_length_slice() {
 
     // Pass a valid pointer but zero length — from_raw_parts(ptr, 0) is safe
     let dummy: u8 = 0;
-    unsafe { log_callback(lib_id, span_id, &dummy as *const u8, 0) };
+    unsafe { log_callback(lib_id, span_id, 0, &dummy as *const u8, 0) };
 
     let msg = rx.recv().await.unwrap();
-    assert_eq!(msg, "");
+    assert_eq!(msg.message, "");
 
     destroy_log(lib_id, span_id);
 }

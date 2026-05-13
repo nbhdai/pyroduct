@@ -7,7 +7,7 @@
 use wasmtime::{AsContextMut, Caller, Extern, Memory};
 
 use crate::{
-    format::{PyroVec, PyroView, get_view},
+    format::{PyroRef, PyroVec, PyroView, get_ref, header::PyroParser},
     module::{PyroState, WasmError},
 };
 
@@ -63,7 +63,7 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
     /// Read a `PyroView` from wasm memory at the given pointer.
     pub async fn get_output(&mut self, ptr: i32) -> Result<PyroVec, WasmError> {
         let wasm_memory = self.memory.data(self.ctx.as_context());
-        let view = get_view(wasm_memory, ptr as usize)
+        let view = get_ref(wasm_memory, ptr as usize)
             .map_err(|e| WasmError::InputMemory(wasmtime::Error::msg(e.to_string())))?;
         let vec = PyroVec::clone_from_pyro(&view);
         let free_output = self
@@ -81,18 +81,18 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
     }
 
     /// Read a `PyroView` from wasm memory at the given pointer.
-    pub async fn borrow_argument(&self, ptr: i32) -> Result<PyroView<'_>, WasmError> {
+    pub async fn borrow_argument(&self, ptr: i32) -> Result<PyroRef<'_>, WasmError> {
         let wasm_memory = self.memory.data(self.ctx.as_context());
-        let view = get_view(wasm_memory, ptr as usize)
+        let view = get_ref(wasm_memory, ptr as usize)
             .map_err(|e| WasmError::InputMemory(wasmtime::Error::msg(e.to_string())))?;
         Ok(view)
     }
 
     /// Allocate a new buffer in wasm memory via `new_input` and copy the
     /// full PyroView (header + payload) into it. Returns the wasm pointer.
-    pub async fn new_input(&mut self, data: &PyroView<'_>) -> Result<i32, WasmError> {
-        let total_len = data.raw_slice.len(); // header + payload
+    pub async fn new_input(&mut self, data: &PyroView) -> Result<i32, WasmError> {
         let data_len = data.len(); // payload only
+        let total_len = PyroParser::HEADER_SIZE + data.len();
 
         let new_input = self
             .ctx
@@ -117,7 +117,7 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
                     ptr, total_len, memory_len
                 )))
             })?;
-        dest.copy_from_slice(data.raw_slice);
+        dest.copy_from_slice(data.as_raw_slice());
 
         Ok(ptr)
     }

@@ -6,14 +6,16 @@
 //! them #[ignore] if you only want fast unit tests in CI.
 
 use crate::artifacts::{
-    Artifact, Artifacts, CapabilityBinary, Module, ModuleBinary, ModuleDependencies, ModuleSource,
+    Artifact, Artifacts, CapabilityBinary, ModuleDependencies, ModuleSource, Playbook,
 };
+use crate::build::Builder;
 use crate::cache::{CacheManager, PyroductConfig};
 use crate::cargo::ResolvedCapability;
 use crate::environment::Environment;
 use cargo_toml::Dependency;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tempfile::TempDir;
 
 const BASIC_MODULE: &str = r#"
@@ -93,7 +95,7 @@ pub fn test_config() -> PyroductConfig {
 #[tokio::test]
 async fn ship_httpc_capability_to_cache() {
     let dir = TempDir::new().unwrap();
-    let cache = CacheManager::new(dir.path(), test_config()).await.unwrap();
+    let cache = Arc::new(CacheManager::new(dir.path()).await.unwrap());
 
     let httpc_path = repo_root().join("capabilities/httpc");
     assert!(
@@ -101,7 +103,7 @@ async fn ship_httpc_capability_to_cache() {
         "Cannot find capabilities/httpc — run tests from the repo root"
     );
 
-    let env = Environment::new(httpc_path).await.unwrap();
+    let env = Environment::new(httpc_path, cache.clone()).await.unwrap();
 
     // 2. Build and ship the capability binary
     let cap_artifacts = env.package(true).await.unwrap();
@@ -131,11 +133,12 @@ async fn ship_httpc_capability_to_cache() {
 #[tokio::test]
 async fn test_anon_compile_with_interface() {
     let dir = TempDir::new().unwrap();
-    let cache = CacheManager::new(dir.path(), test_config()).await.unwrap();
+    let cache = Arc::new(CacheManager::new(dir.path()).await.unwrap());
+    let builder = Builder::new(&dir.path().join("build"), test_config(), Arc::clone(&cache)).await.unwrap();
 
     // 1. Generate the interface for httpc to compile against
     let httpc_path = repo_root().join("capabilities/httpc");
-    let env = Environment::new(httpc_path).await.unwrap();
+    let env = Environment::new(httpc_path, cache.clone()).await.unwrap();
     let capability = env.package(true).await.unwrap();
     for artifact in &capability {
         cache.write_artifacts(artifact).await.unwrap();
@@ -148,38 +151,20 @@ async fn test_anon_compile_with_interface() {
     };
 
     let mod_source = ModuleSource {
+        ident: None,
         dependencies: ModuleDependencies {
             dependencies: BTreeMap::new(),
             capabilities: vec![cap],
         },
         source: HTTPC_MODULE.to_string(),
     };
-    let anon = cache.compile(&mod_source).await.unwrap();
+    let anon = builder.compile(&mod_source).await.unwrap();
 
     assert!(!anon.wasm.is_empty());
     assert!(
         anon.wasm.starts_with(&[0x00, 0x61, 0x73, 0x6D]),
         "Compiled output should be a valid WASM binary"
     );
-
-    let hash = mod_source.hash();
-
-    // 2. Test debug_module
-    let debug_mod = cache.debug_module(&mod_source.hash()).await.unwrap();
-    let mod_dir = cache.root.join("anon").join(&hash);
-    assert!(mod_dir.join("mod.wat").exists());
-    assert!(mod_dir.join("cap.rs").exists());
-    assert!(debug_mod.wat.is_some());
-    assert!(debug_mod.cap_rs.is_some());
-
-    // 3. Test debug_capabilities
-    let debug_cap = cache
-        .debug_capabilities("nbhdai", "httpc", "0.1.0")
-        .await
-        .unwrap();
-    let cap_dir = cache.capabilities_dir("nbhdai", "httpc", "0.1.0");
-    assert!(cap_dir.join("cap.rs").exists());
-    assert!(debug_cap.cap_rs.is_some());
 }
 
 // -----------------------------------------------------------------------------
@@ -189,9 +174,11 @@ async fn test_anon_compile_with_interface() {
 #[tokio::test]
 async fn test_module_wasm_exact_match() {
     let dir = TempDir::new().unwrap();
-    let cache = CacheManager::new(dir.path(), test_config()).await.unwrap();
+    let cache = Arc::new(CacheManager::new(dir.path()).await.unwrap());
+    let builder = Builder::new(&dir.path().join("build"), test_config(), Arc::clone(&cache)).await.unwrap();
 
     let source = ModuleSource {
+        ident: None,
         dependencies: ModuleDependencies {
             dependencies: BTreeMap::new(),
             capabilities: vec![],
@@ -199,7 +186,7 @@ async fn test_module_wasm_exact_match() {
         source: BASIC_MODULE.to_string(),
     };
     cache.write_artifacts(&source.clone().into()).await.unwrap();
-    let binary = cache.compile(&source).await.unwrap();
+    let binary = builder.compile(&source).await.unwrap();
     let original_wasm = binary.wasm.clone();
     cache.write_artifacts(&binary.clone().into()).await.unwrap();
 
@@ -216,10 +203,10 @@ async fn test_module_wasm_exact_match() {
 #[tokio::test]
 async fn test_capability_lib_exact_match() {
     let dir = TempDir::new().unwrap();
-    let cache = CacheManager::new(dir.path(), test_config()).await.unwrap();
+    let cache = Arc::new(CacheManager::new(dir.path()).await.unwrap());
 
     let httpc_path = repo_root().join("capabilities/httpc");
-    let env = Environment::new(httpc_path).await.unwrap();
+    let env = Environment::new(httpc_path, cache.clone()).await.unwrap();
 
     let cap_artifacts = env.package(true).await.unwrap();
 
@@ -246,4 +233,55 @@ async fn test_capability_lib_exact_match() {
         loaded_artifact.libs[0].to_vec(),
         "Capability library bytes do not match after roundtrip to disk"
     );
+}
+
+#[tokio::test]
+async fn test_load_playbook() {
+    let dir = TempDir::new().unwrap();
+    let cache = Arc::new(CacheManager::new(dir.path()).await.unwrap());
+    let builder = Builder::new(&dir.path().join("build"), test_config(), Arc::clone(&cache)).await.unwrap();
+
+    // 1. Setup a module with a capability
+    let httpc_path = repo_root().join("capabilities/httpc");
+    let env = Environment::new(httpc_path, cache.clone()).await.unwrap();
+    let capability = env.package(true).await.unwrap();
+    for artifact in &capability {
+        cache.write_artifacts(artifact).await.unwrap();
+    }
+
+    let cap = ResolvedCapability {
+        author: "nbhdai".to_string(),
+        package: "httpc".to_string(),
+        version: "0.1.0".to_string(),
+    };
+
+    let mod_source = ModuleSource {
+        ident: None,
+        dependencies: ModuleDependencies {
+            dependencies: BTreeMap::new(),
+            capabilities: vec![cap],
+        },
+        source: HTTPC_MODULE.to_string(),
+    };
+    let binary = builder.compile(&mod_source).await.unwrap();
+
+    // 2. Create a Playbook
+    let playbook = Playbook {
+        hash: binary.spec.hash.clone(),
+        configurations: HashMap::from([(
+            "httpc".to_string(),
+            Some(serde_json::json!({"timeout": 30})),
+        )]),
+    };
+
+    // 3. Load the Playbook
+    let loaded = cache.load_playbook(playbook.clone()).await.unwrap();
+
+    // 4. Verify
+    assert_eq!(loaded.binary.spec.hash, binary.spec.hash);
+    assert_eq!(loaded.configurations, playbook.configurations);
+    assert!(loaded.paths.contains_key("httpc"));
+    let cap_path = loaded.paths.get("httpc").unwrap();
+    assert!(cap_path.exists());
+    assert!(cap_path.to_string_lossy().contains("httpc"));
 }

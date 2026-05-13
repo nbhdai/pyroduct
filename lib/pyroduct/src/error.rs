@@ -282,6 +282,10 @@ impl PyroError {
         Self::local(ErrorKind::Transport(err.into()))
     }
 
+    pub fn local_io(err: impl Into<Box<CapturedError>>) -> Self {
+        Self::local(ErrorKind::Io(err.into()))
+    }
+
     pub fn remote_io(err: impl Into<Box<CapturedError>>) -> Self {
         Self::remote(ErrorKind::Io(err.into()))
     }

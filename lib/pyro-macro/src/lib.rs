@@ -1,3 +1,15 @@
+//! Derive macros and code generation utilities for Pyroduct.
+//!
+//! This crate provides proc-macro functionality for Pyroduct capabilities:
+//! - [`ffi`] — FFI binding generation for capability interfaces
+//! - [`format`] — Token formatting and diffing utilities
+//! - [`module`] — Module scaffolding and generation
+//! - [`struct_doc`] — Struct documentation generation
+//! - [`utils`] — Internal helper utilities
+//!
+//! Test infrastructure includes a `fmt` submodule with token pretty-printing
+//! and assertion helpers for diff-based code comparison.
+
 pub mod ffi;
 pub mod format;
 pub mod module;

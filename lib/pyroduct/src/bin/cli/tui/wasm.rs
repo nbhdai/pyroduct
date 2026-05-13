@@ -7,21 +7,14 @@ use ratatui::{
 };
 use ratatui_code_editor::editor::Editor;
 
-use super::PipelineState;
-
 pub struct CodeState {
     pub editing: bool,
     pub area: Rect,
     pub editor: Editor,
-    pub selected_step: usize,
+    pub selected_pipeline: usize,
 }
 
-pub fn render(f: &mut Frame, pipeline: &PipelineState, state: &mut CodeState, area: Rect) {
-    let name = &pipeline
-        .tui
-        .pipeline
-        .keys()[state.selected_step];
-
+pub fn render(f: &mut Frame, state: &mut CodeState, area: Rect) {
     let border_color = if state.editing {
         Color::Green
     } else {
@@ -30,7 +23,7 @@ pub fn render(f: &mut Frame, pipeline: &PipelineState, state: &mut CodeState, ar
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" Code: {}", name))
+        .title(format!(" Code: Pipeline {}", state.selected_pipeline))
         .border_style(Style::default().fg(border_color));
 
     let inner = block.inner(area);

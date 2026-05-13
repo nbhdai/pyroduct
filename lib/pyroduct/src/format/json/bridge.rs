@@ -3,9 +3,8 @@ use std::marker::PhantomData;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::format::{
-    PyroVec,
+    PyroRef, PyroVec, PyroView,
     format::{PyroFormat, UserHeaderValues},
-    view::PyroView,
 };
 
 use super::{JsonHeader, JsonParser, JsonWriter};
@@ -28,9 +27,9 @@ where
     type HeaderValues = JsonHeader;
     type ParsedType = T;
 
-    type VecParser = JsonParser<PyroVec, T>;
-    type ViewParser<'a> = JsonParser<PyroView<'a>, T>;
-    type VecWriter = JsonWriter<PyroVec, T>;
+    type Parser = JsonParser<PyroView, T>;
+    type RefParser<'a> = JsonParser<PyroRef<'a>, T>;
+    type Writer = JsonWriter<PyroVec, T>;
 
     fn new() -> Self {
         Self {
@@ -38,20 +37,20 @@ where
         }
     }
 
-    fn new_writer(data: PyroVec) -> Self::VecWriter {
+    fn new_writer(data: PyroVec) -> Self::Writer {
         JsonWriter {
             data,
             phantom: PhantomData,
         }
     }
 
-    fn vec_parser(data: PyroVec) -> Self::VecParser {
+    fn parser(data: PyroView) -> Self::Parser {
         JsonParser {
             data,
             phantom: PhantomData,
         }
     }
-    fn view_parser<'a>(data: PyroView<'a>) -> Self::ViewParser<'a> {
+    fn view_parser<'a>(data: PyroRef<'a>) -> Self::RefParser<'a> {
         JsonParser {
             data,
             phantom: PhantomData,

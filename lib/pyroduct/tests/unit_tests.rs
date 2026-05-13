@@ -32,11 +32,10 @@ fn test_with_capacity_large() {
 
 // #[test]
 // fn test_default_header_values() {
-//     let vec = PyroVec::with_capacity(10);
 //     assert_eq!(vec.status(), Ok(DataStatus::Empty));
 //     assert_eq!(vec.wire_format(), 1);
-//     assert_eq!(vec.version(), 0);
-//     assert_eq!(vec.error_version(), 0);
+//     assert_eq!(vec.fn_id(), 0);
+//     assert_eq!(vec.class_id(), 0);
 // }
 
 // =============================================================================
@@ -82,21 +81,21 @@ fn test_header_byte_packing() {
     // Write distinct values to all 4 byte fields
     vec.set_wire_format(0xAA);
     vec.set_status_u8(0xBB);
-    vec.set_error_version(0xCC);
-    vec.set_version(0xDD);
+    vec.set_class_id(0xCC);
+    vec.set_fn_id(0xDD);
 
     // Verify read back
     assert_eq!(vec.wire_format(), 0xAA);
     assert_eq!(vec.status_u8(), 0xBB);
-    assert_eq!(vec.error_version(), 0xCC);
-    assert_eq!(vec.version(), 0xDD);
+    assert_eq!(vec.class_id(), 0xCC);
+    assert_eq!(vec.fn_id(), 0xDD);
 
     // Verify via raw slice to ensure correct offsets
     let raw = vec.header();
     assert_eq!(raw[8], 0xAA); // Wire Format
     assert_eq!(raw[9], 0xBB); // Status 
-    assert_eq!(raw[10], 0xCC); // Error Version
-    assert_eq!(raw[11], 0xDD); // User Version 
+    assert_eq!(raw[10], 0xCC); // Class ID
+    assert_eq!(raw[11], 0xDD); // Function ID 
 }
 
 // =============================================================================
@@ -211,22 +210,6 @@ fn test_clear_then_reuse() {
 // =============================================================================
 
 #[test]
-fn test_as_packet_slice() {
-    let mut vec = PyroVec::with_capacity(10);
-    vec.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
-
-    // Should be header (16 bytes) + data (3 bytes)
-    assert_eq!(vec.len(), 3);
-
-    // Verify magic at start
-    let magic = u32::from_ne_bytes(vec.header()[0..4].try_into().unwrap());
-    assert_eq!(magic, 0x7079726F);
-
-    // Verify data at end
-    assert_eq!(&*vec, &[0xAA, 0xBB, 0xCC]);
-}
-
-#[test]
 fn test_deref() {
     let mut vec = PyroVec::with_capacity(10);
     vec.extend_from_slice(b"test");
@@ -255,16 +238,16 @@ fn test_clone_copies_all_fields() {
     let mut original = PyroVec::with_capacity(10);
     original.extend_from_slice(b"hello");
     original.set_status_u8(1);
-    original.set_version(2);
-    original.set_error_version(3);
+    original.set_fn_id(2);
+    original.set_class_id(3);
     original.set_wire_format(4);
 
     let cloned = original.clone();
 
     assert_eq!(cloned.as_slice(), b"hello");
     assert_eq!(cloned.status_u8(), 1);
-    assert_eq!(cloned.version(), 2);
-    assert_eq!(cloned.error_version(), 3);
+    assert_eq!(cloned.fn_id(), 2);
+    assert_eq!(cloned.class_id(), 3);
     assert_eq!(cloned.wire_format(), 4);
 
     // Verify independence

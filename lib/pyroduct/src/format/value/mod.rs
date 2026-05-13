@@ -11,9 +11,12 @@ mod repair;
 // mod bow;
 mod bridgeable;
 mod schema;
+pub use pyro_spec::{
+    CapabilityFunc, ClassSpec, InterfaceSpec, ModuleFunc, PrimitiveDataType, PyroField, PyroSchema,
+    PyroType,
+};
 pub use repair::ScalarRepairError;
 pub use schema::ValueSchemaInferenceError;
-pub use pyro_spec::{CapabilityFunc, ModuleFunc, PrimitiveDataType, InterfaceSpec, ClassSpec, PyroField, PyroSchema, PyroType};
 pub use typeable::{Typeable, TypeableRow};
 
 #[cfg(feature = "host")]

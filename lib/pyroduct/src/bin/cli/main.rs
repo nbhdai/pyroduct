@@ -28,6 +28,9 @@ enum Commands {
     Expand {
         #[arg(value_name = "DIRECTORY")]
         path: PathBuf,
+
+        #[arg(long)]
+        no_compile: bool,
     },
     /// Places package artifacts into the local cache repository
     Ship {
@@ -36,11 +39,36 @@ enum Commands {
 
         #[arg(short, long)]
         debug: bool,
+
+        /// Output directory for artifacts.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
     },
     /// Cleans generated artifacts (Cargo.toml, artifacts/, interface/, target/)
     Clean {
         #[arg(value_name = "DIRECTORY", default_value = ".")]
         path: PathBuf,
+    },
+    /// Initializes the Pyroduct cache
+    Setup,
+    /// Generates the interface.json for a capability
+    Spec {
+        #[arg(value_name = "DIRECTORY", default_value = ".")]
+        path: PathBuf,
+
+        /// Output path for the interface spec.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
+    /// Streams data from a file to a socket.
+    Replay {
+        /// Input file containing JSONL data.
+        #[arg(value_name = "INPUT")]
+        input: PathBuf,
+
+        /// Path to the Unix domain socket or TCP address (e.g., 127.0.0.1:8080).
+        #[arg(value_name = "SOCKET")]
+        socket: String,
     },
     // /// Runs the pipeline.
     // /// Automatically detects if INPUT is a file path (Batch Mode) or a JSON string (Single Mode).
@@ -60,6 +88,10 @@ enum Commands {
         /// Output format (only used for batch processing).
         #[arg(long, value_enum, default_value_t = commands::run::OutputFormat::Json)]
         format: commands::run::OutputFormat,
+
+        /// Path to a Unix domain socket or TCP address (e.g., 127.0.0.1:8080) to listen on.
+        #[arg(long)]
+        socket: Option<String>,
     },
     Tui {
         /// Path to the pipeline config YAML file
@@ -94,21 +126,29 @@ async fn main() -> Result<()> {
 
     match args.command {
         Commands::Init { path, cap } => commands::init::init(path, cap),
-        Commands::Expand { path } => commands::expand::expand(&path).await,
-        Commands::Ship { path, debug } => commands::ship::ship(&path, debug).await,
+        Commands::Expand { path, no_compile } => commands::expand::expand(&path, no_compile).await,
+        Commands::Ship { path, debug, out } => commands::ship::ship(&path, debug, out.as_deref()).await,
         Commands::Clean { path } => commands::clean::clean(&path),
+        Commands::Setup => commands::cache::init().await,
+        Commands::Spec { path, out } => commands::spec::spec(&path, out.as_deref()).await,
+        Commands::Replay { input, socket } => commands::replay::replay(&input, &socket).await,
         Commands::Run {
             config,
             input,
             output_dir,
             format,
+            socket,
         } => {
-            let input_path = Path::new(&input);
-
-            if input_path.exists() && input_path.is_file() {
-                commands::run::run_batch(&config, input_path, &output_dir, format).await
+            if let Some(socket_addr) = socket {
+                commands::run::run_socket(&config, &socket_addr).await
             } else {
-                commands::run::run(&config, &input).await
+                let input_path = Path::new(&input);
+
+                if input_path.exists() && input_path.is_file() {
+                    commands::run::run_batch(&config, input_path, &output_dir, format).await
+                } else {
+                    commands::run::run(&config, &input).await
+                }
             }
         }
         Commands::Tui { config, input } => tui::run_tui(&config, &input).await,

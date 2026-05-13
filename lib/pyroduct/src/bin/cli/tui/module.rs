@@ -1,5 +1,5 @@
-use pyro_artifacts::cache::CacheManager;
 use crossterm::event::{KeyCode, KeyEvent};
+use pyro_artifacts::cache::CacheManager;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -9,7 +9,6 @@ use ratatui::{
 };
 
 use super::{
-    PipelineState,
     cap_config::CapConfigState,
     keys::{Hotkey, HotkeyProvider},
     logs::LogsView,
@@ -49,11 +48,11 @@ impl ModuleView {
         }
     }
 
-    pub fn selected_step(&self) -> usize {
-        self.code.selected_step
+    pub fn selected_pipeline(&self) -> usize {
+        self.code.selected_pipeline
     }
 
-    pub fn render(&mut self, f: &mut Frame<'_>, pipeline: &PipelineState, area: Rect) {
+    pub fn render(&mut self, f: &mut Frame<'_>, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
@@ -62,7 +61,7 @@ impl ModuleView {
         // Code pane
         let orig_editing = self.code.editing;
         self.code.editing = self.focused && self.active_pane == ActivePane::Code;
-        wasm::render(f, pipeline, &mut self.code, chunks[0]);
+        wasm::render(f, &mut self.code, chunks[0]);
         self.code.editing = orig_editing;
 
         // Bottom pane: tab bar + content

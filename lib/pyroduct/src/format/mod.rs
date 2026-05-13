@@ -226,21 +226,22 @@
 //! We're going to dog-food this until we get versioning correct.
 
 pub mod bridgeable;
+mod execution;
 pub mod format;
 pub mod header;
 pub mod json;
 pub mod rkyv_8;
 pub mod value;
 pub mod vec_buf;
-mod view;
+pub mod wal;
 
 pub use bridgeable::{Bridgeable, BridgeableResult};
-pub use format::{HasReceiver, Receiver};
-pub use header::{MAGIC_VAL, ParseError};
-pub use rkyv_8::{Rkyv, RkyvParser, RkyvWriter, TypedBuf, TypedPyroView};
+pub use execution::{PyroFailure, PyroLogs, PyroSuccess};
+pub use format::{HasReceiver, Receiver, SpecWire};
+pub use header::ParseError;
+pub use rkyv_8::{Rkyv, RkyvParser, RkyvWriter, TypedBuf, TypedPyroRef};
 pub use value::{DeepRef, PyroRow, PyroValue, ToRow};
-pub use vec_buf::{PyroBuf, PyroBufPtr, PyroVec, PyroVecPtr};
-pub use view::{PyroMutView, PyroView, PyroViewPtr, get_view, get_view_mut};
+pub use vec_buf::{PyroRef, PyroRefPtr, PyroVec, PyroView, PyroViewPtr, get_ref, make_view, get_ref_ids};
 
 // Async is not supported for wasm
 #[cfg(any(feature = "host", feature = "capability"))]

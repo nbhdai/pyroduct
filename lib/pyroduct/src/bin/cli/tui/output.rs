@@ -1,7 +1,7 @@
 use arrow::array::RecordBatch;
 use arrow::datatypes::Schema;
 use crossterm::event::{KeyCode, KeyEvent};
-use pyroduct::module::PyroLogs;
+use pyroduct::format::PyroLogs;
 use pyroduct::pipeline::wasm_execute::PipelineExecution;
 use pyroduct::pipeline::wasm_execute::extract_upto_batch;
 use ratatui::{
@@ -22,7 +22,7 @@ pub struct OutputView {
     pub table: TableView,
     pub logs: LogsView,
     pub executions: Vec<PipelineExecution>,
-    pub step_index: usize,
+    pub pipeline_idx: usize,
     pub active_pane: ActivePane,
     pub focused: bool,
     current_row: usize,
@@ -44,8 +44,8 @@ impl HotkeyProvider for OutputView {
 }
 
 impl OutputView {
-    pub fn new(executions: Vec<PipelineExecution>, step_index: usize) -> anyhow::Result<Self> {
-        let batch = extract_upto_batch(&executions, step_index)?
+    pub fn new(executions: Vec<PipelineExecution>, pipeline_idx: usize) -> anyhow::Result<Self> {
+        let batch = extract_upto_batch(&executions, pipeline_idx)?
             .unwrap_or_else(|| RecordBatch::new_empty(Arc::new(Schema::empty())));
         let table = TableView::new(batch);
         let logs = LogsView::default();
@@ -54,7 +54,7 @@ impl OutputView {
             table,
             logs,
             executions,
-            step_index,
+            pipeline_idx,
             active_pane: ActivePane::Table,
             focused: false,
             current_row: 0,
@@ -64,15 +64,15 @@ impl OutputView {
     fn extract_logs(&self, row_index: usize) -> PyroLogs {
         if let Some(exec) = self.executions.get(row_index) {
             // Fetch logs for successful steps
-            if let Some(step) = exec.steps.get(self.step_index) {
+            if let Some(step) = exec.steps.get(self.pipeline_idx) {
                 return PyroLogs {
                     module_logs: step.logs.module_logs.clone(),
                     capability_logs: step.logs.capability_logs.clone(),
                 };
             }
-            // Fetch logs for failed step (if it failed exactly on this step)
+            // Fetch logs for failed step (if it failed exactly on this pipeline)
             else if let Some(fail) = &exec.failure {
-                if exec.steps.len() == self.step_index {
+                if exec.steps.len() == self.pipeline_idx {
                     return PyroLogs {
                         module_logs: fail.logs.module_logs.clone(),
                         capability_logs: fail.logs.capability_logs.clone(),

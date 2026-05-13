@@ -3,7 +3,7 @@ use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use pyro_spec::{InterfaceSpec, ModuleFunc};
-use serde::Deserialize as _;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::io::{self, Read, Write};
@@ -11,9 +11,8 @@ use std::ops::Deref;
 use std::path::Path;
 use tar::{Builder, Header};
 use tokio::fs;
-use sha2::{Digest, Sha256};
 
-use crate::cargo::{CapabilityManifest, ResolvedCapability, CapabilityIdent};
+use crate::cargo::{CapabilityIdent, CapabilityManifest, ResolvedCapability};
 
 pub enum CapBinary {
     Pe(Vec<u8>),
@@ -36,6 +35,7 @@ impl Deref for CapBinary {
 pub struct CapabilityBinary {
     pub ident: CapabilityIdent,
     pub libs: Vec<CapBinary>,
+    pub interface: InterfaceSpec<'static>,
 }
 
 pub struct CapabilitySource {
@@ -57,21 +57,37 @@ pub struct ModuleDependencies {
     pub capabilities: Vec<ResolvedCapability>,
 }
 
+/// Identity for a named module (from Module.toml [module] section).
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+pub struct ModuleIdent {
+    pub author: String,
+    pub name: String,
+    pub version: String,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct ModuleSource {
+    /// Named module identity (author/name/version), if this is a named module.
+    #[serde(default)]
+    pub ident: Option<ModuleIdent>,
     pub dependencies: ModuleDependencies,
     pub source: String,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct ModuleSpec {
+    pub hash: String,
     pub func: ModuleFunc<'static>,
     pub capabilities: Vec<ResolvedCapability>,
+    #[serde(default)]
+    pub ident: Option<ModuleIdent>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct ModuleBinary {
-    pub hash: String,
+    /// Named module identity (author/name/version), if this is a named module.
+    #[serde(default)]
+    pub ident: Option<ModuleIdent>,
     pub wasm: Vec<u8>,
     pub spec: ModuleSpec,
 }
@@ -82,37 +98,14 @@ pub enum Module {
     Binary(ModuleBinary),
 }
 
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
-#[serde(untagged)]
-pub enum ModuleRef {
-    Source(ModuleSource),
-    #[serde(deserialize_with = "validate_hash")]
-    Hash(String),
-}
-
-fn validate_hash<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    // Example: Only accept 64-char hex strings as Hashes
-    if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
-        Ok(s)
-    } else {
-        Err(serde::de::Error::custom("not a valid hash"))
-    }
-}
-
 /// A single wasm module in the pipeline intent.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
-pub struct ModuleConfig {
-    pub module: ModuleRef,
+pub struct Playbook {
+    pub hash: String,
     /// Per-class capability configuration. Keys are class names.
     #[serde(default)]
     pub configurations: HashMap<String, Option<serde_json::Value>>,
 }
-
 
 impl ModuleSource {
     /// Computes a deterministic hash of the module's source and dependencies.
@@ -155,7 +148,7 @@ impl ModuleSource {
 
 impl ModuleBinary {
     pub fn hash(&self) -> String {
-        self.hash.clone()
+        self.spec.hash.clone()
     }
 }
 
@@ -254,6 +247,9 @@ impl Artifact for CapabilityBinary {
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
         )
         .await?;
+        let interface_json = serde_json::to_string_pretty(&self.interface)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        fs::write(path.join("interface.json"), interface_json).await?;
         Ok(())
     }
 
@@ -275,6 +271,13 @@ impl Artifact for CapabilityBinary {
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
                 .as_bytes(),
         )?;
+        append_file(
+            &mut tar,
+            "interface.json",
+            serde_json::to_string_pretty(&self.interface)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
+                .as_bytes(),
+        )?;
 
         tar.into_inner()?.finish()
     }
@@ -285,6 +288,7 @@ impl Artifact for CapabilityBinary {
 
         let mut libs = Vec::new();
         let mut ident = None;
+        let mut interface = None;
 
         for file in archive.entries()? {
             let mut file = file?;
@@ -304,6 +308,14 @@ impl Artifact for CapabilityBinary {
                         )
                     })?;
                 }
+                "interface.json" => {
+                    interface = serde_json::from_slice(&content).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Unable to deserialize interface: {}", e),
+                        )
+                    })?;
+                }
                 _ => {}
             }
         }
@@ -312,10 +324,13 @@ impl Artifact for CapabilityBinary {
             return Err(io::Error::new(io::ErrorKind::NotFound, "Missing library"));
         }
 
-
         Ok(CapabilityBinary {
-            ident: ident.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing ident.json"))?,
+            ident: ident
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing ident.json"))?,
             libs,
+            interface: interface.ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "Missing interface.json")
+            })?,
         })
     }
 
@@ -346,9 +361,18 @@ impl Artifact for CapabilityBinary {
             )
         })?;
 
+        let interface_string = fs::read(path.join("interface.json")).await?;
+        let interface = serde_json::from_slice(&interface_string).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unable to deserialize interface: {}", e),
+            )
+        })?;
+
         Ok(CapabilityBinary {
             libs,
             ident,
+            interface,
         })
     }
 }
@@ -627,6 +651,7 @@ impl Artifact for ModuleSource {
         }
 
         Ok(ModuleSource {
+            ident: None,
             source: source
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Missing source.rs"))?,
             dependencies: dependencies.ok_or_else(|| {
@@ -644,6 +669,7 @@ impl Artifact for ModuleSource {
             )
         })?;
         Ok(ModuleSource {
+            ident: None,
             source: fs::read_to_string(path.join("source.rs")).await?,
             dependencies,
         })
@@ -653,7 +679,6 @@ impl Artifact for ModuleSource {
 impl Artifact for ModuleBinary {
     async fn write_to_directory(&self, path: &Path) -> io::Result<()> {
         fs::create_dir_all(path).await?;
-        fs::write(path.join("hash.txt"), self.hash.as_bytes()).await?;
         fs::write(path.join("mod.wasm"), &self.wasm).await?;
         let spec = serde_json::to_string_pretty(&self.spec).map_err(|e| {
             io::Error::new(
@@ -668,7 +693,6 @@ impl Artifact for ModuleBinary {
     fn to_tarball(&self) -> Result<Vec<u8>, io::Error> {
         let encoder = GzEncoder::new(Vec::new(), Compression::default());
         let mut tar = Builder::new(encoder);
-        append_file(&mut tar, "hash.txt", self.hash.as_bytes())?;
         append_file(&mut tar, "mod.wasm", &self.wasm)?;
         let spec = serde_json::to_string_pretty(&self.spec).map_err(|e| {
             io::Error::new(
@@ -685,7 +709,6 @@ impl Artifact for ModuleBinary {
         let mut archive = tar::Archive::new(tar);
         let mut wasm = None;
         let mut spec = None;
-        let mut hash = None;
 
         for file in archive.entries()? {
             let mut file = file?;
@@ -694,14 +717,6 @@ impl Artifact for ModuleBinary {
             file.read_to_end(&mut content)?;
 
             match path.to_string_lossy().as_ref() {
-                "hash.txt" => {
-                    hash = Some(String::from_utf8(content).map_err(|e| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("Unable to deserialize hash: {}", e),
-                        )
-                    })?)
-                }
                 "mod.wasm" => wasm = Some(content),
                 "spec.json" => {
                     spec = serde_json::from_slice(&content).map_err(|e| {
@@ -716,8 +731,7 @@ impl Artifact for ModuleBinary {
         }
 
         Ok(ModuleBinary {
-            hash: hash
-                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Missing hash.txt"))?,
+            ident: None,
             wasm: wasm
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Missing mod.wasm"))?,
             spec: spec
@@ -734,7 +748,7 @@ impl Artifact for ModuleBinary {
             )
         })?;
         Ok(ModuleBinary {
-            hash: fs::read_to_string(path.join("hash.txt")).await?,
+            ident: None,
             wasm: fs::read(path.join("mod.wasm")).await?,
             spec,
         })

@@ -56,7 +56,6 @@ pub async fn run_command(
     }
 }
 
-
 /// Format a syn::Error with source context
 pub fn format_syn_error(source: &str, err: syn::Error) -> String {
     let span = err.span();

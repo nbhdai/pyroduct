@@ -1,7 +1,7 @@
 use std::{fmt::Debug, ops::Deref};
 
 use crate::format::{
-    PyroVec, PyroView,
+    PyroRef, PyroView,
     format::{HasReceiver, TypedWrapper, Wrapper},
     rkyv_8::RkyvReceiver,
 };
@@ -12,7 +12,7 @@ where
     T: rkyv::Archive,
     <T as rkyv::Archive>::Archived: 'static,
 {
-    pub(super) vec: PyroVec,
+    pub(super) vec: PyroView,
     pub(super) archived: &'static T::Archived,
 }
 
@@ -31,7 +31,7 @@ where
     T: rkyv::Archive,
     <T as rkyv::Archive>::Archived: 'static,
 {
-    type Wrapping = PyroVec;
+    type Wrapping = PyroView;
 
     fn data(&self) -> &Self::Wrapping {
         &self.vec
@@ -74,16 +74,16 @@ where
 }
 
 /// A strongly typed view over a borrowed pyro buffer.
-pub struct TypedPyroView<'a, T>
+pub struct TypedPyroRef<'a, T>
 where
     T: rkyv::Archive,
     T::Archived: 'static,
 {
-    pub(super) view: PyroView<'a>,
+    pub(super) view: PyroRef<'a>,
     pub(super) archived: &'a T::Archived,
 }
 
-impl<'a, T> Debug for TypedPyroView<'a, T>
+impl<'a, T> Debug for TypedPyroRef<'a, T>
 where
     T: rkyv::Archive,
     <T as rkyv::Archive>::Archived: Debug + 'static,
@@ -93,12 +93,12 @@ where
     }
 }
 
-impl<'a, T> Wrapper for TypedPyroView<'a, T>
+impl<'a, T> Wrapper for TypedPyroRef<'a, T>
 where
     T: rkyv::Archive,
     <T as rkyv::Archive>::Archived: 'static,
 {
-    type Wrapping = PyroView<'a>;
+    type Wrapping = PyroRef<'a>;
 
     fn data(&self) -> &Self::Wrapping {
         &self.view
@@ -109,7 +109,7 @@ where
     }
 }
 
-impl<'a, T> Deref for TypedPyroView<'a, T>
+impl<'a, T> Deref for TypedPyroRef<'a, T>
 where
     T: rkyv::Archive,
     <T as rkyv::Archive>::Archived: 'static,
@@ -121,14 +121,14 @@ where
     }
 }
 
-impl<'a, T> TypedWrapper<<T as rkyv::Archive>::Archived> for TypedPyroView<'a, T>
+impl<'a, T> TypedWrapper<<T as rkyv::Archive>::Archived> for TypedPyroRef<'a, T>
 where
     T: rkyv::Archive,
     <T as rkyv::Archive>::Archived: 'static,
 {
 }
 
-impl<'a, T> HasReceiver<<T as rkyv::Archive>::Archived, T> for TypedPyroView<'a, T>
+impl<'a, T> HasReceiver<<T as rkyv::Archive>::Archived, T> for TypedPyroRef<'a, T>
 where
     T: rkyv::Archive,
     <T as rkyv::Archive>::Archived: 'static,

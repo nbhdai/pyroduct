@@ -1,3 +1,19 @@
+//! File I/O and data parsing for Pyroduct.
+//!
+//! This crate handles reading, writing, and serializing data across multiple formats:
+//! - **Arrow IPC** (Feather) — binary format with in-memory and memory-mapped support
+//! - **CSV** — with transparent chunking for large datasets
+//! - **JSONL** — line-delimited JSON with chunking support
+//! - **Parquet** — columnar storage for efficient querying
+//!
+//! Core types:
+//! - [`ArrowIpc`] — memory-mapped or in-memory Arrow IPC data wrapper
+//! - [`parse_data_to_batch`] — async entry point for parsing any supported format
+//! - [`write_parquet`], [`write_csv`], [`write_jsonl`] — serialization functions
+//!
+//! All parsing operations return `RecordBatch` data wrapped in `ArrowIpc`, which
+//! provides zero-copy deref access and SHA-256 content hashing.
+
 use arrow::array::RecordBatch;
 use arrow::buffer::Buffer;
 use arrow::datatypes::{Field, Schema};

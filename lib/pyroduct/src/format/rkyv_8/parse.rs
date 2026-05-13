@@ -9,7 +9,7 @@ use rkyv::{
 };
 
 use crate::format::{
-    PyroVec, PyroView, TypedPyroView,
+    PyroRef, PyroView, TypedPyroRef,
     format::{Parser, UserHeaderValues, Wrapper},
     header::PyroData,
     rkyv_8::TypedBuf,
@@ -30,7 +30,7 @@ impl<BD: PyroData, T> Wrapper for RkyvParser<BD, T> {
     }
 }
 
-impl<T> Parser<PyroVec, T> for RkyvParser<PyroVec, T>
+impl<T> Parser<PyroView, T> for RkyvParser<PyroView, T>
 where
     T: UserHeaderValues,
     T: Archive,
@@ -66,7 +66,7 @@ where
     }
 }
 
-impl<'a, T> Parser<PyroView<'a>, T> for RkyvParser<PyroView<'a>, T>
+impl<'a, T> Parser<PyroRef<'a>, T> for RkyvParser<PyroRef<'a>, T>
 where
     T: UserHeaderValues,
     T: Archive,
@@ -76,7 +76,7 @@ where
 {
     type HeaderValues = super::RkyvHeader;
     type ParsedType = <T as rkyv::Archive>::Archived;
-    type TypedWrapper = TypedPyroView<'a, T>;
+    type TypedWrapper = TypedPyroRef<'a, T>;
 
     fn unchecked_parse(self) -> PyroResult<Self::TypedWrapper> {
         let slice = &*self.data;
@@ -94,7 +94,7 @@ where
         let archived_elided =
             unsafe { std::mem::transmute::<&T::Archived, &'static T::Archived>(archived_ref) };
 
-        Ok(TypedPyroView {
+        Ok(TypedPyroRef {
             view: self.data,
             archived: archived_elided,
         })

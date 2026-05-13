@@ -8,13 +8,13 @@ error[E0277]: the trait bound `&[CallMessageRef<'_>]: TryFrom<PyroValue<'_>>` is
    |
    = help: the following other types implement trait `From<T>`:
              `&[u8]` implements `From<&winnow::stream::bstr::BStr>`
+             `&[u8]` implements `From<&winnow::stream::bstr::BStr>`
+             `&[u8]` implements `From<&winnow::stream::bytes::Bytes>`
              `&[u8]` implements `From<&winnow::stream::bytes::Bytes>`
              `&[u8]` implements `From<regex::regex::bytes::Match<'_>>`
              `[T; 1]` implements `From<(T,)>`
              `[T; 1]` implements `From<generic_array::GenericArray<T, typenum::uint::UInt<typenum::uint::UTerm, typenum::bit::B1>>>`
              `[T; 2]` implements `From<(T, T)>`
-             `[T; 2]` implements `From<generic_array::GenericArray<T, typenum::uint::UInt<typenum::uint::UInt<typenum::uint::UTerm, typenum::bit::B1>, typenum::bit::B0>>>`
-             `[u8; 2]` implements `From<zerocopy::byteorder::I16<O>>`
            and $N others
    = note: required for `PyroValue<'_>` to implement `Into<&[CallMessageRef<'_>]>`
    = note: required for `&[CallMessageRef<'_>]` to implement `TryFrom<PyroValue<'_>>`
