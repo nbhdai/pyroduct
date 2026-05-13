@@ -10,6 +10,7 @@ use crate::format::{
     value::PyroRow,
 };
 
+use crate::session::SessionResponse;
 use crate::{CapturedError, PyroError};
 
 mod logger;
@@ -28,6 +29,9 @@ unsafe impl Send for StoredMutPtr {}
 static INPUT_REGISTRY: Mutex<Option<HashMap<StoredMutPtr, PyroVec>>> = Mutex::new(None);
 // Registry for vectors created by WASM (outputs)
 static OUTPUT_REGISTRY: Mutex<Option<HashMap<StoredPtr, PyroVec>>> = Mutex::new(None);
+
+static SESSION_INPUT: Mutex<Option<HashMap<u32, Vec<PyroVec>>>> = Mutex::new(None);
+static SESSION_OUTPUT: Mutex<Option<HashMap<u32, Vec<PyroVec>>>> = Mutex::new(None);
 
 static ERROR_REGISTRY: Mutex<Vec<PyroVec>> = Mutex::new(Vec::new());
 
@@ -199,6 +203,20 @@ where
         Ok(o) => encode_result(Ok(o.to_row())),
         Err(err) => encode_result(Err(err)),
     })
+}
+
+pub fn wasm_row_main_session<'a, O, F>(
+    session_id: u32,
+    func: F,
+) -> *const u8
+where
+    O: ToRow,
+    F: Fn(&[PyroRow<'a>], &[PyroRow<'a>], PyroRow<'a>) -> Result<SessionResponse<O>, CapturedError>,
+{
+    logger::init_logging();
+    todo!("This should get the data from the input and output session repositories and feed it to the function");
+    // There should be 1 more input vector than output vectors. This should go in the special 3rd slot. 
+    // The first slot is for prior inputs and the second is for prior outputs.
 }
 
 fn encode_result<'a>(result: Result<PyroRow<'a>, CapturedError>) -> PyroVec {
