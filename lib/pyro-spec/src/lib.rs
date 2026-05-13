@@ -1,3 +1,19 @@
+//! Pyro-native type system and schema representation.
+//!
+//! This crate provides a lightweight schema representation optimized for
+//! `PyroValue`. Unlike Arrow's `DataType` (which has ~40 variants for timestamps,
+//! decimals, run-end-encoded, etc.), `PyroType` mirrors *exactly* the variants that
+//! `PyroValue` can represent, making match arms exhaustive and tiny.
+//!
+//! Core types:
+//! - [`PyroType`] — the main type enum, mirroring `PyroValue` discriminants 1:1
+//! - [`PyroField`] — a named, nullable column descriptor (equivalent to Arrow `Field`)
+//! - [`PyroSchema`] — an ordered collection of `PyroField`s (equivalent to Arrow `Schema`)
+//! - [`coerce_pyro_types`] — type coercion to find common supertypes
+//!
+//! Conversion to/from `arrow::datatypes::DataType` lives in the `arrow` module
+//! (behind the `arrow` feature flag).
+
 // =============================================================================
 // Pyro-native type system
 // =============================================================================
