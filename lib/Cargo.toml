@@ -25,7 +25,7 @@ keywords = ["wasm", "machine-learning"]
 repository = "github.com/nbhdai/pyroduct"
 edition = "2024"
 rust-version = "1.90"
-homepage = "nbhd.ai"
+homepage = "https://nbhd.ai"
 
 
 [workspace.dependencies]
