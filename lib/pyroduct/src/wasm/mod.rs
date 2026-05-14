@@ -171,17 +171,22 @@ pub extern "C" fn grow_session_input(session_id: u32, new_capacity: u32) -> *mut
         *registry = Some(HashMap::new());
     }
     let map = registry.as_mut().unwrap();
-    if let Some(vecs) = map.get_mut(&session_id) {
-        if let Some(last) = vecs.last_mut() {
-            let current_cap = last.capacity();
-            if (new_capacity as usize) > current_cap {
-                last.grow(new_capacity as usize);
-            }
-            let raw = last.as_raw_slice_mut();
-            return raw.as_mut_ptr();
+    let vecs = map.entry(session_id).or_insert_with(Vec::new);
+
+    if let Some(last) = vecs.last_mut() {
+        let current_cap = last.capacity();
+        if (new_capacity as usize) > current_cap {
+            last.grow(new_capacity as usize);
         }
+        let raw = last.as_raw_slice_mut();
+        raw.as_mut_ptr()
+    } else {
+        let mut vec = PyroVec::with_capacity(new_capacity as usize);
+        let raw = vec.as_raw_slice_mut();
+        let ptr = raw.as_mut_ptr();
+        vecs.push(vec);
+        ptr
     }
-    std::ptr::null_mut()
 }
 
 /// Allocate a new output vector on a session's output history.
@@ -208,17 +213,22 @@ pub extern "C" fn grow_session_output(session_id: u32, new_capacity: u32) -> *mu
         *registry = Some(HashMap::new());
     }
     let map = registry.as_mut().unwrap();
-    if let Some(vecs) = map.get_mut(&session_id) {
-        if let Some(last) = vecs.last_mut() {
-            let current_cap = last.capacity();
-            if (new_capacity as usize) > current_cap {
-                last.grow(new_capacity as usize);
-            }
-            let raw = last.as_raw_slice_mut();
-            return raw.as_mut_ptr();
+    let vecs = map.entry(session_id).or_insert_with(Vec::new);
+
+    if let Some(last) = vecs.last_mut() {
+        let current_cap = last.capacity();
+        if (new_capacity as usize) > current_cap {
+            last.grow(new_capacity as usize);
         }
+        let raw = last.as_raw_slice_mut();
+        raw.as_mut_ptr()
+    } else {
+        let mut vec = PyroVec::with_capacity(new_capacity as usize);
+        let raw = vec.as_raw_slice_mut();
+        let ptr = raw.as_mut_ptr();
+        vecs.push(vec);
+        ptr
     }
-    std::ptr::null_mut()
 }
 
 /// Borrow a pointer to a session's input vector at the given index.
@@ -428,12 +438,8 @@ where
     };
     let sessions = output_sessions.entry(session_id).or_default();
     sessions.push(result);
-    let len = sessions.len() as u32;
-    
-    to_output(match len.ship() {
-        Ok(v) => v,
-        Err(e) => e.encode(),
-    })
+    // Return pointer to the result PyroVec we just pushed (16-byte aligned header)
+    sessions.last().unwrap().raw_ptr() as *const u8
 }
 
 fn encode_result<'a>(result: Result<PyroRow<'a>, CapturedError>) -> PyroVec {

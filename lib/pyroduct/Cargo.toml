@@ -126,6 +126,10 @@ name = "integration_state"
 required-features = ["host"]
 
 [[test]]
+name = "integration_session"
+required-features = ["host"]
+
+[[test]]
 name = "integration_config"
 required-features = ["host"]
 

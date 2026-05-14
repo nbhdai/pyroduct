@@ -32,11 +32,13 @@ use crate::{CapturedError, PyroError};
 
 mod call;
 pub mod capability;
+pub mod sessions;
 mod state;
 // #[cfg(all(test, feature = "module"))]
 // mod tests;
 
 use capability::CapabilityLibrary;
+pub use sessions::{Session, SessionCallError, SessionResult};
 pub use state::{PyroModule, PyroState};
 
 use thiserror::Error;
@@ -450,6 +452,26 @@ impl PyroInstance {
             module_logs,
             capability_logs,
         }
+    }
+
+    /// Access the underlying wasmtime Store.
+    pub fn store(&self) -> &Store<PyroState> {
+        &self.store
+    }
+
+    /// Access the underlying wasmtime Store mutably.
+    pub fn store_mut(&mut self) -> &mut Store<PyroState> {
+        &mut self.store
+    }
+
+    /// Access the underlying wasmtime Instance.
+    pub fn instance(&self) -> &Instance {
+        &self.instance
+    }
+
+    /// Access the underlying wasmtime Memory.
+    pub fn memory(&self) -> Memory {
+        self.memory
     }
 
     pub fn pack_pyro_error(&self, error: impl std::error::Error) -> PyroFailure {
