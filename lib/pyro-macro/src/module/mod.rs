@@ -5,7 +5,7 @@ mod spec;
 use proc_macro2::TokenStream;
 use syn::parse2;
 
-pub use codegen::expand;
+pub use codegen::{expand, expand_session};
 pub use parse::ModuleAttrs;
 pub use spec::generate_module_spec;
 
@@ -33,7 +33,11 @@ pub fn generate_module(content: &str) -> syn::Result<syn::File> {
                     let mut clean_fn = item_fn.clone();
                     clean_fn.attrs.retain(|a| !is_module_attr(a));
 
-                    let expanded = expand(config, clean_fn)?;
+                    let expanded = if config.session {
+                        expand_session(config, clean_fn)?
+                    } else {
+                        expand(config, clean_fn)?
+                    };
                     generated_code.extend(expanded);
                 } else {
                     // Pass through non-module functions

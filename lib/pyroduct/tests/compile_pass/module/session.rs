@@ -8,8 +8,8 @@ pub struct ChatMessage {
 
 #[pyroduct::module(session, output = response)]
 fn process<'a>(
-    prior_input: Vec<ChatMessage>,
-    prior_output: Vec<ChatMessage>,
+    _prior_input: Vec<ChatMessage>,
+    _prior_output: Vec<ChatMessage>,
     input: ChatMessage,
 ) -> Result<SessionResponse<ChatMessage>> {
     Ok(SessionResponse::Continue(ChatMessage {

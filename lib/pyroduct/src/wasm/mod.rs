@@ -409,11 +409,31 @@ where
         Err(err) => return to_output(err.encode()),
     };
 
-    match result {
-        SessionResponse::Continue(_) => todo!(),
-        SessionResponse::End(_) => todo!(),
-        SessionResponse::Terminate => todo!(),
-    }
+    let result = match result {
+        SessionResponse::Continue(o) => {
+            let mut result = encode_result(Ok(o.to_row()));
+            result.set_fn_id(0);
+            result
+        },
+        SessionResponse::End(o) => {
+            let mut result = encode_result(Ok(o.to_row()));
+            result.set_fn_id(1);
+            result
+        },
+        SessionResponse::Terminate => {
+            let mut result = PyroVec::ok();
+            result.set_fn_id(2);
+            result
+        },
+    };
+    let sessions = output_sessions.entry(session_id).or_default();
+    sessions.push(result);
+    let len = sessions.len() as u32;
+    
+    to_output(match len.ship() {
+        Ok(v) => v,
+        Err(e) => e.encode(),
+    })
 }
 
 fn encode_result<'a>(result: Result<PyroRow<'a>, CapturedError>) -> PyroVec {

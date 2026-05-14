@@ -1,4 +1,4 @@
-error: Session modules require a "prior_input", "prior_output", and "input", not found
+error: Session module functions must have at least 3 parameters: prior_input, prior_output, and input
  --> tests/compile_fail/module/session_missing_prior.rs:9:1
   |
 9 | #[pyroduct::module(session, output = response)]
@@ -13,9 +13,3 @@ warning: unused import: `pyroduct::session::SessionResponse`
   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   |
   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
-
-error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/compile_fail/module/session_missing_prior.rs:18:2
-   |
-18 | }
-   |  ^ consider adding a `main` function to `$DIR/tests/compile_fail/module/session_missing_prior.rs`

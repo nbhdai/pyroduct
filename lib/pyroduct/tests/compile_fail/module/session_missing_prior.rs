@@ -16,3 +16,7 @@ fn process<'a>(
         content: "hi".to_string(),
     }))
 }
+
+fn main() {
+    let _ = process(vec![], ChatMessage { role: "user".into(), content: "hi".into() });
+}

@@ -9,11 +9,11 @@ pub struct ChatMessage {
 
 #[pyroduct::module(session, output = response)]
 fn process<'a>(
-    prior_input: Vec<ChatMessage>,
-    prior_output: Vec<String>,
+    _prior_input: Vec<ChatMessage>,
+    _prior_output: Vec<String>,
     input: ChatMessage,
 ) -> Result<SessionResponse<String>> {
-    Ok(SessionResponse::End("Done!"))
+    Ok(SessionResponse::End("Done!".to_string()))
 }
 
 fn main() {
