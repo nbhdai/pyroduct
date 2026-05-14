@@ -51,6 +51,22 @@ fn get_output_registry() -> std::sync::MutexGuard<'static, Option<HashMap<Stored
     lock
 }
 
+fn get_input_session_registry() -> std::sync::MutexGuard<'static, Option<HashMap<u32, Vec<PyroVec>>>> {
+    let mut lock = SESSION_INPUT.lock().unwrap();
+    if lock.is_none() {
+        *lock = Some(HashMap::new());
+    }
+    lock
+}
+
+fn get_output_session_registry() -> std::sync::MutexGuard<'static, Option<HashMap<u32, Vec<PyroVec>>>> {
+    let mut lock = SESSION_OUTPUT.lock().unwrap();
+    if lock.is_none() {
+        *lock = Some(HashMap::new());
+    }
+    lock
+}
+
 /// 1. Input Management (Host -> WASM)
 /// -------------------------------------------------------------------------
 
@@ -129,6 +145,119 @@ pub extern "C" fn free_output(ptr: *const u8) {
         .as_mut()
         .unwrap()
         .remove(&StoredPtr(ptr));
+}
+
+/// Allocate a new input vector on a session's input history.
+#[unsafe(no_mangle)]
+pub extern "C" fn new_session_input(session_id: u32, capacity: u32) -> *mut u8 {
+    let mut registry = SESSION_INPUT.lock().unwrap();
+    if registry.is_none() {
+        *registry = Some(HashMap::new());
+    }
+    let map = registry.as_mut().unwrap();
+    let mut vec = PyroVec::with_capacity(capacity as usize);
+    let raw = vec.as_raw_slice_mut();
+    let ptr = raw.as_mut_ptr();
+    let vecs = map.entry(session_id).or_insert_with(Vec::new);
+    vecs.push(vec);
+    ptr
+}
+
+/// Grow the last input vector for a session.
+#[unsafe(no_mangle)]
+pub extern "C" fn grow_session_input(session_id: u32, new_capacity: u32) -> *mut u8 {
+    let mut registry = SESSION_INPUT.lock().unwrap();
+    if registry.is_none() {
+        *registry = Some(HashMap::new());
+    }
+    let map = registry.as_mut().unwrap();
+    if let Some(vecs) = map.get_mut(&session_id) {
+        if let Some(last) = vecs.last_mut() {
+            let current_cap = last.capacity();
+            if (new_capacity as usize) > current_cap {
+                last.grow(new_capacity as usize);
+            }
+            let raw = last.as_raw_slice_mut();
+            return raw.as_mut_ptr();
+        }
+    }
+    std::ptr::null_mut()
+}
+
+/// Allocate a new output vector on a session's output history.
+#[unsafe(no_mangle)]
+pub extern "C" fn new_session_output(session_id: u32, capacity: u32) -> *mut u8 {
+    let mut registry = SESSION_OUTPUT.lock().unwrap();
+    if registry.is_none() {
+        *registry = Some(HashMap::new());
+    }
+    let map = registry.as_mut().unwrap();
+    let mut vec = PyroVec::with_capacity(capacity as usize);
+    let raw = vec.as_raw_slice_mut();
+    let ptr = raw.as_mut_ptr();
+    let vecs = map.entry(session_id).or_insert_with(Vec::new);
+    vecs.push(vec);
+    ptr
+}
+
+/// Grow the last output vector for a session.
+#[unsafe(no_mangle)]
+pub extern "C" fn grow_session_output(session_id: u32, new_capacity: u32) -> *mut u8 {
+    let mut registry = SESSION_OUTPUT.lock().unwrap();
+    if registry.is_none() {
+        *registry = Some(HashMap::new());
+    }
+    let map = registry.as_mut().unwrap();
+    if let Some(vecs) = map.get_mut(&session_id) {
+        if let Some(last) = vecs.last_mut() {
+            let current_cap = last.capacity();
+            if (new_capacity as usize) > current_cap {
+                last.grow(new_capacity as usize);
+            }
+            let raw = last.as_raw_slice_mut();
+            return raw.as_mut_ptr();
+        }
+    }
+    std::ptr::null_mut()
+}
+
+/// Borrow a pointer to a session's input vector at the given index.
+#[unsafe(no_mangle)]
+pub extern "C" fn borrow_session_input(session_id: u32, index: u32) -> *mut u8 {
+    let registry = SESSION_INPUT.lock().unwrap();
+    if registry.is_none() {
+        return std::ptr::null_mut();
+    }
+    let map = registry.as_ref().unwrap();
+    if let Some(vecs) = map.get(&session_id) {
+        if let Some(vec) = vecs.get(index as usize) {
+            return vec.as_raw_slice().as_ptr() as *mut u8;
+        }
+    }
+    std::ptr::null_mut()
+}
+
+/// Borrow a pointer to a session's output vector at the given index.
+#[unsafe(no_mangle)]
+pub extern "C" fn borrow_session_output(session_id: u32, index: u32) -> *mut u8 {
+    let registry = SESSION_OUTPUT.lock().unwrap();
+    if registry.is_none() {
+        return std::ptr::null_mut();
+    }
+    let map = registry.as_ref().unwrap();
+    if let Some(vecs) = map.get(&session_id) {
+        if let Some(vec) = vecs.get(index as usize) {
+            return vec.as_raw_slice().as_ptr() as *mut u8;
+        }
+    }
+    std::ptr::null_mut()
+}
+
+/// Free all vectors associated with a session and remove the session.
+#[unsafe(no_mangle)]
+pub extern "C" fn free_session(session_id: u32) {
+    SESSION_INPUT.lock().unwrap().as_mut().unwrap().remove(&session_id);
+    SESSION_OUTPUT.lock().unwrap().as_mut().unwrap().remove(&session_id);
 }
 
 /// Test-only: re-insert a PyroVec into the input registry under a given pointer.
@@ -214,9 +343,77 @@ where
     F: Fn(&[PyroRow<'a>], &[PyroRow<'a>], PyroRow<'a>) -> Result<SessionResponse<O>, CapturedError>,
 {
     logger::init_logging();
-    todo!("This should get the data from the input and output session repositories and feed it to the function");
-    // There should be 1 more input vector than output vectors. This should go in the special 3rd slot. 
-    // The first slot is for prior inputs and the second is for prior outputs.
+    let mut input_sessions_guard = get_input_session_registry();
+    let mut output_sessions_guard = get_output_session_registry();
+    let input_sessions = input_sessions_guard.as_mut().unwrap();
+    let output_sessions = output_sessions_guard.as_mut().unwrap();
+
+    let inputs = match input_sessions.get(&session_id) {
+        Some(session) => session,
+        None => {
+            let result = Err(CapturedError::new(format!(
+                "Unable to locate session for id: {}",
+                session_id as usize
+            )));
+            return to_output(encode_result(result));
+        }
+    };
+
+    let outputs = match output_sessions.get(&session_id) {
+        Some(session) => session,
+        None => {
+            let result = Err(CapturedError::new(format!(
+                "Unable to locate session for id: {}",
+                session_id as usize
+            )));
+            return to_output(encode_result(result));
+        }
+    };
+
+    if outputs.len() + 1 != inputs.len() {
+        let result = Err(CapturedError::new(
+            "The input is missing"
+        ));
+        return to_output(encode_result(result));
+    }
+
+    let input_row = match PyroRow::expose_view(inputs[outputs.len()].py_ref()) {
+        Ok(vec) => vec,
+        Err(err) => return to_output(err.encode()),
+    };
+    let input = PyroRow::from(&*input_row);
+
+    let mut prior_inputs = Vec::with_capacity(inputs.len());
+    for ir in inputs[0..inputs.len() - 1].iter() {
+        let input_row = match PyroRow::expose_view(ir.py_ref()) {
+            Ok(vec) => vec,
+            Err(err) => return to_output(err.encode()),
+        };
+        let input = PyroRow::from(&*input_row);
+        prior_inputs.push(input);
+    }
+
+
+    let mut prior_outputs = Vec::with_capacity(outputs.len());
+    for or in outputs[0..outputs.len() - 1].iter() {
+        let output_row = match PyroRow::expose_view(or.py_ref()) {
+            Ok(vec) => vec,
+            Err(err) => return to_output(err.encode()),
+        };
+        let output = PyroRow::from(&*output_row);
+        prior_outputs.push(output);
+    }
+
+    let result = match func(&prior_inputs, &prior_outputs, input) {
+        Ok(result) => result,
+        Err(err) => return to_output(err.encode()),
+    };
+
+    match result {
+        SessionResponse::Continue(_) => todo!(),
+        SessionResponse::End(_) => todo!(),
+        SessionResponse::Terminate => todo!(),
+    }
 }
 
 fn encode_result<'a>(result: Result<PyroRow<'a>, CapturedError>) -> PyroVec {

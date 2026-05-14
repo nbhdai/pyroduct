@@ -13,7 +13,7 @@ fn process<'a>(
     prior_output: Vec<String>,
     input: ChatMessage,
 ) -> Result<SessionResponse<String>> {
-    Ok(SessionResponse::End)
+    Ok(SessionResponse::End("Done!"))
 }
 
 fn main() {
