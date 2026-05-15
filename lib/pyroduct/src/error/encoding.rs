@@ -29,7 +29,7 @@ impl PyroError {
                 let mut err_vec = CapturedError::new(msg)
                     .with_location(Location::caller())
                     .encode();
-                err_vec.set_status(DataStatus::CodeError);
+                err_vec.set_status(DataStatus::RemoteNotFound);
                 err_vec
             }
             PyroError::Header(error) => {
@@ -50,6 +50,7 @@ impl PyroError {
                     ErrorKind::InvalidHeader => None,
                     ErrorKind::LayoutError => None,
                     ErrorKind::UnexpectedEof => None,
+                    ErrorKind::NotFound(_) => None,
                 };
                 let status_code = kind.to_status().to_remote();
 

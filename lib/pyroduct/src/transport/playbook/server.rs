@@ -22,15 +22,13 @@ impl PlaybookServer {
         let factory = PyroFactory::from_playbook(playbook)?;
         let instance = factory.instantiate().await?;
         let output_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let wal_writer = crate::format::wal::WalWriter::open(output_dir.join("wal_0")).ok();
         let pipeline = Pipeline {
             step: instance,
             wal_capacity: 1000,
             success_log_retention_secs: 3600,
             error_log_retention_secs: 86400 * 7,
-            output_dir,
-            wal_writer,
-            current_wal_id: 0,
+            output_dir: output_dir.clone(),
+            data_manager: crate::pipeline::data::DataManager::new(output_dir.clone()),
         };
         Ok(Self {
             pipeline: Arc::new(Mutex::new(pipeline)),

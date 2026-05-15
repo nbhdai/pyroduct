@@ -78,9 +78,6 @@ impl LoadedPipelineConfig {
 /// A loaded pipeline definition for a single playbook.
 pub struct PipelineFactory {
     pub factory: PyroFactory,
-    pub wal_capacity: usize,
-    pub success_log_retention_secs: u64,
-    pub error_log_retention_secs: u64,
     pub output_dir: std::path::PathBuf,
 }
 
@@ -98,12 +95,8 @@ impl PipelineFactory {
 
         Ok(Pipeline {
             step: instance,
-            wal_capacity: self.wal_capacity,
-            success_log_retention_secs: self.success_log_retention_secs,
-            error_log_retention_secs: self.error_log_retention_secs,
             output_dir: self.output_dir.clone(),
-            wal_writer: None,
-            current_wal_id: 0,
+            data_manager: super::data::DataManager::new(self.output_dir.clone()),
         })
     }
 }

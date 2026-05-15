@@ -88,6 +88,63 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
         Ok(view)
     }
 
+    /// Read a `PyroView` from wasm memory for a session's input at the given index.
+    pub async fn borrow_session_input(&mut self, session_id: u32, index: u32) -> Result<PyroRef<'_>, WasmError> {
+        let borrow_fn = self
+            .ctx
+            .as_context()
+            .data()
+            .methods()
+            .ok_or_else(|| WasmError::MissingExport("PyroState not linked".to_string()))?
+            .borrow_session_input();
+
+        let ptr = borrow_fn
+            .call_async(&mut self.ctx, (session_id as i32, index as i32))
+            .await
+            .map_err(WasmError::InputMemory)?;
+
+        if ptr == 0 {
+            return Err(WasmError::MissingExport(format!(
+                "Session {} input at index {} not found",
+                session_id, index
+            )));
+        }
+
+        let wasm_memory = self.memory.data(self.ctx.as_context());
+        let view = get_ref(wasm_memory, ptr as usize)
+            .map_err(|e| WasmError::InputMemory(wasmtime::Error::msg(e.to_string())))?;
+        Ok(view)
+    }
+
+    /// Read a `PyroView` from wasm memory for a session's output at the given index.
+    pub async fn borrow_session_output(&mut self, session_id: u32, index: u32) -> Result<PyroRef<'_>, WasmError> {
+        let borrow_fn = self
+            .ctx
+            .as_context()
+            .data()
+            .methods()
+            .ok_or_else(|| WasmError::MissingExport("PyroState not linked".to_string()))?
+            .borrow_session_output();
+
+        let ptr = borrow_fn
+            .call_async(&mut self.ctx, (session_id as i32, index as i32))
+            .await
+            .map_err(WasmError::InputMemory)?;
+
+        if ptr == 0 {
+            return Err(WasmError::MissingExport(format!(
+                "Session {} output at index {} not found",
+                session_id, index
+            )));
+        }
+
+        let wasm_memory = self.memory.data(self.ctx.as_context());
+        let view = get_ref(wasm_memory, ptr as usize)
+            .map_err(|e| WasmError::InputMemory(wasmtime::Error::msg(e.to_string())))?;
+        Ok(view)
+    }
+
+
     /// Allocate a new buffer in wasm memory via `new_input` and copy the
     /// full PyroView (header + payload) into it. Returns the wasm pointer.
     pub async fn new_input(&mut self, data: &PyroView) -> Result<i32, WasmError> {
@@ -122,6 +179,75 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
         Ok(ptr)
     }
 
+    /// Allocate a new buffer in wasm memory via `new_session_input` and copy the
+    /// full PyroView (header + payload) into it. Returns the wasm pointer.
+    pub async fn new_session_input(&mut self, session_id: u32, data: PyroView) -> Result<i32, WasmError> {
+        let data_len = data.len(); // payload only
+        let total_len = PyroParser::HEADER_SIZE + data.len();
+
+        let new_session_input = self
+            .ctx
+            .as_context()
+            .data()
+            .methods()
+            .ok_or_else(|| WasmError::MissingExport("PyroState not linked".to_string()))?
+            .new_session_input();
+
+        let ptr = new_session_input
+            .call_async(&mut self.ctx, (session_id as i32, data_len as i32))
+            .await
+            .map_err(WasmError::OutputMemory)?;
+
+        let wasm_memory = self.memory.data_mut(&mut self.ctx);
+        let memory_len = wasm_memory.len();
+        let dest = wasm_memory
+            .get_mut(ptr as usize..ptr as usize + total_len)
+            .ok_or_else(|| {
+                WasmError::OutputMemory(wasmtime::Error::msg(format!(
+                    "wasm pointer {:#x} + {} out of bounds (memory size {})",
+                    ptr, total_len, memory_len
+                )))
+            })?;
+        dest.copy_from_slice(data.as_raw_slice());
+
+        Ok(ptr)
+    }
+
+    /// Allocate a new buffer in wasm memory via `new_session_output` and copy the
+    /// full PyroView (header + payload) into it. Returns the wasm pointer.
+    pub async fn new_session_output(&mut self, session_id: u32, data: PyroView) -> Result<i32, WasmError> {
+        let data_len = data.len(); // payload only
+        let total_len = PyroParser::HEADER_SIZE + data.len();
+
+        let new_session_output = self
+            .ctx
+            .as_context()
+            .data()
+            .methods()
+            .ok_or_else(|| WasmError::MissingExport("PyroState not linked".to_string()))?
+            .new_session_output();
+
+        let ptr = new_session_output
+            .call_async(&mut self.ctx, (session_id as i32, data_len as i32))
+            .await
+            .map_err(WasmError::OutputMemory)?;
+
+        let wasm_memory = self.memory.data_mut(&mut self.ctx);
+        let memory_len = wasm_memory.len();
+        let dest = wasm_memory
+            .get_mut(ptr as usize..ptr as usize + total_len)
+            .ok_or_else(|| {
+                WasmError::OutputMemory(wasmtime::Error::msg(format!(
+                    "wasm pointer {:#x} + {} out of bounds (memory size {})",
+                    ptr, total_len, memory_len
+                )))
+            })?;
+        dest.copy_from_slice(data.as_raw_slice());
+
+        Ok(ptr)
+    }
+
+
     /// Allocate a new buffer in wasm memory via `new_input` and copy the
     /// full PyroView (header + payload) into it. Returns the wasm pointer.
     pub fn log(&self, ptr: i32, len: i32) -> Result<i32, WasmError> {
@@ -133,5 +259,22 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
         data.module_log(slice);
 
         Ok(len)
+    }
+
+    /// Free the session and all its input/output history.
+    pub async fn free_session(&mut self, session_id: u32) -> Result<(), WasmError> {
+        let free_fn = self
+            .ctx
+            .as_context()
+            .data()
+            .methods()
+            .ok_or_else(|| WasmError::MissingExport("PyroState not linked".to_string()))?
+            .free_session();
+
+        free_fn
+            .call_async(&mut self.ctx, session_id as i32)
+            .await
+            .map_err(WasmError::Unknown)?;
+        Ok(())
     }
 }

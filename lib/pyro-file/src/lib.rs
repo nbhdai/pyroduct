@@ -104,6 +104,13 @@ pub fn record_batch_to_bytes(batch: &RecordBatch) -> Result<Vec<u8>, DataError> 
     Ok(buffer)
 }
 
+/// Writes a RecordBatch to Arrow IPC format (File/Feather format).
+pub fn write_ipc<P: AsRef<Path>>(batch: &RecordBatch, path: P) -> Result<(), DataError> {
+    let bytes = record_batch_to_bytes(batch)?;
+    std::fs::write(path, bytes)?;
+    Ok(())
+}
+
 fn get_chunk_path(base_path: &Path, chunk_index: Option<usize>) -> PathBuf {
     match chunk_index {
         Some(idx) => {
@@ -414,6 +421,19 @@ pub async fn parse_data_to_batch(
         }
         Ok(error) => error,
         Err(e) => Err(DataError::TaskJoin(e.to_string())),
+    }
+}
+
+/// Synchronous version of parse_data_to_batch.
+pub fn parse_data_to_batch_sync(
+    data: Vec<u8>,
+    filename: &str,
+) -> Result<Vec<ArrowIpc>, DataError> {
+    let inner = inter_parse_data_to_batch(data, filename)?;
+    if inner.is_empty() || inner.iter().all(|b| b.num_rows() == 0) {
+        Err(DataError::Empty)
+    } else {
+        Ok(inner)
     }
 }
 

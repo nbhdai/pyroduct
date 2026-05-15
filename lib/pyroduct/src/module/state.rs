@@ -203,6 +203,15 @@ pub(crate) struct PyroMethods {
     new_input: TypedFunc<i32, i32>,
     _grow_input: TypedFunc<(i32, i32), i32>,
     free_output: TypedFunc<i32, ()>,
+    new_session_input: TypedFunc<(i32, i32), i32>,
+    grow_session_input: TypedFunc<(i32, i32), i32>,
+    new_session_output: TypedFunc<(i32, i32), i32>,
+    grow_session_output: TypedFunc<(i32, i32), i32>,
+    borrow_session_input: TypedFunc<(i32, i32), i32>,
+    borrow_session_output: TypedFunc<(i32, i32), i32>,
+    session_input_length: TypedFunc<i32, i32>,
+    session_output_length: TypedFunc<i32, i32>,
+    free_session: TypedFunc<i32, ()>,
     last_error: Option<anyhow::Error>,
 }
 
@@ -215,6 +224,36 @@ impl PyroMethods {
     /// The `free_output` typed function handle.
     pub fn free_output(&self) -> TypedFunc<i32, ()> {
         self.free_output.clone()
+    }
+
+    /// The `new_input` typed function handle.
+    pub fn new_session_input(&self) -> TypedFunc<(i32, i32), i32> {
+        self.new_session_input.clone()
+    }
+
+    /// The `new_input` typed function handle.
+    pub fn new_session_output(&self) -> TypedFunc<(i32, i32), i32> {
+        self.new_session_output.clone()
+    }
+
+    pub fn borrow_session_input(&self) -> TypedFunc<(i32, i32), i32> {
+        self.borrow_session_input.clone()
+    }
+
+    pub fn borrow_session_output(&self) -> TypedFunc<(i32, i32), i32> {
+        self.borrow_session_output.clone()
+    }
+
+    pub fn session_input_length(&self) -> TypedFunc<i32, i32> {
+        self.session_input_length.clone()
+    }
+
+    pub fn session_output_length(&self) -> TypedFunc<i32, i32> {
+        self.session_output_length.clone()
+    }
+
+    pub fn free_session(&self) -> TypedFunc<i32, ()> {
+        self.free_session.clone()
     }
 
     /// Record an error that will be surfaced after the wasm call completes.
@@ -260,10 +299,56 @@ impl PyroState {
         let free_output = instance
             .get_typed_func::<i32, ()>(&mut *store, "free_output")
             .map_err(|_| WasmError::SignatureMismatch("free_output".to_string()))?;
+
+        let new_session_input = instance
+            .get_typed_func::<(i32, i32), i32>(&mut *store, "new_session_input")
+            .map_err(|_| WasmError::SignatureMismatch("new_session_input".to_string()))?;
+
+        let grow_session_input = instance
+            .get_typed_func::<(i32, i32), i32>(&mut *store, "grow_session_input")
+            .map_err(|_| WasmError::SignatureMismatch("grow_session_input".to_string()))?;
+
+        let new_session_output = instance
+            .get_typed_func::<(i32, i32), i32>(&mut *store, "new_session_output")
+            .map_err(|_| WasmError::SignatureMismatch("new_session_output".to_string()))?;
+
+        let grow_session_output = instance
+            .get_typed_func::<(i32, i32), i32>(&mut *store, "grow_session_output")
+            .map_err(|_| WasmError::SignatureMismatch("grow_session_output".to_string()))?;
+
+        let borrow_session_input = instance
+            .get_typed_func::<(i32, i32), i32>(&mut *store, "borrow_session_input")
+            .map_err(|_| WasmError::SignatureMismatch("borrow_session_input".to_string()))?;
+
+        let borrow_session_output = instance
+            .get_typed_func::<(i32, i32), i32>(&mut *store, "borrow_session_output")
+            .map_err(|_| WasmError::SignatureMismatch("borrow_session_output".to_string()))?;
+
+        let session_input_length = instance
+            .get_typed_func::<i32, i32>(&mut *store, "session_input_length")
+            .map_err(|_| WasmError::SignatureMismatch("session_input_length".to_string()))?;
+
+        let session_output_length = instance
+            .get_typed_func::<i32, i32>(&mut *store, "session_output_length")
+            .map_err(|_| WasmError::SignatureMismatch("session_output_length".to_string()))?;
+
+        let free_session = instance
+            .get_typed_func::<i32, ()>(&mut *store, "free_session")
+            .map_err(|_| WasmError::SignatureMismatch("free_session".to_string()))?;
+
         store.data_mut().methods = Some(PyroMethods {
             new_input,
             _grow_input: grow_input,
             free_output,
+            new_session_input,
+            grow_session_input,
+            new_session_output,
+            grow_session_output,
+            borrow_session_input,
+            borrow_session_output,
+            session_input_length,
+            session_output_length,
+            free_session,
             last_error: None,
         });
         Ok(())

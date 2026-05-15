@@ -44,7 +44,7 @@ pub enum PyroError {
     #[error("Bad header: {0}")]
     Header(#[from] ParseError),
 
-    #[error("unknown status code: {0}")]
+    #[error("not found: {0}")]
     NotFound(String),
 }
 
@@ -87,6 +87,10 @@ impl PyroError {
         )
     }
 
+    pub fn not_found<S: std::fmt::Display>(missing: S) -> Self {
+        Self::NotFound(missing.to_string())
+    }
+
     /// Returns true if this error originated remotely.
     pub fn library(&self) -> Option<&LibraryInfo<'static>> {
         match self {
@@ -105,6 +109,7 @@ impl PyroError {
                 ErrorKind::InvalidHeader => library(),
                 ErrorKind::LayoutError => library(),
                 ErrorKind::UnexpectedEof => library(),
+                ErrorKind::NotFound(_) => library(),
             },
         }
     }
@@ -168,6 +173,7 @@ impl fmt::Display for ErrorOrigin {
 /// The specific kind of pyro/transport error that occurred.
 #[derive(Debug)]
 pub enum ErrorKind {
+    NotFound(String),
     /// Failed to serialize data.
     Serialization(Box<CapturedError>),
     /// Failed to deserialize data.
@@ -191,6 +197,7 @@ pub enum ErrorKind {
 impl ErrorKind {
     pub fn to_status(&self) -> ErrorStatus {
         match self {
+            ErrorKind::NotFound(_) => ErrorStatus::NotFound,
             ErrorKind::Serialization(_) => ErrorStatus::Serialization,
             ErrorKind::Deserialization(_) => ErrorStatus::Deserialization,
             ErrorKind::Validation(_) => ErrorStatus::Validation,
@@ -207,6 +214,7 @@ impl ErrorKind {
 /// The specific kind of pyro/transport error that occurred.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorStatus {
+    NotFound,
     Serialization,
     Deserialization,
     Validation,
@@ -221,6 +229,7 @@ pub enum ErrorStatus {
 impl ErrorStatus {
     pub fn to_local(&self) -> DataStatus {
         match self {
+            ErrorStatus::NotFound => DataStatus::LocalNotFound,
             ErrorStatus::Serialization => DataStatus::LocalSerialization,
             ErrorStatus::Deserialization => DataStatus::LocalDeserialization,
             ErrorStatus::Validation => DataStatus::LocalValidation,
@@ -235,6 +244,7 @@ impl ErrorStatus {
 
     pub fn to_remote(&self) -> DataStatus {
         match self {
+            ErrorStatus::NotFound => DataStatus::RemoteNotFound,
             ErrorStatus::Serialization => DataStatus::RemoteSerialization,
             ErrorStatus::Deserialization => DataStatus::RemoteDeserialization,
             ErrorStatus::Validation => DataStatus::RemoteValidation,
@@ -251,6 +261,7 @@ impl ErrorStatus {
 impl fmt::Display for ErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ErrorKind::NotFound(msg) => write!(f, "not found: {}", msg),
             ErrorKind::Serialization(e) => write!(f, "serialization error: {}", e),
             ErrorKind::Deserialization(e) => write!(f, "deserialization error: {}", e),
             ErrorKind::Validation(e) => write!(f, "validation error: {}", e),

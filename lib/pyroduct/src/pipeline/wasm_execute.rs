@@ -6,17 +6,17 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc};
 use tracing::{error, instrument, warn};
 
-use crate::format::{
+use crate::{format::{
     PyroFailure, PyroLogs, PyroSuccess,
     value::{
         PyroRow, ValueError,
         arrow::{PreBatch, Rowable},
     },
-    wal::{WalRecord, WalWriter, recover},
-};
-use crate::module::PyroInstance;
+    wal::{WalRecord, WalWriter},
+}, pipeline::{PipelineError, PipelineResult}};
+use crate::module::{PyroInstance, sessions::SessionResult};
 
-use super::{PipelineError, PipelineResult};
+use super::data::DataManager;
 
 // =============================================================================
 // Pipeline
@@ -25,69 +25,16 @@ use super::{PipelineError, PipelineResult};
 #[derive(Debug, Clone)]
 pub struct PipelineExecution {
     pub row_index: usize,
-    pub steps: Vec<PyroSuccess>,
+    pub success: Option<PyroSuccess>,
     pub failure: Option<PyroFailure>,
-}
-
-impl PipelineExecution {
-    pub fn row(&self) -> Option<PyroRow<'_>> {
-        let mut steps = self.steps.iter();
-        let mut row = steps.next().map(|r| r.row.clone())?;
-        for step in steps {
-            row.extend(step.row.clone());
-        }
-        Some(row)
-    }
-
-    /// Row from steps [0, step_index] merged together
-    pub fn row_up_to(&self, step_index: usize) -> Option<PyroRow<'_>> {
-        if self.steps.len() < step_index {
-            return None;
-        }
-        let mut steps = self.steps[..=step_index.min(self.steps.len() - 1)].iter();
-        let mut row = steps.next().map(|r| r.row.clone())?;
-        for step in steps {
-            row.extend(step.row.clone());
-        }
-        Some(row)
-    }
-
-    /// Row from only the given step index
-    pub fn row_at(&self, step_index: usize) -> Option<PyroRow<'_>> {
-        self.steps.get(step_index).map(|s| s.row.clone())
-    }
-}
-
-pub fn extract_upto_batch(
-    executions: &[PipelineExecution],
-    step_index: usize,
-) -> Result<Option<RecordBatch>, ValueError> {
-    let batch = PreBatch::from_iter(executions.iter().filter_map(|s| s.row_up_to(step_index)));
-    match batch {
-        Some(mut b) => b.flush(),
-        None => Ok(None),
-    }
-}
-
-pub fn extract_at_batch(
-    executions: &[PipelineExecution],
-    step_index: usize,
-) -> Result<Option<RecordBatch>, ValueError> {
-    let batch = PreBatch::from_iter(executions.iter().filter_map(|s| s.row_at(step_index)));
-    match batch {
-        Some(mut b) => b.flush(),
-        None => Ok(None),
-    }
 }
 
 pub struct Pipeline {
     pub step: PyroInstance,
-    pub wal_capacity: usize,
     pub success_log_retention_secs: u64,
     pub error_log_retention_secs: u64,
     pub output_dir: std::path::PathBuf,
-    pub wal_writer: Option<WalWriter<std::fs::File, std::fs::File>>,
-    pub current_wal_id: usize,
+    pub data_manager: DataManager,
 }
 
 impl Pipeline {
@@ -96,11 +43,11 @@ impl Pipeline {
     pub async fn process(&mut self, input: &PyroRow<'_>) -> PipelineExecution {
         let mut result: PyroRow<'static> = input.clone().into_owned();
         let mut execution = PipelineExecution {
-            steps: Vec::new(),
+            success: None,
             failure: None,
             row_index: 0,
         };
-        execution.steps.push(PyroSuccess {
+        execution.success = Some(PyroSuccess {
             row: result.clone(),
             logs: PyroLogs::empty(),
         });
@@ -131,82 +78,42 @@ impl Pipeline {
             }
         };
 
-        if let Some(wal) = &mut self.wal_writer {
-            if let Err(e) = wal.append(&record) {
-                error!("Failed to append to WAL: {}", e);
-            }
-            if wal.records_written() >= self.wal_capacity as u64 {
-                self.flush_wal().await;
-            }
-        }
+        self.data_manager.push_record(&record)?;
 
         execution
     }
 
-    pub async fn flush_wal(&mut self) {
-        if let Some(wal) = self.wal_writer.take() {
-            let path = wal.wal_path().map(|p| p.to_path_buf());
-            let base_path = self.output_dir.join(format!("wal_{}", self.current_wal_id));
-            
-            // Recover and build arrow batch
-            if let Ok(records) = recover(&base_path) {
-                let success_rows = records.into_iter().filter_map(|r| {
-                    if let WalRecord::Success { success, .. } = r {
-                        Some(success.row)
-                    } else { None }
-                });
-                
-                if let Some(mut prebatch) = PreBatch::from_iter(success_rows) {
-                    if let Ok(Some(batch)) = prebatch.flush() {
-                        let arrow_path = self.output_dir.join(format!("batch_{}.arrow", self.current_wal_id));
-                        #[cfg(feature = "cli")]
-                        {
-                            if let Ok(bytes) = pyro_file::record_batch_to_bytes(&batch) {
-                                let _ = std::fs::write(&arrow_path, bytes);
-                            }
-                        }
-                        #[cfg(not(feature = "cli"))]
-                        {
-                            // If arrow_file feature is not enabled, we just warn or handle differently
-                            // Assuming it's available or we can just ignore.
-                        }
-                    }
-                }
-            }
-
-            // Prune old logs before advancing
-            self.prune_logs().await;
-
-            if let Some(p) = path {
-                let _ = std::fs::remove_file(p);
-            }
-
-            self.current_wal_id += 1;
-            let next_base = self.output_dir.join(format!("wal_{}", self.current_wal_id));
-            self.wal_writer = WalWriter::open(next_base).ok();
-        }
+    pub async fn prep_session(
+        &mut self,
+        session_id: u32,
+        inputs: &[PyroRow<'_>],
+        outputs: &[PyroRow<'_>],
+    ) -> Result<(), PyroFailure> {
+        self.step.prep_session(session_id, inputs, outputs).await
     }
 
-    async fn prune_logs(&self) {
-        let now = std::time::SystemTime::now();
-        if let Ok(entries) = std::fs::read_dir(&self.output_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("pyrolog") {
-                    if let Ok(metadata) = entry.metadata() {
-                        if let Ok(modified) = metadata.modified() {
-                            if let Ok(elapsed) = now.duration_since(modified) {
-                                // Simple heuristic: Since logs are mixed in .pyrolog,
-                                // we'll use the error log retention as the upper bound for the file's lifetime.
-                                if elapsed.as_secs() > self.error_log_retention_secs {
-                                    let _ = std::fs::remove_file(path);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    pub async fn call_session(
+        &mut self,
+        session_id: u32,
+        input: &PyroRow<'_>,
+    ) -> Result<SessionResult, PyroFailure> {
+        self.step.call_session(session_id, input).await
+    }
+
+    pub async fn close_session(&mut self, session_id: u32) -> Result<(), PyroFailure> {
+        self.step.close_session(session_id).await
+    }
+
+    pub async fn session_inputs(&mut self, session_id: u32) -> Result<Vec<PyroRow<'_>>, PyroFailure> {
+        self.step.session_inputs(session_id).await
+    }
+
+    pub async fn session_outputs(&mut self, session_id: u32) -> Result<Vec<PyroRow<'_>>, PyroFailure> {
+        self.step.session_outputs(session_id).await
+    }
+
+    pub fn session_lengths(&self, session_id: u32) -> Option<(u32, u32)> {
+        self.step.session_lengths(session_id)
     }
 }
 

@@ -99,6 +99,12 @@ pub enum WasmError {
 // PyroInstance — owns Store + Instance, drives host↔wasm IO
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Default)]
+struct SessionState {
+    input_len: u32,
+    output_len: u32,
+}
+
 /// A linker pre-configured to use `PyroState<T>` as store data.
 ///
 /// Host functions registered through `define_async` / `define_sync` receive
@@ -242,6 +248,7 @@ impl PyroFactory {
             instance,
             memory,
             objects,
+            session_states: HashMap::new(),
         })
     }
 
@@ -371,6 +378,7 @@ pub struct PyroInstance {
     instance: Instance,
     memory: Memory,
     objects: HashMap<String, ForeignObject>,
+    session_states: HashMap<u32, SessionState>,
 }
 
 impl PyroInstance {
@@ -454,30 +462,204 @@ impl PyroInstance {
         }
     }
 
-    /// Access the underlying wasmtime Store.
-    pub fn store(&self) -> &Store<PyroState> {
-        &self.store
+    /// Push input and call a session module for one step.
+    ///
+    /// This encapsulates the full session call lifecycle: pushing the input row
+    /// into wasm linear memory, calling `call_session_extern`, reading the result
+    /// from the session's output slot, and updating session state.
+    pub async fn prep_session(
+        &mut self,
+        session_id: u32,
+        inputs: &[PyroRow<'_>],
+        outputs: &[PyroRow<'_>],
+    ) -> Result<(), PyroFailure> {
+        let mut io = PyroCallIo::new(&mut self.store, self.memory);
+
+        for input in inputs {
+            let input_row_owned = input.to_static();
+            let input_vec = input_row_owned
+                .ship()
+                .map_err(|err| Self::pack_setup_pyro_error(err))?;
+            let input_view = input_vec.view();
+            io.new_session_input(session_id, input_view)
+                .await
+                .map_err(|err| Self::pack_setup_pyro_error(err))?;
+        }
+
+        for output in outputs {
+            let output_row_owned = output.to_static();
+            let output_vec = output_row_owned
+                .ship()
+                .map_err(|err| Self::pack_setup_pyro_error(err))?;
+            let output_view = output_vec.view();
+            io.new_session_output(session_id, output_view)
+                .await
+                .map_err(|err| Self::pack_setup_pyro_error(err))?;
+        }
+
+        let state = self.session_states.entry(session_id).or_default();
+        state.input_len = inputs.len() as u32;
+        state.output_len = outputs.len() as u32;
+
+        Ok(())
     }
 
-    /// Access the underlying wasmtime Store mutably.
-    pub fn store_mut(&mut self) -> &mut Store<PyroState> {
-        &mut self.store
+    /// Push input and call a session module for one step.
+    ///
+    /// This encapsulates the full session call lifecycle: pushing the input row
+    /// into wasm linear memory, calling `call_session_extern`, reading the result
+    /// from the session's output slot, and updating session state.
+    pub async fn call_session(
+        &mut self,
+        session_id: u32,
+        input: &PyroRow<'_>,
+    ) -> Result<sessions::SessionResult, PyroFailure> {
+        // 1. Ship input into session history
+        let input_row_owned = input.to_static();
+        let input_vec = input_row_owned
+            .ship()
+            .map_err(|err| self.pack_pyro_error(err))?;
+        let input_view = input_vec.view();
+
+        let mut io = PyroCallIo::new(&mut self.store, self.memory);
+        io.new_session_input(session_id, input_view)
+            .await
+            .map_err(|err| self.pack_pyro_error(err))?;
+
+        // 2. Call the session export
+        let entry: TypedFunc<i32, i32> = self
+            .instance
+            .get_typed_func(&mut self.store, "call_session_extern")
+            .map_err(|e| {
+                PyroError::CodePanic(
+                    CapturedError::new(format!("Missing call_session_extern: {}", e)).into(),
+                )
+            })
+            .map_err(|err| self.pack_pyro_error(err))?;
+
+        let output_ptr = entry
+            .call_async(&mut self.store, session_id as i32)
+            .await
+            .map_err(classify_error)
+            .map_err(|err| self.pack_pyro_error(err))?;
+
+        // 3. Read Output
+        let mut io = PyroCallIo::new(&mut self.store, self.memory);
+        let output_vec = io
+            .get_output(output_ptr)
+            .await
+            .map_err(|err| self.pack_pyro_error(err))?;
+
+        // 4. Parse Result
+        let result_view = output_vec.view();
+        result_view
+            .parse_as_error()
+            .map_err(|err| self.pack_pyro_error(err))?;
+
+        let pyref = result_view.py_ref();
+        let fn_id = result_view.fn_id();
+
+        let res = match result_view.status() {
+            Ok(DataStatus::RkyvValid) => {
+                let row = PyroRow::expose_view(pyref).map_err(|err| self.pack_pyro_error(err))?;
+                let row_static = PyroRow::from(&*row).to_static();
+
+                Ok(match fn_id {
+                    0 => sessions::SessionResult::Continue(row_static),
+                    1 => sessions::SessionResult::End(row_static),
+                    2 => sessions::SessionResult::Terminate,
+                    _ => sessions::SessionResult::Terminate,
+                })
+            }
+            Ok(DataStatus::RkyvError) => match serde_json::from_slice(&result_view) {
+                Ok(error) => Err(self.pack_user_error(error)),
+                Err(error) => {
+                    Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view)))
+                }
+            },
+            _ => Err(
+                self.pack_pyro_error(PyroError::Header(ParseError::UnknownStatus(
+                    result_view.status_u8(),
+                ))),
+            ),
+        };
+
+        // 5. Update state
+        if let Ok(_) = &res {
+            let state = self.session_states.entry(session_id).or_default();
+            state.input_len += 1;
+            state.output_len += 1;
+        }
+
+        res
     }
 
-    /// Access the underlying wasmtime Instance.
-    pub fn instance(&self) -> &Instance {
-        &self.instance
+    pub async fn session_inputs(&mut self, session_id: u32) -> Result<Vec<PyroRow<'_>>, PyroFailure> {
+        let state = self.session_states.get(&session_id).ok_or_else(|| {
+            self.pack_pyro_error(PyroError::not_found(format!("Session {} not found", session_id)))
+        })?;
+        let len = state.input_len;
+
+        let mut io = PyroCallIo::new(&mut self.store, self.memory);
+        let mut inputs = Vec::with_capacity(len as usize);
+
+        for i in 0..len {
+            let view = io.borrow_session_input(session_id, i)
+                .await
+                .map_err(|err| Self::pack_setup_pyro_error(err))?;
+            let row = PyroRow::expose_view(view).map_err(|err| Self::pack_setup_pyro_error(err))?;
+            inputs.push(PyroRow::from(&*row));
+        }
+
+        Ok(inputs)
     }
 
-    /// Access the underlying wasmtime Memory.
-    pub fn memory(&self) -> Memory {
-        self.memory
+    pub async fn session_outputs(&mut self, session_id: u32) -> Result<Vec<PyroRow<'_>>, PyroFailure> {
+        let state = self.session_states.get(&session_id).ok_or_else(|| {
+            self.pack_pyro_error(PyroError::not_found(format!("Session {} not found", session_id)))
+        })?;
+        let len = state.output_len;
+
+        let mut io = PyroCallIo::new(&mut self.store, self.memory);
+        let mut outputs = Vec::with_capacity(len as usize);
+
+        for i in 0..len {
+            let view = io.borrow_session_output(session_id, i)
+                .await
+                .map_err(|err| Self::pack_setup_pyro_error(err))?;
+            let row = PyroRow::expose_view(view).map_err(|err| Self::pack_setup_pyro_error(err))?;
+            outputs.push(PyroRow::from(&*row));
+        }
+
+        Ok(outputs)
     }
+
+    pub async fn close_session(&mut self, session_id: u32) -> Result<(), PyroFailure> {
+        let mut io = PyroCallIo::new(&mut self.store, self.memory);
+        io.free_session(session_id)
+            .await
+            .map_err(|err| self.pack_pyro_error(err))?;
+        self.session_states.remove(&session_id);
+        Ok(())
+    }
+
+    pub fn session_lengths(&self, session_id: u32) -> Option<(u32, u32)> {
+        self.session_states.get(&session_id).map(|s| (s.input_len, s.output_len))
+    }
+
+
 
     pub fn pack_pyro_error(&self, error: impl std::error::Error) -> PyroFailure {
         PyroFailure {
             result: Err(error.to_string()),
             logs: self.unpack_logs(),
+        }
+    }
+
+     pub fn pack_setup_pyro_error(error: impl std::error::Error) -> PyroFailure {
+        PyroFailure {
+            result: Err(error.to_string()),
+            logs: PyroLogs::empty(),
         }
     }
 

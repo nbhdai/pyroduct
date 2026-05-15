@@ -247,6 +247,18 @@ pub extern "C" fn borrow_session_input(session_id: u32, index: u32) -> *mut u8 {
     std::ptr::null_mut()
 }
 
+/// Get the number of input vectors for a session.
+#[unsafe(no_mangle)]
+pub extern "C" fn session_input_length(session_id: u32) -> u32 {
+    let registry = SESSION_INPUT.lock().unwrap();
+    if let Some(map) = registry.as_ref() {
+        if let Some(vecs) = map.get(&session_id) {
+            return vecs.len() as u32;
+        }
+    }
+    0
+}
+
 /// Borrow a pointer to a session's output vector at the given index.
 #[unsafe(no_mangle)]
 pub extern "C" fn borrow_session_output(session_id: u32, index: u32) -> *mut u8 {
@@ -261,6 +273,18 @@ pub extern "C" fn borrow_session_output(session_id: u32, index: u32) -> *mut u8 
         }
     }
     std::ptr::null_mut()
+}
+
+/// Get the number of output vectors for a session.
+#[unsafe(no_mangle)]
+pub extern "C" fn session_output_length(session_id: u32) -> u32 {
+    let registry = SESSION_OUTPUT.lock().unwrap();
+    if let Some(map) = registry.as_ref() {
+        if let Some(vecs) = map.get(&session_id) {
+            return vecs.len() as u32;
+        }
+    }
+    0
 }
 
 /// Free all vectors associated with a session and remove the session.

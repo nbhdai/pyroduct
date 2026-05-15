@@ -70,6 +70,7 @@ define_data_status! {
     LocalInvalidHeader   = 106,
     LocalLayoutError     = 107,
     LocalUnexpectedEof   = 108,
+    LocalNotFound          = 109,
 
     // --- Remote Errors (150-199) ---
     RemoteSerialization   = 150,
@@ -81,6 +82,7 @@ define_data_status! {
     RemoteInvalidHeader   = 156,
     RemoteLayoutError     = 157,
     RemoteUnexpectedEof   = 158,
+    RemoteNotFound          = 159,
 }
 
 /// Errors that occur when parsing or validating a PyroVec header.
@@ -377,6 +379,8 @@ pub trait PyroData: private::Sealed + Deref<Target = [u8]> + Sized {
                 Ok(DataStatus::LocalInvalidHeader) => PyroError::local(ErrorKind::InvalidHeader),
                 Ok(DataStatus::LocalLayoutError) => PyroError::local(ErrorKind::LayoutError),
                 Ok(DataStatus::LocalUnexpectedEof) => PyroError::local(ErrorKind::UnexpectedEof),
+                Ok(DataStatus::LocalNotFound) => PyroError::local(ErrorKind::NotFound("not found".into())),
+                Ok(DataStatus::RemoteNotFound) => PyroError::remote(ErrorKind::NotFound("not found".into())),
             },
         )
     }
