@@ -14,6 +14,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use pyro_artifacts::artifacts::ModuleSpec;
 use pyro_artifacts::cache::{CacheError, LoadedPlaybook};
 use pyro_artifacts::build::BuildError;
 use pyro_artifacts::environment::EnvironmentError;
@@ -110,26 +111,15 @@ struct SessionState {
 /// Host functions registered through `define_async` / `define_sync` receive
 /// a clean `(&T, PyroView)` signature — all wasm memory plumbing is hidden.
 pub struct PyroFactory {
+    spec: Arc<ModuleSpec>,
     configurations: HashMap<String, Option<serde_json::Value>>,
     libraries: Vec<Arc<CapabilityLibrary>>,
     module: PyroModule,
 }
 
 impl PyroFactory {
-    /// Create a new linker for the given engine.
-    pub fn new(
-        libraries: Vec<Arc<CapabilityLibrary>>,
-        configurations: HashMap<String, Option<serde_json::Value>>,
-        module: PyroModule,
-    ) -> Result<Self, WasmError> {
-        let mut config = wasmtime::Config::new();
-        config.async_support(true);
-
-        Ok(Self {
-            libraries,
-            configurations,
-            module,
-        })
+        pub fn spec(&self) -> &ModuleSpec {
+        &self.spec
     }
 
     pub fn from_playbook(playbook: &LoadedPlaybook) -> Result<Self, WasmError> {
@@ -153,7 +143,10 @@ impl PyroFactory {
             libs.push(library);
         }
 
+        let spec = Arc::new(playbook.binary.spec.clone());
+
         Ok(PyroFactory {
+            spec,
             libraries: libs,
             configurations: playbook.configurations.clone(),
             module: pyro_module,
@@ -244,6 +237,7 @@ impl PyroFactory {
         // Link the PyroState methods to the instance exports
         PyroState::link(&mut store, &instance)?;
         Ok(PyroInstance {
+            spec: self.spec.clone(),
             store,
             instance,
             memory,
@@ -374,6 +368,7 @@ impl PyroFactory {
 }
 
 pub struct PyroInstance {
+    spec:  Arc<ModuleSpec>,
     store: Store<PyroState>,
     instance: Instance,
     memory: Memory,
@@ -382,6 +377,10 @@ pub struct PyroInstance {
 }
 
 impl PyroInstance {
+    pub fn spec(&self) -> &ModuleSpec {
+        &self.spec
+    }
+
     pub async fn call(&mut self, input: &PyroRow<'_>) -> Result<PyroSuccess, PyroFailure> {
         // Ship the input row via rkyv into a PyroVec
         let input_row_owned = input.to_static();

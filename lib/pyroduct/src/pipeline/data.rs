@@ -5,7 +5,7 @@ use tracing::{info, warn};
 use arrow::array::RecordBatch;
 use pyro_file;
 use crate::error::PyroError;
-use crate::format::wal::{WalRecord, WalWriter, recover};
+use crate::format::wal::{ExecutionRecord, WalWriter, recover};
 use crate::format::value::arrow::PreBatch;
 use crate::format::value::PyroSchema;
 use crate::captured::CapturedError;
@@ -120,7 +120,7 @@ impl DataManager {
     }
 
     /// Pushes a single WAL record to the current WAL and the in-memory buffer.
-    pub fn push_record(&mut self, record: WalRecord) -> Result<(), PyroError> {
+    pub fn push_record(&mut self, record: ExecutionRecord) -> Result<(), PyroError> {
         if self.wal_writer.is_none() {
             self.open_next_wal()?;
         }
@@ -131,7 +131,7 @@ impl DataManager {
         }
 
         // 2. Push to in-memory PreBatch (Performance)
-        if let WalRecord::Success { success, .. } = record {
+        if let ExecutionRecord::Success { success, .. } = record {
             self.wal_data.push(success.row.clone()).map_err(|e| PyroError::validation(CapturedError::new(e)))?;
         }
 
@@ -182,7 +182,7 @@ impl DataManager {
         let records = recover(&base_path).map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
         
         for rec in records {
-            if let WalRecord::Success { success, .. } = rec {
+            if let ExecutionRecord::Success { success, .. } = rec {
                 self.wal_data.push(success.row.clone()).map_err(|e| PyroError::validation(CapturedError::new(e)))?;
             }
         }
@@ -263,14 +263,14 @@ mod tests {
         ])
     }
 
-    fn make_success_record(row_index: usize, id: i32, name: &str) -> WalRecord {
+    fn make_success_record(row_index: usize, id: i32, name: &str) -> ExecutionRecord {
         let row = PyroRow::from([
             ("id", PyroValue::from(id)),
             ("name", PyroValue::from(name)),
         ])
         .into_owned();
 
-        WalRecord::Success {
+        ExecutionRecord::Success {
             row_index,
             success: crate::format::PyroSuccess {
                 row,

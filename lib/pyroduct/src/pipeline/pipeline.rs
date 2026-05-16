@@ -63,7 +63,6 @@ impl LoadedPipelineConfig {
     pub fn factory(&self) -> Result<PipelineFactory, PipelineError> {
         Ok(PipelineFactory {
             factory: PyroFactory::from_playbook(&self.playbook).map_err(PipelineError::Wasm)?,
-            wal_capacity: self.wal_capacity,
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,
             output_dir: self.output_dir.clone(),
@@ -79,6 +78,8 @@ impl LoadedPipelineConfig {
 pub struct PipelineFactory {
     pub factory: PyroFactory,
     pub output_dir: std::path::PathBuf,
+    pub success_log_retention_secs: u64,
+    pub error_log_retention_secs: u64,
 }
 
 // =============================================================================
@@ -92,11 +93,14 @@ impl PipelineFactory {
     pub async fn build(&self) -> Result<Pipeline, PipelineError> {
         tracing::debug!("Building wasm module for playbook");
         let instance = self.factory.instantiate().await?;
+        let input_schema = self.factory.spec().func.input.clone();
 
         Ok(Pipeline {
             step: instance,
+            success_log_retention_secs: self.success_log_retention_secs,
+            error_log_retention_secs: self.error_log_retention_secs,
             output_dir: self.output_dir.clone(),
-            data_manager: super::data::DataManager::new(self.output_dir.clone()),
+            data_manager: super::data::DataManager::new(self.output_dir.clone(), input_schema),
         })
     }
 }

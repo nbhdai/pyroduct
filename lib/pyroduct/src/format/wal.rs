@@ -197,11 +197,11 @@ impl LogFrameReader<File> {
 }
 
 // =============================================================================
-// WalRecord
+// ExecutionRecord
 // =============================================================================
 
 #[derive(Clone)]
-pub enum WalRecord {
+pub enum ExecutionRecord {
     Success {
         row_index: usize,
         success: PyroSuccess,
@@ -212,11 +212,11 @@ pub enum WalRecord {
     },
 }
 
-impl WalRecord {
+impl ExecutionRecord {
     pub fn row_index(&self) -> usize {
         match self {
-            WalRecord::Success { row_index, .. } => *row_index,
-            WalRecord::Failure { row_index, .. } => *row_index,
+            ExecutionRecord::Success { row_index, .. } => *row_index,
+            ExecutionRecord::Failure { row_index, .. } => *row_index,
         }
     }
 }
@@ -244,7 +244,7 @@ impl<W: WalWriterInner, L: Write> WalWriter<W, L> {
         }
     }
 
-    pub fn append(&mut self, record: &WalRecord) -> io::Result<()> {
+    pub fn append(&mut self, record: &ExecutionRecord) -> io::Result<()> {
         let row_index = record.row_index() as u32;
 
         // 1. Write 16-byte prefix [row_index (4) | padding (12)]
@@ -255,11 +255,11 @@ impl<W: WalWriterInner, L: Write> WalWriter<W, L> {
 
         // 2. Ship the record into a PyroVec packet
         let packet = match record {
-            WalRecord::Success { success, .. } => success
+            ExecutionRecord::Success { success, .. } => success
                 .row
                 .ship()
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?,
-            WalRecord::Failure { failure, .. } => {
+            ExecutionRecord::Failure { failure, .. } => {
                 let msg = match &failure.result {
                     Ok(err) => err.message.clone(),
                     Err(msg) => msg.clone(),
@@ -446,11 +446,11 @@ impl WalReader {
         unsafe { crate::format::vec_buf::make_view(&inner.ref_count, reference) }
     }
 
-    /// Recovers all data into owned `WalRecord` structs.
+    /// Recovers all data into owned `ExecutionRecord` structs.
     /// (Useful for loading small runs directly into memory).
-    pub fn recover_all(&self) -> Vec<WalRecord> {
+    pub fn recover_all(&self) -> Vec<ExecutionRecord> {
         self.frames()
-            .filter_map(|frame| WalRecord::from_frame(&frame, self.logs.get(&frame.row_index)))
+            .filter_map(|frame| ExecutionRecord::from_frame(&frame, self.logs.get(&frame.row_index)))
             .collect()
     }
 }
@@ -543,10 +543,10 @@ impl<'a> Iterator for WalFrameIter<'a> {
 }
 
 // =============================================================================
-// Helper: frame → WalRecord
+// Helper: frame → ExecutionRecord
 // =============================================================================
 
-impl WalRecord {
+impl ExecutionRecord {
     fn from_frame(frame: &WalFrame, logs: Option<&LogRecord>) -> Option<Self> {
         use crate::format::header::PyroHeader;
 
@@ -568,7 +568,7 @@ impl WalRecord {
         if pkt.is_ok() {
             let row = PyroRow::expose_view(pkt).ok()?;
             let row = (&*row).into();
-            Some(WalRecord::Success {
+            Some(ExecutionRecord::Success {
                 row_index: frame.row_index,
                 success: PyroSuccess {
                     row,
@@ -577,7 +577,7 @@ impl WalRecord {
             })
         } else {
             let msg = String::from_utf8_lossy(pkt.as_slice()).to_string();
-            Some(WalRecord::Failure {
+            Some(ExecutionRecord::Failure {
                 row_index: frame.row_index,
                 failure: PyroFailure {
                     result: Err(msg),
@@ -593,9 +593,9 @@ impl WalRecord {
 // =============================================================================
 
 impl LogRecord {
-    pub fn from_record(record: &WalRecord) -> Option<Self> {
+    pub fn from_record(record: &ExecutionRecord) -> Option<Self> {
         match record {
-            WalRecord::Success { success, .. } => {
+            ExecutionRecord::Success { success, .. } => {
                 let has_logs = !success.logs.module_logs.is_empty()
                     || !success.logs.capability_logs.is_empty();
                 if !has_logs {
@@ -610,7 +610,7 @@ impl LogRecord {
                     failure_logs: None,
                 })
             }
-            WalRecord::Failure { failure, .. } => {
+            ExecutionRecord::Failure { failure, .. } => {
                 let has_logs = !failure.logs.module_logs.is_empty()
                     || !failure.logs.capability_logs.is_empty();
                 if !has_logs {
@@ -633,7 +633,7 @@ impl LogRecord {
 // Full recovery Helper
 // =============================================================================
 
-pub fn recover(base_path: impl Into<PathBuf>) -> io::Result<Vec<WalRecord>> {
+pub fn recover(base_path: impl Into<PathBuf>) -> io::Result<Vec<ExecutionRecord>> {
     let reader = WalReader::open(base_path)?;
     Ok(reader.recover_all())
 }
@@ -648,14 +648,14 @@ mod tests {
     use crate::{PyroRow, PyroValue, format::header::PyroData};
     use tempfile::TempDir;
 
-    fn make_success_record(row_index: usize) -> WalRecord {
+    fn make_success_record(row_index: usize) -> ExecutionRecord {
         let row = PyroRow::from([
             ("id", PyroValue::from(row_index as i32)),
             ("name", PyroValue::from("test")),
         ])
         .into_owned();
 
-        WalRecord::Success {
+        ExecutionRecord::Success {
             row_index,
             success: PyroSuccess {
                 row,
@@ -667,8 +667,8 @@ mod tests {
         }
     }
 
-    fn make_failure_record(row_index: usize) -> WalRecord {
-        WalRecord::Failure {
+    fn make_failure_record(row_index: usize) -> ExecutionRecord {
+        ExecutionRecord::Failure {
             row_index,
             failure: PyroFailure {
                 result: Err(format!("row {} failed", row_index)),

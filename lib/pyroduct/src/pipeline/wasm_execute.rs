@@ -6,13 +6,13 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc};
 use tracing::{error, instrument, warn};
 
-use crate::{format::{
+use crate::{PyroError, format::{
     PyroFailure, PyroLogs, PyroSuccess,
     value::{
         PyroRow, ValueError,
         arrow::{PreBatch, Rowable},
     },
-    wal::{WalRecord, WalWriter},
+    wal::{ExecutionRecord, WalWriter},
 }, pipeline::{PipelineError, PipelineResult}};
 use crate::module::{PyroInstance, sessions::SessionResult};
 
@@ -21,13 +21,6 @@ use super::data::DataManager;
 // =============================================================================
 // Pipeline
 // =============================================================================
-
-#[derive(Debug, Clone)]
-pub struct PipelineExecution {
-    pub row_index: usize,
-    pub success: Option<PyroSuccess>,
-    pub failure: Option<PyroFailure>,
-}
 
 pub struct Pipeline {
     pub step: PyroInstance,
@@ -40,13 +33,9 @@ pub struct Pipeline {
 impl Pipeline {
     /// Run the input through the single step.
     #[instrument(skip(self, input))]
-    pub async fn process(&mut self, input: &PyroRow<'_>) -> PipelineExecution {
+    pub async fn process(&mut self, input: &PyroRow<'_>) -> Result<ExecutionRecord, PyroError> {
         let mut result: PyroRow<'static> = input.clone().into_owned();
-        let mut execution = PipelineExecution {
-            success: None,
-            failure: None,
-            row_index: 0,
-        };
+
         execution.success = Some(PyroSuccess {
             row: result.clone(),
             logs: PyroLogs::empty(),
@@ -55,7 +44,7 @@ impl Pipeline {
         match self.step.call(&result).await {
             Ok(output) => {
                 result.extend(output.row.clone());
-                execution.steps.push(output);
+                execution.success = Some(output);
             }
             Err(failure) => {
                 match &failure.result {
@@ -67,20 +56,20 @@ impl Pipeline {
         }
 
         let record = if let Some(failure) = &execution.failure {
-            WalRecord::Failure {
+            ExecutionRecord::Failure {
                 row_index: execution.row_index,
                 failure: failure.clone(),
             }
         } else {
-            WalRecord::Success {
+            ExecutionRecord::Success {
                 row_index: execution.row_index,
-                success: execution.steps.last().unwrap().clone(),
+                success: execution.success.clone(),
             }
         };
 
-        self.data_manager.push_record(&record)?;
+        self.data_manager.push_record(record)?;
 
-        execution
+        Ok(execution)
     }
 
     pub async fn prep_session(
@@ -152,7 +141,7 @@ impl PipelinePool {
     pub async fn process_batch(
         &self,
         batch: &RecordBatch,
-    ) -> PipelineResult<(Vec<PipelineExecution>, Vec<PipelineExecution>)> {
+    ) -> PipelineResult<(Vec<ExecutionRecord>, Vec<ExecutionRecord>)> {
         let total_rows = batch.num_rows();
         if total_rows == 0 {
             return Ok((Vec::new(), Vec::new()));
@@ -188,22 +177,29 @@ impl PipelinePool {
                 for j in 0..batch_slice.num_rows() {
                     let absolute_index = offset + j;
 
-                    let mut result = match batch_slice.row(j) {
-                        Ok(input_row) => pipeline.process(&input_row).await,
-                        Err(e) => PipelineExecution {
-                            row_index: absolute_index,
-                            failure: Some(PyroFailure {
-                                result: Ok(crate::CapturedError::new(e)),
-                                logs: PyroLogs::empty(),
-                            }),
-                            steps: Vec::new(),
-                        },
-                    };
-                    result.row_index = absolute_index;
+            let mut result = match batch_slice.row(j) {
+                Ok(input_row) => pipeline.process(absolute_index, &input_row).await,
+                Err(e) => return ExecutionRecord {
+                    row_index: absolute_index,
+                    failure: Some(PyroFailure {
+                        result: Ok(crate::CapturedError::new(e)),
+                        logs: PyroLogs::empty(),
+                    }),
+                    success: None,
+                },
+            };
 
-                    if tx_clone.send(result).await.is_err() {
-                        break;
-                    }
+            if let Err(execution) = result {
+                if tx_clone.send(execution).await.is_err() {
+                    break;
+                }
+                continue;
+            }
+
+            let execution = result.unwrap();
+            if tx_clone.send(execution).await.is_err() {
+                break;
+            }
                 }
 
                 pipeline
@@ -212,7 +208,7 @@ impl PipelinePool {
 
         drop(tx);
         let mut success_results = Vec::with_capacity(total_rows);
-        let mut failures: Vec<PipelineExecution> = Vec::new();
+        let mut failures: Vec<ExecutionRecord> = Vec::new();
 
         while let Some(row_result) = rx.recv().await {
             match &row_result.failure {
