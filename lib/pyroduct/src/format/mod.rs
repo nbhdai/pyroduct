@@ -233,10 +233,11 @@ pub mod json;
 pub mod rkyv_8;
 pub mod value;
 pub mod vec_buf;
+pub mod log_wal;
 pub mod wal;
 
 pub use bridgeable::{Bridgeable, BridgeableResult};
-pub use execution::{PyroFailure, PyroLogs, PyroSuccess};
+pub use execution::{PyroLogs, ExecutionRecord, PyroFailure, PyroSuccess};
 pub use format::{HasReceiver, Receiver, SpecWire};
 pub use header::ParseError;
 pub use rkyv_8::{Rkyv, RkyvParser, RkyvWriter, TypedBuf, TypedPyroRef};
