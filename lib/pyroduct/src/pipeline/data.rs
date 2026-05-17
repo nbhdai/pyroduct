@@ -2,28 +2,29 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
+use crate::PyroRow;
+use crate::captured::CapturedError;
+use crate::error::PyroError;
+use crate::format::value::PyroSchema;
+use crate::format::value::arrow::PreBatch;
+use crate::format::value::arrow::wal::{WalWriter, recover};
 use arrow::array::RecordBatch;
 use pyro_file;
-use crate::error::PyroError;
-use crate::format::wal::{ExecutionRecord, WalWriter, recover};
-use crate::format::value::arrow::PreBatch;
-use crate::format::value::PyroSchema;
-use crate::captured::CapturedError;
 
-/// Manages the persistence of pipeline data, handling the transition from 
+/// Manages the persistence of pipeline data, handling the transition from
 /// WAL -> Arrow IPC (memmapable) -> Parquet.
 pub struct DataManager {
     output_dir: PathBuf,
     schema: PyroSchema<'static>,
-    
+
     /// The in-memory buffer for accumulating rows before flushing to IPC.
     wal_data: PreBatch,
-    
+
     /// The current WAL ID
     current_wal_id: usize,
     /// The wal writer for the current WAL.
-    wal_writer: Option<WalWriter<std::fs::File, std::fs::File>>,
-    
+    wal_writer: Option<WalWriter>,
+
     /// List of IPC files (by ID) that have been flushed from WAL and are ready for Parquet rollout.
     ipc_files: Vec<usize>,
     /// Row counts for pending IPC files.
@@ -60,7 +61,8 @@ impl DataManager {
         let mut total_parquet = 0;
         let mut ipc_counts = HashMap::new();
 
-        let entries = std::fs::read_dir(&self.output_dir).map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
+        let entries = std::fs::read_dir(&self.output_dir)
+            .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
 
         for entry in entries {
             let entry = entry.map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
@@ -69,16 +71,23 @@ impl DataManager {
 
             if filename.starts_with("wal_") && filename.contains(".pyrowal") {
                 // Extract ID from wal_N.pyrowal
-                if let Some(id_str) = filename.strip_prefix("wal_").and_then(|s| s.split('.').next()) {
+                if let Some(id_str) = filename
+                    .strip_prefix("wal_")
+                    .and_then(|s| s.split('.').next())
+                {
                     if let Ok(id) = id_str.parse::<usize>() {
                         max_wal_id = max_wal_id.max(id);
                     }
                 }
             } else if filename.starts_with("batch_") && filename.ends_with(".arrow") {
                 // Extract ID from batch_N.arrow
-                if let Some(id_str) = filename.strip_prefix("batch_").and_then(|s| s.split('.').next()) {
+                if let Some(id_str) = filename
+                    .strip_prefix("batch_")
+                    .and_then(|s| s.split('.').next())
+                {
                     if let Ok(id) = id_str.parse::<usize>() {
-                        let bytes = std::fs::read(&path).map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
+                        let bytes = std::fs::read(&path)
+                            .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
                         let batches = pyro_file::parse_data_to_batch_sync(bytes, &filename)
                             .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
                         let count: usize = batches.iter().map(|b| b.num_rows()).sum();
@@ -87,7 +96,8 @@ impl DataManager {
                 }
             } else if filename.starts_with("rollout_") && filename.ends_with(".parquet") {
                 // For Parquet, we need to read it to get row count.
-                let bytes = std::fs::read(&path).map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
+                let bytes =
+                    std::fs::read(&path).map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
                 let filename_str = filename.to_string();
                 let batches = pyro_file::parse_data_to_batch_sync(bytes, &filename_str)
                     .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
@@ -98,7 +108,7 @@ impl DataManager {
         self.current_wal_id = max_wal_id;
         self.total_parquet_rows = total_parquet;
         self.ipc_row_counts = ipc_counts;
-        
+
         // Also recover the current WAL if it exists
         if self.current_wal_id > 0 {
             self.recover_wal(self.current_wal_id)?;
@@ -120,33 +130,33 @@ impl DataManager {
     }
 
     /// Pushes a single WAL record to the current WAL and the in-memory buffer.
-    pub fn push_record(&mut self, record: ExecutionRecord) -> Result<(), PyroError> {
+    pub fn push_record(&mut self, record: &PyroRow<'_>) -> Result<(), PyroError> {
         if self.wal_writer.is_none() {
             self.open_next_wal()?;
         }
 
         // 1. Write to WAL (Durability)
         if let Some(wal) = &mut self.wal_writer {
-            wal.append(&record).map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
+            wal.append(self.wal_data.len(), record)?;
         }
 
         // 2. Push to in-memory PreBatch (Performance)
-        if let ExecutionRecord::Success { success, .. } = record {
-            self.wal_data.push(success.row.clone()).map_err(|e| PyroError::validation(CapturedError::new(e)))?;
-        }
+        self.wal_data
+            .push(record.clone())
+            .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
 
         // 3. Check capacity for flush
         if self.wal_data.len() >= self.wal_capacity {
             self.flush_wal()?;
         }
-        
+
         Ok(())
     }
 
     fn open_next_wal(&mut self) -> Result<(), PyroError> {
         self.current_wal_id += 1;
         let base_path = self.output_dir.join(format!("wal_{}", self.current_wal_id));
-        let writer = WalWriter::open(base_path).map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
+        let writer = WalWriter::open(base_path)?;
         self.wal_writer = Some(writer);
         Ok(())
     }
@@ -154,7 +164,7 @@ impl DataManager {
     /// Rolls up the in-memory buffer into a memmapable Arrow IPC file.
     pub fn flush_wal(&mut self) -> Result<(), PyroError> {
         let wal_id = self.current_wal_id;
-        
+
         // Close current writer to ensure all data is flushed to disk
         self.wal_writer = None;
 
@@ -165,7 +175,7 @@ impl DataManager {
                 self.write_arrow_ipc(wal_id, &batch)?;
                 self.ipc_files.push(wal_id);
                 self.ipc_row_counts.insert(wal_id, row_count);
-                
+
                 if self.ipc_files.len() >= self.ipc_capacity {
                     self.rollout_to_parquet()?;
                 }
@@ -179,12 +189,12 @@ impl DataManager {
     /// Recovery method to populate `wal_data` from a WAL file on disk (e.g. after crash).
     pub fn recover_wal(&mut self, wal_id: usize) -> Result<(), PyroError> {
         let base_path = self.output_dir.join(format!("wal_{}", wal_id));
-        let records = recover(&base_path).map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
-        
+        let records = recover(&base_path)?;
+
         for rec in records {
-            if let ExecutionRecord::Success { success, .. } = rec {
-                self.wal_data.push(success.row.clone()).map_err(|e| PyroError::validation(CapturedError::new(e)))?;
-            }
+            self.wal_data
+                .push(rec)
+                .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
         }
         Ok(())
     }
@@ -192,7 +202,8 @@ impl DataManager {
     /// Writes a RecordBatch to an Arrow IPC file.
     fn write_arrow_ipc(&self, wal_id: usize, batch: &RecordBatch) -> Result<(), PyroError> {
         let path = self.output_dir.join(format!("batch_{}.arrow", wal_id));
-        pyro_file::write_ipc(batch, &path).map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
+        pyro_file::write_ipc(batch, &path)
+            .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
         info!("Written Arrow IPC file: {:?}", path);
         Ok(())
     }
@@ -216,11 +227,12 @@ impl DataManager {
                 continue;
             }
 
-            let bytes = std::fs::read(&arrow_path).map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
+            let bytes = std::fs::read(&arrow_path)
+                .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
             let filename = arrow_path.file_name().unwrap().to_string_lossy();
             let batches_ipc = pyro_file::parse_data_to_batch_sync(bytes, &filename)
                 .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
-            
+
             for b in batches_ipc {
                 all_batches.push(b.to_batch());
             }
@@ -232,9 +244,11 @@ impl DataManager {
 
             let _ = std::fs::remove_file(&arrow_path);
         }
-        
+
         if !all_batches.is_empty() {
-            let parquet_path = self.output_dir.join(format!("rollout_{}.parquet", rollout_id));
+            let parquet_path = self
+                .output_dir
+                .join(format!("rollout_{}.parquet", rollout_id));
             pyro_file::write_parquet(&all_batches, &parquet_path)
                 .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
             info!("Converted Arrow IPCs to Parquet: {:?}", parquet_path);
@@ -252,31 +266,23 @@ impl DataManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::format::value::{PrimitiveDataType, PyroField, PyroSchema, PyroType};
     use crate::{PyroRow, PyroValue};
-    use crate::format::value::{PyroSchema, PyroField, PyroType, PrimitiveDataType};
     use tempfile::TempDir;
 
     fn setup_schema() -> PyroSchema<'static> {
         PyroSchema::new(vec![
-            PyroField::new("id", PyroType::PrimitiveScalar(PrimitiveDataType::I32), false),
+            PyroField::new(
+                "id",
+                PyroType::PrimitiveScalar(PrimitiveDataType::I32),
+                false,
+            ),
             PyroField::new("name", PyroType::Str, true),
         ])
     }
 
-    fn make_success_record(row_index: usize, id: i32, name: &str) -> ExecutionRecord {
-        let row = PyroRow::from([
-            ("id", PyroValue::from(id)),
-            ("name", PyroValue::from(name)),
-        ])
-        .into_owned();
-
-        ExecutionRecord::Success {
-            row_index,
-            success: crate::format::PyroSuccess {
-                row,
-                logs: crate::format::PyroLogs::empty(),
-            },
-        }
+    fn make_success_record(row_index: usize, id: i32, name: &'static str) -> PyroRow<'static> {
+        PyroRow::from([("id", PyroValue::from(id)), ("name", PyroValue::from(name))])
     }
 
     #[test]
@@ -287,24 +293,29 @@ mod tests {
         manager.set_capacities(2, 2);
 
         // 1. Push records
-        manager.push_record(make_success_record(0, 1, "alice")).unwrap();
-        manager.push_record(make_success_record(1, 2, "bob")).unwrap();
-        
+        manager
+            .push_record(&make_success_record(0, 1, "alice"))
+            .unwrap();
+        manager
+            .push_record(&make_success_record(1, 2, "bob"))
+            .unwrap();
+
         // Should have triggered flush_wal because capacity is 2
         // Current WAL id should be 1, wal_writer should be None (flushed)
         assert!(manager.wal_writer.is_none());
         assert_eq!(manager.ipc_files.len(), 1);
-        
+
         // 2. Push more to trigger second IPC
-        manager.push_record(make_success_record(2, 3, "charlie")).unwrap();
-        manager.push_record(make_success_record(3, 4, "david")).unwrap();
-        
-        // Should have triggered flush_wal again
-        assert_eq!(manager.ipc_files.len(), 2);
-        
-        // Now it should have triggered rollout_to_parquet because ipc_capacity is 2
+        manager
+            .push_record(&make_success_record(2, 3, "charlie"))
+            .unwrap();
+        manager
+            .push_record(&make_success_record(3, 4, "david"))
+            .unwrap();
+
+        // Should have triggered flush_wal again and automatically rolled out to parquet because ipc_capacity is 2
         assert_eq!(manager.ipc_files.len(), 0);
-        
+
         // Check if parquet file exists
         let parquet_path = dir.path().join("rollout_2.parquet");
         assert!(parquet_path.exists());
@@ -315,16 +326,20 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
         let mut manager = DataManager::new(dir.path().to_path_buf(), schema);
-        
+
         // Manually create a WAL file via push
-        manager.push_record(make_success_record(0, 1, "alice")).unwrap();
-        manager.push_record(make_success_record(1, 2, "bob")).unwrap();
-        
+        manager
+            .push_record(&make_success_record(0, 1, "alice"))
+            .unwrap();
+        manager
+            .push_record(&make_success_record(1, 2, "bob"))
+            .unwrap();
+
         // We don't flush, so wal_data has 2 rows.
         // Now let's simulate a crash by creating a new manager and recovering
         let mut manager2 = DataManager::new(dir.path().to_path_buf(), setup_schema());
         manager2.restore().unwrap();
-        
+
         assert_eq!(manager2.wal_data.len(), 2);
     }
 
@@ -333,15 +348,17 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
         let mut manager = DataManager::new(dir.path().to_path_buf(), schema);
-        
-        manager.push_record(make_success_record(0, 1, "alice")).unwrap();
+
+        manager
+            .push_record(&make_success_record(0, 1, "alice"))
+            .unwrap();
         manager.flush_wal().unwrap();
-        
+
         assert_eq!(manager.ipc_files.len(), 1);
-        
+
         manager.rollout_to_parquet().unwrap();
         assert_eq!(manager.ipc_files.len(), 0);
-        
+
         let parquet_path = dir.path().join("rollout_1.parquet");
         assert!(parquet_path.exists());
     }

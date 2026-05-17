@@ -4,7 +4,7 @@ use pyro_artifacts::{
     cache::CacheManager,
 };
 use pyroduct::module::sessions::SessionResult;
-use pyroduct::{PyroRow, pipeline::{PipelineConfig, Pipeline}};
+use pyroduct::{PyroRow, pipeline::PipelineConfig};
 use std::collections::HashMap;
 use tracing_subscriber::EnvFilter;
 
@@ -67,11 +67,15 @@ async fn test_session_lifecycle() {
     let mut pipeline = pipeline_factory.build().await.unwrap();
 
     let session_id = 42;
-    pipeline.prep_session(session_id, &[], &[]).await.expect("Should prep session");
+    pipeline
+        .prep_session(session_id, &[], &[])
+        .await
+        .expect("Should prep session");
 
     // --- Turn 1 ---
     let turn1_input = PyroRow::from([("input", "Hello!".into())]);
-    let result1 = pipeline.call_session(session_id, &turn1_input)
+    let result1 = pipeline
+        .call_session(session_id, &turn1_input)
         .await
         .expect("Session call turn 1 should succeed");
 
@@ -84,7 +88,8 @@ async fn test_session_lifecycle() {
 
     // --- Turn 2 ---
     let turn2_input = PyroRow::from([("input", "How are you?".into())]);
-    let result2 = pipeline.call_session(session_id, &turn2_input)
+    let result2 = pipeline
+        .call_session(session_id, &turn2_input)
         .await
         .expect("Session call turn 2 should succeed");
 
@@ -97,7 +102,8 @@ async fn test_session_lifecycle() {
 
     // --- Turn 3 ---
     let turn3_input = PyroRow::from([("input", "Wait, don't go!".into())]);
-    let result3 = pipeline.call_session(session_id, &turn3_input)
+    let result3 = pipeline
+        .call_session(session_id, &turn3_input)
         .await
         .expect("Session call turn 3 should succeed");
 
@@ -106,11 +112,16 @@ async fn test_session_lifecycle() {
         other => panic!("Expected Terminate, got {:?}", other),
     }
 
-    let (in_len, out_len) = pipeline.session_lengths(session_id).expect("Session should exist");
+    let (in_len, out_len) = pipeline
+        .session_lengths(session_id)
+        .expect("Session should exist");
     assert_eq!(in_len, 3);
     assert_eq!(out_len, 3);
 
-    pipeline.close_session(session_id).await.expect("Should close session");
+    pipeline
+        .close_session(session_id)
+        .await
+        .expect("Should close session");
 }
 
 #[tokio::test]
@@ -129,7 +140,10 @@ async fn test_multiple_sessions_isolation() {
         ident: None,
     };
 
-    let binary = builder.compile(&source).await.expect("Module should compile");
+    let binary = builder
+        .compile(&source)
+        .await
+        .expect("Module should compile");
 
     let config = PipelineConfig {
         playbook: Playbook {
@@ -159,23 +173,31 @@ async fn test_multiple_sessions_isolation() {
 
     if let SessionResult::Continue(row) = res_a {
         assert_eq!(row.get_str("message").unwrap(), "Hello! Turn 1");
-    } else { panic!("A should continue") }
+    } else {
+        panic!("A should continue")
+    }
 
     if let SessionResult::Continue(row) = res_b {
         assert_eq!(row.get_str("message").unwrap(), "Hello! Turn 1");
-    } else { panic!("B should continue") }
+    } else {
+        panic!("B should continue")
+    }
 
     let input_a2 = PyroRow::from([("input", "A2".into())]);
     let res_a2 = pipeline.call_session(id_a, &input_a2).await.unwrap();
     if let SessionResult::End(row) = res_a2 {
         assert_eq!(row.get_str("message").unwrap(), "Goodbye! Turn 2");
-    } else { panic!("A should end") }
+    } else {
+        panic!("A should end")
+    }
 
     let input_b2 = PyroRow::from([("input", "B2".into())]);
     let res_b2 = pipeline.call_session(id_b, &input_b2).await.unwrap();
     if let SessionResult::End(row) = res_b2 {
         assert_eq!(row.get_str("message").unwrap(), "Goodbye! Turn 2");
-    } else { panic!("B should end") }
+    } else {
+        panic!("B should end")
+    }
 
     pipeline.close_session(id_a).await.unwrap();
     pipeline.close_session(id_b).await.unwrap();
@@ -205,7 +227,10 @@ fn error_fn<'a>(_prior_in: Vec<String>, _prior_out: Vec<String>, input: String) 
         ident: None,
     };
 
-    let binary = builder.compile(&source).await.expect("Module should compile");
+    let binary = builder
+        .compile(&source)
+        .await
+        .expect("Module should compile");
 
     let config = PipelineConfig {
         playbook: Playbook {

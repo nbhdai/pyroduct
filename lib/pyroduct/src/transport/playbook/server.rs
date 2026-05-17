@@ -5,7 +5,7 @@ use pyro_artifacts::cache::LoadedPlaybook;
 
 use crate::format::header::{PyroData, PyroHeader};
 use crate::format::tokio::Request;
-use crate::format::{Bridgeable, PyroRow};
+use crate::format::{Bridgeable, PyroRow, ExecutionRecord};
 use crate::module::PyroFactory;
 use crate::pipeline::Pipeline;
 use crate::transport::{PyroListener, PyroSocket};
@@ -21,14 +21,14 @@ impl PlaybookServer {
     pub async fn new(playbook: &LoadedPlaybook) -> Result<Self, crate::pipeline::PipelineError> {
         let factory = PyroFactory::from_playbook(playbook)?;
         let instance = factory.instantiate().await?;
+        let input_schema = factory.spec().func.input.clone();
         let output_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let pipeline = Pipeline {
             step: instance,
-            wal_capacity: 1000,
             success_log_retention_secs: 3600,
             error_log_retention_secs: 86400 * 7,
             output_dir: output_dir.clone(),
-            data_manager: crate::pipeline::data::DataManager::new(output_dir.clone()),
+            data_manager: crate::pipeline::data::DataManager::new(output_dir.clone(), input_schema),
         };
         Ok(Self {
             pipeline: Arc::new(Mutex::new(pipeline)),
@@ -70,22 +70,24 @@ impl PlaybookServer {
                             Ok(row) => {
                                 let mut pipeline = pipeline_arc.lock().await;
                                 let native_row = PyroRow::from(&*row).to_static();
-                                let execution = pipeline.process(&native_row).await;
-
-                                if let Some(failure) = execution.failure {
-                                    crate::PyroError::CodePanic(Box::new(
-                                        crate::CapturedError::new(format!("{:?}", failure.result)),
-                                    ))
-                                    .encode()
-                                    .view()
-                                } else if let Some(success) = execution.steps.last() {
-                                    success.row.ship().map(|v| v.view()).unwrap_or_else(|e| {
-                                        crate::PyroError::from(e).encode().view()
-                                    })
-                                } else {
-                                    crate::PyroError::NotFound("No steps executed".to_string())
+                                match pipeline.process(0, &native_row).await {
+                                    Ok(ExecutionRecord::Failure { failure, .. }) => {
+                                        let err_msg = match failure {
+                                            Ok(captured) => format!("{:?}", captured),
+                                            Err(s) => s,
+                                        };
+                                        crate::PyroError::CodePanic(Box::new(
+                                            crate::CapturedError::new(err_msg),
+                                        ))
                                         .encode()
                                         .view()
+                                    }
+                                    Ok(ExecutionRecord::Success { success, .. }) => {
+                                        success.ship().map(|v| v.view()).unwrap_or_else(|e| {
+                                            crate::PyroError::from(e).encode().view()
+                                        })
+                                    }
+                                    Err(e) => crate::PyroError::from(e).encode().view(),
                                 }
                             }
                             Err(e) => crate::PyroError::from(e).encode().view(),

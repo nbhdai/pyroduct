@@ -63,21 +63,9 @@ impl OutputView {
 
     fn extract_logs(&self, row_index: usize) -> PyroLogs {
         if let Some(exec) = self.executions.get(row_index) {
-            // Fetch logs for successful steps
-            if let Some(step) = exec.steps.get(self.pipeline_idx) {
-                return PyroLogs {
-                    module_logs: step.logs.module_logs.clone(),
-                    capability_logs: step.logs.capability_logs.clone(),
-                };
-            }
-            // Fetch logs for failed step (if it failed exactly on this pipeline)
-            else if let Some(fail) = &exec.failure {
-                if exec.steps.len() == self.pipeline_idx {
-                    return PyroLogs {
-                        module_logs: fail.logs.module_logs.clone(),
-                        capability_logs: fail.logs.capability_logs.clone(),
-                    };
-                }
+            match exec {
+                PipelineExecution::Success { logs, .. } => return logs.clone(),
+                PipelineExecution::Failure { logs, .. } => return logs.clone(),
             }
         }
         PyroLogs::empty()

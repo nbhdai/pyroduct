@@ -280,7 +280,7 @@ impl App {
 
         let mut all_executions = successes;
         all_executions.extend(failures);
-        all_executions.sort_by_key(|e| e.row_index);
+        all_executions.sort_by_key(|e| e.row_index());
         self.pipeline.execution = all_executions;
 
         // If currently viewing the output table, refresh it seamlessly

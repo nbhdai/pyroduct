@@ -230,19 +230,23 @@ mod execution;
 pub mod format;
 pub mod header;
 pub mod json;
+#[cfg(any(feature = "host"))]
+pub mod log_wal;
 pub mod rkyv_8;
 pub mod value;
 pub mod vec_buf;
-pub mod log_wal;
+#[cfg(any(feature = "host"))]
 pub mod wal;
 
 pub use bridgeable::{Bridgeable, BridgeableResult};
-pub use execution::{PyroLogs, ExecutionRecord, PyroFailure, PyroSuccess};
+pub use execution::{ExecutionRecord, PyroFailure, PyroLogs, PyroSuccess};
 pub use format::{HasReceiver, Receiver, SpecWire};
 pub use header::ParseError;
 pub use rkyv_8::{Rkyv, RkyvParser, RkyvWriter, TypedBuf, TypedPyroRef};
 pub use value::{DeepRef, PyroRow, PyroValue, ToRow};
-pub use vec_buf::{PyroRef, PyroRefPtr, PyroVec, PyroView, PyroViewPtr, get_ref, make_view, get_ref_ids};
+pub use vec_buf::{
+    PyroRef, PyroRefPtr, PyroVec, PyroView, PyroViewPtr, get_ref, get_ref_ids, make_view,
+};
 
 // Async is not supported for wasm
 #[cfg(any(feature = "host", feature = "capability"))]

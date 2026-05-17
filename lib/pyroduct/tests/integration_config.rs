@@ -81,31 +81,25 @@ async fn test_capability_configuration_respect() {
     let mut pipeline = factory.build().await.unwrap();
 
     let input = PyroRow::from([("input", "hello".into())]);
-    let result = pipeline.process(&input).await;
+    let result = pipeline.process(0, &input).await.unwrap();
 
-    for (i, step) in result.steps.iter().enumerate() {
-        println!("--- Step {} logs ---", i);
-        for log in &step.logs.module_logs {
-            println!("{}", log);
-        }
-        for ((cap, ver), logs) in &step.logs.capability_logs {
-            for log in logs {
-                println!("[{} v{}]: {}", cap, ver, log);
-            }
+    let logs = match &result {
+        pyroduct::format::ExecutionRecord::Success { logs, .. } => logs,
+        pyroduct::format::ExecutionRecord::Failure { logs, .. } => logs,
+    };
+
+    println!("--- Logs ---");
+    for log in &logs.module_logs {
+        println!("{}", log);
+    }
+    for ((cap, ver), logs) in &logs.capability_logs {
+        for log in logs {
+            println!("[{} v{}]: {}", cap, ver, log);
         }
     }
 
-    if let Some(failure) = &result.failure {
-        println!("--- Failure logs ---");
-        for log in &failure.logs.module_logs {
-            println!("{}", log);
-        }
-        for ((cap, ver), logs) in &failure.logs.capability_logs {
-            for log in logs {
-                println!("[{} v{}]: {}", cap, ver, log);
-            }
-        }
-        println!("Failure: {:?}", failure.result);
+    if let pyroduct::format::ExecutionRecord::Failure { failure, .. } = &result {
+        println!("Failure: {:?}", failure);
     }
 
     let row = result.row().unwrap();

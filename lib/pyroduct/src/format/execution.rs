@@ -45,6 +45,13 @@ impl ExecutionRecord {
             ExecutionRecord::Failure { row_index, .. } => *row_index,
         }
     }
+
+    pub fn row(&self) -> Option<&PyroRow<'static>> {
+        match self {
+            ExecutionRecord::Success { success, .. } => Some(success),
+            ExecutionRecord::Failure { input, .. } => Some(input),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

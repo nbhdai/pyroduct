@@ -76,16 +76,18 @@ async fn test_capability_state_preservation() {
     let mut pipeline = factory.build().await.unwrap();
 
     let result1 = pipeline
-        .process(&PyroRow::from([("input", "0".into())]))
-        .await;
+        .process(0, &PyroRow::from([("input", "0".into())]))
+        .await
+        .unwrap();
     let row1 = result1.row().unwrap();
     // Result should be (count: 0, incremented: 0) since fetch_add returns previous
     assert_eq!(row1.get_u64("incremented").unwrap(), 0);
 
     // Second call: The call_count in CounterServer should now be 1
     let result2 = pipeline
-        .process(&PyroRow::from([("input", "0".into())]))
-        .await;
+        .process(1, &PyroRow::from([("input", "0".into())]))
+        .await
+        .unwrap();
     let row2 = result2.row().unwrap();
     assert_eq!(row2.get_u64("incremented").unwrap(), 1);
 }

@@ -6,15 +6,18 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc};
 use tracing::{error, instrument, warn};
 
-use crate::{PyroError, format::{
-    PyroFailure, PyroLogs, PyroSuccess,
-    value::{
-        PyroRow, ValueError,
-        arrow::{PreBatch, Rowable},
-    },
-    wal::{ExecutionRecord, WalWriter},
-}, pipeline::{PipelineError, PipelineResult}};
 use crate::module::{PyroInstance, sessions::SessionResult};
+use crate::{
+    PyroError,
+    format::{
+        ExecutionRecord, PyroFailure, PyroLogs, PyroSuccess,
+        value::{
+            PyroRow,
+            arrow::{PreBatch, Rowable},
+        },
+    },
+    pipeline::{PipelineError, PipelineResult},
+};
 
 use super::data::DataManager;
 
@@ -33,43 +36,55 @@ pub struct Pipeline {
 impl Pipeline {
     /// Run the input through the single step.
     #[instrument(skip(self, input))]
-    pub async fn process(&mut self, input: &PyroRow<'_>) -> Result<ExecutionRecord, PyroError> {
+    pub async fn process(
+        &mut self,
+        row_index: usize,
+        input: &PyroRow<'_>,
+    ) -> Result<ExecutionRecord, PyroError> {
         let mut result: PyroRow<'static> = input.clone().into_owned();
 
-        execution.success = Some(PyroSuccess {
+        let mut success = Some(PyroSuccess {
             row: result.clone(),
             logs: PyroLogs::empty(),
         });
+        let mut failure = None;
 
         match self.step.call(&result).await {
             Ok(output) => {
                 result.extend(output.row.clone());
-                execution.success = Some(output);
+                success = Some(output);
             }
-            Err(failure) => {
-                match &failure.result {
+            Err(f) => {
+                match &f.result {
                     Ok(error) => warn!("Pipeline Step: Module returned error: {}", error),
                     Err(error) => error!("Pipeline Step: Pyroduct Failed: {}", error),
                 }
-                execution.failure = Some(failure);
+                failure = Some(f);
             }
         }
 
-        let record = if let Some(failure) = &execution.failure {
+        let record = if let Some(f) = failure {
             ExecutionRecord::Failure {
-                row_index: execution.row_index,
-                failure: failure.clone(),
+                row_index,
+                input: input.clone().into_owned(),
+                failure: f.result,
+                logs: f.logs,
             }
         } else {
+            let s = success.unwrap();
             ExecutionRecord::Success {
-                row_index: execution.row_index,
-                success: execution.success.clone(),
+                row_index,
+                input: input.clone().into_owned(),
+                success: s.row,
+                logs: s.logs,
             }
         };
 
-        self.data_manager.push_record(record)?;
+        if let ExecutionRecord::Success { .. } = &record {
+            self.data_manager.push_record(&result)?;
+        }
 
-        Ok(execution)
+        Ok(record)
     }
 
     pub async fn prep_session(
@@ -93,11 +108,17 @@ impl Pipeline {
         self.step.close_session(session_id).await
     }
 
-    pub async fn session_inputs(&mut self, session_id: u32) -> Result<Vec<PyroRow<'_>>, PyroFailure> {
+    pub async fn session_inputs(
+        &mut self,
+        session_id: u32,
+    ) -> Result<Vec<PyroRow<'_>>, PyroFailure> {
         self.step.session_inputs(session_id).await
     }
 
-    pub async fn session_outputs(&mut self, session_id: u32) -> Result<Vec<PyroRow<'_>>, PyroFailure> {
+    pub async fn session_outputs(
+        &mut self,
+        session_id: u32,
+    ) -> Result<Vec<PyroRow<'_>>, PyroFailure> {
         self.step.session_outputs(session_id).await
     }
 
@@ -177,29 +198,40 @@ impl PipelinePool {
                 for j in 0..batch_slice.num_rows() {
                     let absolute_index = offset + j;
 
-            let mut result = match batch_slice.row(j) {
-                Ok(input_row) => pipeline.process(absolute_index, &input_row).await,
-                Err(e) => return ExecutionRecord {
-                    row_index: absolute_index,
-                    failure: Some(PyroFailure {
-                        result: Ok(crate::CapturedError::new(e)),
-                        logs: PyroLogs::empty(),
-                    }),
-                    success: None,
-                },
-            };
+                    let result = match batch_slice.row(j) {
+                        Ok(input_row) => pipeline.process(absolute_index, &input_row).await,
+                        Err(e) => {
+                            let record = ExecutionRecord::Failure {
+                                row_index: absolute_index,
+                                input: PyroRow::empty(),
+                                failure: Ok(crate::CapturedError::new(e)),
+                                logs: PyroLogs::empty(),
+                            };
+                            if tx_clone.send(record).await.is_err() {
+                                break;
+                            }
+                            continue;
+                        }
+                    };
 
-            if let Err(execution) = result {
-                if tx_clone.send(execution).await.is_err() {
-                    break;
-                }
-                continue;
-            }
-
-            let execution = result.unwrap();
-            if tx_clone.send(execution).await.is_err() {
-                break;
-            }
+                    match result {
+                        Ok(execution) => {
+                            if tx_clone.send(execution).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            let record = ExecutionRecord::Failure {
+                                row_index: absolute_index,
+                                input: PyroRow::empty(),
+                                failure: Err(e.to_string()),
+                                logs: PyroLogs::empty(),
+                            };
+                            if tx_clone.send(record).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
                 }
 
                 pipeline
@@ -211,9 +243,9 @@ impl PipelinePool {
         let mut failures: Vec<ExecutionRecord> = Vec::new();
 
         while let Some(row_result) = rx.recv().await {
-            match &row_result.failure {
-                None => success_results.push(row_result),
-                Some(_) => failures.push(row_result),
+            match &row_result {
+                ExecutionRecord::Success { .. } => success_results.push(row_result),
+                ExecutionRecord::Failure { .. } => failures.push(row_result),
             }
         }
 
@@ -233,8 +265,42 @@ impl PipelinePool {
             *guard = reclaimed;
         }
 
-        success_results.sort_by_key(|row| row.row_index);
+        success_results.sort_by_key(|row| row.row_index());
 
         Ok((success_results, failures))
     }
+}
+
+pub type PipelineExecution = ExecutionRecord;
+
+pub fn extract_upto_batch(
+    executions: &[ExecutionRecord],
+    _step_index: usize,
+) -> anyhow::Result<Option<RecordBatch>> {
+    if executions.is_empty() {
+        return Ok(None);
+    }
+
+    // Find the first successful row to get its schema
+    let first_success = executions.iter().find_map(|e| match e {
+        ExecutionRecord::Success { success, .. } => Some(success),
+        _ => None,
+    });
+
+    let Some(first_row) = first_success else {
+        return Ok(None);
+    };
+
+    let schema = first_row.schema().map_err(|e| anyhow::anyhow!("{:?}", e))?;
+    let mut prebatch = PreBatch::new(schema);
+
+    for e in executions {
+        if let ExecutionRecord::Success { success, .. } = e {
+            prebatch
+                .push(success.clone())
+                .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        }
+    }
+
+    prebatch.flush().map_err(|e| anyhow::anyhow!("{:?}", e))
 }

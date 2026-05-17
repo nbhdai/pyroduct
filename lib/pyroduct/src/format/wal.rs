@@ -261,8 +261,14 @@ impl WalReader {
 
     /// Recovers all data into owned `ExecutionRecord` structs.
     /// (Useful for loading small runs directly into memory).
-    pub fn recover_all(&self) -> Vec<PyroView> {
-        todo!()
+    pub fn recover_all(&self) -> Vec<(usize, PyroView)> {
+        let mut results = Vec::new();
+        for frame in self.frames() {
+            if let Ok(view) = self.view_at(frame.packet_offset) {
+                results.push((frame.row_index, view));
+            }
+        }
+        results
     }
 }
 
