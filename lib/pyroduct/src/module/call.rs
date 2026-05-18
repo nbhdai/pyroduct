@@ -88,6 +88,42 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
         Ok(view)
     }
 
+    /// How much of the session is in there
+    pub async fn session_input_length(&mut self, session_id: u32) -> Result<u32, WasmError> {
+        let borrow_fn = self
+            .ctx
+            .as_context()
+            .data()
+            .methods()
+            .ok_or_else(|| WasmError::MissingExport("PyroState not linked".to_string()))?
+            .session_input_length();
+
+        let len = borrow_fn
+            .call_async(&mut self.ctx, session_id as i32)
+            .await
+            .map_err(WasmError::InputMemory)?;
+
+        Ok(len as u32)
+    }
+
+    /// How much of the session is in there
+    pub async fn session_output_length(&mut self, session_id: u32) -> Result<u32, WasmError> {
+        let borrow_fn = self
+            .ctx
+            .as_context()
+            .data()
+            .methods()
+            .ok_or_else(|| WasmError::MissingExport("PyroState not linked".to_string()))?
+            .session_output_length();
+
+        let len = borrow_fn
+            .call_async(&mut self.ctx, session_id as i32)
+            .await
+            .map_err(WasmError::InputMemory)?;
+
+        Ok(len as u32)
+    }
+
     /// Read a `PyroView` from wasm memory for a session's input at the given index.
     pub async fn borrow_session_input(&mut self, session_id: u32, index: u32) -> Result<PyroRef<'_>, WasmError> {
         let borrow_fn = self

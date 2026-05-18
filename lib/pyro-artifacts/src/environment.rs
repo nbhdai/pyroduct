@@ -390,7 +390,7 @@ impl Environment {
                 tracing::info!("Packaging module: {:?}", self.root);
 
                 tracing::info!("Compiling module binary...");
-                self.compile(&["--features", "module", "-p", &name], capture)
+                self.compile(&["-p", &name], capture)
                     .await?;
 
                 let wasm_artifact = self.get_wasm_artifact(&name)?;

@@ -601,8 +601,10 @@ impl PyroInstance {
 
         let mut io = PyroCallIo::new(&mut self.store, self.memory);
         let mut inputs = Vec::with_capacity(len as usize);
-
-        for i in 0..len {
+        let actual_len = io.session_input_length(session_id).await
+                .map_err(|err| Self::pack_setup_pyro_error(err))?;
+        debug_assert_eq!(actual_len, len);
+        for i in 0..actual_len {
             let view = io.borrow_session_input(session_id, i)
                 .await
                 .map_err(|err| Self::pack_setup_pyro_error(err))?;
@@ -621,8 +623,11 @@ impl PyroInstance {
 
         let mut io = PyroCallIo::new(&mut self.store, self.memory);
         let mut outputs = Vec::with_capacity(len as usize);
+        let actual_len = io.session_output_length(session_id).await
+                .map_err(|err| Self::pack_setup_pyro_error(err))?;
+        debug_assert_eq!(actual_len, len);
 
-        for i in 0..len {
+        for i in 0..actual_len {
             let view = io.borrow_session_output(session_id, i)
                 .await
                 .map_err(|err| Self::pack_setup_pyro_error(err))?;

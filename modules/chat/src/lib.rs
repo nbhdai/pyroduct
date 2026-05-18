@@ -5,7 +5,8 @@ use ollama::{OllamaClient, ChatMessage, ChatMessageRef, OllamaClientMethods};
 /// and returns the assistant's reply along with the full updated history.
 #[pyroduct::module(session, output = response)]
 fn process<'a>(
-    prior: Vec<ChatMessage>,
+    prior_input: Vec<ChatMessage>,
+    prior_output: Vec<ChatMessage>,
     input: ChatMessage,
 ) -> Result<ChatMessage> {
 
