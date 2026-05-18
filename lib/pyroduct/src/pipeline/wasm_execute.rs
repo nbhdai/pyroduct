@@ -30,7 +30,8 @@ pub struct Pipeline {
     pub success_log_retention_secs: u64,
     pub error_log_retention_secs: u64,
     pub output_dir: std::path::PathBuf,
-    pub data_manager: DataManager,
+    pub input_manager: DataManager,
+    pub output_manager: DataManager,
 }
 
 impl Pipeline {
@@ -81,7 +82,7 @@ impl Pipeline {
         };
 
         if let ExecutionRecord::Success { .. } = &record {
-            self.data_manager.push_record(&result)?;
+            self.output_manager.push_record(&result)?;
         }
 
         Ok(record)

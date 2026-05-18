@@ -50,29 +50,8 @@ impl WalWriterInner for Vec<u8> {
 }
 
 // =============================================================================
-// Log record (.pyrolog) — per-row logs, JSON framed
+// Alignment
 // =============================================================================
-
-
-
-// =============================================================================
-// CRC-32C & Alignment
-// =============================================================================
-
-fn crc32c(data: &[u8]) -> u32 {
-    let mut crc: u32 = 0xFFFF_FFFF;
-    for &byte in data {
-        crc ^= byte as u32;
-        for _ in 0..8 {
-            if crc & 1 != 0 {
-                crc = (crc >> 1) ^ 0x82F6_3B78;
-            } else {
-                crc >>= 1;
-            }
-        }
-    }
-    !crc
-}
 
 #[inline]
 fn align16(n: usize) -> usize {
@@ -120,7 +99,6 @@ impl<W: WalWriterInner> WalWriter<W> {
 
         self.wal_writer.flush()?;
         self.wal_writer.get_ref().sync_data()?;
-
 
         self.records_written += 1;
         Ok(())
@@ -359,7 +337,6 @@ impl<'a> Iterator for WalFrameIter<'a> {
     }
 }
 
-
 // =============================================================================
 // Tests
 // =============================================================================
@@ -367,8 +344,8 @@ impl<'a> Iterator for WalFrameIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::format::vec_buf::PyroVec;
     use crate::format::header::PyroData;
+    use crate::format::vec_buf::PyroVec;
     use tempfile::NamedTempFile;
 
     fn make_pyro_record(data: &[u8]) -> PyroVec {
@@ -381,18 +358,18 @@ mod tests {
     fn test_wal_roundtrip() {
         let tmp_file = NamedTempFile::new().unwrap();
         let path = tmp_file.path().with_extension("pyrowal");
-        
+
         // We need a base path because WalWriter::open adds .pyrowal
-        let base_path = path.with_extension(""); 
-        
+        let base_path = path.with_extension("");
+
         let mut wal = WalWriter::open(&base_path).unwrap();
         let record = make_pyro_record(b"test data");
-        
+
         wal.append(42, record.py_ref()).unwrap();
-        
+
         let reader = WalReader::open(&base_path).unwrap();
         let mut frames = reader.frames();
-        
+
         let frame = frames.next().expect("Should have one frame");
         assert_eq!(frame.row_index, 42);
         assert_eq!(frame.packet.as_slice(), b"test data");
@@ -403,20 +380,23 @@ mod tests {
     fn test_wal_multiple_records() {
         let tmp_file = NamedTempFile::new().unwrap();
         let base_path = tmp_file.path().with_extension("");
-        
+
         let mut wal = WalWriter::open(&base_path).unwrap();
         for i in 0..5 {
             let record = make_pyro_record(format!("data {}", i).as_bytes());
             wal.append(i, record.py_ref()).unwrap();
         }
-        
+
         let reader = WalReader::open(&base_path).unwrap();
         let frames: Vec<_> = reader.frames().collect();
-        
+
         assert_eq!(frames.len(), 5);
         for i in 0..5 {
             assert_eq!(frames[i].row_index, i);
-            assert_eq!(frames[i].packet.as_slice(), format!("data {}", i).as_bytes());
+            assert_eq!(
+                frames[i].packet.as_slice(),
+                format!("data {}", i).as_bytes()
+            );
         }
     }
 
@@ -424,25 +404,25 @@ mod tests {
     fn test_wal_corruption() {
         let tmp_file = NamedTempFile::new().unwrap();
         let base_path = tmp_file.path().with_extension("");
-        
+
         {
             let mut wal = WalWriter::open(&base_path).unwrap();
             let record = make_pyro_record(b"test data");
             wal.append(0, record.py_ref()).unwrap();
         }
 
-        // Corrupt the file: the first 16 bytes are the prefix. 
-        // The next 16 bytes are the Pyro header.
+        // Corrupt the file: the first 16 bytes are the prefix.
+        // The next 16 bytes are the Pyro header (first 4 bytes are length).
         let wal_path = base_path.with_extension("pyrowal");
         let mut data = std::fs::read(&wal_path).unwrap();
-        if data.len() > 20 {
-            data[20] ^= 0xFF; // Corrupt the Pyro header or payload
+        if data.len() > 16 {
+            data[16] ^= 0xFF; // Corrupt the length in the Pyro header
         }
         std::fs::write(&wal_path, data).unwrap();
 
         let reader = WalReader::open(base_path).unwrap();
         let mut frames = reader.frames();
-        
+
         // The iterator should return None if it encounters a corrupt PyroRef
         assert!(frames.next().is_none());
     }
@@ -463,15 +443,17 @@ mod tests {
     fn test_wal_view_at() {
         let tmp_file = NamedTempFile::new().unwrap();
         let base_path = tmp_file.path().with_extension("");
-        
+
         let mut wal = WalWriter::open(&base_path).unwrap();
         let record = make_pyro_record(b"view test");
         wal.append(0, record.py_ref()).unwrap();
-        
+
         let reader = WalReader::open(&base_path).unwrap();
         let frame = reader.frames().next().unwrap();
-        
-        let view = reader.view_at(frame.packet_offset).expect("Should create view");
+
+        let view = reader
+            .view_at(frame.packet_offset)
+            .expect("Should create view");
         assert_eq!(view.as_slice(), b"view test");
     }
 }

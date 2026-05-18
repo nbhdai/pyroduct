@@ -22,13 +22,16 @@ impl PlaybookServer {
         let factory = PyroFactory::from_playbook(playbook)?;
         let instance = factory.instantiate().await?;
         let input_schema = factory.spec().func.input.clone();
+        let output_schema = factory.spec().func.input.clone();
+        let input_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let output_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let pipeline = Pipeline {
             step: instance,
             success_log_retention_secs: 3600,
             error_log_retention_secs: 86400 * 7,
             output_dir: output_dir.clone(),
-            data_manager: crate::pipeline::data::DataManager::new(output_dir.clone(), input_schema),
+            input_manager: crate::pipeline::data::DataManager::new(input_dir.clone(), input_schema),
+            output_manager: crate::pipeline::data::DataManager::new(output_dir.clone(), output_schema),
         };
         Ok(Self {
             pipeline: Arc::new(Mutex::new(pipeline)),

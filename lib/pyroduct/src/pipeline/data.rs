@@ -39,9 +39,9 @@ pub struct DataManager {
 }
 
 impl DataManager {
-    pub fn new(output_dir: PathBuf, schema: PyroSchema<'static>) -> Self {
+    pub fn new(output_dir: impl AsRef<Path>, schema: PyroSchema<'static>) -> Self {
         Self {
-            output_dir,
+            output_dir: output_dir.as_ref().to_path_buf(),
             wal_data: PreBatch::new(schema.clone()),
             schema,
             current_wal_id: 0,
@@ -289,7 +289,7 @@ mod tests {
     fn test_data_manager_flow() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
-        let mut manager = DataManager::new(dir.path().to_path_buf(), schema);
+        let mut manager = DataManager::new(dir.path(), schema);
         manager.set_capacities(2, 2);
 
         // 1. Push records
@@ -325,7 +325,7 @@ mod tests {
     fn test_recovery() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
-        let mut manager = DataManager::new(dir.path().to_path_buf(), schema);
+        let mut manager = DataManager::new(dir.path(), schema);
 
         // Manually create a WAL file via push
         manager
@@ -337,7 +337,7 @@ mod tests {
 
         // We don't flush, so wal_data has 2 rows.
         // Now let's simulate a crash by creating a new manager and recovering
-        let mut manager2 = DataManager::new(dir.path().to_path_buf(), setup_schema());
+        let mut manager2 = DataManager::new(dir.path(), setup_schema());
         manager2.restore().unwrap();
 
         assert_eq!(manager2.wal_data.len(), 2);
@@ -347,7 +347,7 @@ mod tests {
     fn test_manual_flush_and_rollout() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
-        let mut manager = DataManager::new(dir.path().to_path_buf(), schema);
+        let mut manager = DataManager::new(dir.path(), schema);
 
         manager
             .push_record(&make_success_record(0, 1, "alice"))

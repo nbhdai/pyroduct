@@ -94,13 +94,15 @@ impl PipelineFactory {
         tracing::debug!("Building wasm module for playbook");
         let instance = self.factory.instantiate().await?;
         let input_schema = self.factory.spec().func.input.clone();
+        let output_schema = self.factory.spec().func.output.clone();
 
         Ok(Pipeline {
             step: instance,
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,
             output_dir: self.output_dir.clone(),
-            data_manager: super::data::DataManager::new(self.output_dir.clone(), input_schema),
+            input_manager: super::data::DataManager::new(self.output_dir.clone(), input_schema),
+            output_manager: super::data::DataManager::new(self.output_dir.clone(), output_schema),
         })
     }
 }

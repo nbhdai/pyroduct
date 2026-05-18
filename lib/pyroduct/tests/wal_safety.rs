@@ -137,8 +137,7 @@ fn test_wal_data_persists_across_open() {
 
     // Write session
     {
-        let file = std::fs::File::create(&wal_path).unwrap();
-        let mut writer = WalWriter::new(file);
+        let mut writer = WalWriter::open(&wal_path).unwrap();
         for (idx, row) in &records {
             let vec = row.clone().into_owned().ship().unwrap();
             writer.append(*idx, vec.py_ref()).unwrap();

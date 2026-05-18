@@ -26,8 +26,30 @@ fn crc32c(data: &[u8]) -> u32 {
 pub struct LogEntry {
     pub row_index: usize,
     pub module_logs: Vec<String>,
+    #[serde(serialize_with = "serialize_cap_logs", deserialize_with = "deserialize_cap_logs")]
     pub capability_logs: HashMap<(String, String), Vec<String>>,
     pub failure: Option<CapturedError>,
+}
+
+fn serialize_cap_logs<S>(
+    logs: &HashMap<(String, String), Vec<String>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let list: Vec<(&(String, String), &Vec<String>)> = logs.iter().collect();
+    list.serialize(serializer)
+}
+
+fn deserialize_cap_logs<'de, D>(
+    deserializer: D,
+) -> Result<HashMap<(String, String), Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let list = Vec::<((String, String), Vec<String>)>::deserialize(deserializer)?;
+    Ok(list.into_iter().collect())
 }
 
 /// `LogWal` provides an async file-backed write-ahead log for `LogRecord`s using tokio.
