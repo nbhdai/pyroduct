@@ -5,8 +5,7 @@ use pyro_artifacts::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    module::{PyroFactory, WasmError},
-    pipeline::Pipeline,
+    CapturedError, PyroError, format::log_wal::LogWal, module::{PyroFactory, WasmError}, pipeline::Pipeline
 };
 
 use super::PipelineError;
@@ -24,6 +23,8 @@ pub struct PipelineConfig {
     pub success_log_retention_secs: u64,
     #[serde(default = "default_error_retention")]
     pub error_log_retention_secs: u64,
+    pub log_dir: std::path::PathBuf,
+    pub input_dir: std::path::PathBuf,
     pub output_dir: std::path::PathBuf,
 }
 
@@ -43,18 +44,16 @@ pub struct LoadedPipelineConfig {
     pub wal_capacity: usize,
     pub success_log_retention_secs: u64,
     pub error_log_retention_secs: u64,
-    pub output_dir: std::path::PathBuf,
 }
 
 impl PipelineConfig {
     pub async fn load(self, cache: &CacheManager) -> Result<LoadedPipelineConfig, WasmError> {
-        let loaded_playbook = cache.load_playbook(self.playbook).await?;
+        let loaded_playbook = cache.load_playbook(self.playbook, self.log_dir, self.input_dir, self.output_dir).await?;
         Ok(LoadedPipelineConfig {
             playbook: loaded_playbook,
             wal_capacity: self.wal_capacity,
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,
-            output_dir: self.output_dir,
         })
     }
 }
@@ -65,7 +64,9 @@ impl LoadedPipelineConfig {
             factory: PyroFactory::from_playbook(&self.playbook).map_err(PipelineError::Wasm)?,
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,
-            output_dir: self.output_dir.clone(),
+            log_dir: self.playbook.log_dir.clone(),
+            input_dir: self.playbook.input_dir.clone(),
+            output_dir: self.playbook.output_dir.clone(),
         })
     }
 }
@@ -77,6 +78,8 @@ impl LoadedPipelineConfig {
 /// A loaded pipeline definition for a single playbook.
 pub struct PipelineFactory {
     pub factory: PyroFactory,
+    pub log_dir: std::path::PathBuf,
+    pub input_dir: std::path::PathBuf,
     pub output_dir: std::path::PathBuf,
     pub success_log_retention_secs: u64,
     pub error_log_retention_secs: u64,
@@ -100,8 +103,8 @@ impl PipelineFactory {
             step: instance,
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,
-            output_dir: self.output_dir.clone(),
-            input_manager: super::data::DataManager::new(self.output_dir.clone(), input_schema),
+            log_manager: LogWal::open(self.log_dir.clone()).await.map_err(|io| PyroError::local_io(CapturedError::new("Unable to make the log wal").with_source(io)))?,
+            input_manager: super::data::DataManager::new(self.input_dir.clone(), input_schema),
             output_manager: super::data::DataManager::new(self.output_dir.clone(), output_schema),
         })
     }

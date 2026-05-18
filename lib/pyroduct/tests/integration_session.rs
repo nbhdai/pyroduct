@@ -59,7 +59,9 @@ async fn test_session_lifecycle() {
         wal_capacity: 1000,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
+        input_dir: std::env::current_dir().unwrap(),
         output_dir: std::env::current_dir().unwrap(),
+        log_dir: std::env::current_dir().unwrap(),
     };
 
     let loaded = config.load(&cache).await.unwrap();
@@ -153,7 +155,9 @@ async fn test_multiple_sessions_isolation() {
         wal_capacity: 1000,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
+        input_dir: std::env::current_dir().unwrap(),
         output_dir: std::env::current_dir().unwrap(),
+        log_dir: std::env::current_dir().unwrap(),
     };
 
     let loaded = config.load(&cache).await.unwrap();
@@ -240,7 +244,9 @@ fn error_fn<'a>(_prior_in: Vec<String>, _prior_out: Vec<String>, input: String) 
         wal_capacity: 1000,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
+        input_dir: std::env::current_dir().unwrap(),
         output_dir: std::env::current_dir().unwrap(),
+        log_dir: std::env::current_dir().unwrap(),
     };
 
     let loaded = config.load(&cache).await.unwrap();

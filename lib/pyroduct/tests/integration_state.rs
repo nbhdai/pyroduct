@@ -68,7 +68,9 @@ async fn test_capability_state_preservation() {
         wal_capacity: 1000,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
+        input_dir: std::env::current_dir().unwrap(),
         output_dir: std::env::current_dir().unwrap(),
+        log_dir: std::env::current_dir().unwrap(),
     };
 
     let config = config.load(&cache).await.unwrap();

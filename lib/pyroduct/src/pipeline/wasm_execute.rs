@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc};
 use tracing::{error, instrument, warn};
 
+use crate::format::log_wal::LogWal;
 use crate::module::{PyroInstance, sessions::SessionResult};
 use crate::{
     PyroError,
@@ -29,7 +30,7 @@ pub struct Pipeline {
     pub step: PyroInstance,
     pub success_log_retention_secs: u64,
     pub error_log_retention_secs: u64,
-    pub output_dir: std::path::PathBuf,
+    pub log_manager: LogWal,
     pub input_manager: DataManager,
     pub output_manager: DataManager,
 }
@@ -102,6 +103,7 @@ impl Pipeline {
         session_id: u32,
         input: &PyroRow<'_>,
     ) -> Result<SessionResult, PyroFailure> {
+
         self.step.call_session(session_id, input).await
     }
 

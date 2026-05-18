@@ -30,6 +30,10 @@ pub struct LoadedPlaybook {
     pub configurations: HashMap<String, Option<serde_json::Value>>,
     #[serde(default)]
     pub paths: HashMap<String, PathBuf>,
+
+    pub log_dir: std::path::PathBuf,
+    pub input_dir: std::path::PathBuf,
+    pub output_dir: std::path::PathBuf,
 }
 
 // The lock file is automatically unlocked when `_lock_file` is dropped (fs2 behavior).
@@ -545,7 +549,13 @@ impl CacheManager {
         }
     }
 
-    pub async fn load_playbook(&self, playbook: Playbook) -> Result<LoadedPlaybook, CacheError> {
+    pub async fn load_playbook(
+        &self,
+        playbook: Playbook,
+        log_dir: impl AsRef<Path>,
+        input_dir: impl AsRef<Path>,
+        output_dir: impl AsRef<Path>,
+    ) -> Result<LoadedPlaybook, CacheError> {
         let binary = self.get_binary(&playbook.hash).await?;
         let mut paths = HashMap::new();
 
@@ -560,6 +570,9 @@ impl CacheManager {
             binary,
             configurations: playbook.configurations,
             paths,
+            log_dir: log_dir.as_ref().to_path_buf(),
+            input_dir: input_dir.as_ref().to_path_buf(),
+            output_dir: output_dir.as_ref().to_path_buf(),
         })
     }
 
@@ -569,6 +582,9 @@ impl CacheManager {
         author: &str,
         name: &str,
         version: &str,
+        log_dir: impl AsRef<Path>,
+        input_dir: impl AsRef<Path>,
+        output_dir: impl AsRef<Path>,
     ) -> Result<LoadedPlaybook, CacheError> {
         let binary = self.get_named_binary(author, name, version).await?;
         let mut paths = HashMap::new();
@@ -584,6 +600,9 @@ impl CacheManager {
             binary,
             configurations: Default::default(),
             paths,
+            log_dir: log_dir.as_ref().to_path_buf(),
+            input_dir: input_dir.as_ref().to_path_buf(),
+            output_dir: output_dir.as_ref().to_path_buf(),
         })
     }
 }

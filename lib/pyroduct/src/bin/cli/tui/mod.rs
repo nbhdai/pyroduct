@@ -225,7 +225,10 @@ impl App {
 
     async fn run_pipeline_inner(&mut self) -> Result<()> {
         let mut pipelines = Vec::new();
-        let output_dir = self.pipeline.yaml_path.parent().unwrap_or(Path::new("."));
+        let root_dir = self.pipeline.yaml_path.parent().unwrap_or(Path::new("."));
+        let output_dir = root_dir.join("output");
+        let input_dir = root_dir.join("input");
+        let log_dir = root_dir.join("log");
 
         for (i, source_pipeline) in self.pipeline.pipelines.iter().enumerate() {
             let mut configurations: HashMap<String, Option<serde_json::Value>> = HashMap::new();
@@ -264,6 +267,8 @@ impl App {
                 success_log_retention_secs: source_pipeline.success_log_retention_secs,
                 error_log_retention_secs: source_pipeline.error_log_retention_secs,
                 output_dir: output_dir.to_path_buf(),
+                input_dir: input_dir.to_path_buf(),
+                log_dir: log_dir.to_path_buf(),
             };
 
             let loaded = pipeline_config

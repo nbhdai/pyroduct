@@ -15,7 +15,7 @@ use pyro_file;
 /// WAL -> Arrow IPC (memmapable) -> Parquet.
 pub struct DataManager {
     output_dir: PathBuf,
-    schema: PyroSchema<'static>,
+    _schema: PyroSchema<'static>,
 
     /// The in-memory buffer for accumulating rows before flushing to IPC.
     wal_data: PreBatch,
@@ -43,7 +43,7 @@ impl DataManager {
         Self {
             output_dir: output_dir.as_ref().to_path_buf(),
             wal_data: PreBatch::new(schema.clone()),
-            schema,
+            _schema: schema,
             current_wal_id: 0,
             wal_writer: None,
             ipc_files: Vec::new(),
@@ -282,7 +282,7 @@ mod tests {
     }
 
     fn make_success_record(row_index: usize, id: i32, name: &'static str) -> PyroRow<'static> {
-        PyroRow::from([("id", PyroValue::from(id)), ("name", PyroValue::from(name))])
+        PyroRow::from([("id", PyroValue::from(id)), ("index", PyroValue::from(row_index as u32)), ("name", PyroValue::from(name))])
     }
 
     #[test]

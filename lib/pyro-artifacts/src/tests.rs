@@ -275,7 +275,7 @@ async fn test_load_playbook() {
     };
 
     // 3. Load the Playbook
-    let loaded = cache.load_playbook(playbook.clone()).await.unwrap();
+    let loaded = cache.load_playbook(playbook.clone(), "", "", "").await.unwrap();
 
     // 4. Verify
     assert_eq!(loaded.binary.spec.hash, binary.spec.hash);
