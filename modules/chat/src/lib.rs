@@ -5,8 +5,7 @@ use pyroduct::session::SessionResponse;
 /// and returns the assistant's reply along with the full updated history.
 #[pyroduct::module(session, output = response)]
 fn process<'a>(
-    prior_input: Vec<ChatMessage>,
-    prior_output: Vec<ChatMessage>,
+    mut prior: Vec<ChatMessage>,
     input: ChatMessage,
 ) -> Result<SessionResponse<ChatMessage>> {
 
@@ -14,11 +13,12 @@ fn process<'a>(
     let llm = OllamaClient {
         model: "gemma3:270m".to_string(),
         temperature: 0.7,
-    }
-    .register()?;
+    }.register()?;
+    
+    prior.push(input);
 
     // 3. Call the capability
-    let reply = llm.chat(input.to_owned())?;
+    let reply = llm.chat(prior)?;
 
     Ok(SessionResponse::Continue(reply))
 }

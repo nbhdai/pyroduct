@@ -20,7 +20,9 @@ pub fn expand(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStream> {
                 if let Pat::Ident(pat_ident) = &*pat_type.pat {
                     let name = pat_ident.ident.clone();
                     let ty = (*pat_type.ty).clone();
-                    return Some((name, ty));
+                    let attrs = pat_type.attrs.clone();
+                    let pat = pat_type.pat.clone();
+                    return Some((name, ty, attrs, pat));
                 }
             }
             None
@@ -37,7 +39,7 @@ pub fn expand(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStream> {
     // Generate the call arguments (extract from input struct)
     let call_args: Vec<_> = params
         .iter()
-        .map(|(name, ty)| {
+        .map(|(name, ty, _, _)| {
             let name_str = name.to_string();
             quote! { input.get_value::<#ty>(#name_str).ok_or_else(|| ::pyroduct::CapturedError::new(format!("Missing {}", #name_str)))? }
         })
@@ -46,7 +48,7 @@ pub fn expand(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStream> {
     // Generate the original function parameters
     let original_fn_params: Vec<_> = params
         .iter()
-        .map(|(name, ty)| quote! { #name: #ty })
+        .map(|(_, ty, attrs, pat)| quote! { #(#attrs)* #pat: #ty })
         .collect();
 
     let expanded = quote! {
@@ -91,7 +93,9 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
                 if let Pat::Ident(pat_ident) = &*pat_type.pat {
                     let name = pat_ident.ident.clone();
                     let ty = (*pat_type.ty).clone();
-                    return Some((name, ty));
+                    let attrs = pat_type.attrs.clone();
+                    let pat = pat_type.pat.clone();
+                    return Some((name, ty, attrs, pat));
                 }
             }
             None
@@ -174,7 +178,7 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
     // Generate the call arguments (extract from input struct)
     let call_args: Vec<_> = params
         .iter()
-        .map(|(name, ty)| {
+        .map(|(name, ty, _, _)| {
             let name_str = name.to_string();
             quote! { input.get_value::<#ty>(#name_str).ok_or_else(|| ::pyroduct::CapturedError::new(format!("Missing {}", #name_str)))? }
         })
@@ -183,7 +187,7 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
     // Generate the original function parameters
     let original_fn_params: Vec<_> = params
         .iter()
-        .map(|(name, ty)| quote! { #name: #ty })
+        .map(|(_, ty, attrs, pat)| quote! { #(#attrs)* #pat: #ty })
         .collect();
 
     let expanded = quote! {
