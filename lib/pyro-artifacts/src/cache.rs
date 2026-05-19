@@ -40,18 +40,28 @@ pub struct LoadedPlaybook {
 
 pub struct CacheManager {
     pub root: PathBuf,
+    pub pyroduct: Option<Dependency>,
 }
 
 impl CacheManager {
-    pub async fn new(root: &Path) -> Result<Self, CacheError> {
+    pub async fn new(root: &Path, pyroduct: Option<Dependency>) -> Result<Self, CacheError> {
         if !root.exists() {
             fs::create_dir_all(&root).await.map_err(|e| CacheError {
                 context: "Failed to create cache root".to_string(),
                 error: e,
             })?;
         }
+        
+        let pyroduct = if let Some(mut dep) = pyroduct {
+            crate::cache::resolve_dependency_path(&mut dep, root);
+            Some(dep.clone())
+        } else {
+            None
+        };
+
         let manager = Self {
             root: root.to_path_buf(),
+            pyroduct,
         };
 
         Ok(manager)
@@ -67,8 +77,19 @@ impl CacheManager {
                     .unwrap_or_else(|_| PathBuf::from("."));
                 home.join(".pyroduct")
             });
+        let config_path = root.join("config.toml");
+        let content = fs::read_to_string(&config_path)
+            .await
+            .map_err(|error| CacheError {
+                context: format!("Failed to read the configuration"),
+                error,
+            })?;
+        let config = toml::from_str::<PyroductConfig>(&content).map_err(|error| CacheError {
+            context: format!("Failed to parse the configuration"),
+            error: io::Error::new(io::ErrorKind::InvalidData, error),
+        })?;
 
-        Self::new(&root).await
+        Self::new(&root, config.pyroduct).await
     }
 
     pub async fn init(&self) -> Result<(), CacheError> {
@@ -470,7 +491,10 @@ impl CacheManager {
                     context: format!("Failed to create  {}", path.display()),
                     error: e,
                 })?;
-                let manifest = interface.manifest.clone();
+                let mut manifest = interface.manifest.clone();
+                if let Some(pyroduct) = &self.pyroduct {
+                    manifest.pyroduct = pyroduct.clone();
+                }
                 let cargo_path = path.join("Cargo.toml");
                 let cargo = manifest.clone().to_interface_manifest();
                 let cargo = toml::to_string_pretty(&cargo).map_err(|e| CacheError {

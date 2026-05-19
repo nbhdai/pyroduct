@@ -156,7 +156,7 @@ impl MagmaDocumentation {
 
                 quote! {
                     {
-                        let mut field = #values_path::PyroField::<'static>::new(
+                        let field = #values_path::PyroField::<'static>::new(
                             #fname,
                             <#fty as #values_path::Typeable>::pyro_type(),
                             <#fty as #values_path::Typeable>::is_nullable(),

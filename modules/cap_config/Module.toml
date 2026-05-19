@@ -4,7 +4,7 @@ version = "0.1.0"
 author = "nbhdai"
 
 [pyroduct]
-version = "0.1.0"
+path = "../../lib/pyroduct/"
 
 [capabilities]
 config = { package = "config", author = "nbhdai", version = "0.1.0" }

@@ -1,4 +1,4 @@
-use llm::{LlmClient, ChatMessage, ChatMessageRef, LlmClientMethods};
+use llm::{LlmClient, ChatMessage, LlmClientMethods};
 use pyroduct::session::SessionResponse;
 
 /// Takes an array of chat messages, sends them to the HF LLM capability,

@@ -95,7 +95,7 @@ pub fn test_config() -> PyroductConfig {
 #[tokio::test]
 async fn ship_httpc_capability_to_cache() {
     let dir = TempDir::new().unwrap();
-    let cache = Arc::new(CacheManager::new(dir.path()).await.unwrap());
+    let cache = Arc::new(CacheManager::new(dir.path(), None).await.unwrap());
 
     let httpc_path = repo_root().join("capabilities/httpc");
     assert!(
@@ -133,8 +133,12 @@ async fn ship_httpc_capability_to_cache() {
 #[tokio::test]
 async fn test_anon_compile_with_interface() {
     let dir = TempDir::new().unwrap();
-    let cache = Arc::new(CacheManager::new(dir.path()).await.unwrap());
-    let builder = Builder::new(&dir.path().join("build"), test_config(), Arc::clone(&cache)).await.unwrap();
+    let config = test_config();
+
+    let cache = Arc::new(CacheManager::new(dir.path(), config.pyroduct.clone()).await.unwrap());
+    let builder = Builder::new(&dir.path().join("build"), config, Arc::clone(&cache))
+        .await
+        .unwrap();
 
     // 1. Generate the interface for httpc to compile against
     let httpc_path = repo_root().join("capabilities/httpc");
@@ -174,8 +178,10 @@ async fn test_anon_compile_with_interface() {
 #[tokio::test]
 async fn test_module_wasm_exact_match() {
     let dir = TempDir::new().unwrap();
-    let cache = Arc::new(CacheManager::new(dir.path()).await.unwrap());
-    let builder = Builder::new(&dir.path().join("build"), test_config(), Arc::clone(&cache)).await.unwrap();
+    let cache = Arc::new(CacheManager::new(dir.path(), None).await.unwrap());
+    let builder = Builder::new(&dir.path().join("build"), test_config(), Arc::clone(&cache))
+        .await
+        .unwrap();
 
     let source = ModuleSource {
         ident: None,
@@ -203,7 +209,7 @@ async fn test_module_wasm_exact_match() {
 #[tokio::test]
 async fn test_capability_lib_exact_match() {
     let dir = TempDir::new().unwrap();
-    let cache = Arc::new(CacheManager::new(dir.path()).await.unwrap());
+    let cache = Arc::new(CacheManager::new(dir.path(), None).await.unwrap());
 
     let httpc_path = repo_root().join("capabilities/httpc");
     let env = Environment::new(httpc_path, cache.clone()).await.unwrap();
@@ -238,8 +244,12 @@ async fn test_capability_lib_exact_match() {
 #[tokio::test]
 async fn test_load_playbook() {
     let dir = TempDir::new().unwrap();
-    let cache = Arc::new(CacheManager::new(dir.path()).await.unwrap());
-    let builder = Builder::new(&dir.path().join("build"), test_config(), Arc::clone(&cache)).await.unwrap();
+    let config = test_config();
+
+    let cache = Arc::new(CacheManager::new(dir.path(), config.pyroduct.clone()).await.unwrap());
+    let builder = Builder::new(&dir.path().join("build"), config, Arc::clone(&cache))
+        .await
+        .unwrap();
 
     // 1. Setup a module with a capability
     let httpc_path = repo_root().join("capabilities/httpc");
@@ -275,7 +285,10 @@ async fn test_load_playbook() {
     };
 
     // 3. Load the Playbook
-    let loaded = cache.load_playbook(playbook.clone(), "", "", "").await.unwrap();
+    let loaded = cache
+        .load_playbook(playbook.clone(), "", "", "")
+        .await
+        .unwrap();
 
     // 4. Verify
     assert_eq!(loaded.binary.spec.hash, binary.spec.hash);

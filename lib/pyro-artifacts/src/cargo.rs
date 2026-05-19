@@ -210,11 +210,8 @@ impl CapabilityManifest {
         let mut final_deps = BTreeMap::new();
 
         // Use a simple version dependency for pyroduct to allow patching by the builder
-        let mut pyro_dep = Dependency::Simple("*".to_string());
-        pyro_dep
-            .detail_mut()
-            .features
-            .push("module".to_string());
+        let mut pyro_dep = self.pyroduct.clone();
+        pyro_dep.detail_mut().features.push("module".to_string());
 
         // 1. Shared Dependencies (Required)
         final_deps.extend(self.dependencies.shared.clone().into_iter());
