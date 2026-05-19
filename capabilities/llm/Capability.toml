@@ -1,11 +1,11 @@
 [capability]
 author = "nbhdai"
-name = "ollama"
+name = "llm"
 version = "0.1.0"
 
 [pyroduct]
-version = "0.1.0"
-  
+path = "../../lib/pyroduct/"
+
 [dependencies.host]
 reqwest = { version = "0.13.1", features = [ "json" ] }
 tokio = { version = "1.49.0", features = ["full"] }

@@ -222,11 +222,6 @@ name = "mod_slot"
         }
         manifest.lib = ensure_cdylib(manifest.lib.take());
 
-        // Patch pyroduct to redirect all dependencies to the builder's local path
-        let mut crates_io_patch = std::collections::BTreeMap::new();
-        crates_io_patch.insert("pyroduct".to_string(), self.pyroduct_dep.clone());
-        manifest.patch.insert("crates-io".to_string(), crates_io_patch);
-
         let cargo_toml_content =
             toml::to_string_pretty(&manifest).map_err(|e| BuildError::Manifest(e.to_string()))?;
         tfs::write(build_dir.join("Cargo.toml"), &cargo_toml_content)

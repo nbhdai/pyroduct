@@ -8,6 +8,6 @@ author = "nbhdai"
 path = "../../lib/pyroduct/"
 
 [capabilities]
-ollama = { package = "ollama", author = "nbhdai", version = "0.1.0" }
+llm = { package = "llm", author = "nbhdai", version = "0.1.0" }
 
 [dependencies]
