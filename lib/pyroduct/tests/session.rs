@@ -15,8 +15,7 @@ use pyroduct::session::SessionResponse;
 
 #[pyroduct::module(session, output = message)]
 fn counter(
-    _prior_input: Vec<String>,
-    prior_output: Vec<String>,
+    prior: Vec<String>,
     input: String,
 ) -> Result<SessionResponse<String>> {
     let turn = prior_output.len() as u32 + 1;
@@ -67,18 +66,18 @@ async fn test_multiple_sessions_isolation() {
 
     let loaded = config.load(&cache).await.unwrap();
     let pipeline_factory = loaded.factory().unwrap();
-    let mut pipeline = pipeline_factory.build().await.unwrap();
+    let mut pipeline = pipeline_factory.build_session().await.unwrap();
 
     let id_a = 100;
     let id_b = 200;
-    pipeline.prep_session(id_a, &[], &[]).await.unwrap();
-    pipeline.prep_session(id_b, &[], &[]).await.unwrap();
+    pipeline.prep_session(id_a, &[]).await.unwrap();
+    pipeline.prep_session(id_b, &[]).await.unwrap();
 
     let input_a = PyroRow::from([("input", "Hi A".into())]);
     let input_b = PyroRow::from([("input", "Hi B".into())]);
 
-    let res_a = pipeline.call_session(id_a, &input_a).await.unwrap();
-    let res_b = pipeline.call_session(id_b, &input_b).await.unwrap();
+    let res_a = pipeline.call(id_a, &input_a).await.unwrap();
+    let res_b = pipeline.call(id_b, &input_b).await.unwrap();
 
     if let SessionResult::Continue(row) = res_a {
         assert_eq!(row.get_str("message").unwrap(), "Hello! Turn 1");
@@ -93,7 +92,7 @@ async fn test_multiple_sessions_isolation() {
     }
 
     let input_a2 = PyroRow::from([("input", "A2".into())]);
-    let res_a2 = pipeline.call_session(id_a, &input_a2).await.unwrap();
+    let res_a2 = pipeline.call(id_a, &input_a2).await.unwrap();
     if let SessionResult::End(row) = res_a2 {
         assert_eq!(row.get_str("message").unwrap(), "Goodbye! Turn 2");
     } else {
@@ -101,7 +100,7 @@ async fn test_multiple_sessions_isolation() {
     }
 
     let input_b2 = PyroRow::from([("input", "B2".into())]);
-    let res_b2 = pipeline.call_session(id_b, &input_b2).await.unwrap();
+    let res_b2 = pipeline.call(id_b, &input_b2).await.unwrap();
     if let SessionResult::End(row) = res_b2 {
         assert_eq!(row.get_str("message").unwrap(), "Goodbye! Turn 2");
     } else {
@@ -159,13 +158,13 @@ fn error_fn<'a>(_prior_input: Vec<String>, _prior_output: Vec<String>, input: St
 
     let loaded = config.load(&cache).await.unwrap();
     let pipeline_factory = loaded.factory().unwrap();
-    let mut pipeline = pipeline_factory.build().await.unwrap();
+    let mut pipeline = pipeline_factory.build_session().await.unwrap();
 
     let session_id = 99;
-    pipeline.prep_session(session_id, &[], &[]).await.unwrap();
+    pipeline.prep_session(session_id, &[]).await.unwrap();
 
     let input = PyroRow::from([("input", "test".into())]);
-    let result = pipeline.call_session(session_id, &input).await;
+    let result = pipeline.call(session_id, &input).await;
 
     assert!(result.is_err(), "Should fail");
 

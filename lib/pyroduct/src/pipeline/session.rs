@@ -58,10 +58,9 @@ impl SessionPipeline {
     pub async fn prep_session(
         &mut self,
         session_id: u32,
-        inputs: &[PyroRow<'_>],
-        outputs: &[PyroRow<'_>],
+        prior: &[PyroRow<'_>],
     ) -> Result<(), PyroFailure> {
-        self.step.prep_session(session_id, inputs, outputs).await
+        self.step.prep_session(session_id, prior, &[]).await
     }
 
     pub async fn call(

@@ -28,7 +28,7 @@ use super::data::DataManager;
 // =============================================================================
 
 #[derive(Clone)]
-pub enum SessionExecutionRecord {
+pub enum SessionDiffExecutionRecord {
     Success {
         row_index: usize,
         prior_input: Vec<PyroRow<'static>>,
@@ -47,7 +47,7 @@ pub enum SessionExecutionRecord {
     },
 }
 
-pub struct SessionPipeline {
+pub struct SessionDiffPipeline {
     pub step: PyroInstance,
     pub success_log_retention_secs: u64,
     pub error_log_retention_secs: u64,
@@ -56,10 +56,9 @@ pub struct SessionPipeline {
     pub output_manager: DataManager,
 }
 
-impl SessionPipeline {
+impl SessionDiffPipeline {
     pub async fn prep_session(
         &mut self,
-        row_index: usize,
         session_id: u32,
         inputs: &[PyroRow<'_>],
         outputs: &[PyroRow<'_>],
@@ -116,12 +115,12 @@ pub struct Failure {
 // PipelinePool
 // =============================================================================
 
-pub struct SessionPipelinePool {
-    pipelines: Arc<Mutex<Vec<SessionPipeline>>>,
+pub struct SessionDiffPipelinePool {
+    pipelines: Arc<Mutex<Vec<SessionDiffPipeline>>>,
 }
 
-impl SessionPipelinePool {
-    pub fn new(pipelines: Vec<SessionPipeline>) -> Self {
+impl SessionDiffPipelinePool {
+    pub fn new(pipelines: Vec<SessionDiffPipeline>) -> Self {
         Self {
             pipelines: Arc::new(Mutex::new(pipelines)),
         }
@@ -134,7 +133,7 @@ impl SessionPipelinePool {
     pub async fn process_batch(
         &self,
         batch: &RecordBatch,
-    ) -> PipelineResult<(Vec<SessionExecutionRecord>, Vec<SessionExecutionRecord>)> {
+    ) -> PipelineResult<(Vec<SessionDiffExecutionRecord>, Vec<SessionDiffExecutionRecord>)> {
         todo!()
     }
 }

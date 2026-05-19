@@ -11,8 +11,8 @@ use pyro_artifacts::cache::CacheManager;
 use pyroduct::pipeline::pipeline::LoadedPipelineConfig;
 use pyroduct::{
     PyroRow,
-    format::{value::arrow::PreBatch, ExecutionRecord},
-    pipeline::{Pipeline, PipelineConfig, PipelinePool},
+    format::{value::arrow::PreBatch},
+    pipeline::{Pipeline, PipelineConfig, PipelinePool, ExecutionRecord},
 };
 
 use pyro_file::{

@@ -5,7 +5,7 @@ use pyro_artifacts::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CapturedError, PyroError, format::log_wal::LogWal, module::{PyroFactory, WasmError}, pipeline::Pipeline
+    CapturedError, PyroError, format::log_wal::LogWal, module::{PyroFactory, WasmError}, pipeline::{Pipeline, session::SessionPipeline, session_diff::SessionDiffPipeline}
 };
 
 use super::PipelineError;
@@ -102,6 +102,44 @@ impl PipelineFactory {
         let output_schema = self.factory.spec().func.output.clone();
 
         Ok(Pipeline {
+            step: instance,
+            success_log_retention_secs: self.success_log_retention_secs,
+            error_log_retention_secs: self.error_log_retention_secs,
+            log_manager: LogWal::open(self.log_dir.clone(), self.wal_capacity).await.map_err(|io| PyroError::local_io(CapturedError::new("Unable to make the log wal").with_source(io)))?,
+            input_manager: super::data::DataManager::new(self.input_dir.clone(), input_schema),
+            output_manager: super::data::DataManager::new(self.output_dir.clone(), output_schema),
+        })
+    }
+
+    /// Build a session pipeline from a fully-loaded `PipelineFactory`.
+    ///
+    /// Compiles and instantiates the single wasm module, configuring it with WAL.
+    pub async fn build_session(&self) -> Result<SessionPipeline, PipelineError> {
+        tracing::debug!("Building wasm module for playbook");
+        let instance = self.factory.instantiate().await?;
+        let input_schema = self.factory.spec().func.input.clone();
+        let output_schema = self.factory.spec().func.output.clone();
+
+        Ok(SessionPipeline {
+            step: instance,
+            success_log_retention_secs: self.success_log_retention_secs,
+            error_log_retention_secs: self.error_log_retention_secs,
+            log_manager: LogWal::open(self.log_dir.clone(), self.wal_capacity).await.map_err(|io| PyroError::local_io(CapturedError::new("Unable to make the log wal").with_source(io)))?,
+            input_manager: super::data::DataManager::new(self.input_dir.clone(), input_schema),
+            output_manager: super::data::DataManager::new(self.output_dir.clone(), output_schema),
+        })
+    }
+
+    /// Build a session pipeline from a fully-loaded `PipelineFactory`.
+    ///
+    /// Compiles and instantiates the single wasm module, configuring it with WAL.
+    pub async fn build_session_diff(&self) -> Result<SessionDiffPipeline, PipelineError> {
+        tracing::debug!("Building wasm module for playbook");
+        let instance = self.factory.instantiate().await?;
+        let input_schema = self.factory.spec().func.input.clone();
+        let output_schema = self.factory.spec().func.output.clone();
+
+        Ok(SessionDiffPipeline {
             step: instance,
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,

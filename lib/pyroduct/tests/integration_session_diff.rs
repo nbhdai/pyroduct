@@ -15,10 +15,11 @@ use pyroduct::session::SessionResponse;
 
 #[pyroduct::module(session, output = message)]
 fn counter(
-    prior: Vec<String>,
+    prior_input: Vec<String>,
+    prior_output: Vec<String>,
     input: String,
 ) -> Result<SessionResponse<String>> {
-    let turn = prior.len() as u32 + 1;
+    let turn = prior_output.len() as u32 + 1;
 
     match turn {
         1 => Ok(SessionResponse::Continue(format!("Hello! Turn {}", turn))),
@@ -76,11 +77,11 @@ async fn test_session_lifecycle() {
 
     let loaded = config.load(&cache).await.unwrap();
     let pipeline_factory = loaded.factory().unwrap();
-    let mut pipeline = pipeline_factory.build_session().await.unwrap();
+    let mut pipeline = pipeline_factory.build_session_diff().await.unwrap();
 
     let session_id = 42;
     pipeline
-        .prep_session(session_id, &[])
+        .prep_session(session_id, &[], &[])
         .await
         .expect("Should prep session");
 
@@ -137,10 +138,11 @@ async fn test_session_lifecycle() {
         other => panic!("Expected Terminate, got {:?}", other),
     }
 
-    let len = pipeline
+    let (in_len, out_len) = pipeline
         .session_lengths(session_id)
         .expect("Session should exist");
-    assert_eq!(len, 3 + 3);
+    assert_eq!(in_len, 3);
+    assert_eq!(out_len, 3);
 
     pipeline
         .close_session(session_id)

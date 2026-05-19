@@ -102,8 +102,8 @@ async fn test_capability_configuration_respect() {
     let result = pipeline.process(10, &input).await.unwrap();
 
     let logs = match &result {
-        pyroduct::format::ExecutionRecord::Success { logs, .. } => logs,
-        pyroduct::format::ExecutionRecord::Failure { logs, .. } => logs,
+        pyroduct::pipeline::ExecutionRecord::Success { logs, .. } => logs,
+        pyroduct::pipeline::ExecutionRecord::Failure { logs, .. } => logs,
     };
 
     println!("--- Logs ---");
@@ -116,7 +116,7 @@ async fn test_capability_configuration_respect() {
         }
     }
 
-    if let pyroduct::format::ExecutionRecord::Failure { failure, .. } = &result {
+    if let pyroduct::pipeline::ExecutionRecord::Failure { failure, .. } = &result {
         println!("Failure: {:?}", failure);
     }
 
