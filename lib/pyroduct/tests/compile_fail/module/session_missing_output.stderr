@@ -1,0 +1,15 @@
+error: Missing `output` attribute
+ --> tests/compile_fail/module/session_missing_output.rs:9:1
+  |
+9 | #[pyroduct::module(session)] // ERROR: missing `output = ...`
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `pyroduct::module` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unused import: `pyroduct::session::SessionResponse`
+ --> tests/compile_fail/module/session_missing_output.rs:1:5
+  |
+1 | use pyroduct::session::SessionResponse;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

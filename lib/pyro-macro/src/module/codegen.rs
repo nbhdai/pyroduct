@@ -118,8 +118,9 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
     let output_type = extract_session_inner_type(&input_fn.sig.output)?;
 
     // Generate __Output struct and mapping based on output spec
+    let output_spec = attrs.output;
     let (output_struct, output_mapping, output_name) =
-        generate_output(&attrs.output, &output_type)?;
+        generate_output(&output_spec, &output_type)?;
 
     // Generate the call arguments (extract from input struct)
     let call_args: Vec<_> = params

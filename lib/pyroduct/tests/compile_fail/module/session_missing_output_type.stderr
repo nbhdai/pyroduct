@@ -1,0 +1,7 @@
+error: Session module functions must have at least 3 parameters: prior_input, prior_output, and input
+ --> tests/compile_fail/module/session_missing_output_type.rs:8:1
+  |
+8 | #[pyroduct::module(session, output = response)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `pyroduct::module` (in Nightly builds, run with -Z macro-backtrace for more info)
