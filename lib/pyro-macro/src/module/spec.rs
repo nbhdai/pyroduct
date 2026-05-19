@@ -23,7 +23,7 @@
 
 use std::borrow::Cow;
 
-use pyro_spec::{ModuleFunc, PyroField, PyroSchema};
+use pyro_spec::{ModuleFunc, ModuleKind, PyroField, PyroSchema};
 use syn::{Attribute, Expr, FnArg, ItemFn, Lit, Meta, Pat, ReturnType, Type};
 
 use crate::struct_doc::SchemaBuilder;
@@ -111,11 +111,25 @@ impl ModuleSpecBuilder {
         let ok_type = extract_result_ok_type(&item_fn.sig.output)?;
         let output = build_output_schema(&attrs.output, &ok_type, builder)?;
 
+        let kind = if attrs.session {
+            let num_inputs = item_fn.sig.inputs.len();
+            if num_inputs == 2 {
+                ModuleKind::Session
+            } else if num_inputs == 3 {
+                ModuleKind::SessionDiff
+            } else {
+                ModuleKind::Normal
+            }
+        } else {
+            ModuleKind::Normal
+        };
+
         let func = ModuleFunc {
             name: Cow::Owned(name),
             description: description.map(Cow::Owned),
             input,
             output,
+            kind,
         };
 
         Ok(func)

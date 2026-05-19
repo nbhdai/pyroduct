@@ -34,6 +34,16 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+/// The kind of module execution model
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ModuleKind {
+    #[default]
+    Normal,
+    Session,
+    SessionDiff,
+}
+
 /// Documentation for the main function of a module
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ModuleFunc<'a> {
@@ -41,6 +51,8 @@ pub struct ModuleFunc<'a> {
     pub description: Option<Cow<'a, str>>,
     pub input: PyroSchema<'a>,
     pub output: PyroSchema<'a>,
+    #[serde(default)]
+    pub kind: ModuleKind,
 }
 
 /// The root specification object.

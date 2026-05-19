@@ -316,8 +316,12 @@ pub extern "C" fn session_output_length(session_id: u32) -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn free_session(session_id: u32) {
     trace!(session_id, "free_session");
-    SESSION_INPUT.lock().unwrap().as_mut().unwrap().remove(&session_id);
-    SESSION_OUTPUT.lock().unwrap().as_mut().unwrap().remove(&session_id);
+    if let Some(map) = SESSION_INPUT.lock().unwrap().as_mut() {
+        map.remove(&session_id);
+    }
+    if let Some(map) = SESSION_OUTPUT.lock().unwrap().as_mut() {
+        map.remove(&session_id);
+    }
 }
 
 /// Test-only: re-insert a PyroVec into the input registry under a given pointer.
@@ -415,17 +419,7 @@ where
     let mut sessions_guard = get_input_session_registry();
     let sessions = sessions_guard.as_mut().unwrap();
 
-    let inputs = match sessions.get(&session_id) {
-        Some(session) => session,
-        None => {
-            error!(session_id, "Unable to locate session for id");
-            let result = Err(CapturedError::new(format!(
-                "Unable to locate session for id: {}",
-                session_id as usize
-            )));
-            return to_output(encode_result(result));
-        }
-    };
+    let inputs = sessions.entry(session_id).or_insert_with(Vec::new);
 
     if inputs.is_empty() {
         error!(session_id, "The input is missing for session");
@@ -504,30 +498,9 @@ where
     let input_sessions = input_sessions_guard.as_mut().unwrap();
     let output_sessions = output_sessions_guard.as_mut().unwrap();
 
-    let inputs = match input_sessions.get(&session_id) {
-        Some(session) => session,
-        None => {
-            error!(session_id, "Unable to locate input session for id");
-            let result = Err(CapturedError::new(format!(
-                "Unable to locate session for id: {}",
-                session_id as usize
-            )));
-            return to_output(encode_result(result));
-        }
-    };
-
-    let outputs = match output_sessions.get(&session_id) {
-        Some(session) => session,
-        None => {
-            error!(session_id, "Unable to locate output session for id");
-            let result = Err(CapturedError::new(format!(
-                "Unable to locate session for id: {}",
-                session_id as usize
-            )));
-            return to_output(encode_result(result));
-        }
-    };
-
+    let inputs = input_sessions.entry(session_id).or_insert_with(Vec::new);
+    let outputs = output_sessions.entry(session_id).or_insert_with(Vec::new);
+    
     if outputs.len() + 1 != inputs.len() {
         error!(session_id, inputs_len = inputs.len(), outputs_len = outputs.len(), "The input is missing or session state is inconsistent");
         let result = Err(CapturedError::new(
@@ -560,7 +533,7 @@ where
 
 
     let mut prior_outputs = Vec::with_capacity(outputs.len());
-    for or in outputs[0..outputs.len() - 1].iter() {
+    for or in outputs.iter() {
         let output_row = match PyroRow::expose_view(or.py_ref()) {
             Ok(vec) => vec,
             Err(err) => {
