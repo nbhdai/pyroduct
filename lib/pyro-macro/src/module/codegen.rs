@@ -102,11 +102,31 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
         })
         .collect();
 
-
-    // Validate session module requirements and extract types
+    // Generate __Output struct and mapping based on output spec
     let output_type = extract_session_inner_type(&input_fn.sig.output)?;
     let output_vec = wrap_in_vec(&output_type);
-    match params.len() {
+    let output_spec = attrs.output;
+    let (output_struct, output_mapping, output_name) =
+        generate_output(&output_spec, &output_type)?;
+
+    // Generate the call arguments (extract from input struct)
+    let call_args: Vec<_> = params
+        .iter()
+        .map(|(name, ty, _, _)| {
+            let name_str = name.to_string();
+            quote! { input.get_value::<#ty>(#name_str).ok_or_else(|| ::pyroduct::CapturedError::new(format!("Missing {}", #name_str)))? }
+        })
+        .collect();
+
+    // Generate the original function parameters
+    let original_fn_params: Vec<_> = params
+        .iter()
+        .map(|(_, ty, attrs, pat)| quote! { #(#attrs)* #pat: #ty })
+        .collect();
+
+
+    // Validate session module requirements and extract types
+    let expanded = match params.len() {
         2 => {
             let input_vec = wrap_in_vec(&params[1].1);
             if !(params[0].0 == "prior"  || params[0].0 == "_prior") {
@@ -130,7 +150,34 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
                 ));
             }
 
-            
+            quote! {
+                #[unsafe(no_mangle)]
+                pub extern "C" fn call_session_extern(session_id: u32) -> *const u8 {
+                    #output_struct
+
+                    let call = |prior: &[::pyroduct::PyroRow<'_>], input: ::pyroduct::PyroRow<'_>| {
+                        #fn_name(#(#call_args),*).map(|result| {
+                            match result {
+                                ::pyroduct::session::SessionResponse::Continue(result) => {
+                                    ::pyroduct::session::SessionResponse::Continue(#output_mapping)
+                                }
+                                ::pyroduct::session::SessionResponse::End(result) => {
+                                    ::pyroduct::session::SessionResponse::End(#output_mapping)
+                                }
+                                ::pyroduct::session::SessionResponse::Terminate => {
+                                    ::pyroduct::session::SessionResponse::Terminate
+                                }
+                            }
+                        })
+                    };
+
+                    ::pyroduct::wasm::wasm_row_main_session::<#output_name, _>(session_id, call)
+                }
+
+                #(#fn_attrs)*
+                #fn_vis fn #fn_name(#(#original_fn_params),*) -> ::pyroduct::wasm::ModuleResult<::pyroduct::session::SessionResponse<#output_type>>
+                #fn_block
+            }
         }
         3 => {
             if !(params[0].0 == "prior_input"  || params[0].0 == "_prior_input") {
@@ -159,6 +206,35 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
                     format!("Second parameter of session module must have the type: {:?}", output_type),
                 ));
             }
+
+            quote! {
+                #[unsafe(no_mangle)]
+                pub extern "C" fn call_session_extern(session_id: u32) -> *const u8 {
+                    #output_struct
+
+                    let call = |prior_inputs: &[::pyroduct::PyroRow<'_>], prior_outputs: &[::pyroduct::PyroRow<'_>], input: ::pyroduct::PyroRow<'_>| {
+                        #fn_name(#(#call_args),*).map(|result| {
+                            match result {
+                                ::pyroduct::session::SessionResponse::Continue(result) => {
+                                    ::pyroduct::session::SessionResponse::Continue(#output_mapping)
+                                }
+                                ::pyroduct::session::SessionResponse::End(result) => {
+                                    ::pyroduct::session::SessionResponse::End(#output_mapping)
+                                }
+                                ::pyroduct::session::SessionResponse::Terminate => {
+                                    ::pyroduct::session::SessionResponse::Terminate
+                                }
+                            }
+                        })
+                    };
+
+                    ::pyroduct::wasm::wasm_row_main_session_diff::<#output_name, _>(session_id, call)
+                }
+
+                #(#fn_attrs)*
+                #fn_vis fn #fn_name(#(#original_fn_params),*) -> ::pyroduct::wasm::ModuleResult<::pyroduct::session::SessionResponse<#output_type>>
+                #fn_block
+            }
         }
         _ => {
             return Err(syn::Error::new(
@@ -166,58 +242,8 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
                 "Session module functions must have either 3 parameters (prior_input, prior_output, and input), or 2 parameters (prior, and input) with the same type for input and output",
             ));
         }
-    }
-
-
-
-    // Generate __Output struct and mapping based on output spec
-    let output_spec = attrs.output;
-    let (output_struct, output_mapping, output_name) =
-        generate_output(&output_spec, &output_type)?;
-
-    // Generate the call arguments (extract from input struct)
-    let call_args: Vec<_> = params
-        .iter()
-        .map(|(name, ty, _, _)| {
-            let name_str = name.to_string();
-            quote! { input.get_value::<#ty>(#name_str).ok_or_else(|| ::pyroduct::CapturedError::new(format!("Missing {}", #name_str)))? }
-        })
-        .collect();
-
-    // Generate the original function parameters
-    let original_fn_params: Vec<_> = params
-        .iter()
-        .map(|(_, ty, attrs, pat)| quote! { #(#attrs)* #pat: #ty })
-        .collect();
-
-    let expanded = quote! {
-        #[unsafe(no_mangle)]
-        pub extern "C" fn call_session_extern(session_id: u32) -> *const u8 {
-            #output_struct
-
-            let call = |prior_inputs: &[::pyroduct::PyroRow<'_>], prior_outputs: &[::pyroduct::PyroRow<'_>], input: ::pyroduct::PyroRow<'_>| {
-                #fn_name(#(#call_args),*).map(|result| {
-                    match result {
-                        ::pyroduct::session::SessionResponse::Continue(result) => {
-                            ::pyroduct::session::SessionResponse::Continue(#output_mapping)
-                        }
-                        ::pyroduct::session::SessionResponse::End(result) => {
-                            ::pyroduct::session::SessionResponse::End(#output_mapping)
-                        }
-                        ::pyroduct::session::SessionResponse::Terminate => {
-                            ::pyroduct::session::SessionResponse::Terminate
-                        }
-                    }
-                })
-            };
-
-            ::pyroduct::wasm::wasm_row_main_session::<#output_name, _>(session_id, call)
-        }
-
-        #(#fn_attrs)*
-        #fn_vis fn #fn_name(#(#original_fn_params),*) -> ::pyroduct::wasm::ModuleResult<::pyroduct::session::SessionResponse<#output_type>>
-        #fn_block
     };
+
 
     Ok(expanded)
 }

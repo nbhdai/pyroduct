@@ -374,6 +374,82 @@ pub fn wasm_row_main_session<'a, O, F>(
 ) -> *const u8
 where
     O: ToRow,
+    F: Fn(&[PyroRow<'a>], PyroRow<'a>) -> Result<SessionResponse<O>, CapturedError>,
+{
+    logger::init_logging();
+    let mut sessions_guard = get_input_session_registry();
+    let sessions = sessions_guard.as_mut().unwrap();
+
+    let inputs = match sessions.get(&session_id) {
+        Some(session) => session,
+        None => {
+            let result = Err(CapturedError::new(format!(
+                "Unable to locate session for id: {}",
+                session_id as usize
+            )));
+            return to_output(encode_result(result));
+        }
+    };
+
+    if inputs.is_empty() {
+        let result = Err(CapturedError::new(
+            "The input is missing"
+        ));
+        return to_output(encode_result(result));
+    }
+
+    let input_row = match PyroRow::expose_view(inputs[inputs.len() - 1].py_ref()) {
+        Ok(vec) => vec,
+        Err(err) => return to_output(err.encode()),
+    };
+    let input = PyroRow::from(&*input_row);
+
+    let mut prior = Vec::with_capacity(inputs.len());
+    for ir in inputs[0..inputs.len() - 1].iter() {
+        let input_row = match PyroRow::expose_view(ir.py_ref()) {
+            Ok(vec) => vec,
+            Err(err) => return to_output(err.encode()),
+        };
+        let input = PyroRow::from(&*input_row);
+        prior.push(input);
+    }
+
+
+    let result = match func(&prior, input) {
+        Ok(result) => result,
+        Err(err) => return to_output(err.encode()),
+    };
+
+    let result = match result {
+        SessionResponse::Continue(o) => {
+            let mut result = encode_result(Ok(o.to_row()));
+            result.set_fn_id(0);
+            result
+        },
+        SessionResponse::End(o) => {
+            let mut result = encode_result(Ok(o.to_row()));
+            result.set_fn_id(1);
+            result
+        },
+        SessionResponse::Terminate => {
+            let mut result = PyroVec::ok();
+            result.set_fn_id(2);
+            result
+        },
+    };
+    let sessions = sessions.entry(session_id).or_default();
+    sessions.push(result);
+    // Return pointer to the result PyroVec we just pushed (16-byte aligned header)
+    sessions.last().unwrap().raw_ptr() as *const u8
+}
+
+
+pub fn wasm_row_main_session_diff<'a, O, F>(
+    session_id: u32,
+    func: F,
+) -> *const u8
+where
+    O: ToRow,
     F: Fn(&[PyroRow<'a>], &[PyroRow<'a>], PyroRow<'a>) -> Result<SessionResponse<O>, CapturedError>,
 {
     logger::init_logging();

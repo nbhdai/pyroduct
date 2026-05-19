@@ -326,11 +326,11 @@ impl PyroState {
 
         let session_input_length = instance
             .get_typed_func::<i32, i32>(&mut *store, "session_input_length")
-            .map_err(|_| WasmError::SignatureMismatch("session_input_length".to_string()))?;
+            .map_err(|e| WasmError::SignatureMismatch(format!("session_input_length: {}", e)))?;
 
         let session_output_length = instance
             .get_typed_func::<i32, i32>(&mut *store, "session_output_length")
-            .map_err(|_| WasmError::SignatureMismatch("session_output_length".to_string()))?;
+            .map_err(|e| WasmError::SignatureMismatch(format!("session_output_length: {}", e)))?;
 
         let free_session = instance
             .get_typed_func::<i32, ()>(&mut *store, "free_session")

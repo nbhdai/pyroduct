@@ -651,8 +651,6 @@ impl PyroInstance {
         self.session_states.get(&session_id).map(|s| (s.input_len, s.output_len))
     }
 
-
-
     pub fn pack_pyro_error(&self, error: impl std::error::Error) -> PyroFailure {
         PyroFailure {
             result: Err(error.to_string()),
