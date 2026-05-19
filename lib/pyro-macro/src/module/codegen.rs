@@ -147,7 +147,7 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
                     #output_struct
 
                     let call = |prior: &[::pyroduct::PyroRow<'_>], input: ::pyroduct::PyroRow<'_>| {
-                        let prior = prior.iter().map(|p| p.try_into()).collect::<Result<Vec<#output_type>, _>>().map_err(|e| {
+                        let prior = prior.iter().map(|p| p.clone().try_into()).collect::<Result<Vec<#output_type>, _>>().map_err(|e| {
                             ::pyroduct::CapturedError::new("Unable to extract prior data")
                                 .with_source(e)
                         })?;
@@ -212,11 +212,11 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
                     #output_struct
 
                     let call = |prior_inputs: &[::pyroduct::PyroRow<'_>], prior_outputs: &[::pyroduct::PyroRow<'_>], input: ::pyroduct::PyroRow<'_>| {
-                        let prior_inputs = prior_inputs.iter().map(|p| p.try_into()).collect::<Result<Vec<#input_type>, _>>().map_err(|e| {
+                        let prior_inputs = prior_inputs.iter().map(|p| p.clone().try_into()).collect::<Result<Vec<#input_type>, _>>().map_err(|e| {
                             ::pyroduct::CapturedError::new("Unable to extract prior input data")
                                 .with_source(e)
                         })?;
-                        let prior_outputs = prior_outputs.iter().map(|p| p.try_into()).collect::<Result<Vec<#output_type>, _>>().map_err(|e| {
+                        let prior_outputs = prior_outputs.iter().map(|p| p.clone().try_into()).collect::<Result<Vec<#output_type>, _>>().map_err(|e| {
                             ::pyroduct::CapturedError::new("Unable to extract prior output data")
                                 .with_source(e)
                         })?;
