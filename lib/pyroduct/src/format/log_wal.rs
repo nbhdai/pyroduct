@@ -61,6 +61,7 @@ pub struct LogWal {
     capacity: usize,
     current_file_index: usize,
     current_entries: usize,
+    total_entries: usize,
     writer: BufWriter<File>,
 }
 
@@ -111,11 +112,18 @@ impl LogWal {
             (current_file_index, current_entries, f)
         };
 
+        let total_entries = if final_idx > 0 {
+            final_idx * capacity + final_entries
+        } else {
+            final_entries
+        };
+
         Ok(Self {
             dir,
             capacity,
             current_file_index: final_idx,
             current_entries: final_entries,
+            total_entries,
             writer: BufWriter::new(final_file),
         })
     }
@@ -149,6 +157,7 @@ impl LogWal {
         self.writer.flush().await?;
 
         self.current_entries += 1;
+        self.total_entries += 1;
 
         Ok(())
     }
@@ -156,6 +165,11 @@ impl LogWal {
     /// Ensures all buffered logs are written to disk.
     pub async fn flush(&mut self) -> tokio::io::Result<()> {
         self.writer.flush().await
+    }
+
+    /// Returns the underlying file.
+    pub fn total_entries(&self) -> usize {
+        self.total_entries
     }
 
     /// Returns the underlying file.

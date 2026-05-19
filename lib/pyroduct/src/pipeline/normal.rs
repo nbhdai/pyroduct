@@ -7,7 +7,7 @@ use tokio::sync::{Mutex, mpsc};
 use tracing::{error, instrument, warn};
 
 use crate::CapturedError;
-use crate::format::log_wal::LogWal;
+use crate::format::log_wal::{LogEntry, LogWal};
 use crate::module::PyroInstance;
 use crate::{
     PyroError,
@@ -118,6 +118,31 @@ impl Pipeline {
         if let ExecutionRecord::Success { .. } = &record {
             self.output_manager.push_record(&result)?;
         }
+
+        let log_entry = match &record {
+            ExecutionRecord::Success {
+                row_index,
+                logs,
+                ..
+            } => LogEntry {
+                row_index: *row_index,
+                module_logs: logs.module_logs.clone(),
+                capability_logs: logs.capability_logs.clone(),
+                failure: None,
+            },
+            ExecutionRecord::Failure {
+                row_index,
+                logs,
+                failure,
+                ..
+            } => LogEntry {
+                row_index: *row_index,
+                module_logs: logs.module_logs.clone(),
+                capability_logs: logs.capability_logs.clone(),
+                failure: failure.as_ref().ok().cloned(),
+            },
+        };
+        self.log_manager.append(&log_entry).await?;
 
         Ok(record)
     }

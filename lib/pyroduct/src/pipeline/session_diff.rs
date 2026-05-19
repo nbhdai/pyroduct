@@ -5,14 +5,14 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::CapturedError;
-use crate::format::log_wal::LogWal;
+use crate::format::log_wal::{LogEntry, LogWal};
 use crate::module::{PyroInstance, sessions::SessionResult};
 use crate::{
     format::{
         PyroFailure, PyroLogs,
         value::PyroRow,
     },
-    pipeline::PipelineResult,
+    pipeline::{PipelineResult, PyroError},
 };
 
 use super::data::DataManager;
@@ -51,6 +51,81 @@ pub struct SessionDiffPipeline {
 }
 
 impl SessionDiffPipeline {
+    pub async fn process(
+        &mut self,
+        row_index: usize,
+        prior_inputs: &[PyroRow<'_>],
+        prior_outputs: &[PyroRow<'_>],
+        input: &PyroRow<'_>,
+    ) -> Result<SessionDiffExecutionRecord, PyroError> {
+        let session_id = row_index as u32;
+
+        if let Err(e) = self.prep_session(session_id, prior_inputs, prior_outputs).await {
+            let logs = e.logs.clone();
+
+            let log_entry = LogEntry {
+                row_index,
+                module_logs: logs.module_logs.clone(),
+                capability_logs: logs.capability_logs.clone(),
+                failure: None,
+            };
+            let _ = self.log_manager.append(&log_entry).await;
+
+            return match e.result {
+                Ok(captured) => Err(PyroError::CodePanic(Box::new(captured))),
+                Err(msg) => Err(PyroError::local(crate::error::ErrorKind::Transport(Box::new(CapturedError::new(msg))))),
+            };
+        }
+
+        match self.call(session_id, input).await {
+            Ok(res) => {
+                let row = match res {
+                    SessionResult::Continue(r) => r,
+                    SessionResult::End(r) => r,
+                    SessionResult::Terminate => PyroRow::empty(),
+                };
+
+                let logs = self.step.unpack_logs();
+                let record = SessionDiffExecutionRecord::Success {
+                    row_index,
+                    prior_input: prior_inputs.iter().map(|r| r.clone().into_owned()).collect(),
+                    prior_output: prior_outputs.iter().map(|r| r.clone().into_owned()).collect(),
+                    input: input.clone().into_owned(),
+                    success: row,
+                    logs: logs.clone(),
+                };
+
+                let log_entry = LogEntry {
+                    row_index,
+                    module_logs: logs.module_logs.clone(),
+                    capability_logs: logs.capability_logs.clone(),
+                    failure: None,
+                };
+                let _ = self.log_manager.append(&log_entry).await;
+
+                let _ = self.close_session(session_id).await;
+                Ok(record)
+            }
+            Err(e) => {
+                let logs = e.logs.clone();
+
+                let log_entry = LogEntry {
+                    row_index,
+                    module_logs: logs.module_logs.clone(),
+                    capability_logs: logs.capability_logs.clone(),
+                    failure: None,
+                };
+                let _ = self.log_manager.append(&log_entry).await;
+
+                let _ = self.close_session(session_id).await;
+                match e.result {
+                    Ok(captured) => Err(PyroError::CodePanic(Box::new(captured))),
+                    Err(msg) => Err(PyroError::local(crate::error::ErrorKind::Transport(Box::new(CapturedError::new(msg))))),
+                }
+            }
+        }
+    }
+
     pub async fn prep_session(
         &mut self,
         session_id: u32,
@@ -65,8 +140,32 @@ impl SessionDiffPipeline {
         session_id: u32,
         input: &PyroRow<'_>,
     ) -> Result<SessionResult, PyroFailure> {
+        let res = self.step.call_session(session_id, input).await;
 
-        self.step.call_session(session_id, input).await
+        let row_index = self.log_manager.total_entries();
+        match &res {
+            Ok(_) => {
+                let logs = self.step.unpack_logs();
+                let log_entry = LogEntry {
+                    row_index,
+                    module_logs: logs.module_logs,
+                    capability_logs: logs.capability_logs,
+                    failure: None,
+                };
+                let _ = self.log_manager.append(&log_entry).await;
+            }
+            Err(e) => {
+                let log_entry = LogEntry {
+                    row_index,
+                    module_logs: e.logs.module_logs.clone(),
+                    capability_logs: e.logs.capability_logs.clone(),
+                    failure: e.result.as_ref().ok().cloned(),
+                };
+                let _ = self.log_manager.append(&log_entry).await;
+            }
+        }
+
+        res
     }
 
     pub async fn close_session(&mut self, session_id: u32) -> Result<(), PyroFailure> {
