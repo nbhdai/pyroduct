@@ -62,6 +62,7 @@ impl LoadedPipelineConfig {
     pub fn factory(&self) -> Result<PipelineFactory, PipelineError> {
         Ok(PipelineFactory {
             factory: PyroFactory::from_playbook(&self.playbook).map_err(PipelineError::Wasm)?,
+            wal_capacity: self.wal_capacity,
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,
             log_dir: self.playbook.log_dir.clone(),
@@ -81,6 +82,7 @@ pub struct PipelineFactory {
     pub log_dir: std::path::PathBuf,
     pub input_dir: std::path::PathBuf,
     pub output_dir: std::path::PathBuf,
+    pub wal_capacity: usize,
     pub success_log_retention_secs: u64,
     pub error_log_retention_secs: u64,
 }
@@ -103,7 +105,7 @@ impl PipelineFactory {
             step: instance,
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,
-            log_manager: LogWal::open(self.log_dir.clone()).await.map_err(|io| PyroError::local_io(CapturedError::new("Unable to make the log wal").with_source(io)))?,
+            log_manager: LogWal::open(self.log_dir.clone(), self.wal_capacity).await.map_err(|io| PyroError::local_io(CapturedError::new("Unable to make the log wal").with_source(io)))?,
             input_manager: super::data::DataManager::new(self.input_dir.clone(), input_schema),
             output_manager: super::data::DataManager::new(self.output_dir.clone(), output_schema),
         })

@@ -29,6 +29,7 @@ host = [
     "dep:pin-project",
     "dep:object",
     "dep:pyro-artifacts",
+    "dep:pyro-file",
     "pyro-spec/arrow",
 ]
 transport = ["host"]

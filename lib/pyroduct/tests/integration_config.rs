@@ -60,6 +60,9 @@ async fn test_capability_configuration_respect() {
         .await
         .expect("Valid module should compile");
 
+    let tmp_dir = tempfile::tempdir().unwrap();
+    let tmp_path = tmp_dir.path().to_path_buf();
+
     let config = PipelineConfig {
         playbook: Playbook {
             hash: binary.hash(),
@@ -71,19 +74,31 @@ async fn test_capability_configuration_respect() {
                 })),
             )]),
         },
-        wal_capacity: 1000,
+        wal_capacity: 2,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
-        input_dir: std::env::current_dir().unwrap(),
-        output_dir: std::env::current_dir().unwrap(),
-        log_dir: std::env::current_dir().unwrap(),
+        input_dir: tmp_path.clone(),
+        output_dir: tmp_path.clone(),
+        log_dir: tmp_path.clone(),
     };
     let config = config.load(&cache).await.unwrap();
     let factory = config.factory().unwrap();
     let mut pipeline = factory.build().await.unwrap();
 
+    for i in 0..5 {
+        let input = PyroRow::from([("input", format!("hello {}", i).into())]);
+        pipeline.process(i, &input).await.unwrap();
+    }
+
+    // Verify that multiple log files were created due to low wal_capacity
+    let log_files = std::fs::read_dir(&tmp_path).unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "log"))
+        .count();
+    assert!(log_files > 1, "Should have rotated logs, but found only {} file(s)", log_files);
+
     let input = PyroRow::from([("input", "hello".into())]);
-    let result = pipeline.process(0, &input).await.unwrap();
+    let result = pipeline.process(10, &input).await.unwrap();
 
     let logs = match &result {
         pyroduct::format::ExecutionRecord::Success { logs, .. } => logs,

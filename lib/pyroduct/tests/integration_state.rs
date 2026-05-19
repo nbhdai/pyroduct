@@ -60,25 +60,42 @@ async fn test_capability_state_preservation() {
         .await
         .expect("Valid module should compile");
 
+    let tmp_dir = tempfile::tempdir().unwrap();
+    let tmp_path = tmp_dir.path().to_path_buf();
+
     let config = PipelineConfig {
         playbook: Playbook {
             hash: binary.hash(),
             configurations: HashMap::from([("state".to_string(), None)]),
         },
-        wal_capacity: 1000,
+        wal_capacity: 2,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
-        input_dir: std::env::current_dir().unwrap(),
-        output_dir: std::env::current_dir().unwrap(),
-        log_dir: std::env::current_dir().unwrap(),
+        input_dir: tmp_path.clone(),
+        output_dir: tmp_path.clone(),
+        log_dir: tmp_path.clone(),
     };
 
     let config = config.load(&cache).await.unwrap();
     let factory = config.factory().unwrap();
     let mut pipeline = factory.build().await.unwrap();
 
+    for i in 0..5 {
+        pipeline
+            .process(i, &PyroRow::from([("input", "0".into())]))
+            .await
+            .unwrap();
+    }
+
+    // Verify log rotation
+    let log_files = std::fs::read_dir(&tmp_path).unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "log"))
+        .count();
+    assert!(log_files > 1, "Should have rotated logs, but found only {} file(s)", log_files);
+
     let result1 = pipeline
-        .process(0, &PyroRow::from([("input", "0".into())]))
+        .process(10, &PyroRow::from([("input", "0".into())]))
         .await
         .unwrap();
     let row1 = result1.row().unwrap();

@@ -30,7 +30,7 @@ impl PlaybookServer {
             step: instance,
             success_log_retention_secs: 3600,
             error_log_retention_secs: 86400 * 7,
-            log_manager: LogWal::open(playbook.log_dir.clone()).await.map_err(|io| PyroError::local_io(CapturedError::new("Unable to make the log wal").with_source(io)))?,
+            log_manager: LogWal::open(playbook.log_dir.clone(), 1000).await.map_err(|io| PyroError::local_io(CapturedError::new("Unable to make the log wal").with_source(io)))?,
             input_manager: crate::pipeline::data::DataManager::new(playbook.input_dir.clone(), input_schema),
             output_manager: crate::pipeline::data::DataManager::new(playbook.output_dir.clone(), output_schema),
         };
