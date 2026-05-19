@@ -109,15 +109,6 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
     let (output_struct, output_mapping, output_name) =
         generate_output(&output_spec, &output_type)?;
 
-    // Generate the call arguments (extract from input struct)
-    let call_args: Vec<_> = params
-        .iter()
-        .map(|(name, ty, _, _)| {
-            let name_str = name.to_string();
-            quote! { input.get_value::<#ty>(#name_str).ok_or_else(|| ::pyroduct::CapturedError::new(format!("Missing {}", #name_str)))? }
-        })
-        .collect();
-
     // Generate the original function parameters
     let original_fn_params: Vec<_> = params
         .iter()
@@ -156,7 +147,9 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
                     #output_struct
 
                     let call = |prior: &[::pyroduct::PyroRow<'_>], input: ::pyroduct::PyroRow<'_>| {
-                        #fn_name(#(#call_args),*).map(|result| {
+                        let prior = prior.map(|p| p.try_into()).collect::<Result<Vec<#output_type>, _>>()?;
+                        let input = input.try_into()?;
+                        #fn_name(prior, input).map(|result| {
                             match result {
                                 ::pyroduct::session::SessionResponse::Continue(result) => {
                                     ::pyroduct::session::SessionResponse::Continue(#output_mapping)
@@ -192,7 +185,7 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
                     "If 3 inputs, then the second parameter of session module must be named `prior_output`",
                 ));
             }
-
+            let input_type = &params[2].1;
             let input_vec = wrap_in_vec(&params[2].1);
             if params[0].1 != input_vec {
                 return Err(syn::Error::new(
@@ -213,7 +206,10 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
                     #output_struct
 
                     let call = |prior_inputs: &[::pyroduct::PyroRow<'_>], prior_outputs: &[::pyroduct::PyroRow<'_>], input: ::pyroduct::PyroRow<'_>| {
-                        #fn_name(#(#call_args),*).map(|result| {
+                        let prior_inputs = prior.map(|p| p.try_into()).collect::<Result<Vec<#input_type>, _>>()?;
+                        let prior_outputs = prior.map(|p| p.try_into()).collect::<Result<Vec<#output_type>, _>>()?;
+                        let input = input.try_into()?;
+                        #fn_name(prior_inputs, prior_outputs, input).map(|result| {
                             match result {
                                 ::pyroduct::session::SessionResponse::Continue(result) => {
                                     ::pyroduct::session::SessionResponse::Continue(#output_mapping)

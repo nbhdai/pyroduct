@@ -1,24 +1,18 @@
-use std::cmp::min;
 use std::sync::Arc;
 
 use arrow::array::RecordBatch;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, mpsc};
-use tracing::{error, instrument, warn};
+use tokio::sync::Mutex;
 
 use crate::CapturedError;
 use crate::format::log_wal::LogWal;
 use crate::module::{PyroInstance, sessions::SessionResult};
 use crate::{
-    PyroError,
     format::{
-        PyroFailure, PyroLogs, PyroSuccess,
-        value::{
-            PyroRow,
-            arrow::{PreBatch, Rowable},
-        },
+        PyroFailure, PyroLogs,
+        value::PyroRow,
     },
-    pipeline::{PipelineError, PipelineResult},
+    pipeline::PipelineResult,
 };
 
 use super::data::DataManager;
@@ -106,13 +100,13 @@ pub struct Failure {
 // =============================================================================
 
 pub struct SessionPipelinePool {
-    pipelines: Arc<Mutex<Vec<SessionPipeline>>>,
+    _pipelines: Arc<Mutex<Vec<SessionPipeline>>>,
 }
 
 impl SessionPipelinePool {
     pub fn new(pipelines: Vec<SessionPipeline>) -> Self {
         Self {
-            pipelines: Arc::new(Mutex::new(pipelines)),
+            _pipelines: Arc::new(Mutex::new(pipelines)),
         }
     }
 
@@ -122,7 +116,7 @@ impl SessionPipelinePool {
     /// per-row failures.
     pub async fn process_batch(
         &self,
-        batch: &RecordBatch,
+        _batch: &RecordBatch,
     ) -> PipelineResult<(Vec<SessionExecutionRecord>, Vec<SessionExecutionRecord>)> {
         todo!()
     }
