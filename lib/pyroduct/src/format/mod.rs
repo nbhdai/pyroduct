@@ -239,7 +239,7 @@ pub mod vec_buf;
 pub mod wal;
 
 pub use bridgeable::{Bridgeable, BridgeableResult};
-pub use execution::{ExecutionRecord, PyroFailure, PyroLogs, PyroSuccess};
+pub use execution::{PyroFailure, PyroLogs, PyroSuccess};
 pub use format::{HasReceiver, Receiver, SpecWire};
 pub use header::ParseError;
 pub use rkyv_8::{Rkyv, RkyvParser, RkyvWriter, TypedBuf, TypedPyroRef};

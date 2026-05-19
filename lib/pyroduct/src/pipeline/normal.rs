@@ -6,12 +6,13 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc};
 use tracing::{error, instrument, warn};
 
+use crate::CapturedError;
 use crate::format::log_wal::LogWal;
-use crate::module::{PyroInstance, sessions::SessionResult};
+use crate::module::PyroInstance;
 use crate::{
     PyroError,
     format::{
-        ExecutionRecord, PyroFailure, PyroLogs, PyroSuccess,
+        PyroLogs, PyroSuccess,
         value::{
             PyroRow,
             arrow::{PreBatch, Rowable},
@@ -21,6 +22,38 @@ use crate::{
 };
 
 use super::data::DataManager;
+
+#[derive(Clone)]
+pub enum ExecutionRecord {
+    Success {
+        row_index: usize,
+        input: PyroRow<'static>,
+        success: PyroRow<'static>,
+        logs: PyroLogs,
+    },
+    Failure {
+        row_index: usize,
+        input: PyroRow<'static>,
+        failure: Result<CapturedError, String>,
+        logs: PyroLogs,
+    },
+}
+
+impl ExecutionRecord {
+    pub fn row_index(&self) -> usize {
+        match self {
+            ExecutionRecord::Success { row_index, .. } => *row_index,
+            ExecutionRecord::Failure { row_index, .. } => *row_index,
+        }
+    }
+
+    pub fn row(&self) -> Option<&PyroRow<'static>> {
+        match self {
+            ExecutionRecord::Success { success, .. } => Some(success),
+            ExecutionRecord::Failure { input, .. } => Some(input),
+        }
+    }
+}
 
 // =============================================================================
 // Pipeline
@@ -87,46 +120,6 @@ impl Pipeline {
         }
 
         Ok(record)
-    }
-
-    pub async fn prep_session(
-        &mut self,
-        session_id: u32,
-        inputs: &[PyroRow<'_>],
-        outputs: &[PyroRow<'_>],
-    ) -> Result<(), PyroFailure> {
-        self.step.prep_session(session_id, inputs, outputs).await
-    }
-
-    pub async fn call_session(
-        &mut self,
-        session_id: u32,
-        input: &PyroRow<'_>,
-    ) -> Result<SessionResult, PyroFailure> {
-
-        self.step.call_session(session_id, input).await
-    }
-
-    pub async fn close_session(&mut self, session_id: u32) -> Result<(), PyroFailure> {
-        self.step.close_session(session_id).await
-    }
-
-    pub async fn session_inputs(
-        &mut self,
-        session_id: u32,
-    ) -> Result<Vec<PyroRow<'_>>, PyroFailure> {
-        self.step.session_inputs(session_id).await
-    }
-
-    pub async fn session_outputs(
-        &mut self,
-        session_id: u32,
-    ) -> Result<Vec<PyroRow<'_>>, PyroFailure> {
-        self.step.session_outputs(session_id).await
-    }
-
-    pub fn session_lengths(&self, session_id: u32) -> Option<(u32, u32)> {
-        self.step.session_lengths(session_id)
     }
 }
 

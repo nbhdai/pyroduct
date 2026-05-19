@@ -22,38 +22,6 @@ impl PyroLogs {
 // ExecutionRecord
 // =============================================================================
 
-#[derive(Clone)]
-pub enum ExecutionRecord {
-    Success {
-        row_index: usize,
-        input: PyroRow<'static>,
-        success: PyroRow<'static>,
-        logs: PyroLogs,
-    },
-    Failure {
-        row_index: usize,
-        input: PyroRow<'static>,
-        failure: Result<CapturedError, String>,
-        logs: PyroLogs,
-    },
-}
-
-impl ExecutionRecord {
-    pub fn row_index(&self) -> usize {
-        match self {
-            ExecutionRecord::Success { row_index, .. } => *row_index,
-            ExecutionRecord::Failure { row_index, .. } => *row_index,
-        }
-    }
-
-    pub fn row(&self) -> Option<&PyroRow<'static>> {
-        match self {
-            ExecutionRecord::Success { success, .. } => Some(success),
-            ExecutionRecord::Failure { input, .. } => Some(input),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct PyroSuccess {
     pub row: PyroRow<'static>,

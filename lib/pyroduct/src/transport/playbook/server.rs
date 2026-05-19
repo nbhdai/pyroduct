@@ -7,9 +7,9 @@ use crate::{CapturedError, PyroError};
 use crate::format::header::{PyroData, PyroHeader};
 use crate::format::log_wal::LogWal;
 use crate::format::tokio::Request;
-use crate::format::{Bridgeable, PyroRow, ExecutionRecord};
+use crate::format::{Bridgeable, PyroRow};
 use crate::module::PyroFactory;
-use crate::pipeline::Pipeline;
+use crate::pipeline::{Pipeline, ExecutionRecord};
 use crate::transport::{PyroListener, PyroSocket};
 
 /// A server that listens for incoming [`PyroSocket`] connections and routes

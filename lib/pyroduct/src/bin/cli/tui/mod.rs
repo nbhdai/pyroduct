@@ -18,7 +18,7 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use pyro_artifacts::{build::Builder, cache::CacheManager, cargo::ResolvedCapability};
-use pyroduct::pipeline::{PipelinePool, wasm_execute::PipelineExecution};
+use pyroduct::pipeline::{PipelinePool, normal::PipelineExecution};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,

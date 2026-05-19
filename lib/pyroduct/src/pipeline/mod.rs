@@ -1,10 +1,12 @@
 pub mod pipeline;
-pub mod wasm_execute;
+pub mod session;
+pub mod session_diff;
+pub mod normal;
 pub mod data;
 
 pub use pipeline::{PipelineConfig, PipelineFactory};
 use thiserror::Error;
-pub use wasm_execute::{Failure, Pipeline, PipelinePool};
+pub use normal::{Failure, Pipeline, PipelinePool, ExecutionRecord};
 
 use crate::PyroError;
 use crate::module::{WasmError, capability::CapabilityError};
