@@ -71,6 +71,10 @@ pub fn expand(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStream> {
     Ok(expanded)
 }
 
+fn wrap_in_vec(ty: &Type) -> Type {
+    parse_quote!(Vec<#ty>)
+}
+
 pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStream> {
     let fn_name = &input_fn.sig.ident;
     let fn_vis = &input_fn.vis;
@@ -94,28 +98,73 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
         })
         .collect();
 
-    // Validate session module parameter names
-    if params.len() < 3 {
-        return Err(syn::Error::new(
-            Span::call_site(),
-            "Session module functions must have at least 3 parameters: prior_input, prior_output, and input",
-        ));
-    }
-    if !(params[0].0 == "prior_input"  || params[0].0 == "_prior_input") {
-        return Err(syn::Error::new(
-            params[0].0.span(),
-            "First parameter of session module must be named `prior_input`",
-        ));
-    }
-    if !(params[1].0 == "prior_output" || params[1].0 == "_prior_output") {
-        return Err(syn::Error::new(
-            params[1].0.span(),
-            "Second parameter of session module must be named `prior_output`",
-        ));
-    }
 
     // Validate session module requirements and extract types
     let output_type = extract_session_inner_type(&input_fn.sig.output)?;
+    let output_vec = wrap_in_vec(&output_type);
+    match params.len() {
+        2 => {
+            let input_vec = wrap_in_vec(&params[1].1);
+            if !(params[0].0 == "prior"  || params[0].0 == "_prior") {
+                return Err(syn::Error::new(
+                    params[0].0.span(),
+                    "If 2 inputs, then the first parameter of session module must be named `prior`",
+                ));
+            }
+
+            if params[1].1 != output_type {
+                return Err(syn::Error::new(
+                    params[1].0.span(),
+                        "The type of the output must be the same as input and prior",
+                ));
+            }
+
+            if params[0].1 != input_vec || params[0].1 != output_vec {
+                return Err(syn::Error::new(
+                    params[0].0.span(),
+                    format!("The type of the prior must be type: {:?}", input_vec),
+                ));
+            }
+
+            
+        }
+        3 => {
+            if !(params[0].0 == "prior_input"  || params[0].0 == "_prior_input") {
+                return Err(syn::Error::new(
+                    params[0].0.span(),
+                    "If 3 inputs, then the first parameter of session module must be named `prior_input`",
+                ));
+            }
+            if !(params[1].0 == "prior_output" || params[1].0 == "_prior_output") {
+                return Err(syn::Error::new(
+                    params[1].0.span(),
+                    "If 3 inputs, then the second parameter of session module must be named `prior_output`",
+                ));
+            }
+
+            let input_vec = wrap_in_vec(&params[2].1);
+            if params[0].1 != input_vec {
+                return Err(syn::Error::new(
+                    params[0].0.span(),
+                    format!("First parameter of session module must have the type: {:?}", input_vec),
+                ));
+            }
+            if params[1].1 != output_vec {
+                return Err(syn::Error::new(
+                    params[1].0.span(),
+                    format!("Second parameter of session module must have the type: {:?}", output_type),
+                ));
+            }
+        }
+        _ => {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "Session module functions must have either 3 parameters (prior_input, prior_output, and input), or 2 parameters (prior, and input) with the same type for input and output",
+            ));
+        }
+    }
+
+
 
     // Generate __Output struct and mapping based on output spec
     let output_spec = attrs.output;

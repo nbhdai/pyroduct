@@ -12,10 +12,7 @@ fn process<'a>(
     _prior_output: Vec<ChatMessage>,
     input: ChatMessage,
 ) -> Result<SessionResponse<ChatMessage>> {
-    Ok(SessionResponse::Continue(ChatMessage {
-        role: "assistant".to_string(),
-        content: "hi".to_string(),
-    }))
+    Ok(SessionResponse::Continue(input))
 }
 
 fn main() {

@@ -169,9 +169,7 @@ impl LlmServer {
     async fn chat(
         &self,
         client: &LlmClient,
-        prior_input: Vec<ChatMessage>,
-        prior_output: Vec<ChatMessage>,
-        input: ChatMessage,
+        messages: Vec<ChatMessage>,
     ) -> Result<ChatMessage, String> {
         let mut messages = messages;
 
