@@ -54,6 +54,7 @@ async fn test_capability_configuration_respect() {
         source: CODE.to_string(),
                 ident: None,
     };
+    cache.remove_anon(&source.hash()).await.unwrap();
 
     let binary = builder
         .compile(&source)

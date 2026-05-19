@@ -379,6 +379,17 @@ impl CacheManager {
         }
     }
 
+    pub async fn remove_anon(&self, hash: &str) -> Result<(), CacheError> {
+        let path = self.root.join("anon").join(hash);
+        if path.exists() {
+            tokio::fs::remove_dir_all(path).await.map_err(|error| CacheError {
+                    context: "Unable to remove module".to_string(),
+                    error,
+                })?;
+        }
+        Ok(())
+    }
+
     pub async fn get_source(&self, hash: &str) -> Result<ModuleSource, CacheError> {
         let path = self.root.join("anon").join(hash);
         if path.exists() {

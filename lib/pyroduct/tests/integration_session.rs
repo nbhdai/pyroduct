@@ -52,6 +52,7 @@ async fn test_session_lifecycle() {
         source: SIMPLE_SESSION_MODULE.to_string(),
         ident: None,
     };
+    cache.remove_anon(&source.hash()).await.unwrap();
 
     let binary = builder
         .compile(&source)

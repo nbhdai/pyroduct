@@ -1,5 +1,6 @@
 use std::sync::Mutex;
 use std::{collections::HashMap, ops::Deref};
+use tracing::{error, trace};
 
 use crate::format::{
     Bridgeable, BridgeableResult, PyroVec, ToRow,
@@ -72,6 +73,7 @@ fn get_output_session_registry() -> std::sync::MutexGuard<'static, Option<HashMa
 
 #[unsafe(no_mangle)]
 pub extern "C" fn new_input(capacity: u32) -> *mut u8 {
+    trace!(capacity, "new_input");
     let mut vec = PyroVec::with_capacity(capacity as usize);
     let raw = vec.as_raw_slice_mut();
     let ptr = raw.as_mut_ptr();
@@ -99,14 +101,17 @@ pub extern "C" fn grow_input(ptr: *mut u8, new_capacity: u32) -> *mut u8 {
 
         // Re-insert under the (potentially new) pointer — same lock guard.
         map.insert(StoredMutPtr(new_ptr), vec);
+        trace!(?ptr, ?new_ptr, new_capacity, "grow_input");
         new_ptr
     } else {
+        error!(?ptr, "grow_input: pointer not found in registry");
         std::ptr::null_mut()
     }
 }
 
 #[unsafe(no_mangle)]
 pub fn get_input(ptr: *mut u8) -> Option<PyroVec> {
+    trace!(?ptr, "get_input");
     get_input_registry()
         .as_mut()
         .unwrap()
@@ -135,12 +140,14 @@ pub fn to_output(vec: PyroVec) -> *const u8 {
         .as_mut()
         .unwrap()
         .insert(StoredPtr(ptr), vec);
+    trace!(?ptr, "to_output");
     ptr
 }
 
 /// Host calls this to free the result after reading it.
 #[unsafe(no_mangle)]
 pub extern "C" fn free_output(ptr: *const u8) {
+    trace!(?ptr, "free_output");
     get_output_registry()
         .as_mut()
         .unwrap()
@@ -150,6 +157,7 @@ pub extern "C" fn free_output(ptr: *const u8) {
 /// Allocate a new input vector on a session's input history.
 #[unsafe(no_mangle)]
 pub extern "C" fn new_session_input(session_id: u32, capacity: u32) -> *mut u8 {
+    trace!(session_id, capacity, "new_session_input");
     let mut registry = SESSION_INPUT.lock().unwrap();
     if registry.is_none() {
         *registry = Some(HashMap::new());
@@ -166,6 +174,7 @@ pub extern "C" fn new_session_input(session_id: u32, capacity: u32) -> *mut u8 {
 /// Grow the last input vector for a session.
 #[unsafe(no_mangle)]
 pub extern "C" fn grow_session_input(session_id: u32, new_capacity: u32) -> *mut u8 {
+    trace!(session_id, new_capacity, "grow_session_input");
     let mut registry = SESSION_INPUT.lock().unwrap();
     if registry.is_none() {
         *registry = Some(HashMap::new());
@@ -192,6 +201,7 @@ pub extern "C" fn grow_session_input(session_id: u32, new_capacity: u32) -> *mut
 /// Allocate a new output vector on a session's output history.
 #[unsafe(no_mangle)]
 pub extern "C" fn new_session_output(session_id: u32, capacity: u32) -> *mut u8 {
+    trace!(session_id, capacity, "new_session_output");
     let mut registry = SESSION_OUTPUT.lock().unwrap();
     if registry.is_none() {
         *registry = Some(HashMap::new());
@@ -208,6 +218,7 @@ pub extern "C" fn new_session_output(session_id: u32, capacity: u32) -> *mut u8 
 /// Grow the last output vector for a session.
 #[unsafe(no_mangle)]
 pub extern "C" fn grow_session_output(session_id: u32, new_capacity: u32) -> *mut u8 {
+    trace!(session_id, new_capacity, "grow_session_output");
     let mut registry = SESSION_OUTPUT.lock().unwrap();
     if registry.is_none() {
         *registry = Some(HashMap::new());
@@ -236,14 +247,18 @@ pub extern "C" fn grow_session_output(session_id: u32, new_capacity: u32) -> *mu
 pub extern "C" fn borrow_session_input(session_id: u32, index: u32) -> *mut u8 {
     let registry = SESSION_INPUT.lock().unwrap();
     if registry.is_none() {
+        error!(session_id, index, "borrow_session_input: registry is none");
         return std::ptr::null_mut();
     }
     let map = registry.as_ref().unwrap();
     if let Some(vecs) = map.get(&session_id) {
         if let Some(vec) = vecs.get(index as usize) {
-            return vec.as_raw_slice().as_ptr() as *mut u8;
+            let ptr = vec.as_raw_slice().as_ptr() as *mut u8;
+            trace!(session_id, index, ?ptr, "borrow_session_input");
+            return ptr;
         }
     }
+    error!(session_id, index, "borrow_session_input: session or index not found");
     std::ptr::null_mut()
 }
 
@@ -253,9 +268,12 @@ pub extern "C" fn session_input_length(session_id: u32) -> u32 {
     let registry = SESSION_INPUT.lock().unwrap();
     if let Some(map) = registry.as_ref() {
         if let Some(vecs) = map.get(&session_id) {
-            return vecs.len() as u32;
+            let len = vecs.len() as u32;
+            trace!(session_id, len, "session_input_length");
+            return len;
         }
     }
+    trace!(session_id, "session_input_length: 0");
     0
 }
 
@@ -264,14 +282,18 @@ pub extern "C" fn session_input_length(session_id: u32) -> u32 {
 pub extern "C" fn borrow_session_output(session_id: u32, index: u32) -> *mut u8 {
     let registry = SESSION_OUTPUT.lock().unwrap();
     if registry.is_none() {
+        error!(session_id, index, "borrow_session_output: registry is none");
         return std::ptr::null_mut();
     }
     let map = registry.as_ref().unwrap();
     if let Some(vecs) = map.get(&session_id) {
         if let Some(vec) = vecs.get(index as usize) {
-            return vec.as_raw_slice().as_ptr() as *mut u8;
+            let ptr = vec.as_raw_slice().as_ptr() as *mut u8;
+            trace!(session_id, index, ?ptr, "borrow_session_output");
+            return ptr;
         }
     }
+    error!(session_id, index, "borrow_session_output: session or index not found");
     std::ptr::null_mut()
 }
 
@@ -281,15 +303,19 @@ pub extern "C" fn session_output_length(session_id: u32) -> u32 {
     let registry = SESSION_OUTPUT.lock().unwrap();
     if let Some(map) = registry.as_ref() {
         if let Some(vecs) = map.get(&session_id) {
-            return vecs.len() as u32;
+            let len = vecs.len() as u32;
+            trace!(session_id, len, "session_output_length");
+            return len;
         }
     }
+    trace!(session_id, "session_output_length: 0");
     0
 }
 
 /// Free all vectors associated with a session and remove the session.
 #[unsafe(no_mangle)]
 pub extern "C" fn free_session(session_id: u32) {
+    trace!(session_id, "free_session");
     SESSION_INPUT.lock().unwrap().as_mut().unwrap().remove(&session_id);
     SESSION_OUTPUT.lock().unwrap().as_mut().unwrap().remove(&session_id);
 }
@@ -335,6 +361,7 @@ where
     let input_vec = match get_input(input_ptr) {
         Some(vec) => vec,
         None => {
+            error!(?input_ptr, "Unable to locate input");
             let result = Err(CapturedError::new(format!(
                 "Unable to locate input with offset {}",
                 input_ptr as usize
@@ -345,16 +372,21 @@ where
 
     // 2. Check for pyro-level errors forwarded from the host.
     if let Err(err) = input_vec.parse_as_error() {
+        error!(?err, "pyro-level error forwarded from host");
         return to_output(err.encode());
     };
     let input_row = match PyroRow::expose(input_vec.view()) {
         Ok(vec) => vec,
-        Err(err) => return to_output(err.encode()),
+        Err(err) => {
+            error!(?err, "Unable to expose PyroRow");
+            return to_output(err.encode());
+        },
     };
     let input_row = PyroRow::from(&*input_row);
     let input = match input_row.try_into() {
         Ok(input) => input,
         Err(_) => {
+            error!("Unable to extract input from PyroRow");
             let result = Err(CapturedError::new("Unable to extract input"));
             return to_output(encode_result(result));
         }
@@ -364,7 +396,10 @@ where
 
     to_output(match output {
         Ok(o) => encode_result(Ok(o.to_row())),
-        Err(err) => encode_result(Err(err)),
+        Err(err) => {
+            error!(?err, "Function execution failed");
+            encode_result(Err(err))
+        },
     })
 }
 
@@ -383,6 +418,7 @@ where
     let inputs = match sessions.get(&session_id) {
         Some(session) => session,
         None => {
+            error!(session_id, "Unable to locate session for id");
             let result = Err(CapturedError::new(format!(
                 "Unable to locate session for id: {}",
                 session_id as usize
@@ -392,6 +428,7 @@ where
     };
 
     if inputs.is_empty() {
+        error!(session_id, "The input is missing for session");
         let result = Err(CapturedError::new(
             "The input is missing"
         ));
@@ -400,7 +437,10 @@ where
 
     let input_row = match PyroRow::expose_view(inputs[inputs.len() - 1].py_ref()) {
         Ok(vec) => vec,
-        Err(err) => return to_output(err.encode()),
+        Err(err) => {
+            error!(session_id, ?err, "Unable to expose view for current input");
+            return to_output(err.encode());
+        },
     };
     let input = PyroRow::from(&*input_row);
 
@@ -408,7 +448,10 @@ where
     for ir in inputs[0..inputs.len() - 1].iter() {
         let input_row = match PyroRow::expose_view(ir.py_ref()) {
             Ok(vec) => vec,
-            Err(err) => return to_output(err.encode()),
+            Err(err) => {
+                error!(session_id, ?err, "Unable to expose view for prior input");
+                return to_output(err.encode());
+            },
         };
         let input = PyroRow::from(&*input_row);
         prior.push(input);
@@ -417,7 +460,10 @@ where
 
     let result = match func(&prior, input) {
         Ok(result) => result,
-        Err(err) => return to_output(err.encode()),
+        Err(err) => {
+            error!(session_id, ?err, "Session function execution failed");
+            return to_output(err.encode());
+        },
     };
 
     let result = match result {
@@ -461,6 +507,7 @@ where
     let inputs = match input_sessions.get(&session_id) {
         Some(session) => session,
         None => {
+            error!(session_id, "Unable to locate input session for id");
             let result = Err(CapturedError::new(format!(
                 "Unable to locate session for id: {}",
                 session_id as usize
@@ -472,6 +519,7 @@ where
     let outputs = match output_sessions.get(&session_id) {
         Some(session) => session,
         None => {
+            error!(session_id, "Unable to locate output session for id");
             let result = Err(CapturedError::new(format!(
                 "Unable to locate session for id: {}",
                 session_id as usize
@@ -481,6 +529,7 @@ where
     };
 
     if outputs.len() + 1 != inputs.len() {
+        error!(session_id, inputs_len = inputs.len(), outputs_len = outputs.len(), "The input is missing or session state is inconsistent");
         let result = Err(CapturedError::new(
             "The input is missing"
         ));
@@ -489,7 +538,10 @@ where
 
     let input_row = match PyroRow::expose_view(inputs[outputs.len()].py_ref()) {
         Ok(vec) => vec,
-        Err(err) => return to_output(err.encode()),
+        Err(err) => {
+            error!(session_id, ?err, "Unable to expose view for current input in diff session");
+            return to_output(err.encode());
+        },
     };
     let input = PyroRow::from(&*input_row);
 
@@ -497,7 +549,10 @@ where
     for ir in inputs[0..inputs.len() - 1].iter() {
         let input_row = match PyroRow::expose_view(ir.py_ref()) {
             Ok(vec) => vec,
-            Err(err) => return to_output(err.encode()),
+            Err(err) => {
+                error!(session_id, ?err, "Unable to expose view for prior input in diff session");
+                return to_output(err.encode());
+            },
         };
         let input = PyroRow::from(&*input_row);
         prior_inputs.push(input);
@@ -508,7 +563,10 @@ where
     for or in outputs[0..outputs.len() - 1].iter() {
         let output_row = match PyroRow::expose_view(or.py_ref()) {
             Ok(vec) => vec,
-            Err(err) => return to_output(err.encode()),
+            Err(err) => {
+                error!(session_id, ?err, "Unable to expose view for prior output in diff session");
+                return to_output(err.encode());
+            },
         };
         let output = PyroRow::from(&*output_row);
         prior_outputs.push(output);
@@ -516,7 +574,10 @@ where
 
     let result = match func(&prior_inputs, &prior_outputs, input) {
         Ok(result) => result,
-        Err(err) => return to_output(err.encode()),
+        Err(err) => {
+            error!(session_id, ?err, "Diff session function execution failed");
+            return to_output(err.encode());
+        },
     };
 
     let result = match result {
@@ -549,6 +610,7 @@ fn encode_result<'a>(result: Result<PyroRow<'a>, CapturedError>) -> PyroVec {
             static_success.ship()
         }
         Err(err) => {
+            error!(?err, "encode_result: result is Err");
             let captured: CapturedError = err.into();
             let mut vec = captured.encode();
             vec.set_status(DataStatus::RkyvError);
@@ -557,7 +619,10 @@ fn encode_result<'a>(result: Result<PyroRow<'a>, CapturedError>) -> PyroVec {
     };
     match encoding {
         Ok(v) => v,
-        Err(e) => e.encode(),
+        Err(e) => {
+            error!(?e, "encode_result: encoding failed");
+            e.encode()
+        }
     }
 }
 
@@ -584,6 +649,7 @@ impl<T> Client<T> {
         let config_buf = match data.ship() {
             Ok(config_buf) => config_buf,
             Err(err) => {
+                error!(?err, "__register: was unable to serialize the client state");
                 store_error(err);
                 panic!("Was unable to serialize the client state");
             }
@@ -594,11 +660,15 @@ impl<T> Client<T> {
         let result_raw = register_func(view_ptr);
         let result_vec = match get_input(result_raw) {
             Some(result_vec) => result_vec,
-            None => panic!("Host registration failed with no returned"),
+            None => {
+                error!(?result_raw, "__register: Host registration failed with no returned");
+                panic!("Host registration failed with no returned");
+            },
         };
 
         // Check for transport/host errors
         if let Err(e) = result_vec.parse_as_error() {
+            error!(?e, "__register: Host registration failed with a pyro error");
             store_error(e);
             panic!("Host registration failed with a pyro error");
         }
@@ -616,6 +686,7 @@ impl<T> Client<T> {
         let config_buf = match data.ship() {
             Ok(config_buf) => config_buf,
             Err(err) => {
+                error!(?err, "__register_result: was unable to serialize the client state");
                 store_error(err);
                 panic!("Was unable to serialize the client state");
             }
@@ -626,11 +697,15 @@ impl<T> Client<T> {
         let result_raw = register_func(view_ptr);
         let result_vec = match get_input(result_raw) {
             Some(result_vec) => result_vec,
-            None => panic!("Host registration failed with no returned"),
+            None => {
+                error!(?result_raw, "__register_result: Host registration failed with no returned");
+                panic!("Host registration failed with no returned");
+            },
         };
 
         // Check for transport/host errors
         if let Err(e) = result_vec.parse_as_error() {
+            error!(?e, "__register_result: Host registration failed with a pyro error");
             store_error(e);
             panic!("Host registration failed with a pyro error");
         }
@@ -648,7 +723,10 @@ impl<T> Client<T> {
         let input = match input {
             Some(i) => match i.ship() {
                 Ok(vec) => vec,
-                Err(err) => err.encode(),
+                Err(err) => {
+                    error!(?err, "__call_from_wasm: failed to ship input");
+                    err.encode()
+                },
             },
             None => PyroVec::ok(),
         };
@@ -656,12 +734,16 @@ impl<T> Client<T> {
         let result_ptr = (func)(unsafe { lend(&self.config_buf) }, unsafe { lend(&input) });
         let result_vec = match get_input(result_ptr) {
             Some(result_vec) => result_vec,
-            None => panic!("Host registration failed with no returned"),
+            None => {
+                error!(?result_ptr, "__call_from_wasm: Host registration failed with no returned");
+                panic!("Host registration failed with no returned");
+            },
         };
         let result = O::expose(result_vec.view()).and_then(|r| O::receiver().receive(&r));
         match result {
             Ok(result) => result,
             Err(err) => {
+                error!(?err, "__call_from_wasm: Received an unhandled error from host");
                 store_error(err);
                 panic!("Received an unhandled error from host")
             }
@@ -680,7 +762,10 @@ impl<T> Client<T> {
         let input = match input {
             Some(i) => match i.ship() {
                 Ok(vec) => vec,
-                Err(err) => err.encode(),
+                Err(err) => {
+                    error!(?err, "__call_result_from_wasm: failed to ship input");
+                    err.encode()
+                },
             },
             None => PyroVec::ok(),
         };
@@ -688,7 +773,10 @@ impl<T> Client<T> {
         let result_ptr = (func)(unsafe { lend(&self.config_buf) }, unsafe { lend(&input) });
         let result_vec = match get_input(result_ptr) {
             Some(result_vec) => result_vec,
-            None => panic!("Host registration failed with no returned"),
+            None => {
+                error!(?result_ptr, "__call_result_from_wasm: Host registration failed with no returned");
+                panic!("Host registration failed with no returned");
+            },
         };
         let result = Result::<O, E>::expose(result_vec.view()).and_then(|r| {
             let res = match r {
@@ -700,6 +788,7 @@ impl<T> Client<T> {
         match result {
             Ok(result) => result,
             Err(err) => {
+                error!(?err, "__call_result_from_wasm: Received an unhandled error from host");
                 store_error(err);
                 panic!("Received an unhandled error from host")
             }
