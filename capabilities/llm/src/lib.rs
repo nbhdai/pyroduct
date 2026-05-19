@@ -4,10 +4,10 @@ pyroduct::library!();
 // Config
 // =============================================================================
 
-/// Configuration for the Ollama capability.
+/// Configuration for the Llm capability.
 #[pyroduct::config]
-pub struct OllamaConfig {
-    /// Base URL of the Ollama server (e.g. "http://localhost:11434")
+pub struct LlmConfig {
+    /// Base URL of the Llm server (e.g. "http://localhost:11434")
     pub base_url: String,
     /// Optional system prompt prepended to every chat request.
     pub system_prompt: String,
@@ -21,7 +21,7 @@ pub struct OllamaConfig {
 
 /// Per-client state: which model to talk to and optional system prompt.
 #[pyroduct::magma]
-pub struct OllamaClient {
+pub struct LlmClient {
     /// The model name to use (e.g. "llama3", "mistral", "codellama").
     pub model: String,
     /// Temperature for generation (0.0 - 2.0). 0 = deterministic.
@@ -29,7 +29,7 @@ pub struct OllamaClient {
 }
 
 // =============================================================================
-// Serde types for the Ollama HTTP API
+// Serde types for the Llm HTTP API
 // =============================================================================
 
 #[pyroduct::magma]
@@ -78,22 +78,22 @@ struct GenerateResponse {
 // Server (capability impl)
 // =============================================================================
 
-pub struct OllamaServer {
+pub struct LlmServer {
     base_url: String,
     http: reqwest::Client,
     permitted_models: Vec<String>,
     system_prompt: String,
 }
 
-/// Ollama LLM capability — chat with models hosted on a local Ollama instance.
+/// Llm LLM capability — chat with models hosted on a local Llm instance.
 #[pyroduct::capability]
-impl OllamaServer {
-    type Client = OllamaClient;
-    type Config = OllamaConfig;
+impl LlmServer {
+    type Client = LlmClient;
+    type Config = LlmConfig;
     type Error = String;
 
-    async fn new(config: Option<OllamaConfig>) -> Self {
-        let config = config.unwrap_or(OllamaConfig {
+    async fn new(config: Option<LlmConfig>) -> Self {
+        let config = config.unwrap_or(LlmConfig {
             base_url: "http://localhost:11434".to_string(),
             permitted_models: Vec::new(),
             system_prompt: String::new(),
@@ -113,7 +113,7 @@ impl OllamaServer {
 
     async fn reset(&mut self) {}
 
-    fn register(&self, client: &OllamaClient) -> Result<(), String> {
+    fn register(&self, client: &LlmClient) -> Result<(), String> {
         if self.permitted_models.contains(&client.model) || self.permitted_models.is_empty() {
             Ok(())
         } else {
@@ -124,7 +124,7 @@ impl OllamaServer {
     /// Single-turn generate: send a prompt, get a completion.
     async fn generate(
         &self,
-        client: &OllamaClient,
+        client: &LlmClient,
         prompt: String,
     ) -> Result<String, String> {
         let system = if self.system_prompt.is_empty() {
@@ -148,18 +148,18 @@ impl OllamaServer {
             .json(&body)
             .send()
             .await
-            .map_err(|e| format!("Ollama request failed: {e}"))?;
+            .map_err(|e| format!("Llm request failed: {e}"))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            return Err(format!("Ollama returned {status}: {text}"));
+            return Err(format!("Llm returned {status}: {text}"));
         }
 
         let parsed: GenerateResponse = resp
             .json()
             .await
-            .map_err(|e| format!("Failed to parse Ollama response: {e}"))?;
+            .map_err(|e| format!("Failed to parse Llm response: {e}"))?;
 
         Ok(parsed.response)
     }
@@ -168,8 +168,10 @@ impl OllamaServer {
     /// messages and get the assistant's reply.
     async fn chat(
         &self,
-        client: &OllamaClient,
-        messages: Vec<ChatMessage>,
+        client: &LlmClient,
+        prior_input: Vec<ChatMessage>,
+        prior_output: Vec<ChatMessage>,
+        input: ChatMessage,
     ) -> Result<ChatMessage, String> {
         let mut messages = messages;
 
@@ -201,18 +203,18 @@ impl OllamaServer {
             .json(&body)
             .send()
             .await
-            .map_err(|e| format!("Ollama chat request failed: {e}"))?;
+            .map_err(|e| format!("Llm chat request failed: {e}"))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            return Err(format!("Ollama returned {status}: {text}"));
+            return Err(format!("Llm returned {status}: {text}"));
         }
 
         let parsed: ChatResponse = resp
             .json()
             .await
-            .map_err(|e| format!("Failed to parse Ollama chat response: {e}"))?;
+            .map_err(|e| format!("Failed to parse Llm chat response: {e}"))?;
 
         Ok(parsed.message)
     }

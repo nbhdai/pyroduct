@@ -1,5 +1,5 @@
 use ollama::{OllamaClient, ChatMessage, ChatMessageRef, OllamaClientMethods};
-
+use pyroduct::session::SessionResponse;
 
 /// Takes an array of chat messages, sends them to the HF LLM capability,
 /// and returns the assistant's reply along with the full updated history.
@@ -8,7 +8,7 @@ fn process<'a>(
     prior_input: Vec<ChatMessage>,
     prior_output: Vec<ChatMessage>,
     input: ChatMessage,
-) -> Result<ChatMessage> {
+) -> Result<SessionResponse<ChatMessage>> {
 
     // 1. Register a client with the HF LLM capability
     let llm = OllamaClient {
@@ -20,5 +20,5 @@ fn process<'a>(
     // 3. Call the capability
     let reply = llm.chat(input.to_owned())?;
 
-    Ok(reply)
+    Ok(SessionResponse::Continue(reply))
 }
