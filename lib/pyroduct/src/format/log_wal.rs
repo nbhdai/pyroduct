@@ -1,10 +1,10 @@
-use std::collections::HashMap;
-use std::path::Path;
 use serde::{Deserialize, Serialize};
-use tokio::fs::{File, OpenOptions};
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
+use std::collections::HashMap;
 use std::io::SeekFrom;
+use std::path::Path;
+use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncSeekExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tracing::{debug, error, info};
 
 use crate::CapturedError;
@@ -29,7 +29,10 @@ fn crc32c(data: &[u8]) -> u32 {
 pub struct LogEntry {
     pub row_index: usize,
     pub module_logs: Vec<String>,
-    #[serde(serialize_with = "serialize_cap_logs", deserialize_with = "deserialize_cap_logs")]
+    #[serde(
+        serialize_with = "serialize_cap_logs",
+        deserialize_with = "deserialize_cap_logs"
+    )]
     pub capability_logs: HashMap<(String, String), Vec<String>>,
     pub failure: Option<CapturedError>,
     pub success_index: Option<usize>,
@@ -80,16 +83,16 @@ async fn ensure_index_file(dir: &Path, file_index: usize) -> tokio::io::Result<(
         info!(dir = ?dir, file_index = file_index, "Rebuilding log index file");
         let mut log_file = File::open(&log_path).await?;
         let mut idx_file = File::create(&idx_path).await?;
-        
+
         let mut offset: u64 = 0;
         let mut len_buf = [0u8; 4];
         while log_file.read_exact(&mut len_buf).await.is_ok() {
             idx_file.write_all(&offset.to_le_bytes()).await?;
-            
+
             let len = u32::from_le_bytes(len_buf) as u64;
             let record_len = 4 + 4 + len;
             offset += record_len;
-            
+
             log_file.seek(std::io::SeekFrom::Start(offset)).await?;
         }
         idx_file.flush().await?;
@@ -98,13 +101,14 @@ async fn ensure_index_file(dir: &Path, file_index: usize) -> tokio::io::Result<(
 }
 
 /// `LogWal` provides an async file-backed write-ahead log for `LogRecord`s using tokio.
-/// 
+///
 /// Records are framed using CSC encoding:
 /// `[ Length (u32) | CRC-32C (u32) | JSON Payload ]`
 pub struct LogWal {
     dir: std::path::PathBuf,
     capacity: usize,
     current_file_index: usize,
+    oldest_file_index: usize,
     current_entries: usize,
     total_entries: usize,
     writer: BufWriter<File>,
@@ -133,6 +137,7 @@ impl LogWal {
         }
         files.sort_unstable();
 
+        let oldest_file_index = files.first().cloned().unwrap_or(0);
         let current_file_index = files.last().cloned().unwrap_or(0);
         let path = dir.join(format!("{}.pyrolog", current_file_index));
 
@@ -153,10 +158,18 @@ impl LogWal {
         let (final_idx, final_entries, final_file) = if current_entries >= capacity {
             let next_idx = current_file_index + 1;
             let next_path = dir.join(format!("{}.pyrolog", next_idx));
-            let f = OpenOptions::new().create(true).append(true).open(&next_path).await?;
+            let f = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&next_path)
+                .await?;
             (next_idx, 0, f)
         } else {
-            let f = OpenOptions::new().create(true).append(true).open(&path).await?;
+            let f = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .await?;
             (current_file_index, current_entries, f)
         };
 
@@ -167,7 +180,7 @@ impl LogWal {
         };
 
         // Ensure index files exist and are built up to final_idx
-        for idx in 0..=final_idx {
+        for idx in oldest_file_index..=final_idx {
             ensure_index_file(&dir, idx).await?;
         }
 
@@ -178,7 +191,11 @@ impl LogWal {
         );
 
         let idx_path = dir.join(format!("{}.pyrolog.idx", final_idx));
-        let idx_file = OpenOptions::new().create(true).append(true).open(&idx_path).await?;
+        let idx_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&idx_path)
+            .await?;
 
         let current_offset = if final_entries > 0 {
             tokio::fs::metadata(&path).await?.len()
@@ -190,6 +207,7 @@ impl LogWal {
             dir,
             capacity,
             current_file_index: final_idx,
+            oldest_file_index,
             current_entries: final_entries,
             total_entries,
             writer: BufWriter::new(final_file),
@@ -199,7 +217,10 @@ impl LogWal {
     }
 
     async fn rotate(&mut self) -> tokio::io::Result<()> {
-        info!(new_file_index = self.current_file_index + 1, "Rotating log WAL to new file");
+        info!(
+            new_file_index = self.current_file_index + 1,
+            "Rotating log WAL to new file"
+        );
         self.writer.flush().await?;
         self.idx_writer.flush().await?;
 
@@ -207,12 +228,24 @@ impl LogWal {
         self.current_entries = 0;
         self.current_offset = 0;
 
-        let path = self.dir.join(format!("{}.pyrolog", self.current_file_index));
-        let file = OpenOptions::new().create(true).append(true).open(path).await?;
+        let path = self
+            .dir
+            .join(format!("{}.pyrolog", self.current_file_index));
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .await?;
         self.writer = BufWriter::new(file);
 
-        let idx_path = self.dir.join(format!("{}.pyrolog.idx", self.current_file_index));
-        let idx_file = OpenOptions::new().create(true).append(true).open(idx_path).await?;
+        let idx_path = self
+            .dir
+            .join(format!("{}.pyrolog.idx", self.current_file_index));
+        let idx_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(idx_path)
+            .await?;
         self.idx_writer = BufWriter::new(idx_file);
 
         Ok(())
@@ -227,12 +260,14 @@ impl LogWal {
         debug!(row_index = record.row_index, "Appending log entry");
         let payload = serde_json::to_vec(record)
             .map_err(|e| tokio::io::Error::new(tokio::io::ErrorKind::InvalidData, e))?;
-        
+
         let len = payload.len() as u32;
         let crc = crc32c(&payload);
 
         // Write offset to index file
-        self.idx_writer.write_all(&self.current_offset.to_le_bytes()).await?;
+        self.idx_writer
+            .write_all(&self.current_offset.to_le_bytes())
+            .await?;
         self.idx_writer.flush().await?;
 
         // Frame: [ len (4) | crc (4) | payload (n) ]
@@ -274,8 +309,115 @@ impl LogWal {
         let reader = LogWalReader::open(&self.dir).await?;
         reader.get(index, self.capacity).await
     }
-}
 
+    /// Returns the global index of the oldest log entry currently present in the WAL, if any.
+    pub fn oldest_log(&self) -> Option<usize> {
+        if self.total_entries == 0 {
+            None
+        } else {
+            Some(self.oldest_file_index * self.capacity)
+        }
+    }
+
+    /// Returns the global index of the youngest log entry currently present in the WAL, if any.
+    pub fn youngest_log(&self) -> Option<usize> {
+        if self.total_entries == 0 {
+            None
+        } else {
+            Some(self.total_entries - 1)
+        }
+    }
+
+    /// Deletes logs older than the last `keep_count` entries.
+    /// Returns the number of segment files deleted.
+    pub async fn delete_older_than(&mut self, keep_count: usize) -> tokio::io::Result<usize> {
+        let cutoff = self.total_entries.saturating_sub(keep_count);
+        if cutoff == 0 && keep_count != 0 {
+            return Ok(0);
+        }
+
+        let mut deleted_count = 0;
+        let mut files_to_delete = Vec::new();
+
+        let mut entries = tokio::fs::read_dir(&self.dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.extension().map_or(false, |ext| ext == "pyrolog") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if let Ok(idx) = stem.parse::<usize>() {
+                        // The segment stores entries from idx * capacity to (idx + 1) * capacity - 1.
+                        // If all entries in this segment are strictly less than cutoff, we can delete it.
+                        // We should never delete the active segment being written to.
+                        if idx < self.current_file_index && (idx + 1) * self.capacity <= cutoff {
+                            files_to_delete.push(idx);
+                        }
+                    }
+                }
+            }
+        }
+
+        for idx in &files_to_delete {
+            let log_path = self.dir.join(format!("{}.pyrolog", idx));
+            let idx_path = self.dir.join(format!("{}.pyrolog.idx", idx));
+            if tokio::fs::metadata(&log_path).await.is_ok() {
+                tokio::fs::remove_file(&log_path).await?;
+                deleted_count += 1;
+            }
+            if tokio::fs::metadata(&idx_path).await.is_ok() {
+                let _ = tokio::fs::remove_file(&idx_path).await;
+            }
+        }
+
+        // If keep_count is 0, we clear the active segment completely to simulate a full purge.
+        if keep_count == 0 {
+            let log_path = self.dir.join(format!("{}.pyrolog", self.current_file_index));
+            let idx_path = self.dir.join(format!("{}.pyrolog.idx", self.current_file_index));
+
+            let _ = self.writer.flush().await;
+            let _ = self.idx_writer.flush().await;
+
+            let file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&log_path)
+                .await?;
+            self.writer = BufWriter::new(file);
+
+            let idx_file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&idx_path)
+                .await?;
+            self.idx_writer = BufWriter::new(idx_file);
+
+            self.current_entries = 0;
+            self.total_entries = 0;
+            self.current_offset = 0;
+            self.oldest_file_index = self.current_file_index;
+            deleted_count += 1;
+        } else if deleted_count > 0 {
+            // Update oldest_file_index
+            let mut remaining_files = Vec::new();
+            let mut entries = tokio::fs::read_dir(&self.dir).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                let path = entry.path();
+                if path.extension().map_or(false, |ext| ext == "pyrolog") {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        if let Ok(idx) = stem.parse::<usize>() {
+                            remaining_files.push(idx);
+                        }
+                    }
+                }
+            }
+            remaining_files.sort_unstable();
+            self.oldest_file_index = remaining_files.first().cloned().unwrap_or(0);
+        }
+
+        Ok(deleted_count)
+    }
+}
 
 /// `LogWalReader` provides an async reader to iterate over `LogRecord`s from a log directory.
 pub struct LogWalReader {
@@ -288,9 +430,25 @@ impl LogWalReader {
     /// Opens a log directory for reading.
     pub async fn open<P: AsRef<Path>>(dir: P) -> tokio::io::Result<Self> {
         let dir = dir.as_ref().to_path_buf();
+
+        let mut entries = tokio::fs::read_dir(&dir).await?;
+        let mut files = Vec::new();
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.extension().map_or(false, |ext| ext == "pyrolog") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if let Ok(idx) = stem.parse::<usize>() {
+                        files.push(idx);
+                    }
+                }
+            }
+        }
+        files.sort_unstable();
+        let first_file_index = files.first().cloned().unwrap_or(0);
+
         Ok(Self {
             dir,
-            current_file_index: 0,
+            current_file_index: first_file_index,
             reader: None,
         })
     }
@@ -351,7 +509,10 @@ impl LogWalReader {
         log_file.read_exact(&mut payload).await?;
 
         if crc32c(&payload) != expected_crc {
-            error!(index = index, "Log record CRC mismatch: data corruption detected");
+            error!(
+                index = index,
+                "Log record CRC mismatch: data corruption detected"
+            );
             return Err(tokio::io::Error::new(
                 tokio::io::ErrorKind::InvalidData,
                 "Log record CRC mismatch: data corruption detected",
@@ -362,14 +523,36 @@ impl LogWalReader {
         Ok(Some(record))
     }
 
-
     /// Reads the next `LogRecord` from the log directory.
     /// Returns `Ok(None)` when the end of the log directory is reached.
     pub async fn next(&mut self) -> tokio::io::Result<Option<LogEntry>> {
         loop {
             if self.reader.is_none() {
-                let path = self.dir.join(format!("{}.pyrolog", self.current_file_index));
+                let path = self
+                    .dir
+                    .join(format!("{}.pyrolog", self.current_file_index));
                 if !tokio::fs::metadata(&path).await.is_ok() {
+                    // Check if there are any higher file indices
+                    let mut entries = tokio::fs::read_dir(&self.dir).await?;
+                    let mut next_exists = false;
+                    let mut min_higher = usize::MAX;
+                    while let Some(entry) = entries.next_entry().await? {
+                        let p = entry.path();
+                        if p.extension().map_or(false, |ext| ext == "pyrolog") {
+                            if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                                if let Ok(idx) = stem.parse::<usize>() {
+                                    if idx > self.current_file_index && idx < min_higher {
+                                        min_higher = idx;
+                                        next_exists = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if next_exists {
+                        self.current_file_index = min_higher;
+                        continue;
+                    }
                     // No more log files
                     return Ok(None);
                 }
@@ -378,20 +561,23 @@ impl LogWalReader {
 
             let reader = self.reader.as_mut().unwrap();
             let mut len_buf = [0u8; 4];
-            
+
             if let Err(e) = reader.read_exact(&mut len_buf).await {
                 if e.kind() == tokio::io::ErrorKind::UnexpectedEof {
                     // End of current file, move to next
-                    debug!(new_file_index = self.current_file_index + 1, "Moving to next log file");
+                    debug!(
+                        new_file_index = self.current_file_index + 1,
+                        "Moving to next log file"
+                    );
                     self.reader = None;
                     self.current_file_index += 1;
                     continue;
                 }
                 return Err(e);
             }
-            
+
             let len = u32::from_le_bytes(len_buf) as usize;
-            
+
             // Read the CRC
             let mut crc_buf = [0u8; 4];
             reader.read_exact(&mut crc_buf).await?;
@@ -400,7 +586,7 @@ impl LogWalReader {
             // Read the payload
             let mut payload = vec![0u8; len];
             reader.read_exact(&mut payload).await?;
-            
+
             // Verify checksum
             if crc32c(&payload) != expected_crc {
                 error!("Log record CRC mismatch: data corruption detected");
@@ -437,9 +623,10 @@ mod tests {
         LogEntry {
             row_index,
             module_logs: vec!["test module log".to_string()],
-            capability_logs: HashMap::from([
-                (("cap1".to_string(), "val1".to_string()), vec!["cap log 1".to_string()]),
-            ]),
+            capability_logs: HashMap::from([(
+                ("cap1".to_string(), "val1".to_string()),
+                vec!["cap log 1".to_string()],
+            )]),
             failure: None,
             success_index: None,
         }
@@ -452,12 +639,16 @@ mod tests {
 
         let mut wal = LogWal::open(path, 100).await.unwrap();
         let entry = create_test_entry(42);
-        
+
         wal.append(&entry).await.unwrap();
         wal.flush().await.unwrap();
 
         let mut reader = LogWalReader::open(path).await.unwrap();
-        let record = reader.next().await.unwrap().expect("Should have one record");
+        let record = reader
+            .next()
+            .await
+            .unwrap()
+            .expect("Should have one record");
 
         assert_eq!(record.row_index, 42);
         assert_eq!(record.module_logs[0], "test module log");
@@ -527,7 +718,7 @@ mod tests {
 
         // capacity is 2, so index 0 and 1 go in file 0, index 2 and 3 in file 1, etc.
         let mut wal = LogWal::open(path, 2).await.unwrap();
-        
+
         for i in 0..5 {
             wal.append(&create_test_entry(i)).await.unwrap();
         }
@@ -549,12 +740,77 @@ mod tests {
         assert!(!idx_file_0.exists());
 
         // Call get: should trigger auto-rebuild of the index file and successfully retrieve
-        let entry = wal.get(1).await.unwrap().expect("Should retrieve successfully after index deletion");
+        let entry = wal
+            .get(1)
+            .await
+            .unwrap()
+            .expect("Should retrieve successfully after index deletion");
         assert_eq!(entry.row_index, 1);
         assert!(idx_file_0.exists(), "Index file should have been rebuilt");
 
         // Verify it still works for other records
         let entry_2 = wal.get(2).await.unwrap().expect("Should find record 2");
         assert_eq!(entry_2.row_index, 2);
+    }
+
+    #[tokio::test]
+    async fn test_log_wal_retention_and_ranges() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let path = tmp_dir.path();
+
+        // capacity is 2
+        let mut wal = LogWal::open(path, 2).await.unwrap();
+
+        // Range should be empty/None initially
+        assert_eq!(wal.oldest_log(), None);
+        assert_eq!(wal.youngest_log(), None);
+
+        // Append 5 entries
+        for i in 0..5 {
+            wal.append(&create_test_entry(i)).await.unwrap();
+        }
+        wal.flush().await.unwrap();
+
+        // Range should be 0..4
+        assert_eq!(wal.oldest_log(), Some(0));
+        assert_eq!(wal.youngest_log(), Some(4));
+
+        // Segment files:
+        // 0.pyrolog (entries 0, 1)
+        // 1.pyrolog (entries 2, 3)
+        // 2.pyrolog (entry 4) -> active segment
+
+        // Let's delete logs older than 3 entries (so cutoff is 5 - 3 = 2).
+        // Segment 0 (entries 0, 1) has max possible entry index = 1. Since (0+1)*2 <= 2 (2 <= 2), segment 0 can be deleted.
+        // Segment 1 (entries 2, 3) has max possible entry index = 3. Since (1+1)*2 = 4 > 2, it is kept.
+        // Segment 2 (active) is kept.
+        let deleted = wal.delete_older_than(3).await.unwrap();
+        assert_eq!(deleted, 1);
+
+        // Oldest log should now be 1 * capacity = 2
+        assert_eq!(wal.oldest_log(), Some(2));
+        assert_eq!(wal.youngest_log(), Some(4));
+
+        // Verify reader starts at segment 1 instead of segment 0 and iterates successfully!
+        let mut reader = LogWalReader::open(path).await.unwrap();
+        let records = reader.read_all().await.unwrap();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].row_index, 2);
+        assert_eq!(records[1].row_index, 3);
+        assert_eq!(records[2].row_index, 4);
+
+        // Try deleting again with keep_count = 1 (cutoff is 5 - 1 = 4).
+        // Segment 1 (entries 2, 3) max is 3. Since (1+1)*2 <= 4 (4 <= 4), segment 1 can be deleted!
+        let deleted2 = wal.delete_older_than(1).await.unwrap();
+        assert_eq!(deleted2, 1);
+
+        // Oldest log should now be 2 * capacity = 4
+        assert_eq!(wal.oldest_log(), Some(4));
+        assert_eq!(wal.youngest_log(), Some(4));
+
+        let mut reader2 = LogWalReader::open(path).await.unwrap();
+        let records2 = reader2.read_all().await.unwrap();
+        assert_eq!(records2.len(), 1);
+        assert_eq!(records2[0].row_index, 4);
     }
 }

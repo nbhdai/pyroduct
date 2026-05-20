@@ -30,6 +30,7 @@ host = [
     "dep:object",
     "dep:pyro-artifacts",
     "dep:pyro-file",
+    "dep:rusqlite",
     "pyro-spec/arrow",
 ]
 transport = ["host"]
@@ -83,6 +84,7 @@ sha2 = "0.10.9"
 # Arrow
 arrow = { workspace = true, optional = true }
 parquet = { workspace = true, optional = true }
+rusqlite = { workspace = true, features = ["bundled"], optional = true }
 
 pin-project = { workspace = true, optional = true }
 libloading = { workspace = true, optional = true }

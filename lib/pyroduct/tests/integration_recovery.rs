@@ -89,9 +89,9 @@ async fn test_pipeline_get_record() {
     let input_1 = PyroRow::from([("input", "invalid".into())]); // Will cause a failure
     let input_2 = PyroRow::from([("input", "20".into())]);
 
-    pipeline.input_manager.push_record(&input_0).unwrap();
-    pipeline.input_manager.push_record(&input_1).unwrap();
-    pipeline.input_manager.push_record(&input_2).unwrap();
+    pipeline.input_manager.push_record(0, &input_0).unwrap();
+    pipeline.input_manager.push_record(1, &input_1).unwrap();
+    pipeline.input_manager.push_record(2, &input_2).unwrap();
 
     // 2. Process records through the pipeline
     let proc_0 = pipeline.process(0, &input_0).await.unwrap();
@@ -155,17 +155,11 @@ async fn test_pipeline_get_record() {
         }
         _ => panic!("Expected Success for index 2"),
     }
-    
+
     tracing::info!("Clearing log");
 
     // 4. Clean/delete all log WAL files (.pyrolog) to simulate rotation/cleanup
-    for entry in std::fs::read_dir(&tmp_path).unwrap() {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        if path.extension().map_or(false, |ext| ext == "pyrolog") {
-            std::fs::remove_file(path).unwrap();
-        }
-    }
+    pipeline.log_manager.delete_older_than(0).await.unwrap();
 
     tracing::info!("Getting 0");
 

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use arrow::array::RecordBatch;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc};
-use tracing::{error, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::CapturedError;
 use crate::format::log_wal::{LogEntry, LogWal};
@@ -70,12 +70,13 @@ pub struct Pipeline {
 
 impl Pipeline {
     /// Run the input through the single step.
-    #[instrument(skip(self, input))]
+    #[instrument(skip(self, input), fields(row_index = row_index))]
     pub async fn process(
         &mut self,
         row_index: usize,
         input: &PyroRow<'_>,
     ) -> Result<ExecutionRecord, PyroError> {
+        debug!(row_index, "Processing row");
         let mut result: PyroRow<'static> = input.clone().into_owned();
 
         let mut success = Some(PyroSuccess {
@@ -86,13 +87,16 @@ impl Pipeline {
 
         match self.step.call(&result).await {
             Ok(output) => {
+                debug!(row_index, "Step succeeded");
                 result.extend(output.row.clone());
                 success = Some(output);
             }
             Err(f) => {
                 match &f.result {
-                    Ok(error) => warn!("Pipeline Step: Module returned error: {}", error),
-                    Err(error) => error!("Pipeline Step: Pyroduct Failed: {}", error),
+                    Ok(error) => {
+                        warn!(row_index, "Pipeline Step: Module returned error: {}", error)
+                    }
+                    Err(error) => error!(row_index, "Pipeline Step: Pyroduct Failed: {}", error),
                 }
                 failure = Some(f);
             }
@@ -116,14 +120,12 @@ impl Pipeline {
         };
 
         if let ExecutionRecord::Success { .. } = &record {
-            self.output_manager.push_record(&result)?;
+            self.output_manager.push_record(row_index, &result)?;
         }
 
         let log_entry = match &record {
             ExecutionRecord::Success {
-                row_index,
-                logs,
-                ..
+                row_index, logs, ..
             } => LogEntry {
                 row_index: *row_index,
                 module_logs: logs.module_logs.clone(),
@@ -151,19 +153,25 @@ impl Pipeline {
 
     /// Retrieve a single record by its global index.
     pub async fn get_record(&self, index: usize) -> Result<ExecutionRecord, PyroError> {
+        debug!(index, "Retrieving record");
         let input_row = self.input_manager.get_record(index)?;
 
         // Try to read from LogWal in O(1)
-        let log_entry = self.log_manager.get(index).await
+        let log_entry = self
+            .log_manager
+            .get(index)
+            .await
             .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
 
         if let Some(entry) = log_entry {
+            debug!(index, "Found record in LogWal");
             let logs = PyroLogs {
                 module_logs: entry.module_logs,
                 capability_logs: entry.capability_logs,
             };
 
             if let Some(err) = entry.failure {
+                debug!(index, "Record is a failure");
                 Ok(ExecutionRecord::Failure {
                     row_index: index,
                     input: input_row,
@@ -171,6 +179,8 @@ impl Pipeline {
                     logs,
                 })
             } else {
+                debug_assert!(self.output_manager.get_record(index).is_err());
+                debug!(index, "Record is a success");
                 let success_index = entry.success_index.unwrap_or(0);
                 let success_row = self.output_manager.get_record(success_index)?;
                 Ok(ExecutionRecord::Success {
@@ -181,26 +191,13 @@ impl Pipeline {
                 })
             }
         } else {
+            debug!(
+                index,
+                "Logs cleaned/missing, attempting fallback search in output manager"
+            );
             // Logs cleaned/missing, return blank logs
-            let output_len = self.output_manager.len();
-            let mut matching_row = None;
-            for k in 0..output_len {
-                if let Ok(row) = self.output_manager.get_record(k) {
-                    let mut matches = true;
-                    for (field_name, val) in input_row.iter() {
-                        if row.get(field_name) != Some(val) {
-                            matches = false;
-                            break;
-                        }
-                    }
-                    if matches {
-                        matching_row = Some(row);
-                        break;
-                    }
-                }
-            }
-
-            if let Some(success_row) = matching_row {
+            if let Ok(success_row) = self.output_manager.get_record(index) {
+                debug!(index, "Fallback search found matching record");
                 Ok(ExecutionRecord::Success {
                     row_index: index,
                     input: input_row,
@@ -208,6 +205,7 @@ impl Pipeline {
                     logs: PyroLogs::empty(),
                 })
             } else {
+                debug!(index, "Fallback search failed to find matching record");
                 Ok(ExecutionRecord::Failure {
                     row_index: index,
                     input: input_row,
@@ -256,6 +254,7 @@ impl PipelinePool {
         batch: &RecordBatch,
     ) -> PipelineResult<(Vec<ExecutionRecord>, Vec<ExecutionRecord>)> {
         let total_rows = batch.num_rows();
+        info!(total_rows, "Processing batch");
         if total_rows == 0 {
             return Ok((Vec::new(), Vec::new()));
         }
@@ -271,6 +270,7 @@ impl PipelinePool {
         };
 
         let num_pipelines = pipelines.len();
+        debug!(num_pipelines, "Distributing batch across pipelines");
         let (tx, mut rx) = mpsc::channel(100);
         let chunk_size = min((total_rows + num_pipelines - 1) / num_pipelines, 1000);
         let mut handles = Vec::with_capacity(num_pipelines);
@@ -287,12 +287,14 @@ impl PipelinePool {
             let tx_clone = tx.clone();
 
             handles.push(tokio::spawn(async move {
+                debug!(offset, length, "Worker starting chunk processing");
                 for j in 0..batch_slice.num_rows() {
                     let absolute_index = offset + j;
 
                     let result = match batch_slice.row(j) {
                         Ok(input_row) => pipeline.process(absolute_index, &input_row).await,
                         Err(e) => {
+                            error!(absolute_index, "Failed to read row from batch: {}", e);
                             let record = ExecutionRecord::Failure {
                                 row_index: absolute_index,
                                 input: PyroRow::empty(),
@@ -313,6 +315,7 @@ impl PipelinePool {
                             }
                         }
                         Err(e) => {
+                            error!(absolute_index, "Pipeline process returned error: {}", e);
                             let record = ExecutionRecord::Failure {
                                 row_index: absolute_index,
                                 input: PyroRow::empty(),
@@ -325,6 +328,7 @@ impl PipelinePool {
                         }
                     }
                 }
+                debug!(offset, "Worker finished chunk processing");
 
                 pipeline
             }));
@@ -340,6 +344,12 @@ impl PipelinePool {
                 ExecutionRecord::Failure { .. } => failures.push(row_result),
             }
         }
+
+        info!(
+            successes = success_results.len(),
+            failures = failures.len(),
+            "Batch processing complete"
+        );
 
         // Reclaim pipelines back into the pool
         let mut reclaimed = Vec::with_capacity(num_pipelines);

@@ -84,7 +84,7 @@ impl SessionPipeline {
 
         let rolled_up_row = PyroRow::from([("session", crate::format::value::PyroValue::List(list_vals))]);
 
-        self.output_manager.push_record(&rolled_up_row)?;
+        self.output_manager.push_record(session_id as usize, &rolled_up_row)?;
 
         let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
         if log_dir.exists() {
