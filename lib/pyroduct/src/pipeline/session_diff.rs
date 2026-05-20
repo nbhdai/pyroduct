@@ -41,6 +41,11 @@ pub enum SessionDiffExecutionRecord {
     },
 }
 
+pub struct ActiveSession {
+    pub log_wal: LogWal,
+    pub data_wal: crate::format::value::arrow::wal::WalWriter,
+}
+
 pub struct SessionDiffPipeline {
     pub step: PyroInstance,
     pub success_log_retention_secs: u64,
@@ -48,9 +53,87 @@ pub struct SessionDiffPipeline {
     pub log_manager: LogWal,
     pub input_manager: DataManager,
     pub output_manager: DataManager,
+    pub log_dir: std::path::PathBuf,
+    pub output_dir: std::path::PathBuf,
+    pub wal_capacity: usize,
+    pub active_sessions: std::collections::HashMap<u32, ActiveSession>,
 }
 
 impl SessionDiffPipeline {
+    async fn get_or_open_session(&mut self, session_id: u32) -> Result<&mut ActiveSession, PyroError> {
+        if !self.active_sessions.contains_key(&session_id) {
+            let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
+            let data_path = self.output_dir.join(format!("session_val_{}", session_id));
+
+            let log_wal = LogWal::open(log_dir, self.wal_capacity).await
+                .map_err(|io| PyroError::local_io(CapturedError::new("Unable to open individual log wal").with_source(io)))?;
+            let data_wal = crate::format::value::arrow::wal::WalWriter::open(data_path)
+                .map_err(|io| PyroError::local_io(CapturedError::new("Unable to open individual data wal").with_source(io)))?;
+
+            self.active_sessions.insert(session_id, ActiveSession { log_wal, data_wal });
+        }
+        Ok(self.active_sessions.get_mut(&session_id).unwrap())
+    }
+
+    async fn rollup_and_cleanup_session(&mut self, session_id: u32) -> Result<(), PyroError> {
+        let data_path = self.output_dir.join(format!("session_val_{}", session_id));
+        let wal_rows = crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
+
+        let mut in_list = Vec::new();
+        let mut out_list = Vec::new();
+        for row in wal_rows {
+            if let Some(in_val) = row.get("input") {
+                if let crate::format::value::PyroValue::Group(g) = in_val {
+                    in_list.push(crate::format::value::PyroValue::Group(g.clone()));
+                }
+            }
+            if let Some(out_val) = row.get("output") {
+                if let crate::format::value::PyroValue::Group(g) = out_val {
+                    out_list.push(crate::format::value::PyroValue::Group(g.clone()));
+                }
+            }
+        }
+
+        let rolled_up_row = PyroRow::from([
+            ("inputs", crate::format::value::PyroValue::List(in_list)),
+            ("outputs", crate::format::value::PyroValue::List(out_list)),
+        ]);
+
+        self.output_manager.push_record(&rolled_up_row)?;
+
+        let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
+        if log_dir.exists() {
+            let mut reader = crate::format::log_wal::LogWalReader::open(&log_dir).await
+                .map_err(|io| PyroError::local_io(CapturedError::new("Unable to open individual log wal reader").with_source(io)))?;
+
+            while let Some(log_entry) = reader.next().await
+                .map_err(|io| PyroError::local_io(CapturedError::new("Unable to read from individual log wal").with_source(io)))?
+            {
+                let overall_row_index = self.log_manager.total_entries();
+                let mut entry_to_write = log_entry;
+                entry_to_write.row_index = overall_row_index;
+                self.log_manager.append(&entry_to_write).await
+                    .map_err(|io| PyroError::local_io(CapturedError::new("Unable to write to overall log wal").with_source(io)))?;
+            }
+        }
+
+        let _ = self.log_manager.flush().await;
+
+        self.active_sessions.remove(&session_id);
+
+        let data_path = self.output_dir.join(format!("session_val_{}", session_id));
+        let data_wal_file = data_path.with_extension("pyrowal");
+        if data_wal_file.exists() {
+            let _ = std::fs::remove_file(data_wal_file);
+        }
+
+        if log_dir.exists() {
+            let _ = tokio::fs::remove_dir_all(log_dir).await;
+        }
+
+        Ok(())
+    }
+
     pub async fn process(
         &mut self,
         row_index: usize,
@@ -95,28 +178,10 @@ impl SessionDiffPipeline {
                     logs: logs.clone(),
                 };
 
-                let log_entry = LogEntry {
-                    row_index,
-                    module_logs: logs.module_logs.clone(),
-                    capability_logs: logs.capability_logs.clone(),
-                    failure: None,
-                };
-                let _ = self.log_manager.append(&log_entry).await;
-
                 let _ = self.close_session(session_id).await;
                 Ok(record)
             }
             Err(e) => {
-                let logs = e.logs.clone();
-
-                let log_entry = LogEntry {
-                    row_index,
-                    module_logs: logs.module_logs.clone(),
-                    capability_logs: logs.capability_logs.clone(),
-                    failure: None,
-                };
-                let _ = self.log_manager.append(&log_entry).await;
-
                 let _ = self.close_session(session_id).await;
                 match e.result {
                     Ok(captured) => Err(PyroError::CodePanic(Box::new(captured))),
@@ -132,7 +197,36 @@ impl SessionDiffPipeline {
         inputs: &[PyroRow<'_>],
         outputs: &[PyroRow<'_>],
     ) -> Result<(), PyroFailure> {
-        self.step.prep_session(session_id, inputs, outputs).await
+        self.step.prep_session(session_id, inputs, outputs).await?;
+
+        let data_path = self.output_dir.join(format!("session_val_{}", session_id));
+        let existing = crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
+
+        let active_logs = self.step.unpack_logs();
+        let active = self.get_or_open_session(session_id).await
+            .map_err(|e| PyroFailure {
+                result: Err(e.to_string()),
+                logs: active_logs.clone(),
+            })?;
+
+        let max_len = inputs.len().max(outputs.len());
+        for i in 0..max_len {
+            if i >= existing.len() {
+                let in_val = inputs.get(i).map(|r| crate::format::value::PyroValue::Group(r.clone().into_owned())).unwrap_or(crate::format::value::PyroValue::Null);
+                let out_val = outputs.get(i).map(|r| crate::format::value::PyroValue::Group(r.clone().into_owned())).unwrap_or(crate::format::value::PyroValue::Null);
+                let row = PyroRow::from([
+                    ("input", in_val),
+                    ("output", out_val),
+                ]);
+                active.data_wal.append(i, &row)
+                    .map_err(|e| PyroFailure {
+                        result: Err(e.to_string()),
+                        logs: active_logs.clone(),
+                    })?;
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn call(
@@ -140,19 +234,44 @@ impl SessionDiffPipeline {
         session_id: u32,
         input: &PyroRow<'_>,
     ) -> Result<SessionResult, PyroFailure> {
-        let res = self.step.call_session(session_id, input).await;
+        let active_logs = self.step.unpack_logs();
 
-        let row_index = self.log_manager.total_entries();
+        let res = self.step.call_session(session_id, input).await;
+        let logs = self.step.unpack_logs();
+
+        let output_row = match &res {
+            Ok(SessionResult::Continue(r)) => crate::format::value::PyroValue::Group(r.clone().into_owned()),
+            Ok(SessionResult::End(r)) => crate::format::value::PyroValue::Group(r.clone().into_owned()),
+            _ => crate::format::value::PyroValue::Null,
+        };
+
+        let active = self.get_or_open_session(session_id).await
+            .map_err(|e| PyroFailure {
+                result: Err(e.to_string()),
+                logs: active_logs.clone(),
+            })?;
+
+        let record_index = active.data_wal.records_written() as usize;
+        let step_row = PyroRow::from([
+            ("input", crate::format::value::PyroValue::Group(input.clone().into_owned())),
+            ("output", output_row),
+        ]);
+        active.data_wal.append(record_index, &step_row)
+            .map_err(|e| PyroFailure {
+                result: Err(e.to_string()),
+                logs: active_logs.clone(),
+            })?;
+
+        let row_index = active.log_wal.total_entries();
         match &res {
             Ok(_) => {
-                let logs = self.step.unpack_logs();
                 let log_entry = LogEntry {
                     row_index,
                     module_logs: logs.module_logs,
                     capability_logs: logs.capability_logs,
                     failure: None,
                 };
-                let _ = self.log_manager.append(&log_entry).await;
+                let _ = active.log_wal.append(&log_entry).await;
             }
             Err(e) => {
                 let log_entry = LogEntry {
@@ -161,8 +280,22 @@ impl SessionDiffPipeline {
                     capability_logs: e.logs.capability_logs.clone(),
                     failure: e.result.as_ref().ok().cloned(),
                 };
-                let _ = self.log_manager.append(&log_entry).await;
+                let _ = active.log_wal.append(&log_entry).await;
             }
+        }
+
+        match &res {
+            Ok(SessionResult::End(_)) | Ok(SessionResult::Terminate) => {
+                if let Err(e) = self.rollup_and_cleanup_session(session_id).await {
+                    tracing::error!("Failed to rollup and cleanup session {}: {:?}", session_id, e);
+                }
+            }
+            Err(_) => {
+                if let Err(e) = self.rollup_and_cleanup_session(session_id).await {
+                    tracing::error!("Failed to rollup and cleanup failed session {}: {:?}", session_id, e);
+                }
+            }
+            _ => {}
         }
 
         res

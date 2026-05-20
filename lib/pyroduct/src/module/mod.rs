@@ -15,6 +15,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use pyro_artifacts::artifacts::ModuleSpec;
+use pyro_spec::ModuleKind;
 use pyro_artifacts::cache::{CacheError, LoadedPlaybook};
 use pyro_artifacts::build::BuildError;
 use pyro_artifacts::environment::EnvironmentError;
@@ -635,16 +636,30 @@ impl PyroInstance {
         let len = state.input_len;
 
         let mut io = PyroCallIo::new(&mut self.store, self.memory);
-        let mut inputs = Vec::with_capacity(len as usize);
         let actual_len = io.session_input_length(session_id).await
                 .map_err(|err| Self::pack_setup_pyro_error(err))?;
-        debug_assert_eq!(actual_len, len);
+
+        let mut inputs = Vec::with_capacity(actual_len as usize);
+
+        let is_session_diff = self.spec.func.kind == ModuleKind::SessionDiff;
+
+        if is_session_diff {
+            debug_assert_eq!(actual_len, len);
+        } else {
+            debug_assert!(actual_len == 2 * len || actual_len == 2 * len - 1);
+        }
+
         for i in 0..actual_len {
             let view = io.borrow_session_input(session_id, i)
                 .await
                 .map_err(|err| Self::pack_setup_pyro_error(err))?;
-            let row = PyroRow::expose_view(view).map_err(|err| Self::pack_setup_pyro_error(err))?;
-            inputs.push(PyroRow::from(&*row));
+            let row = if view.status() == Ok(DataStatus::Empty) {
+                PyroRow::empty()
+            } else {
+                let exposed = PyroRow::expose_view(view).map_err(|err| Self::pack_setup_pyro_error(err))?;
+                PyroRow::from(&*exposed)
+            };
+            inputs.push(row);
         }
 
         tracing::debug!(session_id, count = inputs.len(), "Retrieved session inputs");
