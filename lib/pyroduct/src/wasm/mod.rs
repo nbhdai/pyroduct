@@ -479,8 +479,10 @@ where
     };
     let sessions = sessions.entry(session_id).or_default();
     sessions.push(result);
-    // Return pointer to the result PyroVec we just pushed (16-byte aligned header)
-    sessions.last().unwrap().raw_ptr() as *const u8
+    let last = sessions.last().unwrap();
+    tracing::debug!(header = ?*last.header(), "wasm_row_main_session: before return");
+    // Return pointer to PyroInner (the allocation base that host get_ref expects)
+    last.raw_ptr() as *const u8
 }
 
 
@@ -572,7 +574,7 @@ where
     };
     let sessions = output_sessions.entry(session_id).or_default();
     sessions.push(result);
-    // Return pointer to the result PyroVec we just pushed (16-byte aligned header)
+    // Return pointer to PyroInner (the allocation base that host get_ref expects)
     sessions.last().unwrap().raw_ptr() as *const u8
 }
 

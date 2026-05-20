@@ -123,7 +123,7 @@ impl PyroFactory {
     }
 
     pub fn from_playbook(playbook: &LoadedPlaybook) -> Result<Self, WasmError> {
-        tracing::debug!("Loading module from hash: {}", playbook.binary.hash());
+        tracing::info!(hash = %playbook.binary.hash(), "Loading module from playbook");
         let wasmtime_module = wasmtime::Module::from_binary(&DEFAULT_ENGINE, &playbook.binary.wasm)
             .map_err(|e| {
                 WasmError::InstantiationFailed(format!("Failed to compile WASM: {}", e))
@@ -133,6 +133,7 @@ impl PyroFactory {
         let mut libs = Vec::new();
 
         for (name, path) in playbook.paths.iter() {
+            tracing::debug!(name = %name, path = %path.display(), "Loading capability library");
             let library = CapabilityLibrary::load(name.clone(), path).map_err(|e| {
                 WasmError::InstantiationFailed(format!(
                     "Failed to load capability library at {}: {}",
@@ -157,6 +158,7 @@ impl PyroFactory {
     async fn create_capabilities(&self) -> Result<HashMap<String, ForeignObject>, WasmError> {
         let mut objects = HashMap::new();
         for (class, config) in &self.configurations {
+            tracing::debug!(class = %class, "Instantiating capability class");
             for library in self.libraries.iter() {
                 if let Ok(object) = library.instantiate_class(class, config.as_ref()).await {
                     objects.insert(class.clone(), object);
@@ -168,6 +170,7 @@ impl PyroFactory {
     }
 
     pub async fn instantiate(&self) -> Result<PyroInstance, WasmError> {
+        tracing::info!("Instantiating PyroInstance");
         let pyro_state = PyroState::new();
         let mut store = Store::new(&DEFAULT_ENGINE, pyro_state);
         let objects = self.create_capabilities().await?;
@@ -236,6 +239,7 @@ impl PyroFactory {
 
         // Link the PyroState methods to the instance exports
         PyroState::link(&mut store, &instance)?;
+        tracing::info!("PyroInstance instantiated successfully");
         Ok(PyroInstance {
             spec: self.spec.clone(),
             store,
@@ -382,6 +386,7 @@ impl PyroInstance {
     }
 
     pub async fn call(&mut self, input: &PyroRow<'_>) -> Result<PyroSuccess, PyroFailure> {
+        tracing::debug!("Calling wasm module");
         // Ship the input row via rkyv into a PyroVec
         let input_row_owned = input.to_static();
         let input_vec = input_row_owned
@@ -435,20 +440,27 @@ impl PyroInstance {
         let pyref = result_view.py_ref();
         match result_view.status() {
             Ok(DataStatus::RkyvValid) => {
+                tracing::debug!("Result status: RkyvValid");
                 let row = PyroRow::expose_view(pyref).map_err(|err| self.pack_pyro_error(err))?;
                 Ok(self.pack_success(PyroRow::from(&*row).to_static()))
             }
-            Ok(DataStatus::RkyvError) => match serde_json::from_slice(&result_view) {
-                Ok(error) => Err(self.pack_user_error(error)),
-                Err(error) => {
-                    Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view)))
+            Ok(DataStatus::RkyvError) => {
+                tracing::debug!("Result status: RkyvError");
+                match serde_json::from_slice(&result_view) {
+                    Ok(error) => Err(self.pack_user_error(error)),
+                    Err(error) => {
+                        Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view)))
+                    }
                 }
             },
-            _ => Err(
-                self.pack_pyro_error(PyroError::Header(ParseError::UnknownStatus(
-                    result_view.status_u8(),
-                ))),
-            ),
+            _ => {
+                tracing::debug!(status = result_view.status_u8(), "Result status: Unknown");
+                Err(
+                    self.pack_pyro_error(PyroError::Header(ParseError::UnknownStatus(
+                        result_view.status_u8(),
+                    ))),
+                )
+            }
         }
     }
 
@@ -472,6 +484,7 @@ impl PyroInstance {
         inputs: &[PyroRow<'_>],
         outputs: &[PyroRow<'_>],
     ) -> Result<(), PyroFailure> {
+        tracing::debug!(session_id, inputs_len = inputs.len(), outputs_len = outputs.len(), "Preparing session");
         let mut io = PyroCallIo::new(&mut self.store, self.memory);
 
         for input in inputs {
@@ -513,6 +526,7 @@ impl PyroInstance {
         session_id: u32,
         input: &PyroRow<'_>,
     ) -> Result<sessions::SessionResult, PyroFailure> {
+        tracing::debug!(session_id, "Calling session");
         // 1. Ship input into session history
         let input_row_owned = input.to_static();
         let input_vec = input_row_owned
@@ -542,6 +556,8 @@ impl PyroInstance {
             .map_err(classify_error)
             .map_err(|err| self.pack_pyro_error(err))?;
 
+        tracing::debug!(session_id, ?output_ptr, "Session call returned");
+
         // 3. Read Output
         let mut io = PyroCallIo::new(&mut self.store, self.memory);
         let output_vec = io
@@ -563,24 +579,32 @@ impl PyroInstance {
                 let row = PyroRow::expose_view(pyref).map_err(|err| self.pack_pyro_error(err))?;
                 let row_static = PyroRow::from(&*row).to_static();
 
-                Ok(match fn_id {
+                let result = match fn_id {
                     0 => sessions::SessionResult::Continue(row_static),
                     1 => sessions::SessionResult::End(row_static),
                     2 => sessions::SessionResult::Terminate,
                     _ => sessions::SessionResult::Terminate,
-                })
+                };
+                tracing::debug!(session_id, fn_id, "Session result: Valid");
+                Ok(result)
             }
-            Ok(DataStatus::RkyvError) => match serde_json::from_slice(&result_view) {
-                Ok(error) => Err(self.pack_user_error(error)),
-                Err(error) => {
-                    Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view)))
+            Ok(DataStatus::RkyvError) => {
+                tracing::debug!(session_id, "Session result: RkyvError");
+                match serde_json::from_slice(&result_view) {
+                    Ok(error) => Err(self.pack_user_error(error)),
+                    Err(error) => {
+                        Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view)))
+                    }
                 }
             },
-            _ => Err(
-                self.pack_pyro_error(PyroError::Header(ParseError::UnknownStatus(
-                    result_view.status_u8(),
-                ))),
-            ),
+            _ => {
+                tracing::debug!(session_id, status = result_view.status_u8(), "Session result: Unknown");
+                Err(
+                    self.pack_pyro_error(PyroError::Header(ParseError::UnknownStatus(
+                        result_view.status_u8(),
+                    ))),
+                )
+            },
         };
 
         // 5. Update state
@@ -594,6 +618,7 @@ impl PyroInstance {
     }
 
     pub async fn session_inputs(&mut self, session_id: u32) -> Result<Vec<PyroRow<'_>>, PyroFailure> {
+        tracing::debug!(session_id, "Getting session inputs");
         let state = self.session_states.get(&session_id).ok_or_else(|| {
             self.pack_pyro_error(PyroError::not_found(format!("Session {} not found", session_id)))
         })?;
@@ -612,10 +637,12 @@ impl PyroInstance {
             inputs.push(PyroRow::from(&*row));
         }
 
+        tracing::debug!(session_id, count = inputs.len(), "Retrieved session inputs");
         Ok(inputs)
     }
 
     pub async fn session_outputs(&mut self, session_id: u32) -> Result<Vec<PyroRow<'_>>, PyroFailure> {
+        tracing::debug!(session_id, "Getting session outputs");
         let state = self.session_states.get(&session_id).ok_or_else(|| {
             self.pack_pyro_error(PyroError::not_found(format!("Session {} not found", session_id)))
         })?;
@@ -635,15 +662,18 @@ impl PyroInstance {
             outputs.push(PyroRow::from(&*row));
         }
 
+        tracing::debug!(session_id, count = outputs.len(), "Retrieved session outputs");
         Ok(outputs)
     }
 
     pub async fn close_session(&mut self, session_id: u32) -> Result<(), PyroFailure> {
+        tracing::debug!(session_id, "Closing session");
         let mut io = PyroCallIo::new(&mut self.store, self.memory);
         io.free_session(session_id)
             .await
             .map_err(|err| self.pack_pyro_error(err))?;
         self.session_states.remove(&session_id);
+        tracing::debug!(session_id, "Session closed");
         Ok(())
     }
 
