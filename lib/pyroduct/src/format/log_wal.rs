@@ -5,6 +5,7 @@ use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
 use std::io::SeekFrom;
 use tokio::io::AsyncSeekExt;
+use tracing::{debug, error, info};
 
 use crate::CapturedError;
 
@@ -76,6 +77,7 @@ async fn ensure_index_file(dir: &Path, file_index: usize) -> tokio::io::Result<(
     };
 
     if should_rebuild {
+        info!(dir = ?dir, file_index = file_index, "Rebuilding log index file");
         let mut log_file = File::open(&log_path).await?;
         let mut idx_file = File::create(&idx_path).await?;
         
@@ -114,6 +116,7 @@ impl LogWal {
     /// Opens a log directory for appending. Creates the directory and files if they don't exist.
     pub async fn open<P: AsRef<Path>>(dir: P, capacity: usize) -> tokio::io::Result<Self> {
         let dir = dir.as_ref().to_path_buf();
+        info!(dir = ?dir, capacity = capacity, "Opening log WAL");
         tokio::fs::create_dir_all(&dir).await?;
 
         let mut entries = tokio::fs::read_dir(&dir).await?;
@@ -168,6 +171,12 @@ impl LogWal {
             ensure_index_file(&dir, idx).await?;
         }
 
+        debug!(
+            current_file_index = final_idx,
+            total_entries = total_entries,
+            "Log WAL initialized"
+        );
+
         let idx_path = dir.join(format!("{}.pyrolog.idx", final_idx));
         let idx_file = OpenOptions::new().create(true).append(true).open(&idx_path).await?;
 
@@ -190,6 +199,7 @@ impl LogWal {
     }
 
     async fn rotate(&mut self) -> tokio::io::Result<()> {
+        info!(new_file_index = self.current_file_index + 1, "Rotating log WAL to new file");
         self.writer.flush().await?;
         self.idx_writer.flush().await?;
 
@@ -214,6 +224,7 @@ impl LogWal {
             self.rotate().await?;
         }
 
+        debug!(row_index = record.row_index, "Appending log entry");
         let payload = serde_json::to_vec(record)
             .map_err(|e| tokio::io::Error::new(tokio::io::ErrorKind::InvalidData, e))?;
         
@@ -286,6 +297,7 @@ impl LogWalReader {
 
     /// Retrieve a single LogEntry by its global index in O(1) file access.
     pub async fn get(&self, index: usize, capacity: usize) -> tokio::io::Result<Option<LogEntry>> {
+        debug!(index = index, "Retrieving log entry by index");
         if capacity == 0 {
             return Ok(None);
         }
@@ -339,6 +351,7 @@ impl LogWalReader {
         log_file.read_exact(&mut payload).await?;
 
         if crc32c(&payload) != expected_crc {
+            error!(index = index, "Log record CRC mismatch: data corruption detected");
             return Err(tokio::io::Error::new(
                 tokio::io::ErrorKind::InvalidData,
                 "Log record CRC mismatch: data corruption detected",
@@ -369,6 +382,7 @@ impl LogWalReader {
             if let Err(e) = reader.read_exact(&mut len_buf).await {
                 if e.kind() == tokio::io::ErrorKind::UnexpectedEof {
                     // End of current file, move to next
+                    debug!(new_file_index = self.current_file_index + 1, "Moving to next log file");
                     self.reader = None;
                     self.current_file_index += 1;
                     continue;
@@ -389,6 +403,7 @@ impl LogWalReader {
             
             // Verify checksum
             if crc32c(&payload) != expected_crc {
+                error!("Log record CRC mismatch: data corruption detected");
                 return Err(tokio::io::Error::new(
                     tokio::io::ErrorKind::InvalidData,
                     "Log record CRC mismatch: data corruption detected",

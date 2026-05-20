@@ -123,7 +123,7 @@ name = "logs"
 required-features = ["host"]
 
 [[test]]
-name = "integration_state"
+name = "integration_recovery"
 required-features = ["host"]
 
 [[test]]

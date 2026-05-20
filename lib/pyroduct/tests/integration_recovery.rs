@@ -155,6 +155,8 @@ async fn test_pipeline_get_record() {
         }
         _ => panic!("Expected Success for index 2"),
     }
+    
+    tracing::info!("Clearing log");
 
     // 4. Clean/delete all log WAL files (.pyrolog) to simulate rotation/cleanup
     for entry in std::fs::read_dir(&tmp_path).unwrap() {
@@ -164,6 +166,8 @@ async fn test_pipeline_get_record() {
             std::fs::remove_file(path).unwrap();
         }
     }
+
+    tracing::info!("Getting 0");
 
     // 5. Test get_record with log WAL missing/cleaned (should return blank logs)
     let rec_0_clean = pipeline.get_record(0).await.unwrap();
@@ -182,6 +186,8 @@ async fn test_pipeline_get_record() {
         }
         _ => panic!("Expected Success with blank logs for index 0"),
     }
+
+    tracing::info!("Getting 1");
 
     let rec_1_clean = pipeline.get_record(1).await.unwrap();
     match &rec_1_clean {
