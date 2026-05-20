@@ -216,6 +216,10 @@ pub struct PreBatch {
 }
 
 impl PreBatch {
+    pub fn get(&self, index: usize) -> Option<&PyroRow<'static>> {
+        self.rows.get(index)
+    }
+
     pub fn from_iter<'a>(mut iter: impl Iterator<Item = PyroRow<'a>>) -> Option<Self> {
         let first = iter.next()?;
         let schema = first.schema().ok()?;

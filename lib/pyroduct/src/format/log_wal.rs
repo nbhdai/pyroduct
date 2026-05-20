@@ -3,6 +3,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
+use std::io::SeekFrom;
+use tokio::io::AsyncSeekExt;
 
 use crate::CapturedError;
 
@@ -29,6 +31,7 @@ pub struct LogEntry {
     #[serde(serialize_with = "serialize_cap_logs", deserialize_with = "deserialize_cap_logs")]
     pub capability_logs: HashMap<(String, String), Vec<String>>,
     pub failure: Option<CapturedError>,
+    pub success_index: Option<usize>,
 }
 
 fn serialize_cap_logs<S>(
@@ -52,6 +55,46 @@ where
     Ok(list.into_iter().collect())
 }
 
+/// Ensure the index file for a given log file index exists and is up to date.
+async fn ensure_index_file(dir: &Path, file_index: usize) -> tokio::io::Result<()> {
+    let log_path = dir.join(format!("{}.pyrolog", file_index));
+    let idx_path = dir.join(format!("{}.pyrolog.idx", file_index));
+
+    if !tokio::fs::metadata(&log_path).await.is_ok() {
+        return Ok(());
+    }
+
+    let log_meta_len = tokio::fs::metadata(&log_path).await?.len();
+    let idx_meta_opt = tokio::fs::metadata(&idx_path).await.ok();
+
+    let should_rebuild = match idx_meta_opt {
+        None => true,
+        Some(m) => {
+            let idx_len = m.len();
+            idx_len % 8 != 0 || (log_meta_len > 0 && idx_len == 0)
+        }
+    };
+
+    if should_rebuild {
+        let mut log_file = File::open(&log_path).await?;
+        let mut idx_file = File::create(&idx_path).await?;
+        
+        let mut offset: u64 = 0;
+        let mut len_buf = [0u8; 4];
+        while log_file.read_exact(&mut len_buf).await.is_ok() {
+            idx_file.write_all(&offset.to_le_bytes()).await?;
+            
+            let len = u32::from_le_bytes(len_buf) as u64;
+            let record_len = 4 + 4 + len;
+            offset += record_len;
+            
+            log_file.seek(std::io::SeekFrom::Start(offset)).await?;
+        }
+        idx_file.flush().await?;
+    }
+    Ok(())
+}
+
 /// `LogWal` provides an async file-backed write-ahead log for `LogRecord`s using tokio.
 /// 
 /// Records are framed using CSC encoding:
@@ -63,6 +106,8 @@ pub struct LogWal {
     current_entries: usize,
     total_entries: usize,
     writer: BufWriter<File>,
+    idx_writer: BufWriter<File>,
+    current_offset: u64,
 }
 
 impl LogWal {
@@ -118,6 +163,20 @@ impl LogWal {
             final_entries
         };
 
+        // Ensure index files exist and are built up to final_idx
+        for idx in 0..=final_idx {
+            ensure_index_file(&dir, idx).await?;
+        }
+
+        let idx_path = dir.join(format!("{}.pyrolog.idx", final_idx));
+        let idx_file = OpenOptions::new().create(true).append(true).open(&idx_path).await?;
+
+        let current_offset = if final_entries > 0 {
+            tokio::fs::metadata(&path).await?.len()
+        } else {
+            0
+        };
+
         Ok(Self {
             dir,
             capacity,
@@ -125,16 +184,27 @@ impl LogWal {
             current_entries: final_entries,
             total_entries,
             writer: BufWriter::new(final_file),
+            idx_writer: BufWriter::new(idx_file),
+            current_offset,
         })
     }
 
     async fn rotate(&mut self) -> tokio::io::Result<()> {
         self.writer.flush().await?;
+        self.idx_writer.flush().await?;
+
         self.current_file_index += 1;
         self.current_entries = 0;
+        self.current_offset = 0;
+
         let path = self.dir.join(format!("{}.pyrolog", self.current_file_index));
         let file = OpenOptions::new().create(true).append(true).open(path).await?;
         self.writer = BufWriter::new(file);
+
+        let idx_path = self.dir.join(format!("{}.pyrolog.idx", self.current_file_index));
+        let idx_file = OpenOptions::new().create(true).append(true).open(idx_path).await?;
+        self.idx_writer = BufWriter::new(idx_file);
+
         Ok(())
     }
 
@@ -150,12 +220,17 @@ impl LogWal {
         let len = payload.len() as u32;
         let crc = crc32c(&payload);
 
+        // Write offset to index file
+        self.idx_writer.write_all(&self.current_offset.to_le_bytes()).await?;
+        self.idx_writer.flush().await?;
+
         // Frame: [ len (4) | crc (4) | payload (n) ]
         self.writer.write_all(&len.to_le_bytes()).await?;
         self.writer.write_all(&crc.to_le_bytes()).await?;
         self.writer.write_all(&payload).await?;
         self.writer.flush().await?;
 
+        self.current_offset += 4 + 4 + payload.len() as u64;
         self.current_entries += 1;
         self.total_entries += 1;
 
@@ -164,7 +239,13 @@ impl LogWal {
 
     /// Ensures all buffered logs are written to disk.
     pub async fn flush(&mut self) -> tokio::io::Result<()> {
+        self.idx_writer.flush().await?;
         self.writer.flush().await
+    }
+
+    /// Returns the underlying log directory path.
+    pub fn dir(&self) -> &Path {
+        &self.dir
     }
 
     /// Returns the underlying file.
@@ -176,7 +257,14 @@ impl LogWal {
     pub fn into_inner(self) -> File {
         self.writer.into_inner()
     }
+
+    /// Retrieve a single LogEntry by its global index in O(1) file access.
+    pub async fn get(&self, index: usize) -> tokio::io::Result<Option<LogEntry>> {
+        let reader = LogWalReader::open(&self.dir).await?;
+        reader.get(index, self.capacity).await
+    }
 }
+
 
 /// `LogWalReader` provides an async reader to iterate over `LogRecord`s from a log directory.
 pub struct LogWalReader {
@@ -195,6 +283,72 @@ impl LogWalReader {
             reader: None,
         })
     }
+
+    /// Retrieve a single LogEntry by its global index in O(1) file access.
+    pub async fn get(&self, index: usize, capacity: usize) -> tokio::io::Result<Option<LogEntry>> {
+        if capacity == 0 {
+            return Ok(None);
+        }
+        let file_index = index / capacity;
+        let entry_index = index % capacity;
+
+        let log_path = self.dir.join(format!("{}.pyrolog", file_index));
+        let idx_path = self.dir.join(format!("{}.pyrolog.idx", file_index));
+
+        if !tokio::fs::metadata(&log_path).await.is_ok() {
+            return Ok(None);
+        }
+
+        // Ensure the index file exists and is rebuilt if needed
+        ensure_index_file(&self.dir, file_index).await?;
+
+        if !tokio::fs::metadata(&idx_path).await.is_ok() {
+            return Ok(None);
+        }
+
+        let mut idx_file = File::open(&idx_path).await?;
+        let idx_offset = (entry_index * 8) as u64;
+
+        if idx_file.seek(SeekFrom::Start(idx_offset)).await.is_err() {
+            return Ok(None);
+        }
+
+        let mut offset_buf = [0u8; 8];
+        if idx_file.read_exact(&mut offset_buf).await.is_err() {
+            return Ok(None);
+        }
+        let start_offset = u64::from_le_bytes(offset_buf);
+
+        let mut log_file = File::open(&log_path).await?;
+        if log_file.seek(SeekFrom::Start(start_offset)).await.is_err() {
+            return Ok(None);
+        }
+
+        // Now read the target entry
+        let mut len_buf = [0u8; 4];
+        if log_file.read_exact(&mut len_buf).await.is_err() {
+            return Ok(None);
+        }
+        let len = u32::from_le_bytes(len_buf) as usize;
+
+        let mut crc_buf = [0u8; 4];
+        log_file.read_exact(&mut crc_buf).await?;
+        let expected_crc = u32::from_le_bytes(crc_buf);
+
+        let mut payload = vec![0u8; len];
+        log_file.read_exact(&mut payload).await?;
+
+        if crc32c(&payload) != expected_crc {
+            return Err(tokio::io::Error::new(
+                tokio::io::ErrorKind::InvalidData,
+                "Log record CRC mismatch: data corruption detected",
+            ));
+        }
+
+        let record = serde_json::from_slice::<LogEntry>(&payload)?;
+        Ok(Some(record))
+    }
+
 
     /// Reads the next `LogRecord` from the log directory.
     /// Returns `Ok(None)` when the end of the log directory is reached.
@@ -272,6 +426,7 @@ mod tests {
                 (("cap1".to_string(), "val1".to_string()), vec!["cap log 1".to_string()]),
             ]),
             failure: None,
+            success_index: None,
         }
     }
 
@@ -348,5 +503,43 @@ mod tests {
         let mut reader = LogWalReader::open(path).await.unwrap();
         let result = reader.next().await.unwrap();
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_log_wal_get() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let path = tmp_dir.path();
+
+        // capacity is 2, so index 0 and 1 go in file 0, index 2 and 3 in file 1, etc.
+        let mut wal = LogWal::open(path, 2).await.unwrap();
+        
+        for i in 0..5 {
+            wal.append(&create_test_entry(i)).await.unwrap();
+        }
+        wal.flush().await.unwrap();
+
+        // 1. Get each record by index
+        for i in 0..5 {
+            let entry = wal.get(i).await.unwrap().expect("Should find record");
+            assert_eq!(entry.row_index, i);
+        }
+
+        // 2. Index past the end should return None
+        assert!(wal.get(5).await.unwrap().is_none());
+
+        // 3. Delete an index file to verify auto-rebuild of index file
+        let idx_file_0 = path.join("0.pyrolog.idx");
+        assert!(idx_file_0.exists());
+        tokio::fs::remove_file(&idx_file_0).await.unwrap();
+        assert!(!idx_file_0.exists());
+
+        // Call get: should trigger auto-rebuild of the index file and successfully retrieve
+        let entry = wal.get(1).await.unwrap().expect("Should retrieve successfully after index deletion");
+        assert_eq!(entry.row_index, 1);
+        assert!(idx_file_0.exists(), "Index file should have been rebuilt");
+
+        // Verify it still works for other records
+        let entry_2 = wal.get(2).await.unwrap().expect("Should find record 2");
+        assert_eq!(entry_2.row_index, 2);
     }
 }

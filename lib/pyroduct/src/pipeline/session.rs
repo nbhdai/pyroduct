@@ -135,6 +135,7 @@ impl SessionPipeline {
                 module_logs: logs.module_logs.clone(),
                 capability_logs: logs.capability_logs.clone(),
                 failure: None,
+                success_index: None,
             };
             let _ = self.log_manager.append(&log_entry).await;
 
@@ -259,6 +260,7 @@ impl SessionPipeline {
                     module_logs: logs.module_logs,
                     capability_logs: logs.capability_logs,
                     failure: None,
+                    success_index: None,
                 };
                 let _ = active.log_wal.append(&log_entry).await;
             }
@@ -268,6 +270,7 @@ impl SessionPipeline {
                     module_logs: e.logs.module_logs.clone(),
                     capability_logs: e.logs.capability_logs.clone(),
                     failure: e.result.as_ref().ok().cloned(),
+                    success_index: None,
                 };
                 let _ = active.log_wal.append(&log_entry).await;
             }

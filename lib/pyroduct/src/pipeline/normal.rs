@@ -129,6 +129,7 @@ impl Pipeline {
                 module_logs: logs.module_logs.clone(),
                 capability_logs: logs.capability_logs.clone(),
                 failure: None,
+                success_index: Some(self.output_manager.len() - 1),
             },
             ExecutionRecord::Failure {
                 row_index,
@@ -140,11 +141,81 @@ impl Pipeline {
                 module_logs: logs.module_logs.clone(),
                 capability_logs: logs.capability_logs.clone(),
                 failure: failure.as_ref().ok().cloned(),
+                success_index: None,
             },
         };
         self.log_manager.append(&log_entry).await?;
 
         Ok(record)
+    }
+
+    /// Retrieve a single record by its global index.
+    pub async fn get_record(&self, index: usize) -> Result<ExecutionRecord, PyroError> {
+        let input_row = self.input_manager.get_record(index)?;
+
+        // Try to read from LogWal in O(1)
+        let log_entry = self.log_manager.get(index).await
+            .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
+
+        if let Some(entry) = log_entry {
+            let logs = PyroLogs {
+                module_logs: entry.module_logs,
+                capability_logs: entry.capability_logs,
+            };
+
+            if let Some(err) = entry.failure {
+                Ok(ExecutionRecord::Failure {
+                    row_index: index,
+                    input: input_row,
+                    failure: Ok(err),
+                    logs,
+                })
+            } else {
+                let success_index = entry.success_index.unwrap_or(0);
+                let success_row = self.output_manager.get_record(success_index)?;
+                Ok(ExecutionRecord::Success {
+                    row_index: index,
+                    input: input_row,
+                    success: success_row,
+                    logs,
+                })
+            }
+        } else {
+            // Logs cleaned/missing, return blank logs
+            let output_len = self.output_manager.len();
+            let mut matching_row = None;
+            for k in 0..output_len {
+                if let Ok(row) = self.output_manager.get_record(k) {
+                    let mut matches = true;
+                    for (field_name, val) in input_row.iter() {
+                        if row.get(field_name) != Some(val) {
+                            matches = false;
+                            break;
+                        }
+                    }
+                    if matches {
+                        matching_row = Some(row);
+                        break;
+                    }
+                }
+            }
+
+            if let Some(success_row) = matching_row {
+                Ok(ExecutionRecord::Success {
+                    row_index: index,
+                    input: input_row,
+                    success: success_row,
+                    logs: PyroLogs::empty(),
+                })
+            } else {
+                Ok(ExecutionRecord::Failure {
+                    row_index: index,
+                    input: input_row,
+                    failure: Err("Log cleaned and no success record found".to_string()),
+                    logs: PyroLogs::empty(),
+                })
+            }
+        }
     }
 }
 

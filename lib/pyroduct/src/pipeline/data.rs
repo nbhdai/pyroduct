@@ -7,6 +7,7 @@ use crate::captured::CapturedError;
 use crate::error::PyroError;
 use crate::format::value::PyroSchema;
 use crate::format::value::arrow::PreBatch;
+use crate::format::value::arrow::Rowable;
 use crate::format::value::arrow::wal::{WalWriter, recover};
 use arrow::array::RecordBatch;
 use pyro_file;
@@ -260,6 +261,93 @@ impl DataManager {
 
     pub fn output_dir(&self) -> &Path {
         &self.output_dir
+    }
+
+    pub fn get_record(&self, index: usize) -> Result<PyroRow<'static>, PyroError> {
+        let mut current_offset = 0;
+
+        // 1. Scan the output directory for Parquet rollout files and Arrow batch files
+        let mut parquet_files = Vec::new();
+        let mut arrow_files = Vec::new();
+
+        if let Ok(entries) = std::fs::read_dir(&self.output_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let filename = path.file_name().unwrap().to_string_lossy();
+
+                if filename.starts_with("rollout_") && filename.ends_with(".parquet") {
+                    if let Some(id_str) = filename.strip_prefix("rollout_").and_then(|s| s.strip_suffix(".parquet")) {
+                        if let Ok(id) = id_str.parse::<usize>() {
+                            parquet_files.push((id, path));
+                        }
+                    }
+                } else if filename.starts_with("batch_") && filename.ends_with(".arrow") {
+                    if let Some(id_str) = filename.strip_prefix("batch_").and_then(|s| s.strip_suffix(".arrow")) {
+                        if let Ok(id) = id_str.parse::<usize>() {
+                            arrow_files.push((id, path));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sort files by ID ascending to preserve chronological order
+        parquet_files.sort_by_key(|(id, _)| *id);
+        arrow_files.sort_by_key(|(id, _)| *id);
+
+        // 2. Search in Parquet files
+        for (_, path) in parquet_files {
+            let bytes = std::fs::read(&path).map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
+            let filename = path.file_name().unwrap().to_string_lossy().into_owned();
+            let batches = pyro_file::parse_data_to_batch_sync(bytes, &filename)
+                .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
+
+            for batch in batches {
+                let num_rows = batch.num_rows();
+                if index >= current_offset && index < current_offset + num_rows {
+                    let batch_index = index - current_offset;
+                    let row = batch.row(batch_index)
+                        .map_err(|e| PyroError::validation(CapturedError::new(e)))?
+                        .into_owned();
+                    return Ok(row);
+                }
+                current_offset += num_rows;
+            }
+        }
+
+        // 3. Search in Arrow files
+        for (_, path) in arrow_files {
+            let bytes = std::fs::read(&path).map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
+            let filename = path.file_name().unwrap().to_string_lossy().into_owned();
+            let batches = pyro_file::parse_data_to_batch_sync(bytes, &filename)
+                .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
+
+            for batch in batches {
+                let num_rows = batch.num_rows();
+                if index >= current_offset && index < current_offset + num_rows {
+                    let batch_index = index - current_offset;
+                    let row = batch.row(batch_index)
+                        .map_err(|e| PyroError::validation(CapturedError::new(e)))?
+                        .into_owned();
+                    return Ok(row);
+                }
+                current_offset += num_rows;
+            }
+        }
+
+        // 4. Search in in-memory wal_data
+        if index >= current_offset {
+            let val_index = index - current_offset;
+            if let Some(row) = self.wal_data.get(val_index) {
+                return Ok(row.clone());
+            }
+        }
+
+        Err(PyroError::validation(CapturedError::new(format!(
+            "Index {} out of bounds for DataManager (total length: {})",
+            index,
+            self.len()
+        ))))
     }
 }
 
