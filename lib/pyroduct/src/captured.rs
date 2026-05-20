@@ -7,6 +7,7 @@ use std::{backtrace::Backtrace, borrow::Cow};
 use thiserror::Error;
 
 use crate::format::PyroVec;
+use crate::format::header::PyroHeaderMut;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LibraryInfo<'a> {
@@ -140,6 +141,7 @@ impl CapturedError {
         let mut vec = PyroVec::with_capacity(predict_captured_error_size(&self));
         serde_json::to_writer(&mut vec, self)
             .expect("CapturedError serialization should never fail");
+        vec.set_status(crate::format::header::DataStatus::CodeError);
         vec
     }
 }

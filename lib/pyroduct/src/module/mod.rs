@@ -588,6 +588,16 @@ impl PyroInstance {
                 tracing::debug!(session_id, fn_id, "Session result: Valid");
                 Ok(result)
             }
+            Ok(DataStatus::Empty) => {
+                let result = match fn_id {
+                    0 => return Err(self.pack_pyro_error(PyroError::remote_code(CapturedError::new("Session returned 'continue', but provided no data")))),
+                    1 => return Err(self.pack_pyro_error(PyroError::remote_code(CapturedError::new("Session returned 'end', but provided no data")))),
+                    2 => sessions::SessionResult::Terminate,
+                    _ => sessions::SessionResult::Terminate,
+                };
+                tracing::debug!(session_id, fn_id, "Session result: Valid");
+                Ok(result)
+            }
             Ok(DataStatus::RkyvError) => {
                 tracing::debug!(session_id, "Session result: RkyvError");
                 match serde_json::from_slice(&result_view) {

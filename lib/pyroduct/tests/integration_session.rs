@@ -11,14 +11,16 @@ use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberI
 /// A session module that returns a single string field.
 const SIMPLE_SESSION_MODULE: &str = r#"
 // Session module v2
-use pyroduct::session::SessionResponse;
+use pyroduct::{session::SessionResponse, tracing};
 
 #[pyroduct::module(session, output = message)]
 fn counter(
     prior: Vec<String>,
     input: String,
 ) -> Result<SessionResponse<String>> {
-    let turn = prior.len() as u32 + 1;
+    tracing::info!(?prior, input, "Calling");
+    let turn = (prior.len() as u32 + 1) / 2;
+
 
     match turn {
         1 => Ok(SessionResponse::Continue(format!("Hello! Turn {}", turn))),
@@ -83,6 +85,18 @@ async fn test_session_lifecycle() {
         .prep_session(session_id, &[])
         .await
         .expect("Should prep session");
+
+    let input_1 = PyroRow::from([("input", "rot 0".into())]);
+    let output_1 = pipeline.call(session_id, &input_1).await.unwrap();
+    assert_eq!(output_1, SessionResult::Continue(PyroRow::from([("message", "Hello! Turn 0".into())])));
+
+    let input_2 = PyroRow::from([("input", "rot 1".into())]);
+    let output_2 = pipeline.call(session_id, &input_2).await.unwrap();
+    assert_eq!(output_2, SessionResult::End(PyroRow::from([("message", "Goodbye! Turn 1".into())])));
+
+    let input_3 = PyroRow::from([("input", "rot 3".into())]);
+    let output_3 = pipeline.call(session_id, &input_3).await.unwrap();
+    assert_eq!(output_3, SessionResult::Terminate);
 
     // Trigger log rotation
     for i in 0..5 {

@@ -2,6 +2,7 @@ use std::sync::Mutex;
 use std::{collections::HashMap, ops::Deref};
 use tracing::{error, trace};
 
+use crate::format::header::PyroHeader;
 use crate::format::{
     Bridgeable, BridgeableResult, PyroVec, ToRow,
     bridgeable::BridgeableZeroCopy,
@@ -370,7 +371,10 @@ where
                 "Unable to locate input with offset {}",
                 input_ptr as usize
             )));
-            return to_output(encode_result(result));
+            return to_output(match encode_result(result) {
+                Ok(r) => r,
+                Err(r) => r,
+            });
         }
     };
 
@@ -392,17 +396,27 @@ where
         Err(_) => {
             error!("Unable to extract input from PyroRow");
             let result = Err(CapturedError::new("Unable to extract input"));
-            return to_output(encode_result(result));
+            return to_output(match encode_result(result) {
+                Ok(r) => r,
+                Err(r) => r,
+            });
         }
     };
 
     let output = (func)(input);
 
     to_output(match output {
-        Ok(o) => encode_result(Ok(o.to_row())),
+        Ok(o) => match encode_result(Ok(o.to_row())) {
+            Ok(r) => r,
+            Err(r) => r,
+        },
         Err(err) => {
             error!(?err, "Function execution failed");
-            encode_result(Err(err))
+            
+            match encode_result(Err(err)) {
+                Ok(r) => r,
+                Err(r) => r,
+            }
         },
     })
 }
@@ -426,10 +440,18 @@ where
         let result = Err(CapturedError::new(
             "The input is missing"
         ));
-        return to_output(encode_result(result));
+        return to_output(match encode_result(result) {
+            Ok(r) => r,
+            Err(r) => r,
+        });
     }
 
-    let input_row = match PyroRow::expose_view(inputs[inputs.len() - 1].py_ref()) {
+    let current_input = &inputs[inputs.len() - 1];
+    if current_input.status() == Ok(DataStatus::Empty) {
+        error!(session_id, "Session terminated");
+        return to_output(CapturedError::new(format!("Session {session_id} Terminated")).encode());
+    }
+    let input_row = match PyroRow::expose_view(current_input.py_ref()) {
         Ok(vec) => vec,
         Err(err) => {
             error!(session_id, ?err, "Unable to expose view for current input");
@@ -439,9 +461,13 @@ where
     let input = PyroRow::from(&*input_row);
 
     let mut prior = Vec::with_capacity(inputs.len());
-    for ir in inputs[0..inputs.len() - 1].iter() {
+    for (input, ir) in inputs[0..inputs.len() - 1].iter().enumerate() {
+        if ir.status() == Ok(DataStatus::Empty) {
+            error!(session_id, input, "Session terminated");
+            return to_output(CapturedError::new(format!("Session {session_id} Terminated")).encode());
+        }
         let input_row = match PyroRow::expose_view(ir.py_ref()) {
-            Ok(vec) => vec,
+                        Ok(vec) => vec,
             Err(err) => {
                 error!(session_id, ?err, "Unable to expose view for prior input");
                 return to_output(err.encode());
@@ -451,6 +477,7 @@ where
         prior.push(input);
     }
 
+    trace!(priors = prior.len(), "Retrieve priors");
 
     let result = match func(&prior, input) {
         Ok(result) => result,
@@ -460,14 +487,22 @@ where
         },
     };
 
+    trace!("Processed function");
+
     let result = match result {
         SessionResponse::Continue(o) => {
-            let mut result = encode_result(Ok(o.to_row()));
+            let mut result = match encode_result(Ok(o.to_row())) {
+                Ok(r) => r,
+                Err(e) => return to_output(e),
+            };
             result.set_fn_id(0);
             result
         },
         SessionResponse::End(o) => {
-            let mut result = encode_result(Ok(o.to_row()));
+            let mut result = match encode_result(Ok(o.to_row())) {
+                Ok(r) => r,
+                Err(e) => return to_output(e),
+            };
             result.set_fn_id(1);
             result
         },
@@ -508,10 +543,18 @@ where
         let result = Err(CapturedError::new(
             "The input is missing"
         ));
-        return to_output(encode_result(result));
+        return to_output(match encode_result(result) {
+            Ok(r) => r,
+            Err(r) => r,
+        });
     }
 
-    let input_row = match PyroRow::expose_view(inputs[outputs.len()].py_ref()) {
+    let current_input = &inputs[outputs.len()];
+    if current_input.status() == Ok(DataStatus::Empty) {
+        error!(session_id, "Session terminated");
+        return to_output(CapturedError::new(format!("Session {session_id} Terminated")).encode());
+    }
+    let input_row = match PyroRow::expose_view(current_input.py_ref()) {
         Ok(vec) => vec,
         Err(err) => {
             error!(session_id, ?err, "Unable to expose view for current input in diff session");
@@ -521,7 +564,11 @@ where
     let input = PyroRow::from(&*input_row);
 
     let mut prior_inputs = Vec::with_capacity(inputs.len());
-    for ir in inputs[0..inputs.len() - 1].iter() {
+    for (input, ir) in inputs[0..inputs.len() - 1].iter().enumerate() {
+        if ir.status() == Ok(DataStatus::Empty) {
+            error!(session_id, input, "Session terminated");
+            return to_output(CapturedError::new(format!("Session {session_id} Terminated")).encode());
+        }
         let input_row = match PyroRow::expose_view(ir.py_ref()) {
             Ok(vec) => vec,
             Err(err) => {
@@ -535,7 +582,11 @@ where
 
 
     let mut prior_outputs = Vec::with_capacity(outputs.len());
-    for or in outputs.iter() {
+    for (output, or) in outputs.iter().enumerate() {
+        if or.status() == Ok(DataStatus::Empty) {
+            error!(session_id, output, "Session terminated");
+            return to_output(CapturedError::new(format!("Session {session_id} Terminated")).encode());
+        }
         let output_row = match PyroRow::expose_view(or.py_ref()) {
             Ok(vec) => vec,
             Err(err) => {
@@ -557,14 +608,22 @@ where
 
     let result = match result {
         SessionResponse::Continue(o) => {
-            let mut result = encode_result(Ok(o.to_row()));
-            result.set_fn_id(0);
-            result
+            match encode_result(Ok(o.to_row())) {
+                Ok(mut r) => {
+                    r.set_fn_id(0);
+                    r
+                },
+                Err(e) => return to_output(e),
+            }
         },
         SessionResponse::End(o) => {
-            let mut result = encode_result(Ok(o.to_row()));
-            result.set_fn_id(1);
-            result
+            match encode_result(Ok(o.to_row())) {
+                Ok(mut r) => {
+                    r.set_fn_id(1);
+                    r
+                },
+                Err(e) => return to_output(e),
+            }
         },
         SessionResponse::Terminate => {
             let mut result = PyroVec::ok();
@@ -578,7 +637,7 @@ where
     sessions.last().unwrap().raw_ptr() as *const u8
 }
 
-fn encode_result<'a>(result: Result<PyroRow<'a>, CapturedError>) -> PyroVec {
+fn encode_result<'a>(result: Result<PyroRow<'a>, CapturedError>) -> Result<PyroVec, PyroVec> {
     let encoding = match result {
         Ok(success) => {
             let static_success = success.into_owned();
@@ -589,14 +648,17 @@ fn encode_result<'a>(result: Result<PyroRow<'a>, CapturedError>) -> PyroVec {
             let captured: CapturedError = err.into();
             let mut vec = captured.encode();
             vec.set_status(DataStatus::RkyvError);
-            return vec;
+            return Err(vec);
         }
     };
     match encoding {
-        Ok(v) => v,
+        Ok(mut v) => {
+            v.set_status(DataStatus::RkyvValid);
+            Ok(v)
+        },
         Err(e) => {
             error!(?e, "encode_result: encoding failed");
-            e.encode()
+            Err(e.encode())
         }
     }
 }

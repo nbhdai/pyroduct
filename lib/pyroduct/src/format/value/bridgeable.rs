@@ -52,7 +52,7 @@ impl Bridgeable for PyroValue<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::format::{HasReceiver, Receiver, value::PyroRowOwned};
+    use crate::format::{HasReceiver, Receiver, header::PyroHeader, value::PyroRowOwned};
 
     #[test]
     fn test_pyro_row_owned_ship_roundtrip() {
@@ -65,6 +65,7 @@ mod tests {
 
         // Ship
         let vec = row.ship().expect("ship failed");
+        assert_eq!(vec.status(), Ok(crate::format::header::DataStatus::RkyvValid));
         assert!(vec.len() > 0);
 
         // Expose

@@ -45,7 +45,7 @@ use super::PyroState;
 use super::WasmError;
 
 /// The type of session response returned by `Session::call()`.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum SessionResult {
     /// The session should continue. Contains the output row.
     Continue(PyroRow<'static>),

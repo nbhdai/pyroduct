@@ -277,6 +277,10 @@ impl fmt::Display for ErrorKind {
 
 // Convenience constructors for common local errors
 impl PyroError {
+    pub fn remote_code(err: impl Into<Box<CapturedError>>) -> Self {
+        Self::CodePanic(err.into())
+    }
+
     pub fn serialization(err: impl Into<Box<CapturedError>>) -> Self {
         Self::local(ErrorKind::Serialization(err.into()))
     }
