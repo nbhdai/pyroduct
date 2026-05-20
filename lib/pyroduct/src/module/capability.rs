@@ -115,7 +115,7 @@ pub unsafe extern "C" fn log_callback(
         message: log_msg,
         timestamp: std::time::SystemTime::now(),
     };
-
+    tracing::trace!(library_id, span_id, mux_id, msg=entry.message, "[CAPABILITY]");
     if span_id == 0 {
         if let Some(tx) = CATCH_LOG_SENDER.get(&library_id) {
             match tx.try_send(entry) {

@@ -176,7 +176,7 @@ impl SessionPipeline {
     }
 
     pub fn session_lengths(&self, session_id: u32) -> Option<u32> {
-        self.step.session_lengths(session_id).map(|o| o.0)
+        self.step.session_lengths(session_id).map(|o| o.0 + o.1)
     }
 }
 

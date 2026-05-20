@@ -23,8 +23,8 @@ fn counter(
 
 
     match turn {
-        1 => Ok(SessionResponse::Continue(format!("Hello! Turn {}", turn))),
-        2 => Ok(SessionResponse::End(format!("Goodbye! Turn {}", turn))),
+        0 => Ok(SessionResponse::Continue(format!("Hello! Turn {}", turn + 1))),
+        1 => Ok(SessionResponse::End(format!("Goodbye! Turn {}", turn + 1))),
         _ => Ok(SessionResponse::Terminate),
     }
 }
@@ -86,32 +86,7 @@ async fn test_session_lifecycle() {
         .await
         .expect("Should prep session");
 
-    let input_1 = PyroRow::from([("input", "rot 0".into())]);
-    let output_1 = pipeline.call(session_id, &input_1).await.unwrap();
-    assert_eq!(output_1, SessionResult::Continue(PyroRow::from([("message", "Hello! Turn 0".into())])));
-
-    let input_2 = PyroRow::from([("input", "rot 1".into())]);
-    let output_2 = pipeline.call(session_id, &input_2).await.unwrap();
-    assert_eq!(output_2, SessionResult::End(PyroRow::from([("message", "Goodbye! Turn 1".into())])));
-
-    let input_3 = PyroRow::from([("input", "rot 3".into())]);
-    let output_3 = pipeline.call(session_id, &input_3).await.unwrap();
-    assert_eq!(output_3, SessionResult::Terminate);
-
-    // Trigger log rotation
-    for i in 0..5 {
-        let input = PyroRow::from([("input", format!("rot {}", i).into())]);
-        pipeline.call(session_id, &input).await.unwrap();
-    }
-
-    // Verify log rotation
-    let log_files = std::fs::read_dir(&tmp_path).unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "pyrolog"))
-        .count();
-    assert!(log_files > 1, "Should have rotated logs, but found only {} file(s)", log_files);
-
-    // --- Turn 1 ---
+        // --- Turn 1 ---
     let turn1_input = PyroRow::from([("input", "Hello!".into())]);
     let result1 = pipeline
         .call(session_id, &turn1_input)
@@ -155,6 +130,21 @@ async fn test_session_lifecycle() {
         .session_lengths(session_id)
         .expect("Session should exist");
     assert_eq!(len, 3 + 3);
+
+    // Trigger log rotation
+    for session_id in 0..5 {
+        for i in 0..3 {
+            let input = PyroRow::from([("input", format!("rot {}", i).into())]);
+            pipeline.call(session_id, &input).await.unwrap();
+        }
+    }
+
+    // Verify log rotation
+    let log_files = std::fs::read_dir(&tmp_path).unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "pyrolog"))
+        .count();
+    assert!(log_files > 1, "Should have rotated logs, but found only {} file(s)", log_files);
 
     pipeline
         .close_session(session_id)

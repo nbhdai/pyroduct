@@ -85,19 +85,6 @@ async fn test_session_lifecycle() {
         .await
         .expect("Should prep session");
 
-    // Trigger log rotation
-    for i in 0..5 {
-        let input = PyroRow::from([("input", format!("rot {}", i).into())]);
-        pipeline.call(session_id, &input).await.unwrap();
-    }
-
-    // Verify log rotation
-    let log_files = std::fs::read_dir(&tmp_path).unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "pyrolog"))
-        .count();
-    assert!(log_files > 1, "Should have rotated logs, but found only {} file(s)", log_files);
-
     // --- Turn 1 ---
     let turn1_input = PyroRow::from([("input", "Hello!".into())]);
     let result1 = pipeline
@@ -143,6 +130,22 @@ async fn test_session_lifecycle() {
         .expect("Session should exist");
     assert_eq!(in_len, 3);
     assert_eq!(out_len, 3);
+
+    // Trigger log rotation
+    for session_id in 0..5 {
+        for i in 0..3 {
+            let input = PyroRow::from([("input", format!("rot {}", i).into())]);
+            pipeline.call(session_id, &input).await.unwrap();
+        }
+    }
+
+    // Verify log rotation
+    let log_files = std::fs::read_dir(&tmp_path).unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "pyrolog"))
+        .count();
+    assert!(log_files > 1, "Should have rotated logs, but found only {} file(s)", log_files);
+
 
     pipeline
         .close_session(session_id)

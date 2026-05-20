@@ -293,7 +293,7 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
         let slice = &wasm_memory[start..end];
         let data = self.ctx.as_context().data();
         data.module_log(slice);
-
+        
         Ok(len)
     }
 

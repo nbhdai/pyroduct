@@ -379,6 +379,8 @@ impl PyroState {
 
     pub fn module_log(&self, log: &[u8]) {
         let log_msg = String::from_utf8_lossy(log).trim_end().to_string();
+        tracing::trace!(msg=log_msg, "[MODULE]");
+
         self.module_log.lock().unwrap().push(log_msg);
     }
 

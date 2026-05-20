@@ -81,20 +81,6 @@ async fn test_capability_state_preservation() {
     let factory = config.factory().unwrap();
     let mut pipeline = factory.build().await.unwrap();
 
-    for i in 0..5 {
-        pipeline
-            .process(i, &PyroRow::from([("input", "0".into())]))
-            .await
-            .unwrap();
-    }
-
-    // Verify log rotation
-    let log_files = std::fs::read_dir(&tmp_path).unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "pyrolog"))
-        .count();
-    assert!(log_files > 1, "Should have rotated logs, but found only {} file(s)", log_files);
-
     let result1 = pipeline
         .process(10, &PyroRow::from([("input", "0".into())]))
         .await
@@ -110,4 +96,18 @@ async fn test_capability_state_preservation() {
         .unwrap();
     let row2 = result2.row().unwrap();
     assert_eq!(row2.get_u64("incremented").unwrap(), 1);
+
+    for i in 0..5 {
+        pipeline
+            .process(i, &PyroRow::from([("input", "0".into())]))
+            .await
+            .unwrap();
+    }
+
+    // Verify log rotation
+    let log_files = std::fs::read_dir(&tmp_path).unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "pyrolog"))
+        .count();
+    assert!(log_files > 1, "Should have rotated logs, but found only {} file(s)", log_files);
 }
