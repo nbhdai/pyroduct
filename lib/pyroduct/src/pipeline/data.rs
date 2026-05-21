@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use tracing::{info, warn};
+use tracing::{debug, error, info, warn};
 
-use crate::{PyroRow, PyroValue};
 use crate::captured::CapturedError;
 use crate::error::PyroError;
 use crate::format::value::PyroSchema;
 use crate::format::value::arrow::PreBatch;
 use crate::format::value::arrow::Rowable;
 use crate::format::value::arrow::wal::{WalWriter, recover};
+use crate::{PyroRow, PyroValue};
 use arrow::array::RecordBatch;
 use pyro_file;
 
@@ -119,11 +119,18 @@ impl DataManager {
         let mut total_parquet = 0;
         let mut ipc_counts = HashMap::new();
 
-        let entries = std::fs::read_dir(&self.output_dir)
-            .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
+        let entries = std::fs::read_dir(&self.output_dir).map_err(|e| {
+            PyroError::local_io(
+                CapturedError::new("Failed to read output directory").with_source(e),
+            )
+        })?;
 
         for entry in entries {
-            let entry = entry.map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
+            let entry = entry.map_err(|e| {
+                PyroError::local_io(
+                    CapturedError::new("Failed to read directory entry").with_source(e),
+                )
+            })?;
             let path = entry.path();
             let filename = path.file_name().unwrap().to_string_lossy();
 
@@ -144,10 +151,20 @@ impl DataManager {
                     .and_then(|s| s.split('.').next())
                 {
                     if let Ok(id) = id_str.parse::<usize>() {
-                        let bytes = std::fs::read(&path)
-                            .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
+                        let bytes = std::fs::read(&path).map_err(|e| {
+                            PyroError::local_io(
+                                CapturedError::new("Failed to read Arrow IPC file").with_source(e),
+                            )
+                        })?;
                         let batches = pyro_file::parse_data_to_batch_sync(bytes, &filename)
-                            .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
+                            .map_err(|e| {
+                                PyroError::validation(
+                                    CapturedError::new(
+                                        "Failed to parse Arrow IPC file data to batches",
+                                    )
+                                    .with_source(e),
+                                )
+                            })?;
                         let count: usize = batches.iter().map(|b| b.num_rows()).sum();
                         ipc_counts.insert(id, count);
                         self.ipc_file_paths.push(path.clone());
@@ -166,11 +183,22 @@ impl DataManager {
                     .and_then(|s| s.split('.').next())
                 {
                     if let Ok(id) = id_str.parse::<usize>() {
-                        let bytes =
-                            std::fs::read(&path).map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
+                        let bytes = std::fs::read(&path).map_err(|e| {
+                            PyroError::local_io(
+                                CapturedError::new("Failed to read Parquet rollout file")
+                                    .with_source(e),
+                            )
+                        })?;
                         let filename_str = filename.to_string();
                         let batches = pyro_file::parse_data_to_batch_sync(bytes, &filename_str)
-                            .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
+                            .map_err(|e| {
+                                PyroError::validation(
+                                    CapturedError::new(
+                                        "Failed to parse Parquet rollout file data to batches",
+                                    )
+                                    .with_source(e),
+                                )
+                            })?;
                         total_parquet += batches.iter().map(|b| b.num_rows()).sum::<usize>();
                         self.parquet_file_paths.push(path.clone());
 
@@ -212,7 +240,7 @@ impl DataManager {
     }
 
     pub fn set_metadata_prefix(&mut self, prefix: &str) {
-        use crate::format::value::{PyroField, PyroSchema, PyroType, PrimitiveDataType};
+        use crate::format::value::{PrimitiveDataType, PyroField, PyroSchema, PyroType};
 
         let metadata_field = PyroField::new(
             prefix.to_string(),
@@ -222,11 +250,7 @@ impl DataManager {
                     PyroType::PrimitiveScalar(PrimitiveDataType::U64),
                     false,
                 ),
-                PyroField::new(
-                    "timestamp",
-                    PyroType::Timestamp,
-                    false,
-                ),
+                PyroField::new("timestamp", PyroType::Timestamp, false),
             ])),
             false,
         );
@@ -246,6 +270,12 @@ impl DataManager {
             self.open_next_wal()?;
         }
 
+        debug!(
+            row_index,
+            wal_id = self.current_wal_id,
+            "push_record: inserting record"
+        );
+
         let now = chrono::Utc::now();
         let timestamp = crate::format::value::Time::from(now);
 
@@ -259,7 +289,7 @@ impl DataManager {
             record_to_push.insert(prefix.clone(), PyroValue::Group(metadata_row));
         }
 
-        let wal_index = self.wal_data.len();
+        let wal_index = self.len();
 
         // 1. Write to WAL (Durability)
         if let Some(wal) = &mut self.wal_writer {
@@ -267,9 +297,11 @@ impl DataManager {
         }
 
         // 2. Push to in-memory PreBatch (Performance)
-        self.wal_data
-            .push(record_to_push.clone())
-            .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
+        self.wal_data.push(record_to_push.clone()).map_err(|e| {
+            PyroError::validation(
+                CapturedError::new("Failed to push record to WAL buffer").with_source(e),
+            )
+        })?;
 
         // Populate fast lookup map for current active WAL
         self.current_wal_rows.insert(row_index, wal_index);
@@ -283,6 +315,12 @@ impl DataManager {
 
         // 4. Check capacity for flush
         if self.wal_data.len() >= self.wal_capacity {
+            debug!(
+                row_index,
+                wal_data_len = self.wal_data.len(),
+                wal_capacity = self.wal_capacity,
+                "push_record: capacity reached, flushing WAL"
+            );
             self.flush_wal()?;
         }
 
@@ -300,6 +338,7 @@ impl DataManager {
     /// Rolls up the in-memory buffer into a memmapable Arrow IPC file.
     pub fn flush_wal(&mut self) -> Result<(), PyroError> {
         let wal_id = self.current_wal_id;
+        debug!(wal_id, "flush_wal: flushing WAL to Arrow IPC");
 
         // Close current writer to ensure all data is flushed to disk
         self.wal_writer = None;
@@ -308,6 +347,7 @@ impl DataManager {
         match self.wal_data.flush() {
             Ok(Some(batch)) => {
                 let row_count = batch.num_rows();
+                debug!(wal_id, row_count, "flush_wal: writing record batch to IPC");
                 self.write_arrow_ipc(wal_id, &batch)?;
                 self.ipc_files.push(wal_id);
                 self.ipc_row_counts.insert(wal_id, row_count);
@@ -323,39 +363,80 @@ impl DataManager {
                 self.current_wal_rows.clear();
 
                 if self.ipc_files.len() >= self.ipc_capacity {
+                    debug!(
+                        ipc_files_count = self.ipc_files.len(),
+                        ipc_capacity = self.ipc_capacity,
+                        "flush_wal: IPC capacity reached, rolling out to Parquet"
+                    );
                     self.rollout_to_parquet()?;
                 }
                 Ok(())
             }
-            Ok(None) => Ok(()),
-            Err(e) => Err(PyroError::validation(CapturedError::new(e))),
+            Ok(None) => {
+                debug!(wal_id, "flush_wal: no data in prebatch to flush");
+                Ok(())
+            }
+            Err(e) => {
+                error!(wal_id, error = ?e, "flush_wal: failed to flush prebatch");
+                Err(PyroError::validation(
+                    CapturedError::new("Failed to flush in-memory prebatch").with_source(e),
+                ))
+            }
         }
     }
 
     /// Recovery method to populate `wal_data` from a WAL file on disk (e.g. after crash).
     pub fn recover_wal(&mut self, wal_id: usize) -> Result<(), PyroError> {
+        info!(wal_id, "recover_wal: recovering WAL from disk");
         let base_path = self.output_dir.join(format!("wal_{}", wal_id));
         let records = recover(&base_path)?;
+        let num_records = records.len();
+        debug!(
+            wal_id,
+            num_records, "recover_wal: loaded records from WAL file"
+        );
 
         for rec in records {
-            self.wal_data
-                .push(rec)
-                .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
+            self.wal_data.push(rec).map_err(|e| {
+                PyroError::validation(
+                    CapturedError::new("Failed to push recovered record to WAL buffer")
+                        .with_source(e),
+                )
+            })?;
         }
 
-        let mut stmt = self.sqlite_conn.prepare(
-            "SELECT row_index, wal_index FROM wal_index WHERE wal_id = ?"
-        ).map_err(|e| PyroError::validation(CapturedError::new(e)))?;
+        let mut stmt = self
+            .sqlite_conn
+            .prepare("SELECT row_index, wal_index FROM wal_index WHERE wal_id = ?")
+            .map_err(|e| {
+                PyroError::validation(
+                    CapturedError::new("Failed to prepare SELECT statement for wal_index")
+                        .with_source(e),
+                )
+            })?;
 
-        let rows = stmt.query_map([wal_id as i64], |r| {
-            Ok((r.get::<_, i64>(0)? as usize, r.get::<_, i64>(1)? as usize))
-        }).map_err(|e| PyroError::validation(CapturedError::new(e)))?;
+        let rows = stmt
+            .query_map([wal_id as i64], |r| {
+                Ok((r.get::<_, i64>(0)? as usize, r.get::<_, i64>(1)? as usize))
+            })
+            .map_err(|e| {
+                PyroError::validation(
+                    CapturedError::new("Failed to query row_index mappings from SQLite")
+                        .with_source(e),
+                )
+            })?;
 
+        let mut recovered_indices_count = 0;
         for row in rows {
             if let Ok((row_index, wal_index)) = row {
                 self.current_wal_rows.insert(row_index, wal_index);
+                recovered_indices_count += 1;
             }
         }
+        debug!(
+            wal_id,
+            recovered_indices_count, "recover_wal: recovered row_index mappings from SQLite"
+        );
 
         Ok(())
     }
@@ -363,8 +444,11 @@ impl DataManager {
     /// Writes a RecordBatch to an Arrow IPC file.
     fn write_arrow_ipc(&self, wal_id: usize, batch: &RecordBatch) -> Result<(), PyroError> {
         let path = self.output_dir.join(format!("batch_{}.arrow", wal_id));
-        pyro_file::write_ipc(batch, &path)
-            .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
+        pyro_file::write_ipc(batch, &path).map_err(|e| {
+            PyroError::local_io(
+                CapturedError::new("Failed to write RecordBatch to Arrow IPC file").with_source(e),
+            )
+        })?;
         info!("Written Arrow IPC file: {:?}", path);
         Ok(())
     }
@@ -388,11 +472,19 @@ impl DataManager {
                 continue;
             }
 
-            let bytes = std::fs::read(&arrow_path)
-                .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
+            let bytes = std::fs::read(&arrow_path).map_err(|e| {
+                PyroError::local_io(
+                    CapturedError::new("Failed to read Arrow IPC file for rollout").with_source(e),
+                )
+            })?;
             let filename = arrow_path.file_name().unwrap().to_string_lossy();
-            let batches_ipc = pyro_file::parse_data_to_batch_sync(bytes, &filename)
-                .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
+            let batches_ipc =
+                pyro_file::parse_data_to_batch_sync(bytes, &filename).map_err(|e| {
+                    PyroError::validation(
+                        CapturedError::new("Failed to parse Arrow IPC file during rollout")
+                            .with_source(e),
+                    )
+                })?;
 
             for b in batches_ipc {
                 all_batches.push(b.to_batch());
@@ -411,8 +503,11 @@ impl DataManager {
             let parquet_path = self
                 .output_dir
                 .join(format!("rollout_{}.parquet", rollout_id));
-            pyro_file::write_parquet(&all_batches, &parquet_path)
-                .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
+            pyro_file::write_parquet(&all_batches, &parquet_path).map_err(|e| {
+                PyroError::local_io(
+                    CapturedError::new("Failed to write Parquet rollout file").with_source(e),
+                )
+            })?;
             info!("Converted Arrow IPCs to Parquet: {:?}", parquet_path);
             self.total_parquet_rows += rows_rolled_out;
 
@@ -439,132 +534,177 @@ impl DataManager {
     }
 
     pub fn get_record(&self, index: usize) -> Result<PyroRow<'static>, PyroError> {
+        debug!(index, "get_record: starting lookup");
+
         // 1. Fast path: check in-memory current wal rows map (using index as global row_index)
         if let Some(&wal_idx) = self.current_wal_rows.get(&index) {
             if let Some(row) = self.wal_data.get(wal_idx) {
+                debug!(
+                    index,
+                    wal_idx, "get_record: fast-path hit in current active WAL buffer"
+                );
                 return Ok(row.clone());
             }
         }
 
-        // 2. Query sqlite by row_index (global) or offset (sequential)
-        let mut stmt_global = self.sqlite_conn.prepare(
-            "SELECT wal_id, wal_index FROM wal_index WHERE row_index = ?"
-        ).map_err(|e| PyroError::validation(CapturedError::new(e)))?;
+        // 2. Query sqlite by row_index (global)
+        debug!(index, "get_record: querying SQLite wal_index");
+        let mut stmt_global = self
+            .sqlite_conn
+            .prepare("SELECT wal_id, wal_index FROM wal_index WHERE row_index = ?")
+            .map_err(|e| {
+                PyroError::validation(
+                    CapturedError::new("Failed to prepare SQLite global index statement")
+                        .with_source(e),
+                )
+            })?;
 
-        let mut row_opt = stmt_global.query_row([index as i64], |r| {
+        let row_opt = stmt_global.query_row([index as i64], |r| {
             Ok((r.get::<_, i64>(0)? as usize, r.get::<_, i64>(1)? as usize))
         });
 
-        if row_opt.is_err() {
-            // Fallback: try sequential index (offset)
-            let mut stmt_seq = self.sqlite_conn.prepare(
-                "SELECT wal_id, wal_index FROM wal_index ORDER BY wal_id ASC, wal_index ASC LIMIT 1 OFFSET ?"
-            ).map_err(|e| PyroError::validation(CapturedError::new(e)))?;
-
-            row_opt = stmt_seq.query_row([index as i64], |r| {
-                Ok((r.get::<_, i64>(0)? as usize, r.get::<_, i64>(1)? as usize))
-            });
-        }
-
         match row_opt {
             Ok((wal_id, wal_index)) => {
-                // 3. Check if wal_id is rolled up in a parquet file
-                let mut parquet_stmt = self.sqlite_conn.prepare(
-                    "SELECT parquet_id FROM wal_to_parquet WHERE wal_id = ?"
-                ).map_err(|e| PyroError::validation(CapturedError::new(e)))?;
+                debug!(
+                    index,
+                    wal_id, wal_index, "get_record: SQLite index lookup succeeded"
+                );
 
-                let parquet_opt = parquet_stmt.query_row([wal_id as i64], |r| {
-                    Ok(r.get::<_, i64>(0)? as usize)
-                });
+                let arrow_path = self.output_dir.join(format!("batch_{}.arrow", wal_id));
+                if arrow_path.exists() {
+                    let arrow_ipc = pyro_file::parse_ipc_file_mmap(&arrow_path).map_err(|e| {
+                        PyroError::validation(
+                            CapturedError::new("Failed to memory-map Arrow IPC file")
+                                .with_source(e),
+                        )
+                    })?;
 
-                match parquet_opt {
-                    Ok(parquet_id) => {
-                        // Rolled up in Parquet file
-                        let parquet_path = self.output_dir.join(format!("rollout_{}.parquet", parquet_id));
-                        let bytes = std::fs::read(&parquet_path)
-                            .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
-                        let filename = parquet_path.file_name().unwrap().to_string_lossy().into_owned();
-                        let batches = pyro_file::parse_data_to_batch_sync(bytes, &filename)
-                            .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
+                    let mut stmt_min = self
+                        .sqlite_conn
+                        .prepare("SELECT MIN(wal_index) FROM wal_index WHERE wal_id = ?")
+                        .map_err(|e| {
+                            PyroError::validation(
+                                CapturedError::new("Failed to prepare MIN wal_index statement")
+                                    .with_source(e),
+                            )
+                        })?;
+                    let min_wal_index: usize = stmt_min
+                        .query_row([wal_id as i64], |r| r.get::<_, i64>(0))
+                        .map_err(|e| {
+                            PyroError::validation(
+                                CapturedError::new("Failed to query MIN(wal_index)").with_source(e),
+                            )
+                        })? as usize;
 
-                        // Query DB for rows count in the same parquet file with wal_id < target_wal_id
-                        let mut count_stmt = self.sqlite_conn.prepare(
-                            "SELECT COUNT(*) FROM wal_index WHERE wal_id IN (
-                                SELECT wal_id FROM wal_to_parquet WHERE parquet_id = ?1 AND wal_id < ?2
-                            )"
-                        ).map_err(|e| PyroError::validation(CapturedError::new(e)))?;
-
-                        let prev_wals_row_count = count_stmt.query_row(
-                            rusqlite::params![parquet_id as i64, wal_id as i64],
-                            |r| r.get::<_, i64>(0)
-                        ).unwrap_or(0) as usize;
-
-                        let target_offset = prev_wals_row_count + wal_index;
-
-                        let mut current_offset = 0;
-                        for batch in batches {
-                            let num_rows = batch.num_rows();
-                            if target_offset >= current_offset && target_offset < current_offset + num_rows {
-                                let batch_index = target_offset - current_offset;
-                                let row = batch.row(batch_index)
-                                    .map_err(|e| PyroError::validation(CapturedError::new(e)))?
-                                    .into_owned();
-                                return Ok(row);
-                            }
-                            current_offset += num_rows;
-                        }
-
-                        Err(PyroError::validation(CapturedError::new(format!(
-                            "Offset {} not found in Parquet file {:?}",
-                            target_offset,
-                            parquet_path
-                        ))))
-                    }
-                    Err(rusqlite::Error::QueryReturnedNoRows) => {
-                        // Not rolled up in Parquet. Could be in current active in-memory WAL or Arrow IPC file.
-                        if wal_id == self.current_wal_id {
-                            if let Some(row) = self.wal_data.get(wal_index) {
-                                return Ok(row.clone());
-                            }
-                        }
-
-                        // Must be in IPC (Arrow) file
-                        let arrow_path = self.output_dir.join(format!("batch_{}.arrow", wal_id));
-                        let bytes = std::fs::read(&arrow_path)
-                            .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
-                        let filename = arrow_path.file_name().unwrap().to_string_lossy().into_owned();
-                        let batches = pyro_file::parse_data_to_batch_sync(bytes, &filename)
-                            .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
-
-                        let mut current_offset = 0;
-                        for batch in batches {
-                            let num_rows = batch.num_rows();
-                            if wal_index >= current_offset && wal_index < current_offset + num_rows {
-                                let batch_index = wal_index - current_offset;
-                                let row = batch.row(batch_index)
-                                    .map_err(|e| PyroError::validation(CapturedError::new(e)))?
-                                    .into_owned();
-                                return Ok(row);
-                            }
-                            current_offset += num_rows;
-                        }
-
-                        Err(PyroError::validation(CapturedError::new(format!(
-                            "Offset {} not found in Arrow file {:?}",
-                            wal_index,
-                            arrow_path
-                        ))))
-                    }
-                    Err(e) => Err(PyroError::validation(CapturedError::new(e))),
+                    let relative_idx = wal_index - min_wal_index;
+                    let row = arrow_ipc.row(relative_idx).map_err(|e| {
+                        PyroError::validation(
+                            CapturedError::new("Failed to read row from memory-mapped Arrow IPC")
+                                .with_source(e),
+                        )
+                    })?;
+                    return Ok(row.into_owned());
                 }
+
+                // If the IPC file is missing, then it was rolled up into a parquet file
+                let mut stmt_parquet = self
+                    .sqlite_conn
+                    .prepare("SELECT parquet_id FROM wal_to_parquet WHERE wal_id = ?")
+                    .map_err(|e| {
+                        PyroError::validation(
+                            CapturedError::new("Failed to prepare statement for wal_to_parquet")
+                                .with_source(e),
+                        )
+                    })?;
+                let parquet_id: usize = match stmt_parquet
+                    .query_row([wal_id as i64], |r| r.get::<_, i64>(0))
+                {
+                    Ok(id) => id as usize,
+                    Err(rusqlite::Error::QueryReturnedNoRows) => {
+                        return Err(PyroError::NotFound(format!("Index {} not found", index)));
+                    }
+                    Err(e) => {
+                        return Err(PyroError::validation(
+                            CapturedError::new("Failed to query parquet_id from wal_to_parquet")
+                                .with_source(e),
+                        ));
+                    }
+                };
+
+                let parquet_path = self
+                    .output_dir
+                    .join(format!("rollout_{}.parquet", parquet_id));
+                if !parquet_path.exists() {
+                    return Err(PyroError::NotFound(format!(
+                        "Parquet rollout file {:?} not found",
+                        parquet_path
+                    )));
+                }
+
+                let bytes = std::fs::read(&parquet_path).map_err(|e| {
+                    PyroError::local_io(
+                        CapturedError::new(
+                            "Failed to read Parquet rollout file for record retrieval",
+                        )
+                        .with_source(e),
+                    )
+                })?;
+                let filename = parquet_path.file_name().unwrap().to_string_lossy();
+                let arrow_ipcs =
+                    pyro_file::parse_data_to_batch_sync(bytes, &filename).map_err(|e| {
+                        PyroError::validation(
+                            CapturedError::new(
+                                "Failed to parse Parquet rollout file data during record retrieval",
+                            )
+                            .with_source(e),
+                        )
+                    })?;
+
+                let mut stmt_min_parquet = self.sqlite_conn
+                    .prepare("SELECT MIN(wal_index) FROM wal_index WHERE wal_id IN (SELECT wal_id FROM wal_to_parquet WHERE parquet_id = ?)")
+                    .map_err(|e| PyroError::validation(CapturedError::new("Failed to prepare statement for MIN(wal_index) in Parquet").with_source(e)))?;
+                let min_parquet_index: usize = stmt_min_parquet
+                    .query_row([parquet_id as i64], |r| r.get::<_, i64>(0))
+                    .map_err(|e| {
+                        PyroError::validation(
+                            CapturedError::new("Failed to query MIN(wal_index) in Parquet rollout")
+                                .with_source(e),
+                        )
+                    })? as usize;
+
+                let relative_idx = wal_index - min_parquet_index;
+
+                let mut current_offset = 0;
+                for arrow_ipc in &arrow_ipcs {
+                    let num_rows = arrow_ipc.num_rows();
+                    if relative_idx >= current_offset && relative_idx < current_offset + num_rows {
+                        let row_idx_in_batch = relative_idx - current_offset;
+                        let row = arrow_ipc.row(row_idx_in_batch).map_err(|e| {
+                            PyroError::validation(
+                                CapturedError::new("Failed to read row from Parquet batch")
+                                    .with_source(e),
+                            )
+                        })?;
+                        return Ok(row.into_owned());
+                    }
+                    current_offset += num_rows;
+                }
+
+                Err(PyroError::NotFound(format!("Index {} not found", index)))
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => {
-                Err(PyroError::validation(CapturedError::new(format!(
-                    "Index {} out of bounds for DataManager",
-                    index
-                ))))
+                debug!(
+                    index,
+                    "get_record: SQLite lookup returned no rows; returning PyroError::NotFound"
+                );
+                Err(PyroError::NotFound(format!("Index {} not found", index)))
             }
-            Err(e) => Err(PyroError::validation(CapturedError::new(e))),
+            Err(e) => {
+                error!(index, error = ?e, "get_record: SQLite global query error");
+                Err(PyroError::validation(
+                    CapturedError::new("Failed to query global index in SQLite").with_source(e),
+                ))
+            }
         }
     }
 }
@@ -588,7 +728,11 @@ mod tests {
     }
 
     fn make_success_record(row_index: usize, id: i32, name: &'static str) -> PyroRow<'static> {
-        PyroRow::from([("id", PyroValue::from(id)), ("index", PyroValue::from(row_index as u32)), ("name", PyroValue::from(name))])
+        PyroRow::from([
+            ("id", PyroValue::from(id)),
+            ("index", PyroValue::from(row_index as u32)),
+            ("name", PyroValue::from(name)),
+        ])
     }
 
     #[test]
@@ -681,7 +825,7 @@ mod tests {
             .unwrap();
 
         // Verify that the record inside wal_data has the metadata field
-        let row = manager.get_record(0).unwrap();
+        let row = manager.get_record(42).unwrap();
         let pyro_group = row.get("pyro").unwrap();
         if let PyroValue::Group(group_row) = pyro_group {
             assert_eq!(group_row.get("index"), Some(&PyroValue::U64(42)));
@@ -693,7 +837,9 @@ mod tests {
         // Verify SQLite contents
         let mut stmt = manager
             .sqlite_conn
-            .prepare("SELECT row_index, wal_id, wal_index, timestamp FROM wal_index WHERE row_index = ?")
+            .prepare(
+                "SELECT row_index, wal_id, wal_index, timestamp FROM wal_index WHERE row_index = ?",
+            )
             .unwrap();
         let mut rows = stmt
             .query_map([42i64], |r| {
@@ -705,11 +851,54 @@ mod tests {
                 ))
             })
             .unwrap();
-        
+
         let row_data = rows.next().unwrap().unwrap();
         assert_eq!(row_data.0, 42); // row_index
-        assert_eq!(row_data.1, 1);  // wal_id
-        assert_eq!(row_data.2, 0);  // wal_index
-        assert!(row_data.3 > 0);    // timestamp nanos i64
+        assert_eq!(row_data.1, 1); // wal_id
+        assert_eq!(row_data.2, 0); // wal_index
+        assert!(row_data.3 > 0); // timestamp nanos i64
+    }
+
+    #[test]
+    fn test_get_record_not_found_on_odd_entries() {
+        let dir = TempDir::new().unwrap();
+        let schema = setup_schema();
+        let mut manager = DataManager::new(dir.path(), schema);
+
+        // Put data with indices 0, 2, 4
+        manager
+            .push_record(0, &make_success_record(0, 10, "alice"))
+            .unwrap();
+        manager
+            .push_record(2, &make_success_record(2, 20, "bob"))
+            .unwrap();
+        manager
+            .push_record(4, &make_success_record(4, 30, "charlie"))
+            .unwrap();
+
+        // Get 0, 1, 2, 3, 4, 5
+        // 0 -> Success
+        let r0 = manager.get_record(0).unwrap();
+        assert_eq!(r0.get("id"), Some(&PyroValue::from(10)));
+
+        // 1 -> NotFound
+        let r1 = manager.get_record(1);
+        assert!(matches!(r1, Err(PyroError::NotFound(_))));
+
+        // 2 -> Success
+        let r2 = manager.get_record(2).unwrap();
+        assert_eq!(r2.get("id"), Some(&PyroValue::from(20)));
+
+        // 3 -> NotFound
+        let r3 = manager.get_record(3);
+        assert!(matches!(r3, Err(PyroError::NotFound(_))));
+
+        // 4 -> Success
+        let r4 = manager.get_record(4).unwrap();
+        assert_eq!(r4.get("id"), Some(&PyroValue::from(30)));
+
+        // 5 -> NotFound
+        let r5 = manager.get_record(5);
+        assert!(matches!(r5, Err(PyroError::NotFound(_))));
     }
 }

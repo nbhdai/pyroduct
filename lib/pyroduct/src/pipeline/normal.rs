@@ -131,7 +131,6 @@ impl Pipeline {
                 module_logs: logs.module_logs.clone(),
                 capability_logs: logs.capability_logs.clone(),
                 failure: None,
-                success_index: Some(self.output_manager.len() - 1),
             },
             ExecutionRecord::Failure {
                 row_index,
@@ -143,7 +142,6 @@ impl Pipeline {
                 module_logs: logs.module_logs.clone(),
                 capability_logs: logs.capability_logs.clone(),
                 failure: failure.as_ref().ok().cloned(),
-                success_index: None,
             },
         };
         self.log_manager.append(&log_entry).await?;
@@ -172,6 +170,7 @@ impl Pipeline {
 
             if let Some(err) = entry.failure {
                 debug!(index, "Record is a failure");
+                debug_assert!(self.output_manager.get_record(index).is_err());
                 Ok(ExecutionRecord::Failure {
                     row_index: index,
                     input: input_row,
@@ -179,10 +178,9 @@ impl Pipeline {
                     logs,
                 })
             } else {
-                debug_assert!(self.output_manager.get_record(index).is_err());
+                debug_assert!(self.output_manager.get_record(index).is_ok());
                 debug!(index, "Record is a success");
-                let success_index = entry.success_index.unwrap_or(0);
-                let success_row = self.output_manager.get_record(success_index)?;
+                let success_row = self.output_manager.get_record(index)?;
                 Ok(ExecutionRecord::Success {
                     row_index: index,
                     input: input_row,

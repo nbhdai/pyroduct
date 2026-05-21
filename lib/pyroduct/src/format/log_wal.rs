@@ -35,7 +35,6 @@ pub struct LogEntry {
     )]
     pub capability_logs: HashMap<(String, String), Vec<String>>,
     pub failure: Option<CapturedError>,
-    pub success_index: Option<usize>,
 }
 
 fn serialize_cap_logs<S>(
@@ -628,7 +627,6 @@ mod tests {
                 vec!["cap log 1".to_string()],
             )]),
             failure: None,
-            success_index: None,
         }
     }
 

@@ -399,6 +399,15 @@ impl ArrowIpc {
     }
 }
 
+/// Reads an Arrow IPC file from disk using memory-mapping.
+/// This provides zero-copy access to the record batch data.
+pub fn parse_ipc_file_mmap<P: AsRef<Path>>(path: P) -> Result<ArrowIpc, DataError> {
+    let file = File::open(path)?;
+    let mmap = unsafe { Mmap::map(&file)? };
+    let bytes = Bytes::from_owner(mmap);
+    ArrowIpc::try_from(bytes)
+}
+
 // -----------------------------------------------------------------------------
 // 5. Main Async Parser
 // -----------------------------------------------------------------------------
@@ -448,6 +457,18 @@ fn inter_parse_data_to_batch(data: Vec<u8>, filename: &str) -> Result<Vec<ArrowI
         "ipc" | "arrow" => {
             info!("File detected as IPC/Arrow.");
             Ok(vec![ArrowIpc::try_from(data)?])
+        }
+        "parquet" => {
+            debug!("Parsing Parquet...");
+            let bytes = Bytes::from(data);
+            let builder = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(bytes)?;
+            let reader = builder.build()?;
+            let mut batches = Vec::new();
+            for batch_res in reader {
+                let batch = batch_res?;
+                batches.push(ArrowIpc::from_batch(batch)?);
+            }
+            Ok(batches)
         }
         "csv" => {
             debug!("Parsing CSV...");
