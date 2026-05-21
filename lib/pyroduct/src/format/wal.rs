@@ -22,10 +22,13 @@ use std::io::{self, BufWriter, Write};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use tokio::sync::{Mutex, mpsc, oneshot};
 
 use tracing::{info, warn};
 
+use crate::format::header::PyroData;
 use crate::format::vec_buf::PyroRef;
 use crate::format::{PyroView, get_ref};
 
@@ -77,7 +80,7 @@ impl<W: WalWriterInner> WalWriter<W> {
         }
     }
 
-    pub fn append(&mut self, record_index: usize, record: PyroRef<'_>) -> io::Result<()> {
+    pub async fn append(&mut self, record_index: usize, record: PyroRef<'_>) -> io::Result<()> {
         let row_index = record_index as u32;
 
         // 1. Write 16-byte prefix [row_index (4) | padding (12)]
@@ -101,6 +104,39 @@ impl<W: WalWriterInner> WalWriter<W> {
         self.wal_writer.get_ref().sync_data()?;
 
         self.records_written += 1;
+        Ok(())
+    }
+
+    /// Appends multiple records to the WAL, flushing and syncing all changes to disk at the end of the batch.
+    pub async fn append_batch(&mut self, records: &[(usize, PyroRef<'_>)]) -> io::Result<()> {
+        if records.is_empty() {
+            return Ok(());
+        }
+
+        for &(record_index, ref record) in records {
+            let row_index = record_index as u32;
+
+            let mut prefix = [0u8; 16];
+            prefix[0..4].copy_from_slice(&row_index.to_le_bytes());
+            self.wal_writer.write_all(&prefix)?;
+
+            let raw_slice = record.as_raw_slice();
+            let raw_len = raw_slice.len();
+            let align_val = align16(raw_len);
+            let padding_len = align_val - raw_len;
+
+            self.wal_writer.write_all(raw_slice)?;
+            if padding_len > 0 {
+                let padding = [0u8; 15];
+                self.wal_writer.write_all(&padding[..padding_len])?;
+            }
+
+            self.records_written += 1;
+        }
+
+        self.wal_writer.flush()?;
+        self.wal_writer.get_ref().sync_data()?;
+
         Ok(())
     }
 
@@ -274,6 +310,129 @@ impl Drop for WalReader {
                 }
             }
         }
+    }
+}
+
+use crate::format::vec_buf::PyroVec;
+
+/// `WalManager` coordinates multiple asynchronous log writers feeding into a single `WalWriter` on a background thread.
+#[derive(Clone)]
+pub struct WalManager {
+    sender: mpsc::Sender<(usize, PyroVec)>,
+    total_len: Arc<AtomicUsize>,
+    wal_path: Option<PathBuf>,
+    inner: Arc<Mutex<WalManagerInner>>,
+}
+
+struct WalManagerInner {
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    join_handle: Option<tokio::task::JoinHandle<tokio::io::Result<()>>>,
+}
+
+impl WalManager {
+    /// Creates and spawns a new `WalManager` that writes log entries to a `WalWriter` in a background Tokio task.
+    ///
+    /// The manager holds a bounded sender queue of the specified `bound` size.
+    pub fn new(mut wal_writer: WalWriter<File>, bound: usize) -> Self {
+        let (sender, mut receiver) = mpsc::channel::<(usize, PyroVec)>(bound);
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
+
+        let initial_len = wal_writer.records_written() as usize;
+        let total_len = Arc::new(AtomicUsize::new(initial_len));
+        let total_len_clone = Arc::clone(&total_len);
+        let wal_path = wal_writer.wal_path().map(|p| p.to_path_buf());
+
+        let join_handle = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    msg = receiver.recv() => {
+                        match msg {
+                            Some((idx, record)) => {
+                                wal_writer.append(idx, record.py_ref())?;
+                            }
+                            None => {
+                                break;
+                            }
+                        }
+                    }
+                    _ = &mut shutdown_rx => {
+                        break;
+                    }
+                }
+            }
+            // Drain remaining messages in receiver
+            while let Ok((idx, record)) = receiver.try_recv() {
+                wal_writer.append(idx, record.py_ref())?;
+            }
+            Ok(())
+        });
+
+        Self {
+            sender,
+            total_len: total_len_clone,
+            wal_path,
+            inner: Arc::new(Mutex::new(WalManagerInner {
+                shutdown_tx: Some(shutdown_tx),
+                join_handle: Some(join_handle),
+            })),
+        }
+    }
+
+    /// Sends a `PyroVec` record to the WAL background task.
+    ///
+    /// Increments the `total_len` counter if the message is successfully enqueued.
+    pub async fn send(
+        &self,
+        index: usize,
+        record: PyroVec,
+    ) -> Result<(), mpsc::error::SendError<(usize, PyroVec)>> {
+        self.sender.send((index, record)).await?;
+        self.total_len.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// Returns the total number of log entries sent to the manager.
+    pub fn total_len(&self) -> usize {
+        self.total_len.load(Ordering::SeqCst)
+    }
+
+    /// Retrieves a single `PyroView` by its global index by scanning the WAL frames.
+    pub fn get(&self, index: usize) -> tokio::io::Result<Option<PyroView>> {
+        if let Some(path) = &self.wal_path {
+            // WalReader::open uses the base path without extension
+            let reader = WalReader::open(path.with_extension(""))?;
+            for frame in reader.frames() {
+                if frame.row_index == index {
+                    let view = reader
+                        .view_at(frame.packet_offset)
+                        .map_err(|e| tokio::io::Error::new(io::ErrorKind::InvalidData, e))?;
+                    let owned_vec = view.clone_to_vec();
+                    drop(view);
+                    return Ok(Some(owned_vec.view()));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Signals the background task to shut down and waits for completion.
+    pub async fn interrupt(&self) -> tokio::io::Result<()> {
+        let mut inner = self.inner.lock().await;
+        if let Some(tx) = inner.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+        if let Some(handle) = inner.join_handle.take() {
+            match handle.await {
+                Ok(res) => res?,
+                Err(join_err) => {
+                    return Err(tokio::io::Error::new(
+                        tokio::io::ErrorKind::Other,
+                        format!("Background task join error: {:?}", join_err),
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -455,5 +614,86 @@ mod tests {
             .view_at(frame.packet_offset)
             .expect("Should create view");
         assert_eq!(view.as_slice(), b"view test");
+    }
+
+    #[test]
+    fn test_wal_append_batch() {
+        let tmp_file = NamedTempFile::new().unwrap();
+        let base_path = tmp_file.path().with_extension("");
+
+        let mut wal = WalWriter::open(&base_path).unwrap();
+        let r1 = make_pyro_record(b"data 1");
+        let r2 = make_pyro_record(b"data 2");
+
+        let batch = vec![(10, r1.py_ref()), (20, r2.py_ref())];
+        wal.append_batch(&batch).unwrap();
+
+        let reader = WalReader::open(&base_path).unwrap();
+        let frames: Vec<_> = reader.frames().collect();
+
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].row_index, 10);
+        assert_eq!(frames[0].packet.as_slice(), b"data 1");
+        assert_eq!(frames[1].row_index, 20);
+        assert_eq!(frames[1].packet.as_slice(), b"data 2");
+    }
+
+    #[tokio::test]
+    async fn test_wal_manager_basic() {
+        let tmp_file = NamedTempFile::new().unwrap();
+        let base_path = tmp_file.path().with_extension("");
+
+        let wal = WalWriter::open(&base_path).unwrap();
+        let manager = WalManager::new(wal, 10).await;
+
+        assert_eq!(manager.total_len(), 0);
+
+        let r1 = make_pyro_record(b"mgr 1");
+        manager.send(42, r1).await.unwrap();
+        assert_eq!(manager.total_len(), 1);
+
+        manager.interrupt().await.unwrap();
+
+        // Retrieve entry via get
+        let retrieved = manager.get(42).unwrap().expect("Should find entry");
+        assert_eq!(retrieved.as_slice(), b"mgr 1");
+
+        // Verify reopening
+        let reader = WalReader::open(&base_path).unwrap();
+        let frames: Vec<_> = reader.frames().collect();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].row_index, 42);
+        assert_eq!(frames[0].packet.as_slice(), b"mgr 1");
+    }
+
+    #[tokio::test]
+    async fn test_wal_manager_concurrent() {
+        let tmp_file = NamedTempFile::new().unwrap();
+        let base_path = tmp_file.path().with_extension("");
+
+        let wal = WalWriter::open(&base_path).unwrap();
+        let manager = WalManager::new(wal, 5).await;
+
+        let mut tasks = Vec::new();
+        for i in 0..10 {
+            let m = manager.clone();
+            let rec = make_pyro_record(format!("rec {}", i).as_bytes());
+            tasks.push(tokio::spawn(async move {
+                m.send(i, rec).await.unwrap();
+            }));
+        }
+
+        for t in tasks {
+            t.await.unwrap();
+        }
+
+        assert_eq!(manager.total_len(), 10);
+
+        manager.interrupt().await.unwrap();
+
+        // Verify reopening
+        let reader = WalReader::open(&base_path).unwrap();
+        let frames: Vec<_> = reader.frames().collect();
+        assert_eq!(frames.len(), 10);
     }
 }

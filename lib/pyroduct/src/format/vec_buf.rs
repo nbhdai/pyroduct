@@ -548,9 +548,7 @@ impl PyroView {
     }
 
     pub fn clone_to_vec(&self) -> PyroVec {
-        let mut vec = PyroVec::clone_from_pyro(self);
-        vec.extend_from_slice(self.as_slice());
-        vec
+        PyroVec::clone_from_pyro(self)
     }
 }
 

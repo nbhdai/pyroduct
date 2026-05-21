@@ -2,9 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::SeekFrom;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncSeekExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::{debug, error, info};
 
 use crate::CapturedError;
@@ -282,6 +285,45 @@ impl LogWal {
         Ok(())
     }
 
+    /// Appends multiple `LogEntry` records to the log, rotating segment files as needed,
+    /// and flushes all changes to disk at the end of the batch.
+    pub async fn append_batch(&mut self, records: &[LogEntry]) -> tokio::io::Result<()> {
+        if records.is_empty() {
+            return Ok(());
+        }
+
+        for record in records {
+            if self.current_entries >= self.capacity {
+                self.rotate().await?;
+            }
+
+            debug!(row_index = record.row_index, "Appending batch log entry");
+            let payload = serde_json::to_vec(record)
+                .map_err(|e| tokio::io::Error::new(tokio::io::ErrorKind::InvalidData, e))?;
+
+            let len = payload.len() as u32;
+            let crc = crc32c(&payload);
+
+            // Write offset to index file
+            self.idx_writer
+                .write_all(&self.current_offset.to_le_bytes())
+                .await?;
+
+            // Frame: [ len (4) | crc (4) | payload (n) ]
+            self.writer.write_all(&len.to_le_bytes()).await?;
+            self.writer.write_all(&crc.to_le_bytes()).await?;
+            self.writer.write_all(&payload).await?;
+
+            self.current_offset += 4 + 4 + payload.len() as u64;
+            self.current_entries += 1;
+            self.total_entries += 1;
+        }
+
+        self.flush().await?;
+
+        Ok(())
+    }
+
     /// Ensures all buffered logs are written to disk.
     pub async fn flush(&mut self) -> tokio::io::Result<()> {
         self.idx_writer.flush().await?;
@@ -415,6 +457,111 @@ impl LogWal {
         }
 
         Ok(deleted_count)
+    }
+}
+
+/// `LogManager` coordinates multiple asynchronous log writers feeding into a single `LogWal` on a background thread.
+#[derive(Clone)]
+pub struct LogManager {
+    sender: mpsc::Sender<LogEntry>,
+    total_len: Arc<AtomicUsize>,
+    reader: Arc<LogWalReader>,
+    capacity: usize,
+    inner: Arc<Mutex<LogManagerInner>>,
+}
+
+struct LogManagerInner {
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    join_handle: Option<tokio::task::JoinHandle<tokio::io::Result<()>>>,
+}
+
+impl LogManager {
+    /// Creates and spawns a new `LogManager` that writes log entries to a `LogWal` in a background Tokio task.
+    ///
+    /// The manager holds a bounded sender queue of the specified `bound` size.
+    pub async fn new(mut log_wal: LogWal, bound: usize) -> tokio::io::Result<Self> {
+        let (sender, mut receiver) = mpsc::channel::<LogEntry>(bound);
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
+
+        let initial_len = log_wal.total_entries();
+        let total_len = Arc::new(AtomicUsize::new(initial_len));
+        let total_len_clone = Arc::clone(&total_len);
+
+        let reader = Arc::new(LogWalReader::open(log_wal.dir()).await?);
+        let capacity = log_wal.capacity;
+
+        let join_handle = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    msg = receiver.recv() => {
+                        match msg {
+                            Some(entry) => {
+                                log_wal.append(&entry).await?;
+                            }
+                            None => {
+                                break;
+                            }
+                        }
+                    }
+                    _ = &mut shutdown_rx => {
+                        break;
+                    }
+                }
+            }
+            log_wal.flush().await?;
+            Ok(())
+        });
+
+        Ok(Self {
+            sender,
+            total_len: total_len_clone,
+            reader,
+            capacity,
+            inner: Arc::new(Mutex::new(LogManagerInner {
+                shutdown_tx: Some(shutdown_tx),
+                join_handle: Some(join_handle),
+            })),
+        })
+    }
+
+    /// Sends a `LogEntry` to the `LogWal` writer.
+    ///
+    /// This method is asynchronous and can block if the bounded channel is full.
+    /// Increments the `total_len` counter if the message is successfully enqueued.
+    pub async fn send(&self, entry: LogEntry) -> Result<(), mpsc::error::SendError<LogEntry>> {
+        self.sender.send(entry).await?;
+        self.total_len.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// Returns the total number of log entries sent to the manager.
+    pub fn total_len(&self) -> usize {
+        self.total_len.load(Ordering::SeqCst)
+    }
+
+    /// Retrieves a single `LogEntry` by its global index in O(1) file access.
+    pub async fn get(&self, index: usize) -> tokio::io::Result<Option<LogEntry>> {
+        self.reader.get(index, self.capacity).await
+    }
+
+    /// Signals the background task to shut down, flushes the WAL, and waits for completion.
+    pub async fn interrupt(&self) -> tokio::io::Result<()> {
+        let mut inner = self.inner.lock().await;
+        if let Some(tx) = inner.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+        if let Some(handle) = inner.join_handle.take() {
+            match handle.await {
+                Ok(res) => res?,
+                Err(join_err) => {
+                    return Err(tokio::io::Error::new(
+                        tokio::io::ErrorKind::Other,
+                        format!("Background task join error: {:?}", join_err),
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -674,6 +821,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_log_wal_append_batch() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let path = tmp_dir.path();
+
+        let mut wal = LogWal::open(path, 100).await.unwrap();
+        let mut entries = Vec::new();
+        for i in 0..5 {
+            entries.push(create_test_entry(i));
+        }
+        wal.append_batch(&entries).await.unwrap();
+
+        let mut reader = LogWalReader::open(path).await.unwrap();
+        let records = reader.read_all().await.unwrap();
+
+        assert_eq!(records.len(), 5);
+        for i in 0..5 {
+            assert_eq!(records[i].row_index, i);
+        }
+    }
+
+    #[tokio::test]
     async fn test_log_wal_corruption() {
         let tmp_dir = tempfile::tempdir().unwrap();
         let path = tmp_dir.path();
@@ -810,5 +978,68 @@ mod tests {
         let records2 = reader2.read_all().await.unwrap();
         assert_eq!(records2.len(), 1);
         assert_eq!(records2[0].row_index, 4);
+    }
+
+    #[tokio::test]
+    async fn test_log_manager_basic() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let path = tmp_dir.path();
+
+        let wal = LogWal::open(path, 100).await.unwrap();
+        let manager = LogManager::new(wal, 10).await.unwrap();
+
+        assert_eq!(manager.total_len(), 0);
+
+        let entry = create_test_entry(42);
+        manager.send(entry).await.unwrap();
+        assert_eq!(manager.total_len(), 1);
+
+        // Retrieve the entry via get
+        let retrieved = manager.get(0).await.unwrap().expect("Should find entry");
+        assert_eq!(retrieved.row_index, 42);
+
+        manager.interrupt().await.unwrap();
+
+        // Verify it was persisted by reopening
+        let mut reader = LogWalReader::open(path).await.unwrap();
+        let records = reader.read_all().await.unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].row_index, 42);
+    }
+
+    #[tokio::test]
+    async fn test_log_manager_concurrent() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let path = tmp_dir.path();
+
+        let wal = LogWal::open(path, 100).await.unwrap();
+        let manager = LogManager::new(wal, 5).await.unwrap();
+
+        let mut tasks = Vec::new();
+        for i in 0..10 {
+            let m = manager.clone();
+            tasks.push(tokio::spawn(async move {
+                m.send(create_test_entry(i)).await.unwrap();
+            }));
+        }
+
+        for t in tasks {
+            t.await.unwrap();
+        }
+
+        assert_eq!(manager.total_len(), 10);
+
+        // Verify we can retrieve them concurrently
+        for i in 0..10 {
+            let retrieved = manager.get(i).await.unwrap();
+            assert!(retrieved.is_some());
+        }
+
+        manager.interrupt().await.unwrap();
+
+        // Verify reopening shows all 10 entries
+        let mut reader = LogWalReader::open(path).await.unwrap();
+        let records = reader.read_all().await.unwrap();
+        assert_eq!(records.len(), 10);
     }
 }

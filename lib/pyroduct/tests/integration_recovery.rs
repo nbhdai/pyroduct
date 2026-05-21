@@ -89,10 +89,6 @@ async fn test_pipeline_get_record() {
     let input_1 = PyroRow::from([("input", "invalid".into())]); // Will cause a failure
     let input_2 = PyroRow::from([("input", "20".into())]);
 
-    pipeline.input_manager.push_record(0, &input_0).unwrap();
-    pipeline.input_manager.push_record(1, &input_1).unwrap();
-    pipeline.input_manager.push_record(2, &input_2).unwrap();
-
     // 2. Process records through the pipeline
     let proc_0 = pipeline.process(0, &input_0).await.unwrap();
     assert!(matches!(proc_0, ExecutionRecord::Success { .. }));

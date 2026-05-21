@@ -8,10 +8,7 @@ use crate::CapturedError;
 use crate::format::log_wal::{LogEntry, LogWal};
 use crate::module::{PyroInstance, sessions::SessionResult};
 use crate::{
-    format::{
-        PyroFailure, PyroLogs,
-        value::PyroRow,
-    },
+    format::{PyroFailure, PyroLogs, value::PyroRow},
     pipeline::{PipelineResult, PyroError},
 };
 
@@ -74,17 +71,30 @@ pub struct SessionPipeline {
 }
 
 impl SessionPipeline {
-    async fn get_or_open_session(&mut self, session_id: u32) -> Result<&mut ActiveSession, PyroError> {
+    async fn get_or_open_session(
+        &mut self,
+        session_id: u32,
+    ) -> Result<&mut ActiveSession, PyroError> {
         if !self.active_sessions.contains_key(&session_id) {
             let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
             let data_path = self.output_dir.join(format!("session_val_{}", session_id));
 
-            let log_wal = LogWal::open(log_dir, self.wal_capacity).await
-                .map_err(|io| PyroError::local_io(CapturedError::new("Unable to open individual log wal").with_source(io)))?;
-            let data_wal = crate::format::value::arrow::wal::WalWriter::open(data_path)
-                .map_err(|io| PyroError::local_io(CapturedError::new("Unable to open individual data wal").with_source(io)))?;
+            let log_wal = LogWal::open(log_dir, self.wal_capacity)
+                .await
+                .map_err(|io| {
+                    PyroError::local_io(
+                        CapturedError::new("Unable to open individual log wal").with_source(io),
+                    )
+                })?;
+            let data_wal =
+                crate::format::value::arrow::wal::WalWriter::open(data_path).map_err(|io| {
+                    PyroError::local_io(
+                        CapturedError::new("Unable to open individual data wal").with_source(io),
+                    )
+                })?;
 
-            self.active_sessions.insert(session_id, ActiveSession { log_wal, data_wal });
+            self.active_sessions
+                .insert(session_id, ActiveSession { log_wal, data_wal });
         }
         Ok(self.active_sessions.get_mut(&session_id).unwrap())
     }
@@ -98,22 +108,40 @@ impl SessionPipeline {
             list_vals.push(crate::format::value::PyroValue::Group(row));
         }
 
-        let rolled_up_row = PyroRow::from([("session", crate::format::value::PyroValue::List(list_vals))]);
+        let rolled_up_row =
+            PyroRow::from([("session", crate::format::value::PyroValue::List(list_vals))]);
 
-        self.output_manager.push_record(session_id as usize, &rolled_up_row)?;
+        self.output_manager
+            .push_record(session_id as usize, &rolled_up_row)
+            .await?;
 
         let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
         if log_dir.exists() {
-            let mut reader = crate::format::log_wal::LogWalReader::open(&log_dir).await
-                .map_err(|io| PyroError::local_io(CapturedError::new("Unable to open individual log wal reader").with_source(io)))?;
+            let mut reader = crate::format::log_wal::LogWalReader::open(&log_dir)
+                .await
+                .map_err(|io| {
+                    PyroError::local_io(
+                        CapturedError::new("Unable to open individual log wal reader")
+                            .with_source(io),
+                    )
+                })?;
 
-            while let Some(log_entry) = reader.next().await
-                .map_err(|io| PyroError::local_io(CapturedError::new("Unable to read from individual log wal").with_source(io)))?
-            {
+            while let Some(log_entry) = reader.next().await.map_err(|io| {
+                PyroError::local_io(
+                    CapturedError::new("Unable to read from individual log wal").with_source(io),
+                )
+            })? {
                 let mut entry_to_write = log_entry;
                 entry_to_write.row_index = session_id as usize;
-                self.log_manager.append(&entry_to_write).await
-                    .map_err(|io| PyroError::local_io(CapturedError::new("Unable to write to overall log wal").with_source(io)))?;
+                self.log_manager
+                    .append(&entry_to_write)
+                    .await
+                    .map_err(|io| {
+                        PyroError::local_io(
+                            CapturedError::new("Unable to write to overall log wal")
+                                .with_source(io),
+                        )
+                    })?;
             }
         }
 
@@ -154,7 +182,9 @@ impl SessionPipeline {
 
             return match e.result {
                 Ok(captured) => Err(PyroError::CodePanic(Box::new(captured))),
-                Err(msg) => Err(PyroError::local(crate::error::ErrorKind::Transport(Box::new(CapturedError::new(msg))))),
+                Err(msg) => Err(PyroError::local(crate::error::ErrorKind::Transport(
+                    Box::new(CapturedError::new(msg)),
+                ))),
             };
         }
 
@@ -182,7 +212,9 @@ impl SessionPipeline {
                 let _ = self.close_session(session_id).await;
                 match e.result {
                     Ok(captured) => Err(PyroError::CodePanic(Box::new(captured))),
-                    Err(msg) => Err(PyroError::local(crate::error::ErrorKind::Transport(Box::new(CapturedError::new(msg))))),
+                    Err(msg) => Err(PyroError::local(crate::error::ErrorKind::Transport(
+                        Box::new(CapturedError::new(msg)),
+                    ))),
                 }
             }
         }
@@ -194,7 +226,9 @@ impl SessionPipeline {
         prior: &[PyroRow<'_>],
     ) -> Result<(), PyroFailure> {
         if let Err(e) = self.step.prep_session(session_id, prior, &[]).await {
-            let _ = self.output_manager.set_session_status(session_id as usize, "failed");
+            let _ = self
+                .output_manager
+                .set_session_status(session_id as usize, "failed");
             return Err(e);
         }
 
@@ -205,7 +239,9 @@ impl SessionPipeline {
         let active = match self.get_or_open_session(session_id).await {
             Ok(act) => act,
             Err(e) => {
-                let _ = self.output_manager.set_session_status(session_id as usize, "failed");
+                let _ = self
+                    .output_manager
+                    .set_session_status(session_id as usize, "failed");
                 return Err(PyroFailure {
                     result: Err(e.to_string()),
                     logs: active_logs.clone(),
@@ -215,8 +251,10 @@ impl SessionPipeline {
 
         for (i, row) in prior.iter().enumerate() {
             if i >= existing.len() {
-                if let Err(e) = active.data_wal.append(i, row) {
-                    let _ = self.output_manager.set_session_status(session_id as usize, "failed");
+                if let Err(e) = active.data_wal.append(i, row).await {
+                    let _ = self
+                        .output_manager
+                        .set_session_status(session_id as usize, "failed");
                     return Err(PyroFailure {
                         result: Err(e.to_string()),
                         logs: active_logs.clone(),
@@ -237,7 +275,9 @@ impl SessionPipeline {
             let active = match self.get_or_open_session(session_id).await {
                 Ok(act) => act,
                 Err(e) => {
-                    let _ = self.output_manager.set_session_status(session_id as usize, "failed");
+                    let _ = self
+                        .output_manager
+                        .set_session_status(session_id as usize, "failed");
                     let logs = self.step.unpack_logs();
                     return Err(PyroFailure {
                         result: Err(e.to_string()),
@@ -246,8 +286,10 @@ impl SessionPipeline {
                 }
             };
             let record_index = active.data_wal.records_written() as usize;
-            if let Err(e) = active.data_wal.append(record_index, input) {
-                let _ = self.output_manager.set_session_status(session_id as usize, "failed");
+            if let Err(e) = active.data_wal.append(record_index, input).await {
+                let _ = self
+                    .output_manager
+                    .set_session_status(session_id as usize, "failed");
                 let logs = self.step.unpack_logs();
                 return Err(PyroFailure {
                     result: Err(e.to_string()),
@@ -261,13 +303,19 @@ impl SessionPipeline {
         // PERSIST STATUS
         match &res {
             Ok(SessionResult::Continue(_)) => {
-                let _ = self.output_manager.set_session_status(session_id as usize, "active");
+                let _ = self
+                    .output_manager
+                    .set_session_status(session_id as usize, "active");
             }
             Ok(SessionResult::End(_)) | Ok(SessionResult::Terminate) => {
-                let _ = self.output_manager.set_session_status(session_id as usize, "succeeded");
+                let _ = self
+                    .output_manager
+                    .set_session_status(session_id as usize, "succeeded");
             }
             Err(_) => {
-                let _ = self.output_manager.set_session_status(session_id as usize, "failed");
+                let _ = self
+                    .output_manager
+                    .set_session_status(session_id as usize, "failed");
             }
         }
 
@@ -283,9 +331,11 @@ impl SessionPipeline {
                 }
             };
 
-            if let Ok(SessionResult::Continue(output_row)) | Ok(SessionResult::End(output_row)) = &res {
+            if let Ok(SessionResult::Continue(output_row)) | Ok(SessionResult::End(output_row)) =
+                &res
+            {
                 let record_index = active.data_wal.records_written() as usize;
-                let _ = active.data_wal.append(record_index, output_row);
+                let _ = active.data_wal.append(record_index, output_row).await;
             }
         }
 
@@ -325,12 +375,20 @@ impl SessionPipeline {
         match &res {
             Ok(SessionResult::End(_)) | Ok(SessionResult::Terminate) => {
                 if let Err(e) = self.rollup_and_cleanup_session(session_id).await {
-                    tracing::error!("Failed to rollup and cleanup session {}: {:?}", session_id, e);
+                    tracing::error!(
+                        "Failed to rollup and cleanup session {}: {:?}",
+                        session_id,
+                        e
+                    );
                 }
             }
             Err(_) => {
                 if let Err(e) = self.rollup_and_cleanup_session(session_id).await {
-                    tracing::error!("Failed to rollup and cleanup failed session {}: {:?}", session_id, e);
+                    tracing::error!(
+                        "Failed to rollup and cleanup failed session {}: {:?}",
+                        session_id,
+                        e
+                    );
                 }
             }
             _ => {}
@@ -343,7 +401,9 @@ impl SessionPipeline {
         tracing::debug!(session_id, "get_record: starting lookup");
 
         // 1. Determine persistent status
-        let status = self.output_manager.get_session_status(session_id as usize)?
+        let status = self
+            .output_manager
+            .get_session_status(session_id as usize)?
             .unwrap_or_else(|| "active".to_string());
 
         // 2. Retrieve all rows for the session
@@ -356,7 +416,9 @@ impl SessionPipeline {
         } else {
             // Check rolled up rows in output_manager
             if let Ok(rolled_up_row) = self.output_manager.get_record(session_id as usize) {
-                if let Some(crate::format::value::PyroValue::List(list_vals)) = rolled_up_row.get("session") {
+                if let Some(crate::format::value::PyroValue::List(list_vals)) =
+                    rolled_up_row.get("session")
+                {
                     for val in list_vals {
                         if let crate::format::value::PyroValue::Group(r) = val {
                             wal_rows.push(r.clone());
@@ -383,9 +445,12 @@ impl SessionPipeline {
                 }
             }
         } else {
-            if let Ok(mut reader) = crate::format::log_wal::LogWalReader::open(&self.log_dir).await {
+            if let Ok(mut reader) = crate::format::log_wal::LogWalReader::open(&self.log_dir).await
+            {
                 if let Ok(entries) = reader.read_all().await {
-                    if let Some(entry) = entries.iter().rfind(|e| e.row_index == session_id as usize) {
+                    if let Some(entry) =
+                        entries.iter().rfind(|e| e.row_index == session_id as usize)
+                    {
                         logs = PyroLogs {
                             module_logs: entry.module_logs.clone(),
                             capability_logs: entry.capability_logs.clone(),
@@ -401,7 +466,10 @@ impl SessionPipeline {
 
         if is_failed {
             let (prior, input) = if wal_rows.is_empty() {
-                let input_row = self.input_manager.get_record(session_id as usize).unwrap_or_else(|_| PyroRow::empty());
+                let input_row = self
+                    .input_manager
+                    .get_record(session_id as usize)
+                    .unwrap_or_else(|_| PyroRow::empty());
                 (Vec::new(), input_row)
             } else if wal_rows.len() % 2 == 1 {
                 let prior = wal_rows[..wal_rows.len() - 1].to_vec();
@@ -409,7 +477,10 @@ impl SessionPipeline {
                 (prior, input)
             } else {
                 let prior = wal_rows.clone();
-                let input_row = self.input_manager.get_record(session_id as usize).unwrap_or_else(|_| PyroRow::empty());
+                let input_row = self
+                    .input_manager
+                    .get_record(session_id as usize)
+                    .unwrap_or_else(|_| PyroRow::empty());
                 (prior, input_row)
             };
 
@@ -428,7 +499,10 @@ impl SessionPipeline {
             })
         } else {
             let (prior, input, success) = if wal_rows.is_empty() {
-                let input_row = self.input_manager.get_record(session_id as usize).unwrap_or_else(|_| PyroRow::empty());
+                let input_row = self
+                    .input_manager
+                    .get_record(session_id as usize)
+                    .unwrap_or_else(|_| PyroRow::empty());
                 (Vec::new(), input_row, PyroRow::empty())
             } else if wal_rows.len() % 2 == 0 {
                 let prior = wal_rows[..wal_rows.len() - 2].to_vec();
@@ -455,10 +529,7 @@ impl SessionPipeline {
         self.step.close_session(session_id).await
     }
 
-    pub async fn session(
-        &mut self,
-        session_id: u32,
-    ) -> Result<Vec<PyroRow<'_>>, PyroFailure> {
+    pub async fn session(&mut self, session_id: u32) -> Result<Vec<PyroRow<'_>>, PyroFailure> {
         self.step.session_inputs(session_id).await
     }
 

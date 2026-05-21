@@ -77,13 +77,13 @@ impl Pipeline {
         input: &PyroRow<'_>,
     ) -> Result<ExecutionRecord, PyroError> {
         debug!(row_index, "Processing row");
-        self.input_manager.push_record(row_index, input)?;
+        self.input_manager.push_record(row_index, input).await?;
 
         let record = match self.step.call(input).await {
             Ok(output) => {
                 debug!(row_index, "Step succeeded");
-                self.output_manager.push_record(row_index, &output.row)?;
-                
+                self.output_manager.push_record(row_index, &output.row).await?;
+
                 let log_entry = LogEntry {
                     row_index,
                     module_logs: output.logs.module_logs.clone(),
