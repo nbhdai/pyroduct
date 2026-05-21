@@ -15,10 +15,10 @@
 use std::{collections::HashMap, sync::Arc};
 
 use pyro_artifacts::artifacts::ModuleSpec;
-use pyro_spec::ModuleKind;
-use pyro_artifacts::cache::{CacheError, LoadedPlaybook};
 use pyro_artifacts::build::BuildError;
+use pyro_artifacts::cache::{CacheError, LoadedPlaybook};
 use pyro_artifacts::environment::EnvironmentError;
+use pyro_spec::ModuleKind;
 use wasmtime::{
     Caller, Engine, FuncType, Instance, Linker, Memory, Store, TypedFunc, Val, ValType,
 };
@@ -119,7 +119,7 @@ pub struct PyroFactory {
 }
 
 impl PyroFactory {
-        pub fn spec(&self) -> &ModuleSpec {
+    pub fn spec(&self) -> &ModuleSpec {
         &self.spec
     }
 
@@ -373,7 +373,7 @@ impl PyroFactory {
 }
 
 pub struct PyroInstance {
-    spec:  Arc<ModuleSpec>,
+    spec: Arc<ModuleSpec>,
     store: Store<PyroState>,
     instance: Instance,
     memory: Memory,
@@ -421,8 +421,19 @@ impl PyroInstance {
             Err(e) => {
                 let mut io = PyroCallIo::new(&mut self.store, self.memory);
                 if let Ok(Some(err_vec)) = io.get_panic_error().await {
-                    if let Err(err) = err_vec.parse_as_error() {
-                        return Err(self.pack_pyro_error(err));
+                    match err_vec.status() {
+                        Ok(DataStatus::RkyvError) => match serde_json::from_slice(&err_vec) {
+                            Ok(error) => return Err(self.pack_user_error(error)),
+                            Err(error) => {
+                                return Err(
+                                    self.pack_pyro_error(PyroError::capture_json(error, &*err_vec))
+                                );
+                            }
+                        },
+                        _ => match err_vec.parse_as_error() {
+                            Ok(_) => return Err(self.pack_pyro_error(classify_error(e))),
+                            Err(err) => return Err(self.pack_pyro_error(err)),
+                        },
                     }
                 }
                 return Err(self.pack_pyro_error(classify_error(e)));
@@ -460,7 +471,7 @@ impl PyroInstance {
                         Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view)))
                     }
                 }
-            },
+            }
             Ok(DataStatus::CodeError) => {
                 tracing::debug!("Result status: CodeError");
                 match serde_json::from_slice(&result_view) {
@@ -469,7 +480,7 @@ impl PyroInstance {
                         Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view)))
                     }
                 }
-            },
+            }
             _ => {
                 tracing::debug!(status = result_view.status_u8(), "Result status: Unknown");
                 Err(
@@ -501,7 +512,12 @@ impl PyroInstance {
         inputs: &[PyroRow<'_>],
         outputs: &[PyroRow<'_>],
     ) -> Result<(), PyroFailure> {
-        tracing::debug!(session_id, inputs_len = inputs.len(), outputs_len = outputs.len(), "Preparing session");
+        tracing::debug!(
+            session_id,
+            inputs_len = inputs.len(),
+            outputs_len = outputs.len(),
+            "Preparing session"
+        );
         let mut io = PyroCallIo::new(&mut self.store, self.memory);
 
         for input in inputs {
@@ -614,8 +630,16 @@ impl PyroInstance {
             }
             Ok(DataStatus::Empty) => {
                 let result = match fn_id {
-                    0 => return Err(self.pack_pyro_error(PyroError::remote_code(CapturedError::new("Session returned 'continue', but provided no data")))),
-                    1 => return Err(self.pack_pyro_error(PyroError::remote_code(CapturedError::new("Session returned 'end', but provided no data")))),
+                    0 => {
+                        return Err(self.pack_pyro_error(PyroError::remote_code(
+                            CapturedError::new("Session returned 'continue', but provided no data"),
+                        )));
+                    }
+                    1 => {
+                        return Err(self.pack_pyro_error(PyroError::remote_code(
+                            CapturedError::new("Session returned 'end', but provided no data"),
+                        )));
+                    }
                     2 => sessions::SessionResult::Terminate,
                     _ => sessions::SessionResult::Terminate,
                 };
@@ -630,7 +654,7 @@ impl PyroInstance {
                         Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view)))
                     }
                 }
-            },
+            }
             Ok(DataStatus::CodeError) => {
                 tracing::debug!("Session status: CodeError");
                 match serde_json::from_slice(&result_view) {
@@ -639,15 +663,19 @@ impl PyroInstance {
                         Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view)))
                     }
                 }
-            },
+            }
             _ => {
-                tracing::debug!(session_id, status = result_view.status_u8(), "Session result: Unknown");
+                tracing::debug!(
+                    session_id,
+                    status = result_view.status_u8(),
+                    "Session result: Unknown"
+                );
                 Err(
                     self.pack_pyro_error(PyroError::Header(ParseError::UnknownStatus(
                         result_view.status_u8(),
                     ))),
                 )
-            },
+            }
         };
 
         // 5. Update state
@@ -660,16 +688,24 @@ impl PyroInstance {
         res
     }
 
-    pub async fn session_inputs(&mut self, session_id: u32) -> Result<Vec<PyroRow<'_>>, PyroFailure> {
+    pub async fn session_inputs(
+        &mut self,
+        session_id: u32,
+    ) -> Result<Vec<PyroRow<'_>>, PyroFailure> {
         tracing::debug!(session_id, "Getting session inputs");
         let state = self.session_states.get(&session_id).ok_or_else(|| {
-            self.pack_pyro_error(PyroError::not_found(format!("Session {} not found", session_id)))
+            self.pack_pyro_error(PyroError::not_found(format!(
+                "Session {} not found",
+                session_id
+            )))
         })?;
         let len = state.input_len;
 
         let mut io = PyroCallIo::new(&mut self.store, self.memory);
-        let actual_len = io.session_input_length(session_id).await
-                .map_err(|err| Self::pack_setup_pyro_error(err))?;
+        let actual_len = io
+            .session_input_length(session_id)
+            .await
+            .map_err(|err| Self::pack_setup_pyro_error(err))?;
 
         let mut inputs = Vec::with_capacity(actual_len as usize);
 
@@ -682,13 +718,15 @@ impl PyroInstance {
         }
 
         for i in 0..actual_len {
-            let view = io.borrow_session_input(session_id, i)
+            let view = io
+                .borrow_session_input(session_id, i)
                 .await
                 .map_err(|err| Self::pack_setup_pyro_error(err))?;
             let row = if view.status() == Ok(DataStatus::Empty) {
                 PyroRow::empty()
             } else {
-                let exposed = PyroRow::expose_view(view).map_err(|err| Self::pack_setup_pyro_error(err))?;
+                let exposed =
+                    PyroRow::expose_view(view).map_err(|err| Self::pack_setup_pyro_error(err))?;
                 PyroRow::from(&*exposed)
             };
             inputs.push(row);
@@ -698,28 +736,41 @@ impl PyroInstance {
         Ok(inputs)
     }
 
-    pub async fn session_outputs(&mut self, session_id: u32) -> Result<Vec<PyroRow<'_>>, PyroFailure> {
+    pub async fn session_outputs(
+        &mut self,
+        session_id: u32,
+    ) -> Result<Vec<PyroRow<'_>>, PyroFailure> {
         tracing::debug!(session_id, "Getting session outputs");
         let state = self.session_states.get(&session_id).ok_or_else(|| {
-            self.pack_pyro_error(PyroError::not_found(format!("Session {} not found", session_id)))
+            self.pack_pyro_error(PyroError::not_found(format!(
+                "Session {} not found",
+                session_id
+            )))
         })?;
         let len = state.output_len;
 
         let mut io = PyroCallIo::new(&mut self.store, self.memory);
         let mut outputs = Vec::with_capacity(len as usize);
-        let actual_len = io.session_output_length(session_id).await
-                .map_err(|err| Self::pack_setup_pyro_error(err))?;
+        let actual_len = io
+            .session_output_length(session_id)
+            .await
+            .map_err(|err| Self::pack_setup_pyro_error(err))?;
         debug_assert_eq!(actual_len, len);
 
         for i in 0..actual_len {
-            let view = io.borrow_session_output(session_id, i)
+            let view = io
+                .borrow_session_output(session_id, i)
                 .await
                 .map_err(|err| Self::pack_setup_pyro_error(err))?;
             let row = PyroRow::expose_view(view).map_err(|err| Self::pack_setup_pyro_error(err))?;
             outputs.push(PyroRow::from(&*row));
         }
 
-        tracing::debug!(session_id, count = outputs.len(), "Retrieved session outputs");
+        tracing::debug!(
+            session_id,
+            count = outputs.len(),
+            "Retrieved session outputs"
+        );
         Ok(outputs)
     }
 
@@ -735,7 +786,9 @@ impl PyroInstance {
     }
 
     pub fn session_lengths(&self, session_id: u32) -> Option<(u32, u32)> {
-        self.session_states.get(&session_id).map(|s| (s.input_len, s.output_len))
+        self.session_states
+            .get(&session_id)
+            .map(|s| (s.input_len, s.output_len))
     }
 
     pub fn pack_pyro_error(&self, error: impl std::error::Error) -> PyroFailure {
@@ -745,7 +798,7 @@ impl PyroInstance {
         }
     }
 
-     pub fn pack_setup_pyro_error(error: impl std::error::Error) -> PyroFailure {
+    pub fn pack_setup_pyro_error(error: impl std::error::Error) -> PyroFailure {
         PyroFailure {
             result: Err(error.to_string()),
             logs: PyroLogs::empty(),

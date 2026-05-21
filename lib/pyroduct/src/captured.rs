@@ -9,7 +9,7 @@ use thiserror::Error;
 use crate::format::PyroVec;
 use crate::format::header::PyroHeaderMut;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LibraryInfo<'a> {
     pub meta: Cow<'a, str>,
     pub name: Cow<'a, str>,
@@ -65,7 +65,7 @@ pub extern "C" fn library_json(len: *mut usize) -> *const u8 {
     json_str.as_ptr()
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, Error)]
 #[error("Error at {file}:{line}:{column} - {message}{}", 
     .error.as_ref().map(|e| format!(" (Error: {e})")).unwrap_or_default()
 )]

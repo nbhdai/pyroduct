@@ -77,37 +77,43 @@ async fn test_module_errors_and_panics() {
     // Test Success
     let input_success = PyroRow::from([("input", "hello".into())]);
     let res_success = pipeline.process(0, &input_success).await.unwrap();
-    println!("{:?}",res_success);
-    if let ExecutionRecord::Success { success, .. } = res_success {
+    println!("{:?}", res_success);
+    if let ExecutionRecord::Success { success, .. } = &res_success {
         assert_eq!(success.get_str("message").unwrap(), "Success: hello");
     } else {
         panic!("Expected Success");
     }
+    let rec_success = pipeline.get_record(0).await.expect("Should retrieve success record");
+    assert_eq!(res_success, rec_success);
 
     // Test Error: return Err(pyroduct::capture!(...))
     let input_error = PyroRow::from([("input", "error".into())]);
     let res_error = pipeline.process(1, &input_error).await.unwrap();
-    println!("{:?}",res_error);
-    if let ExecutionRecord::Failure { failure, .. } = res_error {
+    println!("{:?}", res_error);
+    if let ExecutionRecord::Failure { failure, .. } = &res_error {
         // Following the pattern in integration_session_recovery.rs for capture!
         assert!(failure.is_ok());
-        let err_msg = failure.unwrap().to_string();
+        let err_msg = failure.as_ref().unwrap().to_string();
         assert!(!err_msg.contains("Remote Code Panic"));
         assert!(err_msg.contains("intentional error"));
     } else {
         panic!("Expected Failure for error");
     }
+    let rec_error = pipeline.get_record(1).await.expect("Should retrieve error record");
+    assert_eq!(res_error, rec_error);
 
     // Test Panic: panic!(...)
     let input_panic = PyroRow::from([("input", "panic".into())]);
     let res_panic = pipeline.process(2, &input_panic).await.unwrap();
-    println!("{:?}",res_panic);
-    if let ExecutionRecord::Failure { failure, .. } = res_panic {
+    println!("{:?}", res_panic);
+    if let ExecutionRecord::Failure { failure, .. } = &res_panic {
         // Following the pattern in integration_session_recovery.rs for panic!
         assert!(failure.is_err());
-        let captured_err = failure.unwrap_err();
+        let captured_err = failure.as_ref().unwrap_err();
         assert!(captured_err.contains("intentional panic"));
     } else {
         panic!("Expected Failure for panic");
     }
+    let rec_panic = pipeline.get_record(2).await.expect("Should retrieve panic record");
+    assert_eq!(res_panic, rec_panic);
 }

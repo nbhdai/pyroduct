@@ -23,7 +23,7 @@ use crate::{
 
 use super::data::DataManager;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ExecutionRecord {
     Success {
         row_index: usize,
@@ -110,7 +110,7 @@ impl Pipeline {
                     row_index,
                     module_logs: f.logs.module_logs.clone(),
                     capability_logs: f.logs.capability_logs.clone(),
-                    failure: f.result.as_ref().ok().cloned(),
+                    failure: Some(f.result.clone()),
                 };
                 self.log_manager.append(&log_entry).await?;
                 let record = ExecutionRecord::Failure {
@@ -151,7 +151,7 @@ impl Pipeline {
                 Ok(ExecutionRecord::Failure {
                     row_index: index,
                     input: input_row,
-                    failure: Ok(err),
+                    failure: err,
                     logs,
                 })
             } else {

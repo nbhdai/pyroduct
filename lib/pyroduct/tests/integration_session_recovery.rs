@@ -7,9 +7,7 @@ use pyroduct::module::sessions::SessionResult;
 use pyroduct::{
     PyroRow,
     pipeline::{
-        PipelineConfig,
-        session::SessionExecutionRecord,
-        session_diff::SessionDiffExecutionRecord,
+        PipelineConfig, session::SessionExecutionRecord, session_diff::SessionDiffExecutionRecord,
     },
 };
 use std::collections::HashMap;
@@ -137,13 +135,22 @@ async fn test_session_recovery_lifecycle() {
     assert!(matches!(result1, SessionResult::Continue(_)));
 
     // Verify state is "active" in SQLite status
-    let status_active = pipeline.output_manager.get_session_status(session_id_1 as usize).unwrap();
+    let status_active = pipeline
+        .output_manager
+        .get_session_status(session_id_1 as usize)
+        .unwrap();
     assert_eq!(status_active, Some("active".to_string()));
 
     // Verify get_record returns Success
     let rec_active = pipeline.get_record(session_id_1).await.unwrap();
     match rec_active {
-        SessionExecutionRecord::Success { row_index, prior, input, success, .. } => {
+        SessionExecutionRecord::Success {
+            row_index,
+            prior,
+            input,
+            success,
+            ..
+        } => {
             assert_eq!(row_index, session_id_1 as usize);
             assert!(prior.is_empty());
             assert_eq!(input.get_str("input").unwrap(), "Hello!");
@@ -162,13 +169,22 @@ async fn test_session_recovery_lifecycle() {
     assert!(matches!(result2, SessionResult::End(_)));
 
     // Verify state is "succeeded" in SQLite status
-    let status_success = pipeline.output_manager.get_session_status(session_id_1 as usize).unwrap();
+    let status_success = pipeline
+        .output_manager
+        .get_session_status(session_id_1 as usize)
+        .unwrap();
     assert_eq!(status_success, Some("succeeded".to_string()));
 
     // Verify get_record returns Success with rolled-up state
     let rec_succeeded = pipeline.get_record(session_id_1).await.unwrap();
     match rec_succeeded {
-        SessionExecutionRecord::Success { row_index, prior, input, success, .. } => {
+        SessionExecutionRecord::Success {
+            row_index,
+            prior,
+            input,
+            success,
+            ..
+        } => {
             assert_eq!(row_index, session_id_1 as usize);
             assert_eq!(prior.len(), 2);
             assert_eq!(prior[0].get_str("input").unwrap(), "Hello!");
@@ -193,18 +209,30 @@ async fn test_session_recovery_lifecycle() {
     assert!(result_err.is_err());
 
     // Verify state is "failed" in SQLite status
-    let status_failed_err = pipeline.output_manager.get_session_status(session_id_2 as usize).unwrap();
+    let status_failed_err = pipeline
+        .output_manager
+        .get_session_status(session_id_2 as usize)
+        .unwrap();
     assert_eq!(status_failed_err, Some("failed".to_string()));
 
     // Verify get_record returns Failure containing error description
     let rec_failed_err = pipeline.get_record(session_id_2).await.unwrap();
     match rec_failed_err {
-        SessionExecutionRecord::Failure { row_index, prior, input, failure, .. } => {
+        SessionExecutionRecord::Failure {
+            row_index,
+            prior,
+            input,
+            failure,
+            ..
+        } => {
             assert_eq!(row_index, session_id_2 as usize);
             assert!(prior.is_empty());
             assert_eq!(input.get_str("input").unwrap(), "error");
             assert!(failure.is_ok());
-            assert_eq!(failure.unwrap().to_string(), "Remote Code Panic: Panic at src/lib.rs:15:20 - intentional error");
+            assert_eq!(
+                failure.unwrap().to_string(),
+                "Remote Code Panic: Error at src/lib.rs:15:20 - intentional error"
+            );
         }
         other => panic!("Expected Failure execution record, got {:?}", other),
     }
@@ -223,19 +251,32 @@ async fn test_session_recovery_lifecycle() {
     assert!(result_panic.is_err());
 
     // Verify state is "failed" in SQLite status
-    let status_failed_panic = pipeline.output_manager.get_session_status(session_id_3 as usize).unwrap();
+    let status_failed_panic = pipeline
+        .output_manager
+        .get_session_status(session_id_3 as usize)
+        .unwrap();
     assert_eq!(status_failed_panic, Some("failed".to_string()));
 
     // Verify get_record returns Failure containing panic details
     let rec_failed_panic = pipeline.get_record(session_id_3).await.unwrap();
     match rec_failed_panic {
-        SessionExecutionRecord::Failure { row_index, prior, input, failure, .. } => {
+        SessionExecutionRecord::Failure {
+            row_index,
+            prior,
+            input,
+            failure,
+            ..
+        } => {
             assert_eq!(row_index, session_id_3 as usize);
             assert!(prior.is_empty());
             assert_eq!(input.get_str("input").unwrap(), "panic");
             assert!(failure.is_err());
             let captured_err = failure.unwrap();
-            assert!(captured_err.message.contains("Remote Code Panic: Panic at src/lib.rs:15:20 - intentional panic"));
+            assert!(
+                captured_err
+                    .message
+                    .contains("Remote Code Panic: Error at src/lib.rs:15:20 - intentional panic")
+            );
         }
         other => panic!("Expected Failure execution record, got {:?}", other),
     }
@@ -309,13 +350,23 @@ async fn test_session_diff_recovery_lifecycle() {
     assert!(matches!(result1, SessionResult::Continue(_)));
 
     // Verify state is "active" in SQLite status
-    let status_active = pipeline.output_manager.get_session_status(session_id_1 as usize).unwrap();
+    let status_active = pipeline
+        .output_manager
+        .get_session_status(session_id_1 as usize)
+        .unwrap();
     assert_eq!(status_active, Some("active".to_string()));
 
     // Verify get_record returns Success
     let rec_active = pipeline.get_record(session_id_1).await.unwrap();
     match rec_active {
-        SessionDiffExecutionRecord::Success { row_index, prior_input, prior_output, input, success, .. } => {
+        SessionDiffExecutionRecord::Success {
+            row_index,
+            prior_input,
+            prior_output,
+            input,
+            success,
+            ..
+        } => {
             assert_eq!(row_index, session_id_1 as usize);
             assert!(prior_input.is_empty());
             assert!(prior_output.is_empty());
@@ -335,13 +386,23 @@ async fn test_session_diff_recovery_lifecycle() {
     assert!(matches!(result2, SessionResult::End(_)));
 
     // Verify state is "succeeded" in SQLite status
-    let status_success = pipeline.output_manager.get_session_status(session_id_1 as usize).unwrap();
+    let status_success = pipeline
+        .output_manager
+        .get_session_status(session_id_1 as usize)
+        .unwrap();
     assert_eq!(status_success, Some("succeeded".to_string()));
 
     // Verify get_record returns Success with rolled-up state
     let rec_succeeded = pipeline.get_record(session_id_1).await.unwrap();
     match rec_succeeded {
-        SessionDiffExecutionRecord::Success { row_index, prior_input, prior_output, input, success, .. } => {
+        SessionDiffExecutionRecord::Success {
+            row_index,
+            prior_input,
+            prior_output,
+            input,
+            success,
+            ..
+        } => {
             assert_eq!(row_index, session_id_1 as usize);
             assert_eq!(prior_input.len(), 1);
             assert_eq!(prior_output.len(), 1);
@@ -367,19 +428,32 @@ async fn test_session_diff_recovery_lifecycle() {
     assert!(result_err.is_err());
 
     // Verify state is "failed" in SQLite status
-    let status_failed_err = pipeline.output_manager.get_session_status(session_id_2 as usize).unwrap();
+    let status_failed_err = pipeline
+        .output_manager
+        .get_session_status(session_id_2 as usize)
+        .unwrap();
     assert_eq!(status_failed_err, Some("failed".to_string()));
 
     // Verify get_record returns Failure containing error description
     let rec_failed_err = pipeline.get_record(session_id_2).await.unwrap();
     match rec_failed_err {
-        SessionDiffExecutionRecord::Failure { row_index, prior_input, prior_output, input, failure, .. } => {
+        SessionDiffExecutionRecord::Failure {
+            row_index,
+            prior_input,
+            prior_output,
+            input,
+            failure,
+            ..
+        } => {
             assert_eq!(row_index, session_id_2 as usize);
             assert!(prior_input.is_empty());
             assert!(prior_output.is_empty());
             assert_eq!(input.get_str("input").unwrap(), "error");
             assert!(failure.is_err());
-            assert_eq!(failure.unwrap_err(), "Remote Code Panic: Panic at src/lib.rs:15:20 - intentional error");
+            assert_eq!(
+                failure.unwrap_err(),
+                "Remote Code Panic: Error at src/lib.rs:15:20 - intentional error"
+            );
         }
         other => panic!("Expected Failure execution record, got {:?}", other),
     }
@@ -398,13 +472,23 @@ async fn test_session_diff_recovery_lifecycle() {
     assert!(result_panic.is_err());
 
     // Verify state is "failed" in SQLite status
-    let status_failed_panic = pipeline.output_manager.get_session_status(session_id_3 as usize).unwrap();
+    let status_failed_panic = pipeline
+        .output_manager
+        .get_session_status(session_id_3 as usize)
+        .unwrap();
     assert_eq!(status_failed_panic, Some("failed".to_string()));
 
     // Verify get_record returns Failure containing panic details
     let rec_failed_panic = pipeline.get_record(session_id_3).await.unwrap();
     match rec_failed_panic {
-        SessionDiffExecutionRecord::Failure { row_index, prior_input, prior_output, input, failure, .. } => {
+        SessionDiffExecutionRecord::Failure {
+            row_index,
+            prior_input,
+            prior_output,
+            input,
+            failure,
+            ..
+        } => {
             assert_eq!(row_index, session_id_3 as usize);
             assert!(prior_input.is_empty());
             assert!(prior_output.is_empty());

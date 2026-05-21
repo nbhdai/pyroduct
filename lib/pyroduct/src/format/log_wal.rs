@@ -34,7 +34,7 @@ pub struct LogEntry {
         deserialize_with = "deserialize_cap_logs"
     )]
     pub capability_logs: HashMap<(String, String), Vec<String>>,
-    pub failure: Option<CapturedError>,
+    pub failure: Option<Result<CapturedError, String>>,
 }
 
 fn serialize_cap_logs<S>(

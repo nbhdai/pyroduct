@@ -21,7 +21,7 @@ use super::data::DataManager;
 // Pipeline
 // =============================================================================
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SessionDiffExecutionRecord {
     Success {
         row_index: usize,
@@ -160,24 +160,11 @@ impl SessionDiffPipeline {
 
         if let Err(e) = self.prep_session(session_id, prior_inputs, prior_outputs).await {
             let logs = e.logs.clone();
-            let failure = match &e.result {
-                Ok(cap) => Some(cap.clone()),
-                Err(msg) => Some(CapturedError {
-                    message: msg.clone(),
-                    file: "".to_string(),
-                    line: 0,
-                    column: 0,
-                    error: None,
-                    stack_trace: None,
-                    library: None,
-                }),
-            };
-
             let log_entry = LogEntry {
                 row_index,
                 module_logs: logs.module_logs.clone(),
                 capability_logs: logs.capability_logs.clone(),
-                failure,
+                failure: Some(e.result.clone()),
             };
             let _ = self.log_manager.append(&log_entry).await;
 
@@ -336,23 +323,11 @@ impl SessionDiffPipeline {
                 let _ = active.log_wal.append(&log_entry).await;
             }
             Err(e) => {
-                let failure = match &e.result {
-                    Ok(cap) => Some(cap.clone()),
-                    Err(msg) => Some(CapturedError {
-                        message: msg.clone(),
-                        file: "".to_string(),
-                        line: 0,
-                        column: 0,
-                        error: None,
-                        stack_trace: None,
-                        library: None,
-                    }),
-                };
                 let log_entry = LogEntry {
                     row_index,
                     module_logs: e.logs.module_logs.clone(),
                     capability_logs: e.logs.capability_logs.clone(),
-                    failure,
+                    failure: Some(e.result.clone()),
                 };
                 let _ = active.log_wal.append(&log_entry).await;
             }
@@ -478,12 +453,8 @@ impl SessionDiffPipeline {
         };
 
         if is_failed {
-            let failure_err = if let Some(err) = log_failure {
-                if err.file.is_empty() {
-                    Err(err.message)
-                } else {
-                    Ok(err)
-                }
+            let failure_err = if let Some(err_res) = log_failure {
+                err_res
             } else {
                 Err("Session failed".to_string())
             };

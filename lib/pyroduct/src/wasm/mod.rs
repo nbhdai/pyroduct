@@ -14,7 +14,7 @@ use crate::format::{
 };
 
 use crate::session::SessionResponse;
-use crate::{CapturedError, PyroError};
+use crate::CapturedError;
 
 mod logger;
 
@@ -53,6 +53,7 @@ pub fn register_ffi_panic_hook() {
             } else {
                 CapturedError::new("Panic occurred (unknown payload type)")
             };
+            let vec = error.encode();
 
             if let Some(loc) = info.location() {
                 error = error.with_location(loc);
@@ -63,7 +64,7 @@ pub fn register_ffi_panic_hook() {
             error!(?error, "FFI Panic Hook captured a panic");
             ERROR_REGISTRY.clear_poison();
             let mut registry = ERROR_REGISTRY.lock().unwrap();
-            *registry = Some(PyroError::CodePanic(error.into()).encode());
+            *registry = Some(vec);
 
             default_hook(info);
         }));
