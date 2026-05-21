@@ -108,9 +108,9 @@ async fn test_module_errors_and_panics() {
     println!("{:?}", res_panic);
     if let ExecutionRecord::Failure { failure, .. } = &res_panic {
         // Following the pattern in integration_session_recovery.rs for panic!
-        assert!(failure.is_err());
-        let captured_err = failure.as_ref().unwrap_err();
-        assert!(captured_err.contains("intentional panic"));
+        assert!(failure.is_ok());
+        let captured_err = failure.as_ref().unwrap();
+        assert!(captured_err.to_string().contains("Error at src/lib.rs:7:9 - intentional panic"));
     } else {
         panic!("Expected Failure for panic");
     }

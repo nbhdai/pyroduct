@@ -588,8 +588,19 @@ impl PyroInstance {
             Err(e) => {
                 let mut io = PyroCallIo::new(&mut self.store, self.memory);
                 if let Ok(Some(err_vec)) = io.get_panic_error().await {
-                    if let Err(err) = err_vec.parse_as_error() {
-                        return Err(self.pack_pyro_error(err));
+                    match err_vec.status() {
+                        Ok(DataStatus::RkyvError) => match serde_json::from_slice(&err_vec) {
+                            Ok(error) => return Err(self.pack_user_error(error)),
+                            Err(error) => {
+                                return Err(
+                                    self.pack_pyro_error(PyroError::capture_json(error, &*err_vec))
+                                );
+                            }
+                        },
+                        _ => match err_vec.parse_as_error() {
+                            Ok(_) => return Err(self.pack_pyro_error(classify_error(e))),
+                            Err(err) => return Err(self.pack_pyro_error(err)),
+                        },
                     }
                 }
                 return Err(self.pack_pyro_error(classify_error(e)));
@@ -631,14 +642,14 @@ impl PyroInstance {
             Ok(DataStatus::Empty) => {
                 let result = match fn_id {
                     0 => {
-                        return Err(self.pack_pyro_error(PyroError::remote_code(
+                        return Err(self.pack_user_error(
                             CapturedError::new("Session returned 'continue', but provided no data"),
-                        )));
+                        ));
                     }
                     1 => {
-                        return Err(self.pack_pyro_error(PyroError::remote_code(
+                        return Err(self.pack_user_error(
                             CapturedError::new("Session returned 'end', but provided no data"),
-                        )));
+                        ));
                     }
                     2 => sessions::SessionResult::Terminate,
                     _ => sessions::SessionResult::Terminate,

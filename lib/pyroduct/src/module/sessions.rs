@@ -247,12 +247,17 @@ impl Session {
 
         // Check for pyro-level errors forwarded from the host.
         if let Err(e) = result_view.parse_as_error() {
-            return Err(SessionCallError {
-                error: PyroFailure {
-                    result: Err(e.to_string()),
+            let error = match e {
+                PyroError::CodePanic(captured) => PyroFailure {
+                    result: Ok(*captured),
                     logs: PyroLogs::empty(),
                 },
-            });
+                other => PyroFailure {
+                    result: Err(other.to_string()),
+                    logs: PyroLogs::empty(),
+                },
+            };
+            return Err(SessionCallError { error });
         }
 
         let pyref = result_view.py_ref();

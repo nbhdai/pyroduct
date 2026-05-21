@@ -231,7 +231,7 @@ async fn test_session_recovery_lifecycle() {
             assert!(failure.is_ok());
             assert_eq!(
                 failure.unwrap().to_string(),
-                "Remote Code Panic: Error at src/lib.rs:15:20 - intentional error"
+                "Error at src/lib.rs:15:20 - intentional error"
             );
         }
         other => panic!("Expected Failure execution record, got {:?}", other),
@@ -270,12 +270,12 @@ async fn test_session_recovery_lifecycle() {
             assert_eq!(row_index, session_id_3 as usize);
             assert!(prior.is_empty());
             assert_eq!(input.get_str("input").unwrap(), "panic");
-            assert!(failure.is_err());
+            assert!(failure.is_ok());
             let captured_err = failure.unwrap();
             assert!(
                 captured_err
-                    .message
-                    .contains("Remote Code Panic: Error at src/lib.rs:15:20 - intentional panic")
+                    .to_string()
+                    .contains("Error at src/lib.rs:12:9 - intentional panic")
             );
         }
         other => panic!("Expected Failure execution record, got {:?}", other),
@@ -449,10 +449,10 @@ async fn test_session_diff_recovery_lifecycle() {
             assert!(prior_input.is_empty());
             assert!(prior_output.is_empty());
             assert_eq!(input.get_str("input").unwrap(), "error");
-            assert!(failure.is_err());
+            assert!(failure.is_ok());
             assert_eq!(
-                failure.unwrap_err(),
-                "Remote Code Panic: Error at src/lib.rs:15:20 - intentional error"
+                failure.unwrap().to_string(),
+                "Error at src/lib.rs:15:20 - intentional error"
             );
         }
         other => panic!("Expected Failure execution record, got {:?}", other),
@@ -495,7 +495,10 @@ async fn test_session_diff_recovery_lifecycle() {
             assert_eq!(input.get_str("input").unwrap(), "panic");
             assert!(failure.is_ok());
             let captured_err = failure.unwrap();
-            assert!(captured_err.message.contains("intentional panic"));
+            assert_eq!(
+                captured_err.to_string(),
+                "Error at src/lib.rs:12:9 - intentional panic"
+            );
         }
         other => panic!("Expected Failure execution record, got {:?}", other),
     }

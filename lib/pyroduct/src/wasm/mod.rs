@@ -53,13 +53,15 @@ pub fn register_ffi_panic_hook() {
             } else {
                 CapturedError::new("Panic occurred (unknown payload type)")
             };
-            let vec = error.encode();
 
             if let Some(loc) = info.location() {
                 error = error.with_location(loc);
             };
 
             error = error.with_backtrace(std::backtrace::Backtrace::capture());
+
+            let mut vec = error.encode();
+            vec.set_status(DataStatus::RkyvError);
 
             error!(?error, "FFI Panic Hook captured a panic");
             ERROR_REGISTRY.clear_poison();
@@ -517,7 +519,9 @@ where
         Ok(result) => result,
         Err(err) => {
             error!(session_id, ?err, "Session function execution failed");
-            return to_output(err.encode());
+            let mut vec = err.encode();
+            vec.set_status(DataStatus::RkyvError);
+            return to_output(vec);
         }
     };
 
@@ -652,7 +656,9 @@ where
         Ok(result) => result,
         Err(err) => {
             error!(session_id, ?err, "Session function execution failed");
-            return to_output(err.encode());
+            let mut vec = err.encode();
+            vec.set_status(DataStatus::RkyvError);
+            return to_output(vec);
         }
     };
 
