@@ -37,12 +37,16 @@ impl WalWriter {
             .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
         self.inner
             .append(record_index, vec.py_ref())
+            .await
             .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
         Ok(())
     }
 
     /// Appends multiple `PyroRow` records to the WAL using the underlying RawWalWriter's batching.
-    pub fn append_batch(&mut self, records: &[(usize, PyroRow<'_>)]) -> Result<(), PyroError> {
+    pub async fn append_batch(
+        &mut self,
+        records: &[(usize, PyroRow<'_>)],
+    ) -> Result<(), PyroError> {
         let mut shipped = Vec::with_capacity(records.len());
         let mut vecs = Vec::with_capacity(records.len());
         for &(_, ref row) in records {
@@ -57,6 +61,7 @@ impl WalWriter {
         }
         self.inner
             .append_batch(&shipped)
+            .await
             .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
         Ok(())
     }

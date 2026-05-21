@@ -348,7 +348,7 @@ impl WalManager {
                     msg = receiver.recv() => {
                         match msg {
                             Some((idx, record)) => {
-                                wal_writer.append(idx, record.py_ref())?;
+                                wal_writer.append(idx, record.py_ref()).await?;
                             }
                             None => {
                                 break;
@@ -362,7 +362,7 @@ impl WalManager {
             }
             // Drain remaining messages in receiver
             while let Ok((idx, record)) = receiver.try_recv() {
-                wal_writer.append(idx, record.py_ref())?;
+                wal_writer.append(idx, record.py_ref()).await?;
             }
             Ok(())
         });
@@ -513,8 +513,8 @@ mod tests {
         vec
     }
 
-    #[test]
-    fn test_wal_roundtrip() {
+    #[tokio::test]
+    async fn test_wal_roundtrip() {
         let tmp_file = NamedTempFile::new().unwrap();
         let path = tmp_file.path().with_extension("pyrowal");
 
@@ -524,7 +524,7 @@ mod tests {
         let mut wal = WalWriter::open(&base_path).unwrap();
         let record = make_pyro_record(b"test data");
 
-        wal.append(42, record.py_ref()).unwrap();
+        wal.append(42, record.py_ref()).await.unwrap();
 
         let reader = WalReader::open(&base_path).unwrap();
         let mut frames = reader.frames();
@@ -535,15 +535,15 @@ mod tests {
         assert!(frames.next().is_none());
     }
 
-    #[test]
-    fn test_wal_multiple_records() {
+    #[tokio::test]
+    async fn test_wal_multiple_records() {
         let tmp_file = NamedTempFile::new().unwrap();
         let base_path = tmp_file.path().with_extension("");
 
         let mut wal = WalWriter::open(&base_path).unwrap();
         for i in 0..5 {
             let record = make_pyro_record(format!("data {}", i).as_bytes());
-            wal.append(i, record.py_ref()).unwrap();
+            wal.append(i, record.py_ref()).await.unwrap();
         }
 
         let reader = WalReader::open(&base_path).unwrap();
@@ -559,15 +559,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_wal_corruption() {
+    #[tokio::test]
+    async fn test_wal_corruption() {
         let tmp_file = NamedTempFile::new().unwrap();
         let base_path = tmp_file.path().with_extension("");
 
         {
             let mut wal = WalWriter::open(&base_path).unwrap();
             let record = make_pyro_record(b"test data");
-            wal.append(0, record.py_ref()).unwrap();
+            wal.append(0, record.py_ref()).await.unwrap();
         }
 
         // Corrupt the file: the first 16 bytes are the prefix.
@@ -586,8 +586,8 @@ mod tests {
         assert!(frames.next().is_none());
     }
 
-    #[test]
-    fn test_wal_empty_file() {
+    #[tokio::test]
+    async fn test_wal_empty_file() {
         let tmp_file = NamedTempFile::new().unwrap();
         let base_path = tmp_file.path().with_extension("");
         let wal_path = base_path.with_extension("pyrowal");
@@ -598,14 +598,14 @@ mod tests {
         assert!(frames.next().is_none());
     }
 
-    #[test]
-    fn test_wal_view_at() {
+    #[tokio::test]
+    async fn test_wal_view_at() {
         let tmp_file = NamedTempFile::new().unwrap();
         let base_path = tmp_file.path().with_extension("");
 
         let mut wal = WalWriter::open(&base_path).unwrap();
         let record = make_pyro_record(b"view test");
-        wal.append(0, record.py_ref()).unwrap();
+        wal.append(0, record.py_ref()).await.unwrap();
 
         let reader = WalReader::open(&base_path).unwrap();
         let frame = reader.frames().next().unwrap();
@@ -616,8 +616,8 @@ mod tests {
         assert_eq!(view.as_slice(), b"view test");
     }
 
-    #[test]
-    fn test_wal_append_batch() {
+    #[tokio::test]
+    async fn test_wal_append_batch() {
         let tmp_file = NamedTempFile::new().unwrap();
         let base_path = tmp_file.path().with_extension("");
 
@@ -626,7 +626,7 @@ mod tests {
         let r2 = make_pyro_record(b"data 2");
 
         let batch = vec![(10, r1.py_ref()), (20, r2.py_ref())];
-        wal.append_batch(&batch).unwrap();
+        wal.append_batch(&batch).await.unwrap();
 
         let reader = WalReader::open(&base_path).unwrap();
         let frames: Vec<_> = reader.frames().collect();
@@ -644,7 +644,7 @@ mod tests {
         let base_path = tmp_file.path().with_extension("");
 
         let wal = WalWriter::open(&base_path).unwrap();
-        let manager = WalManager::new(wal, 10).await;
+        let manager = WalManager::new(wal, 10);
 
         assert_eq!(manager.total_len(), 0);
 
@@ -672,7 +672,7 @@ mod tests {
         let base_path = tmp_file.path().with_extension("");
 
         let wal = WalWriter::open(&base_path).unwrap();
-        let manager = WalManager::new(wal, 5).await;
+        let manager = WalManager::new(wal, 5);
 
         let mut tasks = Vec::new();
         for i in 0..10 {

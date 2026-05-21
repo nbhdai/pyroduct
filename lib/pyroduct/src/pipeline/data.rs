@@ -273,7 +273,11 @@ impl DataManager {
     }
 
     /// Pushes a single WAL record to the current WAL and the in-memory buffer.
-    pub fn push_record(&mut self, row_index: usize, record: &PyroRow<'_>) -> Result<(), PyroError> {
+    pub async fn push_record(
+        &mut self,
+        row_index: usize,
+        record: &PyroRow<'_>,
+    ) -> Result<(), PyroError> {
         if self.wal_writer.is_none() {
             self.open_next_wal()?;
         }
@@ -301,7 +305,7 @@ impl DataManager {
 
         // 1. Write to WAL (Durability)
         if let Some(wal) = &mut self.wal_writer {
-            wal.append(wal_index, &record_to_push)?;
+            wal.append(wal_index, &record_to_push).await?;
         }
 
         // 2. Push to in-memory PreBatch (Performance)
@@ -546,22 +550,36 @@ impl DataManager {
     }
 
     pub fn set_session_status(&self, session_id: usize, status: &str) -> Result<(), PyroError> {
-        self.sqlite_conn.execute(
-            "INSERT OR REPLACE INTO session_status (session_id, status) VALUES (?1, ?2)",
-            rusqlite::params![session_id as i64, status],
-        ).map_err(|e| PyroError::validation(CapturedError::new("Failed to set session status").with_source(e)))?;
+        self.sqlite_conn
+            .execute(
+                "INSERT OR REPLACE INTO session_status (session_id, status) VALUES (?1, ?2)",
+                rusqlite::params![session_id as i64, status],
+            )
+            .map_err(|e| {
+                PyroError::validation(
+                    CapturedError::new("Failed to set session status").with_source(e),
+                )
+            })?;
         Ok(())
     }
 
     pub fn get_session_status(&self, session_id: usize) -> Result<Option<String>, PyroError> {
-        let mut stmt = self.sqlite_conn.prepare("SELECT status FROM session_status WHERE session_id = ?").map_err(|e| {
-            PyroError::validation(CapturedError::new("Failed to prepare SELECT statement for session_status").with_source(e))
-        })?;
+        let mut stmt = self
+            .sqlite_conn
+            .prepare("SELECT status FROM session_status WHERE session_id = ?")
+            .map_err(|e| {
+                PyroError::validation(
+                    CapturedError::new("Failed to prepare SELECT statement for session_status")
+                        .with_source(e),
+                )
+            })?;
         let status_opt = stmt.query_row([session_id as i64], |r| r.get::<_, String>(0));
         match status_opt {
             Ok(status) => Ok(Some(status)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(PyroError::validation(CapturedError::new("Failed to query session status").with_source(e))),
+            Err(e) => Err(PyroError::validation(
+                CapturedError::new("Failed to query session status").with_source(e),
+            )),
         }
     }
 
@@ -767,8 +785,8 @@ mod tests {
         ])
     }
 
-    #[test]
-    fn test_data_manager_flow() {
+    #[tokio::test]
+    async fn test_data_manager_flow() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
         let mut manager = DataManager::new(dir.path(), schema);
@@ -777,9 +795,11 @@ mod tests {
         // 1. Push records
         manager
             .push_record(0, &make_success_record(0, 1, "alice"))
+            .await
             .unwrap();
         manager
             .push_record(1, &make_success_record(1, 2, "bob"))
+            .await
             .unwrap();
 
         // Should have triggered flush_wal because capacity is 2
@@ -790,9 +810,11 @@ mod tests {
         // 2. Push more to trigger second IPC
         manager
             .push_record(2, &make_success_record(2, 3, "charlie"))
+            .await
             .unwrap();
         manager
             .push_record(3, &make_success_record(3, 4, "david"))
+            .await
             .unwrap();
 
         // Should have triggered flush_wal again and automatically rolled out to parquet because ipc_capacity is 2
@@ -803,8 +825,8 @@ mod tests {
         assert!(parquet_path.exists());
     }
 
-    #[test]
-    fn test_recovery() {
+    #[tokio::test]
+    async fn test_recovery() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
         let mut manager = DataManager::new(dir.path(), schema);
@@ -812,9 +834,11 @@ mod tests {
         // Manually create a WAL file via push
         manager
             .push_record(0, &make_success_record(0, 1, "alice"))
+            .await
             .unwrap();
         manager
             .push_record(1, &make_success_record(1, 2, "bob"))
+            .await
             .unwrap();
 
         // We don't flush, so wal_data has 2 rows.
@@ -825,14 +849,15 @@ mod tests {
         assert_eq!(manager2.wal_data.len(), 2);
     }
 
-    #[test]
-    fn test_manual_flush_and_rollout() {
+    #[tokio::test]
+    async fn test_manual_flush_and_rollout() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
         let mut manager = DataManager::new(dir.path(), schema);
 
         manager
             .push_record(0, &make_success_record(0, 1, "alice"))
+            .await
             .unwrap();
         manager.flush_wal().unwrap();
 
@@ -845,8 +870,8 @@ mod tests {
         assert!(parquet_path.exists());
     }
 
-    #[test]
-    fn test_sqlite_index_and_metadata_prefix() {
+    #[tokio::test]
+    async fn test_sqlite_index_and_metadata_prefix() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
         let mut manager = DataManager::new(dir.path(), schema);
@@ -854,6 +879,7 @@ mod tests {
 
         manager
             .push_record(42, &make_success_record(42, 123, "test_metadata"))
+            .await
             .unwrap();
 
         // Verify that the record inside wal_data has the metadata field
@@ -891,8 +917,8 @@ mod tests {
         assert!(row_data.3 > 0); // timestamp nanos i64
     }
 
-    #[test]
-    fn test_get_record_not_found_on_odd_entries() {
+    #[tokio::test]
+    async fn test_get_record_not_found_on_odd_entries() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
         let mut manager = DataManager::new(dir.path(), schema);
@@ -900,12 +926,15 @@ mod tests {
         // Put data with indices 0, 2, 4
         manager
             .push_record(0, &make_success_record(0, 10, "alice"))
+            .await
             .unwrap();
         manager
             .push_record(2, &make_success_record(2, 20, "bob"))
+            .await
             .unwrap();
         manager
             .push_record(4, &make_success_record(4, 30, "charlie"))
+            .await
             .unwrap();
 
         // Get 0, 1, 2, 3, 4, 5
