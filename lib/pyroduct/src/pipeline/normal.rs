@@ -23,7 +23,7 @@ use crate::{
 
 use super::data::DataManager;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ExecutionRecord {
     Success {
         row_index: usize,

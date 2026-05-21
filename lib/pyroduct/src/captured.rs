@@ -66,7 +66,7 @@ pub extern "C" fn library_json(len: *mut usize) -> *const u8 {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Error)]
-#[error("Panic at {file}:{line}:{column} - {message}{}", 
+#[error("Error at {file}:{line}:{column} - {message}{}", 
     .error.as_ref().map(|e| format!(" (Error: {e})")).unwrap_or_default()
 )]
 pub struct CapturedError {

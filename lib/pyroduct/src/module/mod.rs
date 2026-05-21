@@ -454,6 +454,15 @@ impl PyroInstance {
                     }
                 }
             },
+            Ok(DataStatus::CodeError) => {
+                tracing::debug!("Result status: CodeError");
+                match serde_json::from_slice(&result_view) {
+                    Ok(error) => Err(self.pack_user_error(error)),
+                    Err(error) => {
+                        Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view)))
+                    }
+                }
+            },
             _ => {
                 tracing::debug!(status = result_view.status_u8(), "Result status: Unknown");
                 Err(
@@ -601,6 +610,15 @@ impl PyroInstance {
             }
             Ok(DataStatus::RkyvError) => {
                 tracing::debug!(session_id, "Session result: RkyvError");
+                match serde_json::from_slice(&result_view) {
+                    Ok(error) => Err(self.pack_user_error(error)),
+                    Err(error) => {
+                        Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view)))
+                    }
+                }
+            },
+            Ok(DataStatus::CodeError) => {
+                tracing::debug!("Session status: CodeError");
                 match serde_json::from_slice(&result_view) {
                     Ok(error) => Err(self.pack_user_error(error)),
                     Err(error) => {

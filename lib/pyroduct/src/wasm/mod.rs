@@ -1,6 +1,7 @@
-use std::sync::Mutex;
+use std::panic::{self, PanicHookInfo};
+use std::sync::{Mutex, Once};
 use std::{collections::HashMap, ops::Deref};
-use tracing::{error, trace};
+use tracing::{error, trace, debug};
 
 use crate::format::header::PyroHeader;
 use crate::format::{
@@ -35,7 +36,39 @@ static OUTPUT_REGISTRY: Mutex<Option<HashMap<StoredPtr, PyroVec>>> = Mutex::new(
 static SESSION_INPUT: Mutex<Option<HashMap<u32, Vec<PyroVec>>>> = Mutex::new(None);
 static SESSION_OUTPUT: Mutex<Option<HashMap<u32, Vec<PyroVec>>>> = Mutex::new(None);
 
-static ERROR_REGISTRY: Mutex<Vec<PyroVec>> = Mutex::new(Vec::new());
+static ERROR_REGISTRY: Mutex<Option<PyroVec>> = Mutex::new(None);
+
+static REGISTER_PANIC_HOOK: Once = Once::new();
+
+pub fn register_ffi_panic_hook() {
+    REGISTER_PANIC_HOOK.call_once(|| {
+        debug!("register_ffi_panic_hook: installing global panic hook for FFI boundary");
+        let default_hook = panic::take_hook();
+
+        panic::set_hook(Box::new(move |info: &PanicHookInfo| {
+            let mut error = if let Some(s) = info.payload().downcast_ref::<&str>() {
+                CapturedError::new(*s)
+            } else if let Some(s) = info.payload().downcast_ref::<String>() {
+                CapturedError::new(s)
+            } else {
+                CapturedError::new("Panic occurred (unknown payload type)")
+            };
+
+            if let Some(loc) = info.location() {
+                error = error.with_location(loc);
+            };
+
+            error = error.with_backtrace(std::backtrace::Backtrace::capture());
+
+            error!(?error, "FFI Panic Hook captured a panic");
+            ERROR_REGISTRY.clear_poison();
+            let mut registry = ERROR_REGISTRY.lock().unwrap();
+            *registry = Some(PyroError::CodePanic(error.into()).encode());
+
+            default_hook(info);
+        }));
+    });
+}
 
 fn get_input_registry() -> std::sync::MutexGuard<'static, Option<HashMap<StoredMutPtr, PyroVec>>> {
     let mut lock = INPUT_REGISTRY.lock().unwrap();
@@ -53,7 +86,8 @@ fn get_output_registry() -> std::sync::MutexGuard<'static, Option<HashMap<Stored
     lock
 }
 
-fn get_input_session_registry() -> std::sync::MutexGuard<'static, Option<HashMap<u32, Vec<PyroVec>>>> {
+fn get_input_session_registry() -> std::sync::MutexGuard<'static, Option<HashMap<u32, Vec<PyroVec>>>>
+{
     let mut lock = SESSION_INPUT.lock().unwrap();
     if lock.is_none() {
         *lock = Some(HashMap::new());
@@ -61,7 +95,8 @@ fn get_input_session_registry() -> std::sync::MutexGuard<'static, Option<HashMap
     lock
 }
 
-fn get_output_session_registry() -> std::sync::MutexGuard<'static, Option<HashMap<u32, Vec<PyroVec>>>> {
+fn get_output_session_registry()
+-> std::sync::MutexGuard<'static, Option<HashMap<u32, Vec<PyroVec>>>> {
     let mut lock = SESSION_OUTPUT.lock().unwrap();
     if lock.is_none() {
         *lock = Some(HashMap::new());
@@ -123,13 +158,6 @@ pub fn get_input(ptr: *mut u8) -> Option<PyroVec> {
 pub unsafe fn lend(vec: &PyroVec) -> *const u8 {
     let raw = vec.as_raw_slice();
     raw.as_ptr()
-}
-
-/// Consume a PyroVec and register it for the host to pick up.
-pub fn store_error(error: PyroError) {
-    let vec = error.encode();
-
-    ERROR_REGISTRY.lock().as_mut().unwrap().push(vec);
 }
 
 /// Consume a PyroVec and register it for the host to pick up.
@@ -259,7 +287,10 @@ pub extern "C" fn borrow_session_input(session_id: u32, index: u32) -> *mut u8 {
             return ptr;
         }
     }
-    error!(session_id, index, "borrow_session_input: session or index not found");
+    error!(
+        session_id,
+        index, "borrow_session_input: session or index not found"
+    );
     std::ptr::null_mut()
 }
 
@@ -294,7 +325,10 @@ pub extern "C" fn borrow_session_output(session_id: u32, index: u32) -> *mut u8 
             return ptr;
         }
     }
-    error!(session_id, index, "borrow_session_output: session or index not found");
+    error!(
+        session_id,
+        index, "borrow_session_output: session or index not found"
+    );
     std::ptr::null_mut()
 }
 
@@ -388,7 +422,7 @@ where
         Err(err) => {
             error!(?err, "Unable to expose PyroRow");
             return to_output(err.encode());
-        },
+        }
     };
     let input_row = PyroRow::from(&*input_row);
     let input = match input_row.try_into() {
@@ -403,28 +437,25 @@ where
         }
     };
 
-    let output = (func)(input);
+    register_ffi_panic_hook();
 
-    to_output(match output {
+    to_output(match func(input) {
         Ok(o) => match encode_result(Ok(o.to_row())) {
             Ok(r) => r,
             Err(r) => r,
         },
         Err(err) => {
             error!(?err, "Function execution failed");
-            
+
             match encode_result(Err(err)) {
                 Ok(r) => r,
                 Err(r) => r,
             }
-        },
+        }
     })
 }
 
-pub fn wasm_row_main_session<'a, O, F>(
-    session_id: u32,
-    func: F,
-) -> *const u8
+pub fn wasm_row_main_session<'a, O, F>(session_id: u32, func: F) -> *const u8
 where
     O: ToRow,
     F: Fn(&[PyroRow<'a>], PyroRow<'a>) -> Result<SessionResponse<O>, CapturedError>,
@@ -437,9 +468,7 @@ where
 
     if inputs.is_empty() {
         error!(session_id, "The input is missing for session");
-        let result = Err(CapturedError::new(
-            "The input is missing"
-        ));
+        let result = Err(CapturedError::new("The input is missing"));
         return to_output(match encode_result(result) {
             Ok(r) => r,
             Err(r) => r,
@@ -456,7 +485,7 @@ where
         Err(err) => {
             error!(session_id, ?err, "Unable to expose view for current input");
             return to_output(err.encode());
-        },
+        }
     };
     let input = PyroRow::from(&*input_row);
 
@@ -464,14 +493,16 @@ where
     for (input, ir) in inputs[0..inputs.len() - 1].iter().enumerate() {
         if ir.status() == Ok(DataStatus::Empty) {
             error!(session_id, input, "Session terminated");
-            return to_output(CapturedError::new(format!("Session {session_id} Terminated")).encode());
+            return to_output(
+                CapturedError::new(format!("Session {session_id} Terminated")).encode(),
+            );
         }
         let input_row = match PyroRow::expose_view(ir.py_ref()) {
-                        Ok(vec) => vec,
+            Ok(vec) => vec,
             Err(err) => {
                 error!(session_id, ?err, "Unable to expose view for prior input");
                 return to_output(err.encode());
-            },
+            }
         };
         let input = PyroRow::from(&*input_row);
         prior.push(input);
@@ -479,12 +510,14 @@ where
 
     trace!(priors = prior.len(), "Retrieve priors");
 
+    register_ffi_panic_hook();
+
     let result = match func(&prior, input) {
         Ok(result) => result,
         Err(err) => {
             error!(session_id, ?err, "Session function execution failed");
             return to_output(err.encode());
-        },
+        }
     };
 
     trace!("Processed function");
@@ -497,7 +530,7 @@ where
             };
             result.set_fn_id(0);
             result
-        },
+        }
         SessionResponse::End(o) => {
             let mut result = match encode_result(Ok(o.to_row())) {
                 Ok(r) => r,
@@ -505,12 +538,12 @@ where
             };
             result.set_fn_id(1);
             result
-        },
+        }
         SessionResponse::Terminate => {
             let mut result = PyroVec::ok();
             result.set_fn_id(2);
             result
-        },
+        }
     };
     let sessions = sessions.entry(session_id).or_default();
     sessions.push(result);
@@ -520,11 +553,7 @@ where
     last.raw_ptr() as *const u8
 }
 
-
-pub fn wasm_row_main_session_diff<'a, O, F>(
-    session_id: u32,
-    func: F,
-) -> *const u8
+pub fn wasm_row_main_session_diff<'a, O, F>(session_id: u32, func: F) -> *const u8
 where
     O: ToRow,
     F: Fn(&[PyroRow<'a>], &[PyroRow<'a>], PyroRow<'a>) -> Result<SessionResponse<O>, CapturedError>,
@@ -537,12 +566,15 @@ where
 
     let inputs = input_sessions.entry(session_id).or_insert_with(Vec::new);
     let outputs = output_sessions.entry(session_id).or_insert_with(Vec::new);
-    
+
     if outputs.len() + 1 != inputs.len() {
-        error!(session_id, inputs_len = inputs.len(), outputs_len = outputs.len(), "The input is missing or session state is inconsistent");
-        let result = Err(CapturedError::new(
-            "The input is missing"
-        ));
+        error!(
+            session_id,
+            inputs_len = inputs.len(),
+            outputs_len = outputs.len(),
+            "The input is missing or session state is inconsistent"
+        );
+        let result = Err(CapturedError::new("The input is missing"));
         return to_output(match encode_result(result) {
             Ok(r) => r,
             Err(r) => r,
@@ -557,9 +589,13 @@ where
     let input_row = match PyroRow::expose_view(current_input.py_ref()) {
         Ok(vec) => vec,
         Err(err) => {
-            error!(session_id, ?err, "Unable to expose view for current input in diff session");
+            error!(
+                session_id,
+                ?err,
+                "Unable to expose view for current input in diff session"
+            );
             return to_output(err.encode());
-        },
+        }
     };
     let input = PyroRow::from(&*input_row);
 
@@ -567,69 +603,78 @@ where
     for (input, ir) in inputs[0..inputs.len() - 1].iter().enumerate() {
         if ir.status() == Ok(DataStatus::Empty) {
             error!(session_id, input, "Session terminated");
-            return to_output(CapturedError::new(format!("Session {session_id} Terminated")).encode());
+            return to_output(
+                CapturedError::new(format!("Session {session_id} Terminated")).encode(),
+            );
         }
         let input_row = match PyroRow::expose_view(ir.py_ref()) {
             Ok(vec) => vec,
             Err(err) => {
-                error!(session_id, ?err, "Unable to expose view for prior input in diff session");
+                error!(
+                    session_id,
+                    ?err,
+                    "Unable to expose view for prior input in diff session"
+                );
                 return to_output(err.encode());
-            },
+            }
         };
         let input = PyroRow::from(&*input_row);
         prior_inputs.push(input);
     }
 
-
     let mut prior_outputs = Vec::with_capacity(outputs.len());
     for (output, or) in outputs.iter().enumerate() {
         if or.status() == Ok(DataStatus::Empty) {
             error!(session_id, output, "Session terminated");
-            return to_output(CapturedError::new(format!("Session {session_id} Terminated")).encode());
+            return to_output(
+                CapturedError::new(format!("Session {session_id} Terminated")).encode(),
+            );
         }
         let output_row = match PyroRow::expose_view(or.py_ref()) {
             Ok(vec) => vec,
             Err(err) => {
-                error!(session_id, ?err, "Unable to expose view for prior output in diff session");
+                error!(
+                    session_id,
+                    ?err,
+                    "Unable to expose view for prior output in diff session"
+                );
                 return to_output(err.encode());
-            },
+            }
         };
         let output = PyroRow::from(&*output_row);
         prior_outputs.push(output);
     }
 
+    register_ffi_panic_hook();
+
     let result = match func(&prior_inputs, &prior_outputs, input) {
         Ok(result) => result,
         Err(err) => {
-            error!(session_id, ?err, "Diff session function execution failed");
+            error!(session_id, ?err, "Session function execution failed");
             return to_output(err.encode());
-        },
+        }
     };
 
     let result = match result {
-        SessionResponse::Continue(o) => {
-            match encode_result(Ok(o.to_row())) {
-                Ok(mut r) => {
-                    r.set_fn_id(0);
-                    r
-                },
-                Err(e) => return to_output(e),
+        SessionResponse::Continue(o) => match encode_result(Ok(o.to_row())) {
+            Ok(mut r) => {
+                r.set_fn_id(0);
+                r
             }
+            Err(e) => return to_output(e),
         },
-        SessionResponse::End(o) => {
-            match encode_result(Ok(o.to_row())) {
-                Ok(mut r) => {
-                    r.set_fn_id(1);
-                    r
-                },
-                Err(e) => return to_output(e),
+        SessionResponse::End(o) => match encode_result(Ok(o.to_row())) {
+            Ok(mut r) => {
+                r.set_fn_id(1);
+                r
             }
+            Err(e) => return to_output(e),
         },
         SessionResponse::Terminate => {
             let mut result = PyroVec::ok();
             result.set_fn_id(2);
             result
-        },
+        }
     };
     let sessions = output_sessions.entry(session_id).or_default();
     sessions.push(result);
@@ -655,7 +700,7 @@ fn encode_result<'a>(result: Result<PyroRow<'a>, CapturedError>) -> Result<PyroV
         Ok(mut v) => {
             v.set_status(DataStatus::RkyvValid);
             Ok(v)
-        },
+        }
         Err(e) => {
             error!(?e, "encode_result: encoding failed");
             Err(e.encode())
@@ -687,7 +732,6 @@ impl<T> Client<T> {
             Ok(config_buf) => config_buf,
             Err(err) => {
                 error!(?err, "__register: was unable to serialize the client state");
-                store_error(err);
                 panic!("Was unable to serialize the client state");
             }
         };
@@ -698,15 +742,17 @@ impl<T> Client<T> {
         let result_vec = match get_input(result_raw) {
             Some(result_vec) => result_vec,
             None => {
-                error!(?result_raw, "__register: Host registration failed with no returned");
+                error!(
+                    ?result_raw,
+                    "__register: Host registration failed with no returned"
+                );
                 panic!("Host registration failed with no returned");
-            },
+            }
         };
 
         // Check for transport/host errors
         if let Err(e) = result_vec.parse_as_error() {
             error!(?e, "__register: Host registration failed with a pyro error");
-            store_error(e);
             panic!("Host registration failed with a pyro error");
         }
 
@@ -723,8 +769,10 @@ impl<T> Client<T> {
         let config_buf = match data.ship() {
             Ok(config_buf) => config_buf,
             Err(err) => {
-                error!(?err, "__register_result: was unable to serialize the client state");
-                store_error(err);
+                error!(
+                    ?err,
+                    "__register_result: was unable to serialize the client state"
+                );
                 panic!("Was unable to serialize the client state");
             }
         };
@@ -735,15 +783,20 @@ impl<T> Client<T> {
         let result_vec = match get_input(result_raw) {
             Some(result_vec) => result_vec,
             None => {
-                error!(?result_raw, "__register_result: Host registration failed with no returned");
+                error!(
+                    ?result_raw,
+                    "__register_result: Host registration failed with no returned"
+                );
                 panic!("Host registration failed with no returned");
-            },
+            }
         };
 
         // Check for transport/host errors
         if let Err(e) = result_vec.parse_as_error() {
-            error!(?e, "__register_result: Host registration failed with a pyro error");
-            store_error(e);
+            error!(
+                ?e,
+                "__register_result: Host registration failed with a pyro error"
+            );
             panic!("Host registration failed with a pyro error");
         }
 
@@ -763,7 +816,7 @@ impl<T> Client<T> {
                 Err(err) => {
                     error!(?err, "__call_from_wasm: failed to ship input");
                     err.encode()
-                },
+                }
             },
             None => PyroVec::ok(),
         };
@@ -772,16 +825,21 @@ impl<T> Client<T> {
         let result_vec = match get_input(result_ptr) {
             Some(result_vec) => result_vec,
             None => {
-                error!(?result_ptr, "__call_from_wasm: Host registration failed with no returned");
+                error!(
+                    ?result_ptr,
+                    "__call_from_wasm: Host registration failed with no returned"
+                );
                 panic!("Host registration failed with no returned");
-            },
+            }
         };
         let result = O::expose(result_vec.view()).and_then(|r| O::receiver().receive(&r));
         match result {
             Ok(result) => result,
             Err(err) => {
-                error!(?err, "__call_from_wasm: Received an unhandled error from host");
-                store_error(err);
+                error!(
+                    ?err,
+                    "__call_from_wasm: Received an unhandled error from host"
+                );
                 panic!("Received an unhandled error from host")
             }
         }
@@ -802,7 +860,7 @@ impl<T> Client<T> {
                 Err(err) => {
                     error!(?err, "__call_result_from_wasm: failed to ship input");
                     err.encode()
-                },
+                }
             },
             None => PyroVec::ok(),
         };
@@ -811,9 +869,12 @@ impl<T> Client<T> {
         let result_vec = match get_input(result_ptr) {
             Some(result_vec) => result_vec,
             None => {
-                error!(?result_ptr, "__call_result_from_wasm: Host registration failed with no returned");
+                error!(
+                    ?result_ptr,
+                    "__call_result_from_wasm: Host registration failed with no returned"
+                );
                 panic!("Host registration failed with no returned");
-            },
+            }
         };
         let result = Result::<O, E>::expose(result_vec.view()).and_then(|r| {
             let res = match r {
@@ -825,8 +886,10 @@ impl<T> Client<T> {
         match result {
             Ok(result) => result,
             Err(err) => {
-                error!(?err, "__call_result_from_wasm: Received an unhandled error from host");
-                store_error(err);
+                error!(
+                    ?err,
+                    "__call_result_from_wasm: Received an unhandled error from host"
+                );
                 panic!("Received an unhandled error from host")
             }
         }

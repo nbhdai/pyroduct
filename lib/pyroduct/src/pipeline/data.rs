@@ -93,6 +93,14 @@ impl DataManager {
             [],
         );
 
+        let _ = conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_status (
+                session_id INTEGER PRIMARY KEY,
+                status TEXT NOT NULL
+            )",
+            [],
+        );
+
         Self {
             output_dir: output_dir_buf,
             wal_data: PreBatch::new(schema.clone()),
@@ -531,6 +539,30 @@ impl DataManager {
 
     pub fn output_dir(&self) -> &Path {
         &self.output_dir
+    }
+
+    pub fn schema(&self) -> &PyroSchema<'static> {
+        &self._schema
+    }
+
+    pub fn set_session_status(&self, session_id: usize, status: &str) -> Result<(), PyroError> {
+        self.sqlite_conn.execute(
+            "INSERT OR REPLACE INTO session_status (session_id, status) VALUES (?1, ?2)",
+            rusqlite::params![session_id as i64, status],
+        ).map_err(|e| PyroError::validation(CapturedError::new("Failed to set session status").with_source(e)))?;
+        Ok(())
+    }
+
+    pub fn get_session_status(&self, session_id: usize) -> Result<Option<String>, PyroError> {
+        let mut stmt = self.sqlite_conn.prepare("SELECT status FROM session_status WHERE session_id = ?").map_err(|e| {
+            PyroError::validation(CapturedError::new("Failed to prepare SELECT statement for session_status").with_source(e))
+        })?;
+        let status_opt = stmt.query_row([session_id as i64], |r| r.get::<_, String>(0));
+        match status_opt {
+            Ok(status) => Ok(Some(status)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(PyroError::validation(CapturedError::new("Failed to query session status").with_source(e))),
+        }
     }
 
     pub fn get_record(&self, index: usize) -> Result<PyroRow<'static>, PyroError> {
