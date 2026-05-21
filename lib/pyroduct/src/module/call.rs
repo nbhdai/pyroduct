@@ -313,4 +313,44 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
             .map_err(WasmError::Unknown)?;
         Ok(())
     }
+
+    /// Read the panic error from the WASM registry, if any.
+    pub async fn get_panic_error(&mut self) -> Result<Option<PyroVec>, WasmError> {
+        let (lend_fn, free_fn) = {
+            let methods = self
+                .ctx
+                .as_context()
+                .data()
+                .methods()
+                .ok_or_else(|| WasmError::MissingExport("PyroState not linked".to_string()))?;
+            (methods.lend_error(), methods.free_error())
+        };
+
+        let (lend_fn, free_fn) = match (lend_fn, free_fn) {
+            (Some(l), Some(f)) => (l, f),
+            _ => return Ok(None),
+        };
+
+        let ptr = lend_fn
+            .call_async(&mut self.ctx, ())
+            .await
+            .map_err(WasmError::Unknown)?;
+
+        if ptr == 0 {
+            return Ok(None);
+        }
+
+        let wasm_memory = self.memory.data(self.ctx.as_context());
+        let view = get_ref(wasm_memory, ptr as usize)
+            .map_err(|e| WasmError::InputMemory(wasmtime::Error::msg(e.to_string())))?;
+        let vec = PyroVec::clone_from_pyro(&view);
+
+        free_fn
+            .call_async(&mut self.ctx, ())
+            .await
+            .map_err(WasmError::Unknown)?;
+
+        Ok(Some(vec))
+    }
 }
+

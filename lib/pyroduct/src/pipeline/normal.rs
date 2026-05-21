@@ -12,7 +12,7 @@ use crate::module::PyroInstance;
 use crate::{
     PyroError,
     format::{
-        PyroLogs, PyroSuccess,
+        PyroLogs,
         value::{
             PyroRow,
             arrow::{PreBatch, Rowable},
@@ -77,19 +77,27 @@ impl Pipeline {
         input: &PyroRow<'_>,
     ) -> Result<ExecutionRecord, PyroError> {
         debug!(row_index, "Processing row");
-        let mut result: PyroRow<'static> = input.clone().into_owned();
+        self.input_manager.push_record(row_index, input)?;
 
-        let mut success = Some(PyroSuccess {
-            row: result.clone(),
-            logs: PyroLogs::empty(),
-        });
-        let mut failure = None;
-
-        match self.step.call(&result).await {
+        let record = match self.step.call(input).await {
             Ok(output) => {
                 debug!(row_index, "Step succeeded");
-                result.extend(output.row.clone());
-                success = Some(output);
+                self.output_manager.push_record(row_index, &output.row)?;
+                
+                let log_entry = LogEntry {
+                    row_index,
+                    module_logs: output.logs.module_logs.clone(),
+                    capability_logs: output.logs.capability_logs.clone(),
+                    failure: None,
+                };
+                self.log_manager.append(&log_entry).await?;
+                let record = ExecutionRecord::Success {
+                    row_index,
+                    input: input.clone().into_owned(),
+                    success: output.row,
+                    logs: output.logs,
+                };
+                record
             }
             Err(f) => {
                 match &f.result {
@@ -98,53 +106,22 @@ impl Pipeline {
                     }
                     Err(error) => error!(row_index, "Pipeline Step: Pyroduct Failed: {}", error),
                 }
-                failure = Some(f);
-            }
-        }
-
-        let record = if let Some(f) = failure {
-            ExecutionRecord::Failure {
-                row_index,
-                input: input.clone().into_owned(),
-                failure: f.result,
-                logs: f.logs,
-            }
-        } else {
-            let s = success.unwrap();
-            ExecutionRecord::Success {
-                row_index,
-                input: input.clone().into_owned(),
-                success: s.row,
-                logs: s.logs,
+                let log_entry = LogEntry {
+                    row_index,
+                    module_logs: f.logs.module_logs.clone(),
+                    capability_logs: f.logs.capability_logs.clone(),
+                    failure: f.result.as_ref().ok().cloned(),
+                };
+                self.log_manager.append(&log_entry).await?;
+                let record = ExecutionRecord::Failure {
+                    row_index,
+                    input: input.clone().into_owned(),
+                    failure: f.result,
+                    logs: f.logs,
+                };
+                record
             }
         };
-
-        if let ExecutionRecord::Success { .. } = &record {
-            self.output_manager.push_record(row_index, &result)?;
-        }
-
-        let log_entry = match &record {
-            ExecutionRecord::Success {
-                row_index, logs, ..
-            } => LogEntry {
-                row_index: *row_index,
-                module_logs: logs.module_logs.clone(),
-                capability_logs: logs.capability_logs.clone(),
-                failure: None,
-            },
-            ExecutionRecord::Failure {
-                row_index,
-                logs,
-                failure,
-                ..
-            } => LogEntry {
-                row_index: *row_index,
-                module_logs: logs.module_logs.clone(),
-                capability_logs: logs.capability_logs.clone(),
-                failure: failure.as_ref().ok().cloned(),
-            },
-        };
-        self.log_manager.append(&log_entry).await?;
 
         Ok(record)
     }

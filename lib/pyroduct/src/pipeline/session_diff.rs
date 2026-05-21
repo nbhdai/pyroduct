@@ -271,10 +271,7 @@ impl SessionDiffPipeline {
         session_id: u32,
         input: &PyroRow<'_>,
     ) -> Result<SessionResult, PyroFailure> {
-        let active_logs = self.step.unpack_logs();
-
         let res = self.step.call_session(session_id, input).await;
-        let logs = self.step.unpack_logs();
 
         // PERSIST STATUS
         match &res {
@@ -299,9 +296,10 @@ impl SessionDiffPipeline {
             let active = match self.get_or_open_session(session_id).await {
                 Ok(act) => act,
                 Err(e) => {
+                    let logs = self.step.unpack_logs();
                     return Err(PyroFailure {
                         result: Err(e.to_string()),
-                        logs: active_logs.clone(),
+                        logs,
                     });
                 }
             };
@@ -314,12 +312,14 @@ impl SessionDiffPipeline {
             let _ = active.data_wal.append(record_index, &step_row);
         }
 
+        let logs = self.step.unpack_logs();
         let active = match self.get_or_open_session(session_id).await {
             Ok(act) => act,
             Err(e) => {
+                let logs = self.step.unpack_logs();
                 return Err(PyroFailure {
                     result: Err(e.to_string()),
-                    logs: active_logs.clone(),
+                    logs,
                 });
             }
         };

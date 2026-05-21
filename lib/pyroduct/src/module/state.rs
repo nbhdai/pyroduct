@@ -212,6 +212,8 @@ pub(crate) struct PyroMethods {
     session_input_length: TypedFunc<i32, i32>,
     session_output_length: TypedFunc<i32, i32>,
     free_session: TypedFunc<i32, ()>,
+    lend_error: Option<TypedFunc<(), i32>>,
+    free_error: Option<TypedFunc<(), ()>>,
     last_error: Option<anyhow::Error>,
 }
 
@@ -254,6 +256,14 @@ impl PyroMethods {
 
     pub fn free_session(&self) -> TypedFunc<i32, ()> {
         self.free_session.clone()
+    }
+
+    pub fn lend_error(&self) -> Option<TypedFunc<(), i32>> {
+        self.lend_error.clone()
+    }
+
+    pub fn free_error(&self) -> Option<TypedFunc<(), ()>> {
+        self.free_error.clone()
     }
 
     /// Record an error that will be surfaced after the wasm call completes.
@@ -336,6 +346,14 @@ impl PyroState {
             .get_typed_func::<i32, ()>(&mut *store, "free_session")
             .map_err(|_| WasmError::SignatureMismatch("free_session".to_string()))?;
 
+        let lend_error = instance
+            .get_typed_func::<(), i32>(&mut *store, "lend_error")
+            .ok();
+
+        let free_error = instance
+            .get_typed_func::<(), ()>(&mut *store, "free_error")
+            .ok();
+
         store.data_mut().methods = Some(PyroMethods {
             new_input,
             _grow_input: grow_input,
@@ -349,6 +367,8 @@ impl PyroState {
             session_input_length,
             session_output_length,
             free_session,
+            lend_error,
+            free_error,
             last_error: None,
         });
         Ok(())

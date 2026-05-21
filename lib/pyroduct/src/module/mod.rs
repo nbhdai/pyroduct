@@ -416,11 +416,18 @@ impl PyroInstance {
             .map_err(|err| self.pack_pyro_error(err))?;
 
         tracing::debug!("calling call_extern...");
-        let output_ptr = entry
-            .call_async(&mut self.store, input_ptr)
-            .await
-            .map_err(classify_error)
-            .map_err(|err| self.pack_pyro_error(err))?;
+        let output_ptr = match entry.call_async(&mut self.store, input_ptr).await {
+            Ok(ptr) => ptr,
+            Err(e) => {
+                let mut io = PyroCallIo::new(&mut self.store, self.memory);
+                if let Ok(Some(err_vec)) = io.get_panic_error().await {
+                    if let Err(err) = err_vec.parse_as_error() {
+                        return Err(self.pack_pyro_error(err));
+                    }
+                }
+                return Err(self.pack_pyro_error(classify_error(e)));
+            }
+        };
         tracing::debug!("output_ptr = {:#x}", output_ptr);
 
         // 3. Read Output using PyroCallIo
@@ -560,11 +567,18 @@ impl PyroInstance {
             })
             .map_err(|err| self.pack_pyro_error(err))?;
 
-        let output_ptr = entry
-            .call_async(&mut self.store, session_id as i32)
-            .await
-            .map_err(classify_error)
-            .map_err(|err| self.pack_pyro_error(err))?;
+        let output_ptr = match entry.call_async(&mut self.store, session_id as i32).await {
+            Ok(ptr) => ptr,
+            Err(e) => {
+                let mut io = PyroCallIo::new(&mut self.store, self.memory);
+                if let Ok(Some(err_vec)) = io.get_panic_error().await {
+                    if let Err(err) = err_vec.parse_as_error() {
+                        return Err(self.pack_pyro_error(err));
+                    }
+                }
+                return Err(self.pack_pyro_error(classify_error(e)));
+            }
+        };
 
         tracing::debug!(session_id, ?output_ptr, "Session call returned");
 

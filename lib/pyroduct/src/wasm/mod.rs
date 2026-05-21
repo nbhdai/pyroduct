@@ -1,7 +1,7 @@
 use std::panic::{self, PanicHookInfo};
 use std::sync::{Mutex, Once};
 use std::{collections::HashMap, ops::Deref};
-use tracing::{error, trace, debug};
+use tracing::{debug, error, trace};
 
 use crate::format::header::PyroHeader;
 use crate::format::{
@@ -895,9 +895,30 @@ impl<T> Client<T> {
         }
     }
 }
+#[unsafe(no_mangle)]
+pub extern "C" fn lend_error() -> *const u8 {
+    trace!("lend_error");
+    ERROR_REGISTRY.clear_poison();
+    let registry = ERROR_REGISTRY.lock().unwrap();
+    if let Some(ref vec) = *registry {
+        let raw = vec.as_raw_slice();
+        raw.as_ptr()
+    } else {
+        std::ptr::null()
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn free_error() {
+    trace!("free_error");
+    ERROR_REGISTRY.clear_poison();
+    let mut registry = ERROR_REGISTRY.lock().unwrap();
+    *registry = None;
+}
 
 impl From<String> for CapturedError {
     fn from(err: String) -> Self {
         CapturedError::new(err)
     }
 }
+
