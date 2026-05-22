@@ -90,7 +90,9 @@ pub struct App {
 impl App {
     pub async fn load(yaml_path: &Path, input_path: &Path) -> Result<Self> {
         let cache = Arc::new(CacheManager::from_env().await?);
-        let builder = Builder::from_env(cache.clone()).await.context("Failed to initialize builder")?;
+        let builder = Builder::from_env(cache.clone())
+            .await
+            .context("Failed to initialize builder")?;
 
         let tui_path = yaml_path.with_extension("tui.json");
         let pipelines: Vec<SourcePipeline> = if tui_path.exists() {
@@ -505,11 +507,15 @@ async fn handle_event(app: &mut App) -> Result<()> {
 
                         // Proactively refresh config if that tab is visible
                         if mv.bottom_tab == module::BottomTab::Config {
-                            mv.cap_config.refresh_available_caps(app.cache.as_ref()).await;
+                            mv.cap_config
+                                .refresh_available_caps(app.cache.as_ref())
+                                .await;
                             if mv.cap_config.selected_tab < mv.cap_config.editors.len() {
                                 let name =
                                     mv.cap_config.editors[mv.cap_config.selected_tab].0.clone();
-                                mv.cap_config.load_interface(app.cache.as_ref(), &name).await;
+                                mv.cap_config
+                                    .load_interface(app.cache.as_ref(), &name)
+                                    .await;
                             }
                         }
                     }

@@ -5,8 +5,8 @@ use pyro_artifacts::{
 };
 use pyroduct::module::sessions::SessionResult;
 use pyroduct::{PyroRow, pipeline::PipelineConfig};
-use tracing_subscriber::EnvFilter;
 use std::collections::HashMap;
+use tracing_subscriber::EnvFilter;
 
 /// A session module that returns a single string field.
 const SIMPLE_SESSION_MODULE: &str = r#"

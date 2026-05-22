@@ -642,14 +642,14 @@ impl PyroInstance {
             Ok(DataStatus::Empty) => {
                 let result = match fn_id {
                     0 => {
-                        return Err(self.pack_user_error(
-                            CapturedError::new("Session returned 'continue', but provided no data"),
-                        ));
+                        return Err(self.pack_user_error(CapturedError::new(
+                            "Session returned 'continue', but provided no data",
+                        )));
                     }
                     1 => {
-                        return Err(self.pack_user_error(
-                            CapturedError::new("Session returned 'end', but provided no data"),
-                        ));
+                        return Err(self.pack_user_error(CapturedError::new(
+                            "Session returned 'end', but provided no data",
+                        )));
                     }
                     2 => sessions::SessionResult::Terminate,
                     _ => sessions::SessionResult::Terminate,

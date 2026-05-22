@@ -1,13 +1,14 @@
 use anyhow::{Result, bail};
 use fs_err as fs;
-use pyro_artifacts::{
-    artifacts::Artifact,
-    cache::CacheManager,
-    environment::Environment,
-};
+use pyro_artifacts::{artifacts::Artifact, cache::CacheManager, environment::Environment};
 use std::path::Path;
 
-pub async fn ship_single(cache: std::sync::Arc<CacheManager>, path: &Path, debug: bool, out: Option<&Path>) -> Result<()> {
+pub async fn ship_single(
+    cache: std::sync::Arc<CacheManager>,
+    path: &Path,
+    debug: bool,
+    out: Option<&Path>,
+) -> Result<()> {
     let env = Environment::new(path.to_path_buf(), cache.clone()).await?;
 
     let artifacts = env.package(false).await?;

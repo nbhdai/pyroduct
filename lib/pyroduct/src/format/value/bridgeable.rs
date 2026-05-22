@@ -65,7 +65,10 @@ mod tests {
 
         // Ship
         let vec = row.ship().expect("ship failed");
-        assert_eq!(vec.status(), Ok(crate::format::header::DataStatus::RkyvValid));
+        assert_eq!(
+            vec.status(),
+            Ok(crate::format::header::DataStatus::RkyvValid)
+        );
         assert!(vec.len() > 0);
 
         // Expose

@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
 use fs_err as fs;
 use pyro_artifacts::{
-    artifacts::{Artifact, Artifacts, Module}, cache::CacheManager, debug::CapSymbols, environment::Environment
+    artifacts::{Artifact, Artifacts, Module},
+    cache::CacheManager,
+    debug::CapSymbols,
+    environment::Environment,
 };
 use pyro_macro::{ffi::generate_capability, module::generate_module};
 use std::path::Path;

@@ -379,8 +379,12 @@ pub trait PyroData: private::Sealed + Deref<Target = [u8]> + Sized {
                 Ok(DataStatus::LocalInvalidHeader) => PyroError::local(ErrorKind::InvalidHeader),
                 Ok(DataStatus::LocalLayoutError) => PyroError::local(ErrorKind::LayoutError),
                 Ok(DataStatus::LocalUnexpectedEof) => PyroError::local(ErrorKind::UnexpectedEof),
-                Ok(DataStatus::LocalNotFound) => PyroError::local(ErrorKind::NotFound("not found".into())),
-                Ok(DataStatus::RemoteNotFound) => PyroError::remote(ErrorKind::NotFound("not found".into())),
+                Ok(DataStatus::LocalNotFound) => {
+                    PyroError::local(ErrorKind::NotFound("not found".into()))
+                }
+                Ok(DataStatus::RemoteNotFound) => {
+                    PyroError::remote(ErrorKind::NotFound("not found".into()))
+                }
             },
         )
     }

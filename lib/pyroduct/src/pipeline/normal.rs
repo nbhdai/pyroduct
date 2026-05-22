@@ -82,7 +82,9 @@ impl Pipeline {
         let record = match self.step.call(input).await {
             Ok(output) => {
                 debug!(row_index, "Step succeeded");
-                self.output_manager.push_record(row_index, &output.row).await?;
+                self.output_manager
+                    .push_record(row_index, &output.row)
+                    .await?;
 
                 let log_entry = LogEntry {
                     row_index,

@@ -52,7 +52,7 @@ async fn test_capability_configuration_respect() {
             }],
         },
         source: CODE.to_string(),
-                ident: None,
+        ident: None,
     };
     cache.remove_anon(&source.hash()).await.unwrap();
 
@@ -92,11 +92,16 @@ async fn test_capability_configuration_respect() {
     }
 
     // Verify that multiple log files were created due to low wal_capacity
-    let log_files = std::fs::read_dir(&tmp_path).unwrap()
+    let log_files = std::fs::read_dir(&tmp_path)
+        .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().map_or(false, |ext| ext == "pyrolog"))
         .count();
-    assert!(log_files > 1, "Should have rotated logs, but found only {} file(s)", log_files);
+    assert!(
+        log_files > 1,
+        "Should have rotated logs, but found only {} file(s)",
+        log_files
+    );
 
     let input = PyroRow::from([("input", "hello".into())]);
     let result = pipeline.process(10, &input).await.unwrap();

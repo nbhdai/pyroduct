@@ -96,10 +96,7 @@ impl PyroRouter {
                 tracing::debug!(%class_id, %method_index, %client_id, "Dispatching method call");
 
                 let client_data = self.clients.get(&client_id).ok_or_else(|| {
-                    let err = format!(
-                        "Object for client ID {} not configured",
-                        client_id
-                    );
+                    let err = format!("Object for client ID {} not configured", client_id);
                     tracing::warn!(%err);
                     PyroError::NotFound(err)
                 })?;

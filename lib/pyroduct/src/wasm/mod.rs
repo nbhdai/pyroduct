@@ -13,8 +13,8 @@ use crate::format::{
     value::PyroRow,
 };
 
-use crate::session::SessionResponse;
 use crate::CapturedError;
+use crate::session::SessionResponse;
 
 mod logger;
 
@@ -928,4 +928,3 @@ impl From<String> for CapturedError {
         CapturedError::new(err)
     }
 }
-

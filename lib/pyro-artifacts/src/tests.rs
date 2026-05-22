@@ -135,7 +135,11 @@ async fn test_anon_compile_with_interface() {
     let dir = TempDir::new().unwrap();
     let config = test_config();
 
-    let cache = Arc::new(CacheManager::new(dir.path(), config.pyroduct.clone()).await.unwrap());
+    let cache = Arc::new(
+        CacheManager::new(dir.path(), config.pyroduct.clone())
+            .await
+            .unwrap(),
+    );
     let builder = Builder::new(&dir.path().join("build"), config, Arc::clone(&cache))
         .await
         .unwrap();
@@ -246,7 +250,11 @@ async fn test_load_playbook() {
     let dir = TempDir::new().unwrap();
     let config = test_config();
 
-    let cache = Arc::new(CacheManager::new(dir.path(), config.pyroduct.clone()).await.unwrap());
+    let cache = Arc::new(
+        CacheManager::new(dir.path(), config.pyroduct.clone())
+            .await
+            .unwrap(),
+    );
     let builder = Builder::new(&dir.path().join("build"), config, Arc::clone(&cache))
         .await
         .unwrap();

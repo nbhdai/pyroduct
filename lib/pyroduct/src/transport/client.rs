@@ -1,6 +1,6 @@
 use sha2::{Digest, Sha256};
-use std::fmt;
 use std::collections::HashMap;
+use std::fmt;
 use std::path::Path;
 
 use pyro_spec::InterfaceSpec;
@@ -25,7 +25,9 @@ pub struct PyroClient {
 
 impl PyroClient {
     /// Connect to a TCP address (e.g. `"127.0.0.1:9000"`).
-    pub async fn connect_tcp(addr: impl tokio::net::ToSocketAddrs + fmt::Debug) -> Result<Self, PyroError> {
+    pub async fn connect_tcp(
+        addr: impl tokio::net::ToSocketAddrs + fmt::Debug,
+    ) -> Result<Self, PyroError> {
         tracing::info!(?addr, "Connecting via TCP");
         let socket = PyroSocket::connect_tcp(addr)
             .await

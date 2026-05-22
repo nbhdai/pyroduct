@@ -63,10 +63,9 @@ pub fn object_span(object_id: u64, mux_id: u32) -> tracing::Span {
             if let Some(id) = span.id() {
                 if let Some(reg) = dispatch.downcast_ref::<Registry>() {
                     if let Some(span_ref) = reg.span(&id) {
-                        span_ref.extensions_mut().insert(ObjectContext {
-                            object_id,
-                            mux_id,
-                        });
+                        span_ref
+                            .extensions_mut()
+                            .insert(ObjectContext { object_id, mux_id });
                     }
                 }
             }
@@ -85,7 +84,10 @@ impl<'a> MakeWriter<'a> for FfiWriterFactory {
     type Writer = FfiProxy;
 
     fn make_writer(&'a self) -> Self::Writer {
-        FfiProxy { object_id: None, mux_id: None }
+        FfiProxy {
+            object_id: None,
+            mux_id: None,
+        }
     }
 
     fn make_writer_for(&'a self, _meta: &Metadata<'_>) -> Self::Writer {

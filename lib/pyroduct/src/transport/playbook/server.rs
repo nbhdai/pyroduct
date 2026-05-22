@@ -3,14 +3,14 @@ use tokio::sync::Mutex;
 
 use pyro_artifacts::cache::LoadedPlaybook;
 
-use crate::{CapturedError, PyroError};
 use crate::format::header::{PyroData, PyroHeader};
 use crate::format::log_wal::LogWal;
 use crate::format::tokio::Request;
 use crate::format::{Bridgeable, PyroRow};
 use crate::module::PyroFactory;
-use crate::pipeline::{Pipeline, ExecutionRecord};
+use crate::pipeline::{ExecutionRecord, Pipeline};
 use crate::transport::{PyroListener, PyroSocket};
+use crate::{CapturedError, PyroError};
 
 /// A server that listens for incoming [`PyroSocket`] connections and routes
 /// requests using a single-level [`Pipeline`] instantiated from a playbook.
@@ -30,9 +30,21 @@ impl PlaybookServer {
             step: instance,
             success_log_retention_secs: 3600,
             error_log_retention_secs: 86400 * 7,
-            log_manager: LogWal::open(playbook.log_dir.clone(), 1000).await.map_err(|io| PyroError::local_io(CapturedError::new("Unable to make the log wal").with_source(io)))?,
-            input_manager: crate::pipeline::data::DataManager::new(playbook.input_dir.clone(), input_schema),
-            output_manager: crate::pipeline::data::DataManager::new(playbook.output_dir.clone(), output_schema),
+            log_manager: LogWal::open(playbook.log_dir.clone(), 1000)
+                .await
+                .map_err(|io| {
+                    PyroError::local_io(
+                        CapturedError::new("Unable to make the log wal").with_source(io),
+                    )
+                })?,
+            input_manager: crate::pipeline::data::DataManager::new(
+                playbook.input_dir.clone(),
+                input_schema,
+            ),
+            output_manager: crate::pipeline::data::DataManager::new(
+                playbook.output_dir.clone(),
+                output_schema,
+            ),
         };
         Ok(Self {
             pipeline: Arc::new(Mutex::new(pipeline)),

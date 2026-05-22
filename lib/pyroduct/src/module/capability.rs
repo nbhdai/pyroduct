@@ -75,7 +75,8 @@ pub struct LogEntry {
     pub timestamp: std::time::SystemTime,
 }
 
-static CATCH_LOG_SENDER: LazyLock<DashMap<i64, mpsc::Sender<LogEntry>>> = LazyLock::new(DashMap::new);
+static CATCH_LOG_SENDER: LazyLock<DashMap<i64, mpsc::Sender<LogEntry>>> =
+    LazyLock::new(DashMap::new);
 static LOG_SENDERS: LazyLock<DashMap<(i64, u64), mpsc::Sender<LogEntry>>> =
     LazyLock::new(DashMap::new);
 static NEXT_LIB_ID: AtomicI64 = AtomicI64::new(1);
@@ -115,7 +116,13 @@ pub unsafe extern "C" fn log_callback(
         message: log_msg,
         timestamp: std::time::SystemTime::now(),
     };
-    tracing::trace!(library_id, span_id, mux_id, msg=entry.message, "[CAPABILITY]");
+    tracing::trace!(
+        library_id,
+        span_id,
+        mux_id,
+        msg = entry.message,
+        "[CAPABILITY]"
+    );
     if span_id == 0 {
         if let Some(tx) = CATCH_LOG_SENDER.get(&library_id) {
             match tx.try_send(entry) {
@@ -128,7 +135,7 @@ pub unsafe extern "C" fn log_callback(
                 Err(mpsc::error::TrySendError::Closed(_)) => {}
             }
         } else {
-            tracing::debug!(log_msg=entry.message, "Uncaught Capability Log");
+            tracing::debug!(log_msg = entry.message, "Uncaught Capability Log");
         }
     } else {
         if let Some(tx) = LOG_SENDERS.get(&(library_id, span_id)) {
@@ -144,7 +151,7 @@ pub unsafe extern "C" fn log_callback(
                 }
             }
         } else {
-            tracing::debug!(log_msg=entry.message, "Uncaught Capability Log");
+            tracing::debug!(log_msg = entry.message, "Uncaught Capability Log");
         }
     }
 }

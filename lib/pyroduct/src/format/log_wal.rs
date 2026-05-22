@@ -2,12 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::SeekFrom;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncSeekExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tracing::{debug, error, info};
 
 use crate::CapturedError;
@@ -411,8 +411,12 @@ impl LogWal {
 
         // If keep_count is 0, we clear the active segment completely to simulate a full purge.
         if keep_count == 0 {
-            let log_path = self.dir.join(format!("{}.pyrolog", self.current_file_index));
-            let idx_path = self.dir.join(format!("{}.pyrolog.idx", self.current_file_index));
+            let log_path = self
+                .dir
+                .join(format!("{}.pyrolog", self.current_file_index));
+            let idx_path = self
+                .dir
+                .join(format!("{}.pyrolog.idx", self.current_file_index));
 
             let _ = self.writer.flush().await;
             let _ = self.idx_writer.flush().await;

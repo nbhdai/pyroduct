@@ -434,10 +434,7 @@ pub async fn parse_data_to_batch(
 }
 
 /// Synchronous version of parse_data_to_batch.
-pub fn parse_data_to_batch_sync(
-    data: Vec<u8>,
-    filename: &str,
-) -> Result<Vec<ArrowIpc>, DataError> {
+pub fn parse_data_to_batch_sync(data: Vec<u8>, filename: &str) -> Result<Vec<ArrowIpc>, DataError> {
     let inner = inter_parse_data_to_batch(data, filename)?;
     if inner.is_empty() || inner.iter().all(|b| b.num_rows() == 0) {
         Err(DataError::Empty)
@@ -461,7 +458,8 @@ fn inter_parse_data_to_batch(data: Vec<u8>, filename: &str) -> Result<Vec<ArrowI
         "parquet" => {
             debug!("Parsing Parquet...");
             let bytes = Bytes::from(data);
-            let builder = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(bytes)?;
+            let builder =
+                parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(bytes)?;
             let reader = builder.build()?;
             let mut batches = Vec::new();
             for batch_res in reader {

@@ -498,7 +498,6 @@ where
 
     fn try_from(row: PyroRow<'a>) -> Result<Self, Self::Error> {
         if row.len() == 1 {
-
             return Vec::<T>::try_from((row.0)[0].value.clone());
         }
         Err(PyroValue::Group(row))

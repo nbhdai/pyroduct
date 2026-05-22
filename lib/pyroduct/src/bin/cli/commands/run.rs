@@ -1,7 +1,7 @@
 use std::io::{BufWriter, Write};
 use std::path::Path;
 use tokio::io::AsyncReadExt;
-use tokio::net::{UnixListener, TcpListener};
+use tokio::net::{TcpListener, UnixListener};
 
 use anyhow::{Context, Result, anyhow};
 use clap::ValueEnum;
@@ -11,8 +11,8 @@ use pyro_artifacts::cache::CacheManager;
 use pyroduct::pipeline::pipeline::LoadedPipelineConfig;
 use pyroduct::{
     PyroRow,
-    format::{value::arrow::PreBatch},
-    pipeline::{Pipeline, PipelineConfig, PipelinePool, ExecutionRecord},
+    format::value::arrow::PreBatch,
+    pipeline::{ExecutionRecord, Pipeline, PipelineConfig, PipelinePool},
 };
 
 use pyro_file::{
@@ -71,7 +71,9 @@ pub async fn run_socket(config_path: &Path, socket_addr: &str) -> Result<()> {
     let mut pipeline = factory.build().await?;
 
     if let Ok(addr) = socket_addr.parse::<std::net::SocketAddr>() {
-        let listener = TcpListener::bind(addr).await.context("Failed to bind to TCP socket")?;
+        let listener = TcpListener::bind(addr)
+            .await
+            .context("Failed to bind to TCP socket")?;
         tracing::info!("Listening on TCP socket {}", addr);
 
         loop {

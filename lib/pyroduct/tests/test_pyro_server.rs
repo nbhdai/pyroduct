@@ -1,9 +1,9 @@
-use pyroduct::format::header::{DataStatus, PyroHeader, PyroHeaderMut};
 use pyroduct::format::PyroVec;
+use pyroduct::format::header::{DataStatus, PyroHeader, PyroHeaderMut};
 use pyroduct::transport::{PyroListener, PyroRouter, PyroServer, PyroSocket};
+use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, fmt};
-use tracing_subscriber::layer::SubscriberExt;
 
 #[tokio::test]
 async fn test_pyro_server_capability_call() {
@@ -28,7 +28,9 @@ async fn test_pyro_server_capability_call() {
         .join("state")
         .join("0.1.0")
         .join("lib.dylib");
-    let lib_path = lib_path.canonicalize().expect("Failed to canonicalize lib_path");
+    let lib_path = lib_path
+        .canonicalize()
+        .expect("Failed to canonicalize lib_path");
     let router =
         PyroRouter::load("state".into(), &lib_path).expect("Failed to load capability library");
 

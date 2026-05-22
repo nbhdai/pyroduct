@@ -140,12 +140,16 @@ async fn test_session_lifecycle() {
     }
 
     // Verify log rotation
-    let log_files = std::fs::read_dir(&tmp_path).unwrap()
+    let log_files = std::fs::read_dir(&tmp_path)
+        .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().map_or(false, |ext| ext == "pyrolog"))
         .count();
-    assert!(log_files > 1, "Should have rotated logs, but found only {} file(s)", log_files);
-
+    assert!(
+        log_files > 1,
+        "Should have rotated logs, but found only {} file(s)",
+        log_files
+    );
 
     pipeline
         .close_session(session_id)

@@ -44,10 +44,7 @@ impl ModuleAttrs {
         }
 
         let output = output.ok_or_else(|| {
-            syn::Error::new(
-                proc_macro2::Span::call_site(),
-                "Missing `output` attribute",
-            )
+            syn::Error::new(proc_macro2::Span::call_site(), "Missing `output` attribute")
         })?;
 
         Ok(ModuleAttrs { session, output })
@@ -63,7 +60,10 @@ fn parse_output_spec(expr: &Expr) -> Result<OutputSpec> {
                     if let Some(ident) = path.path.get_ident() {
                         fields.push(ident.clone());
                     } else {
-                        return Err(syn::Error::new_spanned(path, "Expected identifier in tuple"));
+                        return Err(syn::Error::new_spanned(
+                            path,
+                            "Expected identifier in tuple",
+                        ));
                     }
                 } else {
                     return Err(syn::Error::new_spanned(e, "Expected identifier in tuple"));
@@ -74,16 +74,27 @@ fn parse_output_spec(expr: &Expr) -> Result<OutputSpec> {
         Expr::Path(path) => {
             if let Some(ident) = path.path.get_ident() {
                 let name_str = ident.to_string();
-                if name_str.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                if name_str
+                    .chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false)
+                {
                     Ok(OutputSpec::Struct)
                 } else {
                     Ok(OutputSpec::SingleField(ident.clone()))
                 }
             } else {
-                Err(syn::Error::new_spanned(path, "Expected identifier for output"))
+                Err(syn::Error::new_spanned(
+                    path,
+                    "Expected identifier for output",
+                ))
             }
         }
-        _ => Err(syn::Error::new_spanned(expr, "Expected identifier or tuple of identifiers for output")),
+        _ => Err(syn::Error::new_spanned(
+            expr,
+            "Expected identifier or tuple of identifiers for output",
+        )),
     }
 }
 

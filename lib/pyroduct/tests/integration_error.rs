@@ -83,7 +83,10 @@ async fn test_module_errors_and_panics() {
     } else {
         panic!("Expected Success");
     }
-    let rec_success = pipeline.get_record(0).await.expect("Should retrieve success record");
+    let rec_success = pipeline
+        .get_record(0)
+        .await
+        .expect("Should retrieve success record");
     assert_eq!(res_success, rec_success);
 
     // Test Error: return Err(pyroduct::capture!(...))
@@ -99,7 +102,10 @@ async fn test_module_errors_and_panics() {
     } else {
         panic!("Expected Failure for error");
     }
-    let rec_error = pipeline.get_record(1).await.expect("Should retrieve error record");
+    let rec_error = pipeline
+        .get_record(1)
+        .await
+        .expect("Should retrieve error record");
     assert_eq!(res_error, rec_error);
 
     // Test Panic: panic!(...)
@@ -110,10 +116,17 @@ async fn test_module_errors_and_panics() {
         // Following the pattern in integration_session_recovery.rs for panic!
         assert!(failure.is_ok());
         let captured_err = failure.as_ref().unwrap();
-        assert!(captured_err.to_string().contains("Error at src/lib.rs:7:9 - intentional panic"));
+        assert!(
+            captured_err
+                .to_string()
+                .contains("Error at src/lib.rs:7:9 - intentional panic")
+        );
     } else {
         panic!("Expected Failure for panic");
     }
-    let rec_panic = pipeline.get_record(2).await.expect("Should retrieve panic record");
+    let rec_panic = pipeline
+        .get_record(2)
+        .await
+        .expect("Should retrieve panic record");
     assert_eq!(res_panic, rec_panic);
 }

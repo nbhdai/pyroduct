@@ -1,14 +1,13 @@
-
-use std::path::{Path, PathBuf};
-use std::io;
-use tokio::fs as tfs;
-use cargo_toml::Dependency;
-use std::sync::Arc;
-use crate::cache::{CacheManager, PyroductConfig, CacheError};
-use crate::artifacts::{ModuleSource, ModuleBinary, ModuleSpec};
-use crate::command::{run_command, format_syn_error, CommandError};
-use pyro_macro::module::generate_module_spec;
+use crate::artifacts::{ModuleBinary, ModuleSource, ModuleSpec};
+use crate::cache::{CacheError, CacheManager, PyroductConfig};
 use crate::cargo::ensure_cdylib;
+use crate::command::{CommandError, format_syn_error, run_command};
+use cargo_toml::Dependency;
+use pyro_macro::module::generate_module_spec;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::fs as tfs;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BuildError {
@@ -57,12 +56,15 @@ pub struct Builder {
 }
 
 impl Builder {
-    pub async fn new(root: &Path, mut config: PyroductConfig, cache_manager: Arc<CacheManager>) -> Result<Self, CacheError> {
+    pub async fn new(
+        root: &Path,
+        mut config: PyroductConfig,
+        cache_manager: Arc<CacheManager>,
+    ) -> Result<Self, CacheError> {
         tfs::create_dir_all(root).await.map_err(|e| CacheError {
             context: "Failed to create build root".to_string(),
             error: e,
         })?;
-
 
         let pyroduct_dep = if let Some(dep) = &mut config.pyroduct {
             crate::cache::resolve_dependency_path(dep, root);
@@ -163,7 +165,7 @@ impl Builder {
     #[cfg(feature = "compiler")]
     pub async fn compile(&self, source: &ModuleSource) -> Result<ModuleBinary, BuildError> {
         let hash = source.hash();
-        
+
         // Check if binary is already in cache
         if let Ok(binary) = self.cache_manager.get_binary(&hash).await {
             return Ok(binary);
@@ -211,7 +213,9 @@ name = "mod_slot"
             manifest.dependencies.insert(dep_name.clone(), dep.clone());
         }
         for cap in source.dependencies.capabilities.iter() {
-            let path = self.cache_manager.interface_dir(&cap.author, &cap.package, &cap.version)
+            let path = self
+                .cache_manager
+                .interface_dir(&cap.author, &cap.package, &cap.version)
                 .to_string_lossy()
                 .into();
             let dep = Dependency::Detailed(Box::new(cargo_toml::DependencyDetail {
@@ -268,8 +272,14 @@ name = "mod_slot"
         };
 
         // Save to cache
-        let _ = self.cache_manager.write_artifacts(&source.clone().into()).await;
-        let _ = self.cache_manager.write_artifacts(&binary.clone().into()).await;
+        let _ = self
+            .cache_manager
+            .write_artifacts(&source.clone().into())
+            .await;
+        let _ = self
+            .cache_manager
+            .write_artifacts(&binary.clone().into())
+            .await;
 
         Ok(binary)
     }

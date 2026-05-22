@@ -5,7 +5,10 @@ use pyro_artifacts::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CapturedError, PyroError, format::log_wal::LogWal, module::{PyroFactory, WasmError}, pipeline::{Pipeline, session::SessionPipeline, session_diff::SessionDiffPipeline}
+    CapturedError, PyroError,
+    format::log_wal::LogWal,
+    module::{PyroFactory, WasmError},
+    pipeline::{Pipeline, session::SessionPipeline, session_diff::SessionDiffPipeline},
 };
 
 use super::PipelineError;
@@ -48,7 +51,9 @@ pub struct LoadedPipelineConfig {
 
 impl PipelineConfig {
     pub async fn load(self, cache: &CacheManager) -> Result<LoadedPipelineConfig, WasmError> {
-        let loaded_playbook = cache.load_playbook(self.playbook, self.log_dir, self.input_dir, self.output_dir).await?;
+        let loaded_playbook = cache
+            .load_playbook(self.playbook, self.log_dir, self.input_dir, self.output_dir)
+            .await?;
         Ok(LoadedPipelineConfig {
             playbook: loaded_playbook,
             wal_capacity: self.wal_capacity,
@@ -105,7 +110,13 @@ impl PipelineFactory {
             step: instance,
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,
-            log_manager: LogWal::open(self.log_dir.clone(), self.wal_capacity).await.map_err(|io| PyroError::local_io(CapturedError::new("Unable to make the log wal").with_source(io)))?,
+            log_manager: LogWal::open(self.log_dir.clone(), self.wal_capacity)
+                .await
+                .map_err(|io| {
+                    PyroError::local_io(
+                        CapturedError::new("Unable to make the log wal").with_source(io),
+                    )
+                })?,
             input_manager: super::data::DataManager::new(self.input_dir.clone(), input_schema),
             output_manager: super::data::DataManager::new(self.output_dir.clone(), output_schema),
         })
@@ -128,7 +139,10 @@ impl PipelineFactory {
         // If the Wasm output field has an empty Group type (which occurs when SessionResponse<T> ok type
         // is resolved as an unknown struct/enum), we fallback to the type of the last input field.
         let last_input_field = input_schema.fields.last().cloned();
-        let last_input_type = last_input_field.as_ref().map(|f| f.data_type.clone()).unwrap_or(crate::format::value::PyroType::Null);
+        let last_input_type = last_input_field
+            .as_ref()
+            .map(|f| f.data_type.clone())
+            .unwrap_or(crate::format::value::PyroType::Null);
 
         let mut group_fields = Vec::new();
         if let Some(mut f) = last_input_field {
@@ -146,19 +160,29 @@ impl PipelineFactory {
         }
 
         let session_type = crate::format::value::PyroType::List(
-            Box::new(crate::format::value::PyroType::Group(std::borrow::Cow::Owned(group_fields))),
+            Box::new(crate::format::value::PyroType::Group(
+                std::borrow::Cow::Owned(group_fields),
+            )),
             false,
         );
-        let output_schema = crate::format::value::PyroSchema::new(vec![
-            crate::format::value::PyroField::new("session", session_type, false),
-        ]);
+        let output_schema =
+            crate::format::value::PyroSchema::new(vec![crate::format::value::PyroField::new(
+                "session",
+                session_type,
+                false,
+            )]);
 
         Ok(SessionPipeline {
             step: instance,
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,
-            log_manager: LogWal::open(self.log_dir.clone(), self.wal_capacity).await.map_err(|io| PyroError::local_io(CapturedError::new("Unable to make the log wal").with_source(io)))?,
-            input_manager: super::data::DataManager::new(self.input_dir.clone(), input_schema),
+            log_manager: LogWal::open(self.log_dir.clone(), self.wal_capacity)
+                .await
+                .map_err(|io| {
+                    PyroError::local_io(
+                        CapturedError::new("Unable to make the log wal").with_source(io),
+                    )
+                })?,
             output_manager: super::data::DataManager::new(self.output_dir.clone(), output_schema),
             log_dir: self.log_dir.clone(),
             output_dir: self.output_dir.clone(),
@@ -184,7 +208,11 @@ impl PipelineFactory {
             input_group_fields.push(last_input_field);
         }
 
-        let last_input_type = input_schema.fields.last().map(|f| f.data_type.clone()).unwrap_or(crate::format::value::PyroType::Null);
+        let last_input_type = input_schema
+            .fields
+            .last()
+            .map(|f| f.data_type.clone())
+            .unwrap_or(crate::format::value::PyroType::Null);
         let mut output_group_fields = Vec::new();
         for mut out_field in output_schema.fields.iter().cloned() {
             if let crate::format::value::PyroType::Group(ref fields) = out_field.data_type {
@@ -196,11 +224,15 @@ impl PipelineFactory {
         }
 
         let inputs_type = crate::format::value::PyroType::List(
-            Box::new(crate::format::value::PyroType::Group(std::borrow::Cow::Owned(input_group_fields))),
+            Box::new(crate::format::value::PyroType::Group(
+                std::borrow::Cow::Owned(input_group_fields),
+            )),
             false,
         );
         let outputs_type = crate::format::value::PyroType::List(
-            Box::new(crate::format::value::PyroType::Group(std::borrow::Cow::Owned(output_group_fields))),
+            Box::new(crate::format::value::PyroType::Group(
+                std::borrow::Cow::Owned(output_group_fields),
+            )),
             false,
         );
         let overall_output_schema = crate::format::value::PyroSchema::new(vec![
@@ -212,9 +244,18 @@ impl PipelineFactory {
             step: instance,
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,
-            log_manager: LogWal::open(self.log_dir.clone(), self.wal_capacity).await.map_err(|io| PyroError::local_io(CapturedError::new("Unable to make the log wal").with_source(io)))?,
+            log_manager: LogWal::open(self.log_dir.clone(), self.wal_capacity)
+                .await
+                .map_err(|io| {
+                    PyroError::local_io(
+                        CapturedError::new("Unable to make the log wal").with_source(io),
+                    )
+                })?,
             input_manager: super::data::DataManager::new(self.input_dir.clone(), input_schema),
-            output_manager: super::data::DataManager::new(self.output_dir.clone(), overall_output_schema),
+            output_manager: super::data::DataManager::new(
+                self.output_dir.clone(),
+                overall_output_schema,
+            ),
             log_dir: self.log_dir.clone(),
             output_dir: self.output_dir.clone(),
             wal_capacity: self.wal_capacity,

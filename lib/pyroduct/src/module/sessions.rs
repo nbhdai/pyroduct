@@ -32,13 +32,13 @@
 
 use wasmtime::{AsContext, Instance, Memory, Store};
 
+use crate::format::ParseError;
 use crate::format::bridgeable::Bridgeable;
 use crate::format::header::{PyroData, PyroHeader};
 use crate::format::{
     PyroFailure, PyroLogs, PyroRow, get_ref,
     header::{DataStatus, PyroParser},
 };
-use crate::format::ParseError;
 use crate::{CapturedError, PyroError};
 
 use super::PyroState;
@@ -185,13 +185,13 @@ impl Session {
         memory: Memory,
     ) -> Result<SessionResult, SessionCallError> {
         // Call call_session_extern(session_id)
-        tracing::debug!("calling call_session_extern(session_id={})", self.session_id);
-        let call_fn = instance
-            .get_typed_func::<u32, i32>(&mut *store, SESSION_CALL)?;
+        tracing::debug!(
+            "calling call_session_extern(session_id={})",
+            self.session_id
+        );
+        let call_fn = instance.get_typed_func::<u32, i32>(&mut *store, SESSION_CALL)?;
 
-        let call_output_ptr = call_fn
-            .call_async(&mut *store, self.session_id)
-            .await?;
+        let call_output_ptr = call_fn.call_async(&mut *store, self.session_id).await?;
 
         tracing::debug!("call_session_extern returned ptr={:#x}", call_output_ptr);
 
@@ -199,8 +199,12 @@ impl Session {
         if call_output_ptr != 0 {
             let wasm_memory = memory.data(&*store);
             if let Ok(row) = get_ref(wasm_memory, call_output_ptr as usize) {
-                tracing::debug!("call_session_extern output: status={}, fn_id={}, row_len={}",
-                    row.status_u8(), row.fn_id(), row.len());
+                tracing::debug!(
+                    "call_session_extern output: status={}, fn_id={}, row_len={}",
+                    row.status_u8(),
+                    row.fn_id(),
+                    row.len()
+                );
             }
         }
 
@@ -208,10 +212,14 @@ impl Session {
         // The actual result is stored in SESSION_OUTPUT for this session at index output_count.
         // We read the result via borrow_session_output rather than the output registry.
 
-        let borrow_output_fn = instance
-            .get_typed_func::<(u32, u32), i32>(&mut *store, SESSION_BORROW_OUTPUT)?;
+        let borrow_output_fn =
+            instance.get_typed_func::<(u32, u32), i32>(&mut *store, SESSION_BORROW_OUTPUT)?;
 
-        tracing::debug!("calling borrow_session_output(session_id={}, index={})", self.session_id, self.output_count);
+        tracing::debug!(
+            "calling borrow_session_output(session_id={}, index={})",
+            self.session_id,
+            self.output_count
+        );
 
         let result_ptr = borrow_output_fn
             .call_async(&mut *store, (self.session_id, self.output_count))
@@ -233,8 +241,8 @@ impl Session {
 
         // Read the result from wasm memory (zero-copy)
         let wasm_memory = memory.data(store.as_context());
-        let result_view = get_ref(wasm_memory, result_ptr as usize).map_err(|e| {
-            SessionCallError {
+        let result_view =
+            get_ref(wasm_memory, result_ptr as usize).map_err(|e| SessionCallError {
                 error: PyroFailure {
                     result: Err(format!(
                         "Failed to read result from wasm memory at {:#x}: {}",
@@ -242,8 +250,7 @@ impl Session {
                     )),
                     logs: PyroLogs::empty(),
                 },
-            }
-        })?;
+            })?;
 
         // Check for pyro-level errors forwarded from the host.
         if let Err(e) = result_view.parse_as_error() {
@@ -275,8 +282,8 @@ impl Session {
 
                 let result = match fn_id {
                     0 => SessionResult::Continue(row), // Continue
-                    1 => SessionResult::End(row),       // End
-                    2 => SessionResult::Terminate,      // Terminate
+                    1 => SessionResult::End(row),      // End
+                    2 => SessionResult::Terminate,     // Terminate
                     _ => {
                         // Unknown fn_id — treat as Continue
                         tracing::warn!(
@@ -302,7 +309,7 @@ impl Session {
                     Err(_) => Err(SessionCallError {
                         error: PyroFailure {
                             result: Err(
-                                ParseError::UnknownStatus(result_view.status_u8()).to_string(),
+                                ParseError::UnknownStatus(result_view.status_u8()).to_string()
                             ),
                             logs: PyroLogs::empty(),
                         },

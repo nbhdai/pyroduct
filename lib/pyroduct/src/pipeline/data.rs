@@ -8,7 +8,7 @@ use crate::error::PyroError;
 use crate::format::value::PyroSchema;
 use crate::format::value::arrow::PreBatch;
 use crate::format::value::arrow::Rowable;
-use crate::format::value::arrow::wal::{WalWriter, WalManager};
+use crate::format::value::arrow::wal::{WalManager, WalWriter};
 use crate::{PyroRow, PyroValue};
 use arrow::array::RecordBatch;
 use pyro_file;
@@ -226,10 +226,16 @@ impl DataManager {
 
         // Also recover the current WAL if it exists
         if self.current_wal_id > 0 {
-            let wal_file_path = self.output_dir.join(format!("wal_{}.pyrowal", self.current_wal_id));
+            let wal_file_path = self
+                .output_dir
+                .join(format!("wal_{}.pyrowal", self.current_wal_id));
             if wal_file_path.exists() {
                 let base_path = self.output_dir.join(format!("wal_{}", self.current_wal_id));
-                let wm = WalManager::open_with_recovery(&base_path, self.wal_capacity, self._schema.clone())?;
+                let wm = WalManager::open_with_recovery(
+                    &base_path,
+                    self.wal_capacity,
+                    self._schema.clone(),
+                )?;
                 self.wal_manager = Some(wm);
             }
         }
@@ -313,22 +319,27 @@ impl DataManager {
     }
 
     #[cfg(feature = "host")]
-    pub fn sql_provider(&self) -> Result<crate::pipeline::sql::DataManagerTableProvider, PyroError> {
+    pub fn sql_provider(
+        &self,
+    ) -> Result<crate::pipeline::sql::DataManagerTableProvider, PyroError> {
         let mut batches = Vec::new();
 
         // 1. Eagerly load Parquet files
         for path in &self.parquet_file_paths {
             let bytes = std::fs::read(path).map_err(|e| {
                 PyroError::local_io(
-                    CapturedError::new("Failed to read Parquet file for SQL provider").with_source(e),
+                    CapturedError::new("Failed to read Parquet file for SQL provider")
+                        .with_source(e),
                 )
             })?;
             let filename = path.file_name().unwrap().to_string_lossy().into_owned();
-            let parsed_batches = pyro_file::parse_data_to_batch_sync(bytes, &filename).map_err(|e| {
-                PyroError::validation(
-                    CapturedError::new("Failed to parse Parquet file for SQL provider").with_source(e),
-                )
-            })?;
+            let parsed_batches =
+                pyro_file::parse_data_to_batch_sync(bytes, &filename).map_err(|e| {
+                    PyroError::validation(
+                        CapturedError::new("Failed to parse Parquet file for SQL provider")
+                            .with_source(e),
+                    )
+                })?;
             for b in parsed_batches {
                 batches.push(b.to_batch());
             }
@@ -343,15 +354,18 @@ impl DataManager {
 
             let bytes = std::fs::read(path).map_err(|e| {
                 PyroError::local_io(
-                    CapturedError::new("Failed to read Arrow IPC file for SQL provider").with_source(e),
+                    CapturedError::new("Failed to read Arrow IPC file for SQL provider")
+                        .with_source(e),
                 )
             })?;
             let filename = path.file_name().unwrap().to_string_lossy().into_owned();
-            let parsed_batches = pyro_file::parse_data_to_batch_sync(bytes, &filename).map_err(|e| {
-                PyroError::validation(
-                    CapturedError::new("Failed to parse Arrow IPC file for SQL provider").with_source(e),
-                )
-            })?;
+            let parsed_batches =
+                pyro_file::parse_data_to_batch_sync(bytes, &filename).map_err(|e| {
+                    PyroError::validation(
+                        CapturedError::new("Failed to parse Arrow IPC file for SQL provider")
+                            .with_source(e),
+                    )
+                })?;
             for b in parsed_batches {
                 batches.push(b.to_batch());
             }
@@ -364,13 +378,16 @@ impl DataManager {
 
         // 4. Construct MemTable
         let schema = std::sync::Arc::new(self._schema.to_arrow());
-        let mem_table = datafusion::datasource::memory::MemTable::try_new(schema, vec![batches]).map_err(|e| {
-            PyroError::validation(
-                CapturedError::new("Failed to create MemTable for SQL provider").with_source(e),
-            )
-        })?;
+        let mem_table = datafusion::datasource::memory::MemTable::try_new(schema, vec![batches])
+            .map_err(|e| {
+                PyroError::validation(
+                    CapturedError::new("Failed to create MemTable for SQL provider").with_source(e),
+                )
+            })?;
 
-        Ok(crate::pipeline::sql::DataManagerTableProvider::new(mem_table, guards))
+        Ok(crate::pipeline::sql::DataManagerTableProvider::new(
+            mem_table, guards,
+        ))
     }
 
     fn ensure_wal_manager(&mut self) -> Result<WalManager, PyroError> {
@@ -463,7 +480,9 @@ impl DataManager {
         // 4. Batch insert of the mapping old_rows (HashMap<usize, usize>) into SQLite
         let tx_res: Result<(), PyroError> = {
             let tx = self.sqlite_conn.transaction().map_err(|e| {
-                PyroError::validation(CapturedError::new("Failed to start transaction").with_source(e))
+                PyroError::validation(
+                    CapturedError::new("Failed to start transaction").with_source(e),
+                )
             })?;
             {
                 let mut stmt = tx.prepare(
@@ -472,13 +491,22 @@ impl DataManager {
                     PyroError::validation(CapturedError::new("Failed to prepare insert statement").with_source(e))
                 })?;
                 for (&row_index, &wal_index) in &old_rows {
-                    stmt.execute(rusqlite::params![row_index as i64, wal_id as i64, wal_index as i64]).map_err(|e| {
-                        PyroError::validation(CapturedError::new("Failed to execute insert statement").with_source(e))
+                    stmt.execute(rusqlite::params![
+                        row_index as i64,
+                        wal_id as i64,
+                        wal_index as i64
+                    ])
+                    .map_err(|e| {
+                        PyroError::validation(
+                            CapturedError::new("Failed to execute insert statement").with_source(e),
+                        )
                     })?;
                 }
             }
             tx.commit().map_err(|e| {
-                PyroError::validation(CapturedError::new("Failed to commit transaction").with_source(e))
+                PyroError::validation(
+                    CapturedError::new("Failed to commit transaction").with_source(e),
+                )
             })?;
             Ok(())
         };
@@ -494,7 +522,10 @@ impl DataManager {
             std::fs::remove_file(&old_wal_path).map_err(|e| {
                 PyroError::local_io(CapturedError::new("Failed to delete WAL file").with_source(e))
             })?;
-            debug!(wal_id, "flush_wal: successfully deleted WAL file {:?}", old_wal_path);
+            debug!(
+                wal_id,
+                "flush_wal: successfully deleted WAL file {:?}", old_wal_path
+            );
         }
 
         // 6. Update track variables
@@ -581,7 +612,10 @@ impl DataManager {
                 let mut state = self.shared_state.lock().unwrap();
                 if state.active_readers.contains_key(&arrow_path) {
                     state.pending_deletions.insert(arrow_path.clone());
-                    debug!("IPC file {:?} is currently being read. Deferring deletion.", arrow_path);
+                    debug!(
+                        "IPC file {:?} is currently being read. Deferring deletion.",
+                        arrow_path
+                    );
                 } else {
                     let _ = std::fs::remove_file(&arrow_path);
                 }
@@ -859,7 +893,9 @@ impl DataManagerSharedState {
     }
 
     pub fn remove_reader(&mut self, path: &Path) {
-        if let std::collections::hash_map::Entry::Occupied(mut entry) = self.active_readers.entry(path.to_path_buf()) {
+        if let std::collections::hash_map::Entry::Occupied(mut entry) =
+            self.active_readers.entry(path.to_path_buf())
+        {
             *entry.get_mut() -= 1;
             if *entry.get() == 0 {
                 entry.remove();
@@ -1064,9 +1100,7 @@ mod tests {
         // Verify SQLite contents
         let mut stmt = manager
             .sqlite_conn
-            .prepare(
-                "SELECT row_index, wal_id, wal_index FROM wal_index WHERE row_index = ?",
-            )
+            .prepare("SELECT row_index, wal_id, wal_index FROM wal_index WHERE row_index = ?")
             .unwrap();
         let mut rows = stmt
             .query_map([42i64], |r| {

@@ -106,8 +106,7 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
     let output_type = extract_session_inner_type(&input_fn.sig.output)?;
     let output_vec = wrap_in_vec(&output_type);
     let output_spec = attrs.output;
-    let (output_struct, output_mapping, output_name) =
-        generate_output(&output_spec, &output_type)?;
+    let (output_struct, output_mapping, output_name) = generate_output(&output_spec, &output_type)?;
 
     // Generate the original function parameters
     let original_fn_params: Vec<_> = params
@@ -115,12 +114,11 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
         .map(|(_, ty, attrs, pat)| quote! { #(#attrs)* #pat: #ty })
         .collect();
 
-
     // Validate session module requirements and extract types
     let expanded = match params.len() {
         2 => {
             let input_vec = wrap_in_vec(&params[1].1);
-            if !(params[0].0 == "prior"  || params[0].0 == "_prior") {
+            if !(params[0].0 == "prior" || params[0].0 == "_prior") {
                 return Err(syn::Error::new(
                     params[0].0.span(),
                     "If 2 inputs, then the first parameter of session module must be named `prior`",
@@ -130,7 +128,7 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
             if params[1].1 != output_type {
                 return Err(syn::Error::new(
                     params[1].0.span(),
-                        "The type of the output must be the same as input and prior",
+                    "The type of the output must be the same as input and prior",
                 ));
             }
 
@@ -179,7 +177,7 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
             }
         }
         3 => {
-            if !(params[0].0 == "prior_input"  || params[0].0 == "_prior_input") {
+            if !(params[0].0 == "prior_input" || params[0].0 == "_prior_input") {
                 return Err(syn::Error::new(
                     params[0].0.span(),
                     "If 3 inputs, then the first parameter of session module must be named `prior_input`",
@@ -196,13 +194,19 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
             if params[0].1 != input_vec {
                 return Err(syn::Error::new(
                     params[0].0.span(),
-                    format!("First parameter of session module must have the type: {:?}", input_vec),
+                    format!(
+                        "First parameter of session module must have the type: {:?}",
+                        input_vec
+                    ),
                 ));
             }
             if params[1].1 != output_vec {
                 return Err(syn::Error::new(
                     params[1].0.span(),
-                    format!("Second parameter of session module must have the type: {:?}", output_type),
+                    format!(
+                        "Second parameter of session module must have the type: {:?}",
+                        output_type
+                    ),
                 ));
             }
 
@@ -254,7 +258,6 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
             ));
         }
     };
-
 
     Ok(expanded)
 }
@@ -360,9 +363,7 @@ fn generate_output(
         }
 
         // Pattern 3: Existing struct that implements ToRow
-        OutputSpec::Struct => {
-            Ok((quote! {}, quote! { result }, return_type.clone()))
-        }
+        OutputSpec::Struct => Ok((quote! {}, quote! { result }, return_type.clone())),
     }
 }
 
@@ -395,8 +396,12 @@ fn extract_session_inner_type(ret: &ReturnType) -> Result<Type> {
                                 if let Type::Path(inner_path) = inner_ty {
                                     if let Some(seg) = inner_path.path.segments.last() {
                                         if seg.ident == "SessionResponse" {
-                                            if let syn::PathArguments::AngleBracketed(inner_args) = &seg.arguments {
-                                                if let Some(syn::GenericArgument::Type(output_ty)) = inner_args.args.first() {
+                                            if let syn::PathArguments::AngleBracketed(inner_args) =
+                                                &seg.arguments
+                                            {
+                                                if let Some(syn::GenericArgument::Type(output_ty)) =
+                                                    inner_args.args.first()
+                                                {
                                                     return Ok(output_ty.clone());
                                                 }
                                             }
@@ -415,5 +420,3 @@ fn extract_session_inner_type(ret: &ReturnType) -> Result<Type> {
         }
     }
 }
-
-

@@ -125,7 +125,11 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
     }
 
     /// Read a `PyroView` from wasm memory for a session's input at the given index.
-    pub async fn borrow_session_input(&mut self, session_id: u32, index: u32) -> Result<PyroRef<'_>, WasmError> {
+    pub async fn borrow_session_input(
+        &mut self,
+        session_id: u32,
+        index: u32,
+    ) -> Result<PyroRef<'_>, WasmError> {
         let borrow_fn = self
             .ctx
             .as_context()
@@ -153,7 +157,11 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
     }
 
     /// Read a `PyroView` from wasm memory for a session's output at the given index.
-    pub async fn borrow_session_output(&mut self, session_id: u32, index: u32) -> Result<PyroRef<'_>, WasmError> {
+    pub async fn borrow_session_output(
+        &mut self,
+        session_id: u32,
+        index: u32,
+    ) -> Result<PyroRef<'_>, WasmError> {
         let borrow_fn = self
             .ctx
             .as_context()
@@ -179,7 +187,6 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
             .map_err(|e| WasmError::InputMemory(wasmtime::Error::msg(e.to_string())))?;
         Ok(view)
     }
-
 
     /// Allocate a new buffer in wasm memory via `new_input` and copy the
     /// full PyroView (header + payload) into it. Returns the wasm pointer.
@@ -217,7 +224,11 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
 
     /// Allocate a new buffer in wasm memory via `new_session_input` and copy the
     /// full PyroView (header + payload) into it. Returns the wasm pointer.
-    pub async fn new_session_input(&mut self, session_id: u32, data: PyroView) -> Result<i32, WasmError> {
+    pub async fn new_session_input(
+        &mut self,
+        session_id: u32,
+        data: PyroView,
+    ) -> Result<i32, WasmError> {
         let data_len = data.len(); // payload only
         let total_len = PyroParser::HEADER_SIZE + data.len();
 
@@ -251,7 +262,11 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
 
     /// Allocate a new buffer in wasm memory via `new_session_output` and copy the
     /// full PyroView (header + payload) into it. Returns the wasm pointer.
-    pub async fn new_session_output(&mut self, session_id: u32, data: PyroView) -> Result<i32, WasmError> {
+    pub async fn new_session_output(
+        &mut self,
+        session_id: u32,
+        data: PyroView,
+    ) -> Result<i32, WasmError> {
         let data_len = data.len(); // payload only
         let total_len = PyroParser::HEADER_SIZE + data.len();
 
@@ -283,7 +298,6 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
         Ok(ptr)
     }
 
-
     /// Allocate a new buffer in wasm memory via `new_input` and copy the
     /// full PyroView (header + payload) into it. Returns the wasm pointer.
     pub fn log(&self, ptr: i32, len: i32) -> Result<i32, WasmError> {
@@ -293,7 +307,7 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
         let slice = &wasm_memory[start..end];
         let data = self.ctx.as_context().data();
         data.module_log(slice);
-        
+
         Ok(len)
     }
 
@@ -316,15 +330,14 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
 
     /// Read the panic error from the WASM registry, if any.
     pub async fn get_panic_error(&mut self) -> Result<Option<PyroVec>, WasmError> {
-        let (lend_fn, free_fn) = {
-            let methods = self
-                .ctx
-                .as_context()
-                .data()
-                .methods()
-                .ok_or_else(|| WasmError::MissingExport("PyroState not linked".to_string()))?;
-            (methods.lend_error(), methods.free_error())
-        };
+        let (lend_fn, free_fn) =
+            {
+                let methods =
+                    self.ctx.as_context().data().methods().ok_or_else(|| {
+                        WasmError::MissingExport("PyroState not linked".to_string())
+                    })?;
+                (methods.lend_error(), methods.free_error())
+            };
 
         let (lend_fn, free_fn) = match (lend_fn, free_fn) {
             (Some(l), Some(f)) => (l, f),
@@ -353,4 +366,3 @@ impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
         Ok(Some(vec))
     }
 }
-

@@ -1,15 +1,15 @@
+pub mod data;
+pub mod normal;
 pub mod pipeline;
 pub mod session;
 pub mod session_diff;
-pub mod normal;
-pub mod data;
 
 #[cfg(feature = "host")]
 pub mod sql;
 
+pub use normal::{ExecutionRecord, Failure, Pipeline, PipelinePool};
 pub use pipeline::{PipelineConfig, PipelineFactory};
 use thiserror::Error;
-pub use normal::{Failure, Pipeline, PipelinePool, ExecutionRecord};
 
 use crate::PyroError;
 use crate::module::{WasmError, capability::CapabilityError};

@@ -167,11 +167,11 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
     if attrs.session {
         pyro_macro::module::expand_session(attrs, input_fn)
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
+            .unwrap_or_else(|e| e.to_compile_error())
+            .into()
     } else {
         pyro_macro::module::expand(attrs, input_fn)
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
+            .unwrap_or_else(|e| e.to_compile_error())
+            .into()
     }
 }

@@ -62,7 +62,6 @@ pub struct SessionPipeline {
     pub success_log_retention_secs: u64,
     pub error_log_retention_secs: u64,
     pub log_manager: LogWal,
-    pub input_manager: DataManager,
     pub output_manager: DataManager,
     pub log_dir: std::path::PathBuf,
     pub output_dir: std::path::PathBuf,
@@ -467,7 +466,7 @@ impl SessionPipeline {
         if is_failed {
             let (prior, input) = if wal_rows.is_empty() {
                 let input_row = self
-                    .input_manager
+                    .output_manager
                     .get_record(session_id as usize)
                     .unwrap_or_else(|_| PyroRow::empty());
                 (Vec::new(), input_row)
@@ -478,7 +477,7 @@ impl SessionPipeline {
             } else {
                 let prior = wal_rows.clone();
                 let input_row = self
-                    .input_manager
+                    .output_manager
                     .get_record(session_id as usize)
                     .unwrap_or_else(|_| PyroRow::empty());
                 (prior, input_row)
@@ -500,7 +499,7 @@ impl SessionPipeline {
         } else {
             let (prior, input, success) = if wal_rows.is_empty() {
                 let input_row = self
-                    .input_manager
+                    .output_manager
                     .get_record(session_id as usize)
                     .unwrap_or_else(|_| PyroRow::empty());
                 (Vec::new(), input_row, PyroRow::empty())

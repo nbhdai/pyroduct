@@ -1,4 +1,4 @@
-use pyroduct::format::{get_ref_ids, PyroVec, PyroView, PyroRefPtr};
+use pyroduct::format::{PyroRefPtr, PyroVec, PyroView, get_ref_ids};
 use std::sync::Arc;
 use std::thread;
 
@@ -26,10 +26,10 @@ fn test_pyro_vec_growth_lifecycle() {
 fn test_pyro_view_ref_counting() {
     let vec = PyroVec::with_capacity(100);
     let view1 = vec.view();
-    
+
     let view2 = view1.clone();
     let view3 = view2.clone();
-    
+
     drop(view1);
     drop(view2);
     drop(view3);
@@ -40,12 +40,12 @@ fn test_pyro_view_ptr_roundtrip() {
     let vec = PyroVec::with_capacity(100);
     let view = vec.view();
     let ptr = view.clone().into_ptr(); // ref count becomes 2
-    
+
     let view_reconstructed = unsafe { PyroView::from_ptr(ptr).unwrap() };
     // ref count still 2 (from_ptr doesn't increment)
-    
+
     assert_eq!(view.as_slice(), view_reconstructed.as_slice());
-    
+
     drop(view);
     drop(view_reconstructed);
     // ref count should now be 0 (since we had 2 refs and dropped 2)
@@ -64,7 +64,7 @@ fn test_pyro_view_multithreaded() {
     vec.extend_from_slice(b"shared data");
     let view = vec.view();
     let shared_view = Arc::new(view);
-    
+
     let mut handles = vec![];
     for _ in 0..10 {
         let v = Arc::clone(&shared_view);
@@ -75,7 +75,7 @@ fn test_pyro_view_multithreaded() {
             // cloned is dropped here
         }));
     }
-    
+
     for h in handles {
         h.join().unwrap();
     }
@@ -119,7 +119,7 @@ fn test_get_ref_ids_valid() {
     raw[12..16].copy_from_slice(&200u32.to_le_bytes());
     raw[11] = 10;
     raw[10] = 20;
-    
+
     let ptr = PyroRefPtr::new(raw.as_ptr());
     let ids = unsafe { get_ref_ids(ptr) };
     assert_eq!(ids, (100, 200, 10, 20));

@@ -371,90 +371,88 @@ fn build_array(data_type: &DataType, values: &[PyroValue]) -> Result<ArrayRef, V
             }
             Ok(Arc::new(builder.finish()))
         }
-        DataType::Timestamp(unit, tz) => {
-            match unit {
-                TimeUnit::Second => {
-                    let mut builder = TimestampSecondBuilder::with_capacity(values.len());
-                    for v in values {
-                        match v {
-                            PyroValue::Timestamp(time_val) => {
-                                let secs = (time_val.0 / 1_000_000_000) as i64;
-                                builder.append_value(secs);
-                            }
-                            PyroValue::Null => builder.append_null(),
-                            _ => return Err(ValueError::invalid(v)),
+        DataType::Timestamp(unit, tz) => match unit {
+            TimeUnit::Second => {
+                let mut builder = TimestampSecondBuilder::with_capacity(values.len());
+                for v in values {
+                    match v {
+                        PyroValue::Timestamp(time_val) => {
+                            let secs = (time_val.0 / 1_000_000_000) as i64;
+                            builder.append_value(secs);
                         }
+                        PyroValue::Null => builder.append_null(),
+                        _ => return Err(ValueError::invalid(v)),
                     }
-                    let array = builder.finish();
-                    let array = if let Some(tz_str) = tz {
-                        array.with_timezone(tz_str.clone())
-                    } else {
-                        array
-                    };
-                    Ok(Arc::new(array))
                 }
-                TimeUnit::Millisecond => {
-                    let mut builder = TimestampMillisecondBuilder::with_capacity(values.len());
-                    for v in values {
-                        match v {
-                            PyroValue::Timestamp(time_val) => {
-                                let msecs = (time_val.0 / 1_000_000) as i64;
-                                builder.append_value(msecs);
-                            }
-                            PyroValue::Null => builder.append_null(),
-                            _ => return Err(ValueError::invalid(v)),
-                        }
-                    }
-                    let array = builder.finish();
-                    let array = if let Some(tz_str) = tz {
-                        array.with_timezone(tz_str.clone())
-                    } else {
-                        array
-                    };
-                    Ok(Arc::new(array))
-                }
-                TimeUnit::Microsecond => {
-                    let mut builder = TimestampMicrosecondBuilder::with_capacity(values.len());
-                    for v in values {
-                        match v {
-                            PyroValue::Timestamp(time_val) => {
-                                let usecs = (time_val.0 / 1_000) as i64;
-                                builder.append_value(usecs);
-                            }
-                            PyroValue::Null => builder.append_null(),
-                            _ => return Err(ValueError::invalid(v)),
-                        }
-                    }
-                    let array = builder.finish();
-                    let array = if let Some(tz_str) = tz {
-                        array.with_timezone(tz_str.clone())
-                    } else {
-                        array
-                    };
-                    Ok(Arc::new(array))
-                }
-                TimeUnit::Nanosecond => {
-                    let mut builder = TimestampNanosecondBuilder::with_capacity(values.len());
-                    for v in values {
-                        match v {
-                            PyroValue::Timestamp(time_val) => {
-                                let nsecs = time_val.0 as i64;
-                                builder.append_value(nsecs);
-                            }
-                            PyroValue::Null => builder.append_null(),
-                            _ => return Err(ValueError::invalid(v)),
-                        }
-                    }
-                    let array = builder.finish();
-                    let array = if let Some(tz_str) = tz {
-                        array.with_timezone(tz_str.clone())
-                    } else {
-                        array
-                    };
-                    Ok(Arc::new(array))
-                }
+                let array = builder.finish();
+                let array = if let Some(tz_str) = tz {
+                    array.with_timezone(tz_str.clone())
+                } else {
+                    array
+                };
+                Ok(Arc::new(array))
             }
-        }
+            TimeUnit::Millisecond => {
+                let mut builder = TimestampMillisecondBuilder::with_capacity(values.len());
+                for v in values {
+                    match v {
+                        PyroValue::Timestamp(time_val) => {
+                            let msecs = (time_val.0 / 1_000_000) as i64;
+                            builder.append_value(msecs);
+                        }
+                        PyroValue::Null => builder.append_null(),
+                        _ => return Err(ValueError::invalid(v)),
+                    }
+                }
+                let array = builder.finish();
+                let array = if let Some(tz_str) = tz {
+                    array.with_timezone(tz_str.clone())
+                } else {
+                    array
+                };
+                Ok(Arc::new(array))
+            }
+            TimeUnit::Microsecond => {
+                let mut builder = TimestampMicrosecondBuilder::with_capacity(values.len());
+                for v in values {
+                    match v {
+                        PyroValue::Timestamp(time_val) => {
+                            let usecs = (time_val.0 / 1_000) as i64;
+                            builder.append_value(usecs);
+                        }
+                        PyroValue::Null => builder.append_null(),
+                        _ => return Err(ValueError::invalid(v)),
+                    }
+                }
+                let array = builder.finish();
+                let array = if let Some(tz_str) = tz {
+                    array.with_timezone(tz_str.clone())
+                } else {
+                    array
+                };
+                Ok(Arc::new(array))
+            }
+            TimeUnit::Nanosecond => {
+                let mut builder = TimestampNanosecondBuilder::with_capacity(values.len());
+                for v in values {
+                    match v {
+                        PyroValue::Timestamp(time_val) => {
+                            let nsecs = time_val.0 as i64;
+                            builder.append_value(nsecs);
+                        }
+                        PyroValue::Null => builder.append_null(),
+                        _ => return Err(ValueError::invalid(v)),
+                    }
+                }
+                let array = builder.finish();
+                let array = if let Some(tz_str) = tz {
+                    array.with_timezone(tz_str.clone())
+                } else {
+                    array
+                };
+                Ok(Arc::new(array))
+            }
+        },
 
         DataType::Struct(fields) => {
             // Transpose Row-based PyroValues into Column-based arrays recursively
