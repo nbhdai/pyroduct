@@ -11,6 +11,7 @@ use crate::format::Bridgeable;
 use crate::format::header::PyroData;
 use crate::format::value::arrow::PreBatch;
 use crate::format::wal::{WalManager as RealWalManager, WalReader, WalWriter as RawWalWriter};
+use arrow::record_batch::RecordBatch;
 
 /// A high-level WAL writer wrapper that handles serialization of `PyroRow` values.
 pub struct WalWriter {
@@ -256,7 +257,7 @@ impl WalManager {
     }
 
     /// Returns the path to the WAL file.
-    pub fn wal_path(&self) -> Option<&Path> {
+    pub fn wal_path(&self) -> Option<PathBuf> {
         self.inner.wal_path()
     }
 
@@ -265,11 +266,140 @@ impl WalManager {
         self.inner.total_len()
     }
 
+    /// Rotates the WAL manager with a new `WalWriter`.
+    /// This locks the in-memory data, flushes the current `PreBatch` into an Apache Arrow `RecordBatch`,
+    /// extracts the current `current_wal_rows` mapping, and rotates the underlying `self.inner` (RealWalManager).
+    /// It resets the `PreBatch` with the new schema and returns the record batch + the index mapping.
+    pub async fn rotate(
+        &self,
+        new_writer: WalWriter,
+        new_schema: crate::format::value::PyroSchema<'static>,
+    ) -> Result<(RecordBatch, HashMap<usize, usize>), PyroError> {
+        let mut data = self.data.lock().await;
+
+        // 1. Flush the old prebatch
+        let batch_opt = data
+            .prebatch
+            .flush()
+            .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
+
+        // 2. If it's None (empty), construct an empty RecordBatch with the old schema
+        let record_batch = match batch_opt {
+            Some(b) => b,
+            None => {
+                let arrow_schema = data.prebatch.arrow_schema();
+                RecordBatch::new_empty(arrow_schema)
+            }
+        };
+
+        // 3. Take the old WAL rows map
+        let old_rows = std::mem::take(&mut data.current_wal_rows);
+
+        // 4. Rotate the underlying low-level WalManager
+        self.inner
+            .rotate(new_writer.inner)
+            .await
+            .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
+
+        // 5. Reset the prebatch with the new schema
+        data.prebatch = PreBatch::new(new_schema);
+
+        Ok((record_batch, old_rows))
+    }
+
     /// Shuts down the background writer.
     pub async fn interrupt(&self) -> Result<(), PyroError> {
         self.inner.interrupt().await.map_err(|e| {
             PyroError::local_io(CapturedError::new("Unable to close data WAL").with_source(e))
         })?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::PyroValue;
+    use crate::format::value::PyroSchema;
+    use arrow::datatypes::{DataType, Field, Schema};
+    use tempfile::NamedTempFile;
+
+    #[tokio::test]
+    async fn test_arrow_wal_manager_rotation() {
+        let schema = Arc::new(Schema::new(vec![Field::new("val", DataType::Int32, true)]));
+        let pyro_schema = PyroSchema::from_arrow(&schema).unwrap();
+
+        // Create WAL 1
+        let tmp_file1 = NamedTempFile::new().unwrap();
+        let base_path1 = tmp_file1.path().with_extension("");
+        let writer1 = WalWriter::open(&base_path1).unwrap();
+
+        let manager = WalManager::new(writer1, 10, pyro_schema.clone());
+
+        // Append to manager
+        let row1 = PyroRow::from([("val", PyroValue::I32(100))]);
+        manager.append(10, &row1).await.unwrap();
+
+        // Create WAL 2
+        let tmp_file2 = NamedTempFile::new().unwrap();
+        let base_path2 = tmp_file2.path().with_extension("");
+        let writer2 = WalWriter::open(&base_path2).unwrap();
+
+        // Rotate
+        let (batch, rows_map) = manager.rotate(writer2, pyro_schema.clone()).await.unwrap();
+
+        // Verify the record batch returned from rotate has our entry
+        assert_eq!(batch.num_rows(), 1);
+        let val_col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::Int32Array>()
+            .unwrap();
+        assert_eq!(val_col.value(0), 100);
+
+        // Verify rows_map
+        assert_eq!(rows_map.len(), 1);
+        assert_eq!(rows_map.get(&10), Some(&0));
+
+        // Append to rotated manager
+        let row2 = PyroRow::from([("val", PyroValue::I32(200))]);
+        manager.append(20, &row2).await.unwrap();
+
+        // Interrupt manager to flush everything
+        manager.interrupt().await.unwrap();
+
+        // Verify WAL 2 contains the new record
+        let recovered = recover(&base_path2).unwrap();
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].get("val"), Some(&PyroValue::I32(200)));
+    }
+
+    #[tokio::test]
+    async fn test_arrow_wal_manager_rotation_empty() {
+        let schema = Arc::new(Schema::new(vec![Field::new("val", DataType::Int32, true)]));
+        let pyro_schema = PyroSchema::from_arrow(&schema).unwrap();
+
+        // Create WAL 1
+        let tmp_file1 = NamedTempFile::new().unwrap();
+        let base_path1 = tmp_file1.path().with_extension("");
+        let writer1 = WalWriter::open(&base_path1).unwrap();
+
+        let manager = WalManager::new(writer1, 10, pyro_schema.clone());
+
+        // Create WAL 2
+        let tmp_file2 = NamedTempFile::new().unwrap();
+        let base_path2 = tmp_file2.path().with_extension("");
+        let writer2 = WalWriter::open(&base_path2).unwrap();
+
+        // Rotate empty WAL
+        let (batch, rows_map) = manager.rotate(writer2, pyro_schema.clone()).await.unwrap();
+
+        // Verify the record batch is empty
+        assert_eq!(batch.num_rows(), 0);
+        assert_eq!(batch.schema().fields().len(), 1);
+        assert_eq!(batch.schema().field(0).name(), "val");
+
+        // Verify rows_map is empty
+        assert!(rows_map.is_empty());
     }
 }

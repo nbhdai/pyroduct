@@ -318,9 +318,10 @@ use crate::format::vec_buf::PyroVec;
 /// `WalManager` coordinates multiple asynchronous log writers feeding into a single `WalWriter` on a background thread.
 #[derive(Clone)]
 pub struct WalManager {
-    sender: mpsc::Sender<(usize, PyroVec)>,
+    bound: usize,
+    sender: Arc<std::sync::RwLock<mpsc::Sender<(usize, PyroVec)>>>,
     total_len: Arc<AtomicUsize>,
-    wal_path: Option<PathBuf>,
+    wal_path: Arc<std::sync::RwLock<Option<PathBuf>>>,
     inner: Arc<Mutex<WalManagerInner>>,
 }
 
@@ -368,9 +369,10 @@ impl WalManager {
         });
 
         Self {
-            sender,
+            bound,
+            sender: Arc::new(std::sync::RwLock::new(sender)),
             total_len: total_len_clone,
-            wal_path,
+            wal_path: Arc::new(std::sync::RwLock::new(wal_path)),
             inner: Arc::new(Mutex::new(WalManagerInner {
                 shutdown_tx: Some(shutdown_tx),
                 join_handle: Some(join_handle),
@@ -386,7 +388,8 @@ impl WalManager {
         index: usize,
         record: PyroVec,
     ) -> Result<(), mpsc::error::SendError<(usize, PyroVec)>> {
-        self.sender.send((index, record)).await?;
+        let sender = self.sender.read().unwrap().clone();
+        sender.send((index, record)).await?;
         self.total_len.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -396,9 +399,14 @@ impl WalManager {
         self.total_len.load(Ordering::SeqCst)
     }
 
+    /// Returns the path to the current WAL file.
+    pub fn wal_path(&self) -> Option<PathBuf> {
+        self.wal_path.read().unwrap().clone()
+    }
+
     /// Retrieves a single `PyroView` by its global index by scanning the WAL frames.
     pub fn get(&self, index: usize) -> tokio::io::Result<Option<PyroView>> {
-        if let Some(path) = &self.wal_path {
+        if let Some(path) = self.wal_path() {
             // WalReader::open uses the base path without extension
             let reader = WalReader::open(path.with_extension(""))?;
             for frame in reader.frames() {
@@ -413,6 +421,90 @@ impl WalManager {
             }
         }
         Ok(None)
+    }
+
+    /// Rotates the `WalManager` with a new `WalWriter`.
+    /// This shuts down the old write loop (waiting for it to finish flushing and draining)
+    /// and replaces it with a new loop using the new writer.
+    pub async fn rotate(&self, mut new_wal_writer: WalWriter<File>) -> io::Result<()> {
+        let mut inner = self.inner.lock().await;
+
+        let (new_sender, mut new_receiver) = mpsc::channel::<(usize, PyroVec)>(self.bound);
+        let (new_shutdown_tx, mut new_shutdown_rx) = oneshot::channel::<()>();
+
+        {
+            // 1. Lock the sender for writing to prevent any thread from obtaining the old sender
+            let mut sender_guard = self.sender.write().unwrap();
+
+            // 2. Swap the old sender with the new sender
+            let old_sender = std::mem::replace(&mut *sender_guard, new_sender);
+
+            // 3. Drop the sender guard so other threads can start sending to the new loop
+            // 4. Drop our copy of the old sender.
+            // Any transient senders in active `send()` calls will finish sending and be dropped.
+            // Once they are all dropped, the old receiver will receive `None` and naturally terminate the old loop,
+            // ensuring complete draining of all messages.
+            drop(sender_guard);
+            drop(old_sender);
+        }
+
+        // 6. Wait for the old loop to complete (which drains its queue and flushes to disk)
+        if let Some(handle) = inner.join_handle.take() {
+            match handle.await {
+                Ok(res) => res?,
+                Err(join_err) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("Background task join error during rotation: {:?}", join_err),
+                    ));
+                }
+            }
+        }
+
+        // 7. Update the path in the shared `wal_path` field
+        let new_wal_path = new_wal_writer.wal_path().map(|p| p.to_path_buf());
+        {
+            let mut path_guard = self.wal_path.write().unwrap();
+            *path_guard = new_wal_path;
+        }
+
+        let new_records_written = new_wal_writer.records_written();
+
+        // 8. Spawn the new background loop
+        let new_join_handle = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    msg = new_receiver.recv() => {
+                        match msg {
+                            Some((idx, record)) => {
+                                new_wal_writer.append(idx, record.py_ref()).await?;
+                            }
+                            None => {
+                                break;
+                            }
+                        }
+                    }
+                    _ = &mut new_shutdown_rx => {
+                        break;
+                    }
+                }
+            }
+            // Drain remaining messages in receiver
+            while let Ok((idx, record)) = new_receiver.try_recv() {
+                new_wal_writer.append(idx, record.py_ref()).await?;
+            }
+            Ok(())
+        });
+
+        // 9. Update the inner state
+        inner.shutdown_tx = Some(new_shutdown_tx);
+        inner.join_handle = Some(new_join_handle);
+
+        // 10. Update total_len to match the new segment's records_written
+        self.total_len
+            .store(new_records_written as usize, Ordering::SeqCst);
+
+        Ok(())
     }
 
     /// Signals the background task to shut down and waits for completion.
@@ -695,5 +787,60 @@ mod tests {
         let reader = WalReader::open(&base_path).unwrap();
         let frames: Vec<_> = reader.frames().collect();
         assert_eq!(frames.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_wal_manager_rotation() {
+        let tmp_file1 = NamedTempFile::new().unwrap();
+        let base_path1 = tmp_file1.path().with_extension("");
+        let tmp_file2 = NamedTempFile::new().unwrap();
+        let base_path2 = tmp_file2.path().with_extension("");
+
+        let wal1 = WalWriter::open(&base_path1).unwrap();
+        let manager = WalManager::new(wal1, 5);
+
+        // Write 3 entries to the first segment
+        for i in 0..3 {
+            let record = make_pyro_record(format!("rec {}", i).as_bytes());
+            manager.send(i, record).await.unwrap();
+        }
+        assert_eq!(manager.total_len(), 3);
+
+        // Rotate to the second segment
+        let wal2 = WalWriter::open(&base_path2).unwrap();
+        manager.rotate(wal2).await.unwrap();
+
+        // Write 2 entries to the second segment
+        for i in 3..5 {
+            let record = make_pyro_record(format!("rec {}", i).as_bytes());
+            manager.send(i, record).await.unwrap();
+        }
+        assert_eq!(manager.total_len(), 2);
+
+        manager.interrupt().await.unwrap();
+
+        // Verify first segment
+        let reader1 = WalReader::open(&base_path1).unwrap();
+        let frames1: Vec<_> = reader1.frames().collect();
+        assert_eq!(frames1.len(), 3);
+        for i in 0..3 {
+            assert_eq!(frames1[i].row_index, i);
+            assert_eq!(
+                frames1[i].packet.as_slice(),
+                format!("rec {}", i).as_bytes()
+            );
+        }
+
+        // Verify second segment
+        let reader2 = WalReader::open(&base_path2).unwrap();
+        let frames2: Vec<_> = reader2.frames().collect();
+        assert_eq!(frames2.len(), 2);
+        for i in 3..5 {
+            assert_eq!(frames2[i - 3].row_index, i);
+            assert_eq!(
+                frames2[i - 3].packet.as_slice(),
+                format!("rec {}", i).as_bytes()
+            );
+        }
     }
 }

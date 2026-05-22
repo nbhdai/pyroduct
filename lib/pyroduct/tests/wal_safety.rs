@@ -18,9 +18,13 @@ fn write_and_open_in_memory(records: &[(usize, PyroRow<'static>)]) -> WalReader 
 
     {
         let mut writer = WalWriter::new(wal_buf);
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         for (idx, row) in records {
             let vec = row.clone().into_owned().ship().unwrap();
-            writer.append(*idx, vec.py_ref()).unwrap();
+            rt.block_on(writer.append(*idx, vec.py_ref())).unwrap();
         }
         wal_buf = writer.into_inner();
     }
@@ -110,7 +114,7 @@ fn test_wal_reader_shared_across_threads() {
 
     let mut handles = vec![];
     for _ in 0..4 {
-        let r = Arc::clone(&reader);
+        let r: Arc<WalReader> = Arc::clone(&reader);
         let b = Arc::clone(&barrier);
         handles.push(thread::spawn(move || {
             b.wait();
@@ -138,9 +142,13 @@ fn test_wal_data_persists_across_open() {
     // Write session
     {
         let mut writer = WalWriter::open(&wal_path).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         for (idx, row) in &records {
             let vec = row.clone().into_owned().ship().unwrap();
-            writer.append(*idx, vec.py_ref()).unwrap();
+            rt.block_on(writer.append(*idx, vec.py_ref())).unwrap();
         }
     }
 

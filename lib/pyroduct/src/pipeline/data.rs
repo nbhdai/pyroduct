@@ -7,7 +7,7 @@ use crate::error::PyroError;
 use crate::format::value::PyroSchema;
 use crate::format::value::arrow::PreBatch;
 use crate::format::value::arrow::Rowable;
-use crate::format::value::arrow::wal::{WalWriter, recover};
+use crate::format::value::arrow::wal::{WalWriter, WalManager};
 use crate::{PyroRow, PyroValue};
 use arrow::array::RecordBatch;
 use pyro_file;
@@ -18,13 +18,11 @@ pub struct DataManager {
     output_dir: PathBuf,
     _schema: PyroSchema<'static>,
 
-    /// The in-memory buffer for accumulating rows before flushing to IPC.
-    wal_data: PreBatch,
+    /// The thread-safe WAL manager
+    wal_manager: Option<WalManager>,
 
     /// The current WAL ID
     current_wal_id: usize,
-    /// The wal writer for the current WAL.
-    wal_writer: Option<WalWriter>,
 
     /// List of IPC files (by ID) that have been flushed from WAL and are ready for Parquet rollout.
     ipc_files: Vec<usize>,
@@ -47,8 +45,6 @@ pub struct DataManager {
     pub ipc_file_paths: Vec<PathBuf>,
     /// List of Parquet file paths on disk.
     pub parquet_file_paths: Vec<PathBuf>,
-    /// Maps a global row_index to the index within the current active wal_data buffer.
-    current_wal_rows: HashMap<usize, usize>,
 }
 
 impl DataManager {
@@ -63,8 +59,7 @@ impl DataManager {
             "CREATE TABLE IF NOT EXISTS wal_index (
                 row_index INTEGER PRIMARY KEY,
                 wal_id INTEGER NOT NULL,
-                wal_index INTEGER NOT NULL,
-                timestamp INTEGER NOT NULL
+                wal_index INTEGER NOT NULL
             )",
             [],
         );
@@ -103,10 +98,9 @@ impl DataManager {
 
         Self {
             output_dir: output_dir_buf,
-            wal_data: PreBatch::new(schema.clone()),
             _schema: schema,
+            wal_manager: None,
             current_wal_id: 0,
-            wal_writer: None,
             ipc_files: Vec::new(),
             ipc_row_counts: HashMap::new(),
             total_parquet_rows: 0,
@@ -116,7 +110,6 @@ impl DataManager {
             metadata_prefix: None,
             ipc_file_paths: Vec::new(),
             parquet_file_paths: Vec::new(),
-            current_wal_rows: HashMap::new(),
         }
     }
 
@@ -229,7 +222,12 @@ impl DataManager {
 
         // Also recover the current WAL if it exists
         if self.current_wal_id > 0 {
-            self.recover_wal(self.current_wal_id)?;
+            let wal_file_path = self.output_dir.join(format!("wal_{}.pyrowal", self.current_wal_id));
+            if wal_file_path.exists() {
+                let base_path = self.output_dir.join(format!("wal_{}", self.current_wal_id));
+                let wm = WalManager::open_with_recovery(&base_path, self.wal_capacity, self._schema.clone())?;
+                self.wal_manager = Some(wm);
+            }
         }
 
         Ok(())
@@ -239,7 +237,18 @@ impl DataManager {
     /// Parquet files + IPC files + current in-memory buffer.
     pub fn len(&self) -> usize {
         let ipc_sum: usize = self.ipc_row_counts.values().sum();
-        self.total_parquet_rows + ipc_sum + self.wal_data.len()
+        let active_len = if let Some(wm) = &self.wal_manager {
+            let data = loop {
+                if let Ok(g) = wm.data.try_lock() {
+                    break g;
+                }
+                std::thread::yield_now();
+            };
+            data.prebatch.len()
+        } else {
+            0
+        };
+        self.total_parquet_rows + ipc_sum + active_len
     }
 
     pub fn set_capacities(&mut self, wal_capacity: usize, ipc_capacity: usize) {
@@ -267,9 +276,29 @@ impl DataManager {
         fields.push(metadata_field);
         let new_schema = PyroSchema::new(fields);
 
-        self.wal_data = PreBatch::new(new_schema.clone());
         self._schema = new_schema;
         self.metadata_prefix = Some(prefix.to_string());
+
+        if let Some(wm) = &mut self.wal_manager {
+            let mut data = loop {
+                if let Ok(g) = wm.data.try_lock() {
+                    break g;
+                }
+                std::thread::yield_now();
+            };
+            data.prebatch = PreBatch::new(self._schema.clone());
+        }
+    }
+
+    fn ensure_wal_manager(&mut self) -> Result<WalManager, PyroError> {
+        if self.wal_manager.is_none() {
+            self.current_wal_id += 1;
+            let base_path = self.output_dir.join(format!("wal_{}", self.current_wal_id));
+            let writer = WalWriter::open(&base_path)?;
+            let wm = WalManager::new(writer, self.wal_capacity, self._schema.clone());
+            self.wal_manager = Some(wm);
+        }
+        Ok(self.wal_manager.clone().unwrap())
     }
 
     /// Pushes a single WAL record to the current WAL and the in-memory buffer.
@@ -278,9 +307,7 @@ impl DataManager {
         row_index: usize,
         record: &PyroRow<'_>,
     ) -> Result<(), PyroError> {
-        if self.wal_writer.is_none() {
-            self.open_next_wal()?;
-        }
+        let wal_manager = self.ensure_wal_manager()?;
 
         debug!(
             row_index,
@@ -301,154 +328,113 @@ impl DataManager {
             record_to_push.insert(prefix.clone(), PyroValue::Group(metadata_row));
         }
 
-        let wal_index = self.len();
+        // 1. Write to WAL & Push to in-memory PreBatch
+        wal_manager.append(row_index, &record_to_push).await?;
 
-        // 1. Write to WAL (Durability)
-        if let Some(wal) = &mut self.wal_writer {
-            wal.append(wal_index, &record_to_push).await?;
-        }
+        // 2. Check capacity for flush
+        let current_len = {
+            let data = wal_manager.data.lock().await;
+            data.prebatch.len()
+        };
 
-        // 2. Push to in-memory PreBatch (Performance)
-        self.wal_data.push(record_to_push.clone()).map_err(|e| {
-            PyroError::validation(
-                CapturedError::new("Failed to push record to WAL buffer").with_source(e),
-            )
-        })?;
-
-        // Populate fast lookup map for current active WAL
-        self.current_wal_rows.insert(row_index, wal_index);
-
-        // 3. Store in SQLite index
-        let timestamp_nanos = timestamp.0;
-        let _ = self.sqlite_conn.execute(
-            "INSERT OR REPLACE INTO wal_index (row_index, wal_id, wal_index, timestamp) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![row_index as i64, self.current_wal_id as i64, wal_index as i64, timestamp_nanos as i64],
-        );
-
-        // 4. Check capacity for flush
-        if self.wal_data.len() >= self.wal_capacity {
+        if current_len >= self.wal_capacity {
             debug!(
                 row_index,
-                wal_data_len = self.wal_data.len(),
+                wal_data_len = current_len,
                 wal_capacity = self.wal_capacity,
                 "push_record: capacity reached, flushing WAL"
             );
-            self.flush_wal()?;
+            self.flush_wal().await?;
         }
 
-        Ok(())
-    }
-
-    fn open_next_wal(&mut self) -> Result<(), PyroError> {
-        self.current_wal_id += 1;
-        let base_path = self.output_dir.join(format!("wal_{}", self.current_wal_id));
-        let writer = WalWriter::open(base_path)?;
-        self.wal_writer = Some(writer);
         Ok(())
     }
 
     /// Rolls up the in-memory buffer into a memmapable Arrow IPC file.
-    pub fn flush_wal(&mut self) -> Result<(), PyroError> {
+    pub async fn flush_wal(&mut self) -> Result<(), PyroError> {
         let wal_id = self.current_wal_id;
+        if self.wal_manager.is_none() {
+            debug!(wal_id, "flush_wal: no active wal manager, nothing to flush");
+            return Ok(());
+        }
+
         debug!(wal_id, "flush_wal: flushing WAL to Arrow IPC");
 
-        // Close current writer to ensure all data is flushed to disk
-        self.wal_writer = None;
+        // 1. Prepare next WAL ID and writer
+        let next_wal_id = wal_id + 1;
+        let base_path = self.output_dir.join(format!("wal_{}", next_wal_id));
+        let next_writer = WalWriter::open(&base_path)?;
 
-        // Flush the in-memory prebatch
-        match self.wal_data.flush() {
-            Ok(Some(batch)) => {
-                let row_count = batch.num_rows();
-                debug!(wal_id, row_count, "flush_wal: writing record batch to IPC");
-                self.write_arrow_ipc(wal_id, &batch)?;
-                self.ipc_files.push(wal_id);
-                self.ipc_row_counts.insert(wal_id, row_count);
+        // 2. Rotate the WAL manager
+        let (batch, old_rows) = {
+            let wm = self.wal_manager.as_ref().unwrap();
+            wm.rotate(next_writer, self._schema.clone()).await?
+        };
 
-                let path = self.output_dir.join(format!("batch_{}.arrow", wal_id));
-                self.ipc_file_paths.push(path);
+        let row_count = batch.num_rows();
 
-                let _ = self.sqlite_conn.execute(
-                    "INSERT OR IGNORE INTO ipc_index (wal_id) VALUES (?1)",
-                    rusqlite::params![wal_id as i64],
-                );
+        // 3. Write Arrow IPC file
+        debug!(wal_id, row_count, "flush_wal: writing record batch to IPC");
+        self.write_arrow_ipc(wal_id, &batch)?;
 
-                self.current_wal_rows.clear();
-
-                if self.ipc_files.len() >= self.ipc_capacity {
-                    debug!(
-                        ipc_files_count = self.ipc_files.len(),
-                        ipc_capacity = self.ipc_capacity,
-                        "flush_wal: IPC capacity reached, rolling out to Parquet"
-                    );
-                    self.rollout_to_parquet()?;
+        // 4. Batch insert of the mapping old_rows (HashMap<usize, usize>) into SQLite
+        let tx_res: Result<(), PyroError> = {
+            let tx = self.sqlite_conn.transaction().map_err(|e| {
+                PyroError::validation(CapturedError::new("Failed to start transaction").with_source(e))
+            })?;
+            {
+                let mut stmt = tx.prepare(
+                    "INSERT OR REPLACE INTO wal_index (row_index, wal_id, wal_index) VALUES (?1, ?2, ?3)"
+                ).map_err(|e| {
+                    PyroError::validation(CapturedError::new("Failed to prepare insert statement").with_source(e))
+                })?;
+                for (&row_index, &wal_index) in &old_rows {
+                    stmt.execute(rusqlite::params![row_index as i64, wal_id as i64, wal_index as i64]).map_err(|e| {
+                        PyroError::validation(CapturedError::new("Failed to execute insert statement").with_source(e))
+                    })?;
                 }
-                Ok(())
             }
-            Ok(None) => {
-                debug!(wal_id, "flush_wal: no data in prebatch to flush");
-                Ok(())
-            }
-            Err(e) => {
-                error!(wal_id, error = ?e, "flush_wal: failed to flush prebatch");
-                Err(PyroError::validation(
-                    CapturedError::new("Failed to flush in-memory prebatch").with_source(e),
-                ))
-            }
-        }
-    }
+            tx.commit().map_err(|e| {
+                PyroError::validation(CapturedError::new("Failed to commit transaction").with_source(e))
+            })?;
+            Ok(())
+        };
 
-    /// Recovery method to populate `wal_data` from a WAL file on disk (e.g. after crash).
-    pub fn recover_wal(&mut self, wal_id: usize) -> Result<(), PyroError> {
-        info!(wal_id, "recover_wal: recovering WAL from disk");
-        let base_path = self.output_dir.join(format!("wal_{}", wal_id));
-        let records = recover(&base_path)?;
-        let num_records = records.len();
-        debug!(
-            wal_id,
-            num_records, "recover_wal: loaded records from WAL file"
+        if let Err(e) = tx_res {
+            error!(wal_id, error = ?e, "flush_wal: failed to insert WAL rows into SQLite");
+            return Err(e);
+        }
+
+        // 5. Delete the old WAL file
+        let old_wal_path = self.output_dir.join(format!("wal_{}.pyrowal", wal_id));
+        if old_wal_path.exists() {
+            std::fs::remove_file(&old_wal_path).map_err(|e| {
+                PyroError::local_io(CapturedError::new("Failed to delete WAL file").with_source(e))
+            })?;
+            debug!(wal_id, "flush_wal: successfully deleted WAL file {:?}", old_wal_path);
+        }
+
+        // 6. Update track variables
+        self.current_wal_id = next_wal_id;
+        self.ipc_files.push(wal_id);
+        self.ipc_row_counts.insert(wal_id, row_count);
+
+        let path = self.output_dir.join(format!("batch_{}.arrow", wal_id));
+        self.ipc_file_paths.push(path);
+
+        let _ = self.sqlite_conn.execute(
+            "INSERT OR IGNORE INTO ipc_index (wal_id) VALUES (?1)",
+            rusqlite::params![wal_id as i64],
         );
 
-        for rec in records {
-            self.wal_data.push(rec).map_err(|e| {
-                PyroError::validation(
-                    CapturedError::new("Failed to push recovered record to WAL buffer")
-                        .with_source(e),
-                )
-            })?;
+        if self.ipc_files.len() >= self.ipc_capacity {
+            debug!(
+                ipc_files_count = self.ipc_files.len(),
+                ipc_capacity = self.ipc_capacity,
+                "flush_wal: IPC capacity reached, rolling out to Parquet"
+            );
+            self.rollout_to_parquet()?;
         }
-
-        let mut stmt = self
-            .sqlite_conn
-            .prepare("SELECT row_index, wal_index FROM wal_index WHERE wal_id = ?")
-            .map_err(|e| {
-                PyroError::validation(
-                    CapturedError::new("Failed to prepare SELECT statement for wal_index")
-                        .with_source(e),
-                )
-            })?;
-
-        let rows = stmt
-            .query_map([wal_id as i64], |r| {
-                Ok((r.get::<_, i64>(0)? as usize, r.get::<_, i64>(1)? as usize))
-            })
-            .map_err(|e| {
-                PyroError::validation(
-                    CapturedError::new("Failed to query row_index mappings from SQLite")
-                        .with_source(e),
-                )
-            })?;
-
-        let mut recovered_indices_count = 0;
-        for row in rows {
-            if let Ok((row_index, wal_index)) = row {
-                self.current_wal_rows.insert(row_index, wal_index);
-                recovered_indices_count += 1;
-            }
-        }
-        debug!(
-            wal_id,
-            recovered_indices_count, "recover_wal: recovered row_index mappings from SQLite"
-        );
 
         Ok(())
     }
@@ -587,13 +573,21 @@ impl DataManager {
         debug!(index, "get_record: starting lookup");
 
         // 1. Fast path: check in-memory current wal rows map (using index as global row_index)
-        if let Some(&wal_idx) = self.current_wal_rows.get(&index) {
-            if let Some(row) = self.wal_data.get(wal_idx) {
-                debug!(
-                    index,
-                    wal_idx, "get_record: fast-path hit in current active WAL buffer"
-                );
-                return Ok(row.clone());
+        if let Some(wm) = &self.wal_manager {
+            let data = loop {
+                if let Ok(g) = wm.data.try_lock() {
+                    break g;
+                }
+                std::thread::yield_now();
+            };
+            if let Some(&wal_idx) = data.current_wal_rows.get(&index) {
+                if let Some(row) = data.prebatch.get(wal_idx) {
+                    debug!(
+                        index,
+                        wal_idx, "get_record: fast-path hit in current active WAL buffer"
+                    );
+                    return Ok(row.clone());
+                }
             }
         }
 
@@ -803,8 +797,9 @@ mod tests {
             .unwrap();
 
         // Should have triggered flush_wal because capacity is 2
-        // Current WAL id should be 1, wal_writer should be None (flushed)
-        assert!(manager.wal_writer.is_none());
+        // Current WAL id should be 2, wal_manager should be Some (rotated to wal_2)
+        assert!(manager.wal_manager.is_some());
+        assert_eq!(manager.current_wal_id, 2);
         assert_eq!(manager.ipc_files.len(), 1);
 
         // 2. Push more to trigger second IPC
@@ -821,7 +816,7 @@ mod tests {
         assert_eq!(manager.ipc_files.len(), 0);
 
         // Check if parquet file exists
-        let parquet_path = dir.path().join("rollout_2.parquet");
+        let parquet_path = dir.path().join("rollout_3.parquet");
         assert!(parquet_path.exists());
     }
 
@@ -841,12 +836,27 @@ mod tests {
             .await
             .unwrap();
 
-        // We don't flush, so wal_data has 2 rows.
+        // Gracefully shut down the first manager's WAL writer to flush everything to disk
+        if let Some(wm) = manager.wal_manager.take() {
+            wm.interrupt().await.unwrap();
+        }
+
+        // We don't flush, so WAL has 2 rows.
         // Now let's simulate a crash by creating a new manager and recovering
         let mut manager2 = DataManager::new(dir.path(), setup_schema());
         manager2.restore().unwrap();
 
-        assert_eq!(manager2.wal_data.len(), 2);
+        assert_eq!(manager2.len(), 2);
+        let active_len = {
+            let data = loop {
+                if let Ok(g) = manager2.wal_manager.as_ref().unwrap().data.try_lock() {
+                    break g;
+                }
+                std::thread::yield_now();
+            };
+            data.prebatch.len()
+        };
+        assert_eq!(active_len, 2);
     }
 
     #[tokio::test]
@@ -859,14 +869,14 @@ mod tests {
             .push_record(0, &make_success_record(0, 1, "alice"))
             .await
             .unwrap();
-        manager.flush_wal().unwrap();
+        manager.flush_wal().await.unwrap();
 
         assert_eq!(manager.ipc_files.len(), 1);
 
         manager.rollout_to_parquet().unwrap();
         assert_eq!(manager.ipc_files.len(), 0);
 
-        let parquet_path = dir.path().join("rollout_1.parquet");
+        let parquet_path = dir.path().join("rollout_2.parquet");
         assert!(parquet_path.exists());
     }
 
@@ -882,7 +892,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify that the record inside wal_data has the metadata field
+        // Verify that the record inside in-memory WAL has the metadata field
         let row = manager.get_record(42).unwrap();
         let pyro_group = row.get("pyro").unwrap();
         if let PyroValue::Group(group_row) = pyro_group {
@@ -892,11 +902,14 @@ mod tests {
             panic!("Expected PyroValue::Group under 'pyro' key");
         }
 
+        // Flush WAL to batch insert the row index mapping to SQLite and write Arrow IPC file
+        manager.flush_wal().await.unwrap();
+
         // Verify SQLite contents
         let mut stmt = manager
             .sqlite_conn
             .prepare(
-                "SELECT row_index, wal_id, wal_index, timestamp FROM wal_index WHERE row_index = ?",
+                "SELECT row_index, wal_id, wal_index FROM wal_index WHERE row_index = ?",
             )
             .unwrap();
         let mut rows = stmt
@@ -905,7 +918,6 @@ mod tests {
                     r.get::<_, i64>(0)?,
                     r.get::<_, i64>(1)?,
                     r.get::<_, i64>(2)?,
-                    r.get::<_, i64>(3)?,
                 ))
             })
             .unwrap();
@@ -914,7 +926,6 @@ mod tests {
         assert_eq!(row_data.0, 42); // row_index
         assert_eq!(row_data.1, 1); // wal_id
         assert_eq!(row_data.2, 0); // wal_index
-        assert!(row_data.3 > 0); // timestamp nanos i64
     }
 
     #[tokio::test]
