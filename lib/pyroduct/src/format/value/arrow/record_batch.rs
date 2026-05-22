@@ -292,6 +292,30 @@ impl PreBatch {
         self.rows.clear();
         Ok(Some(batch))
     }
+
+    pub fn to_record_batch(&self) -> Result<Option<RecordBatch>, ValueError> {
+        if self.rows.is_empty() {
+            return Ok(None);
+        }
+
+        let columns = self
+            .arrow_schema
+            .fields()
+            .iter()
+            .map(|field| {
+                let col_values: Vec<PyroValue> = self
+                    .rows
+                    .iter()
+                    .map(|row| row.get(field.name()).cloned().unwrap_or(PyroValue::Null))
+                    .collect();
+                build_array(field.data_type(), &col_values)
+            })
+            .collect::<Result<Vec<ArrayRef>, ValueError>>()?;
+
+        let batch = RecordBatch::try_new(self.arrow_schema.clone(), columns)?;
+
+        Ok(Some(batch))
+    }
 }
 
 /// Recursively builds an Arrow Array from a slice of PyroValues based on the target DataType.

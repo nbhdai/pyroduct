@@ -4,6 +4,9 @@ pub mod session_diff;
 pub mod normal;
 pub mod data;
 
+#[cfg(feature = "host")]
+pub mod sql;
+
 pub use pipeline::{PipelineConfig, PipelineFactory};
 use thiserror::Error;
 pub use normal::{Failure, Pipeline, PipelinePool, ExecutionRecord};

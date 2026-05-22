@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use tracing::{debug, error, info, warn};
 
 use crate::captured::CapturedError;
@@ -45,6 +46,8 @@ pub struct DataManager {
     pub ipc_file_paths: Vec<PathBuf>,
     /// List of Parquet file paths on disk.
     pub parquet_file_paths: Vec<PathBuf>,
+    /// Shared state for tracking active readers and pending deletions of IPC files.
+    pub shared_state: Arc<Mutex<DataManagerSharedState>>,
 }
 
 impl DataManager {
@@ -110,6 +113,7 @@ impl DataManager {
             metadata_prefix: None,
             ipc_file_paths: Vec::new(),
             parquet_file_paths: Vec::new(),
+            shared_state: Arc::new(Mutex::new(DataManagerSharedState::default())),
         }
     }
 
@@ -288,6 +292,85 @@ impl DataManager {
             };
             data.prebatch = PreBatch::new(self._schema.clone());
         }
+    }
+
+    pub fn get_active_batch(&self) -> Result<Option<RecordBatch>, PyroError> {
+        if let Some(wm) = &self.wal_manager {
+            let data = loop {
+                if let Ok(g) = wm.data.try_lock() {
+                    break g;
+                }
+                std::thread::yield_now();
+            };
+            data.prebatch.to_record_batch().map_err(|e| {
+                PyroError::validation(
+                    CapturedError::new("Failed to serialize WAL to RecordBatch").with_source(e),
+                )
+            })
+        } else {
+            Ok(None)
+        }
+    }
+
+    #[cfg(feature = "host")]
+    pub fn sql_provider(&self) -> Result<crate::pipeline::sql::DataManagerTableProvider, PyroError> {
+        let mut batches = Vec::new();
+
+        // 1. Eagerly load Parquet files
+        for path in &self.parquet_file_paths {
+            let bytes = std::fs::read(path).map_err(|e| {
+                PyroError::local_io(
+                    CapturedError::new("Failed to read Parquet file for SQL provider").with_source(e),
+                )
+            })?;
+            let filename = path.file_name().unwrap().to_string_lossy().into_owned();
+            let parsed_batches = pyro_file::parse_data_to_batch_sync(bytes, &filename).map_err(|e| {
+                PyroError::validation(
+                    CapturedError::new("Failed to parse Parquet file for SQL provider").with_source(e),
+                )
+            })?;
+            for b in parsed_batches {
+                batches.push(b.to_batch());
+            }
+        }
+
+        // 2. Eagerly load IPC files and track active readers with guards
+        let mut guards = Vec::new();
+        for path in &self.ipc_file_paths {
+            // Register guard
+            let guard = IpcFileGuard::new(path.clone(), self.shared_state.clone());
+            guards.push(guard);
+
+            let bytes = std::fs::read(path).map_err(|e| {
+                PyroError::local_io(
+                    CapturedError::new("Failed to read Arrow IPC file for SQL provider").with_source(e),
+                )
+            })?;
+            let filename = path.file_name().unwrap().to_string_lossy().into_owned();
+            let parsed_batches = pyro_file::parse_data_to_batch_sync(bytes, &filename).map_err(|e| {
+                PyroError::validation(
+                    CapturedError::new("Failed to parse Arrow IPC file for SQL provider").with_source(e),
+                )
+            })?;
+            for b in parsed_batches {
+                batches.push(b.to_batch());
+            }
+        }
+
+        // 3. Eagerly load active WAL record batch
+        if let Some(active_batch) = self.get_active_batch()? {
+            batches.push(active_batch);
+        }
+
+        // 4. Construct MemTable
+        let schema = std::sync::Arc::new(self._schema.to_arrow());
+        let mem_table = datafusion::datasource::memory::MemTable::try_new(schema, vec![batches]).map_err(|e| {
+            PyroError::validation(
+                CapturedError::new("Failed to create MemTable for SQL provider").with_source(e),
+            )
+        })?;
+
+        Ok(crate::pipeline::sql::DataManagerTableProvider::new(mem_table, guards))
     }
 
     fn ensure_wal_manager(&mut self) -> Result<WalManager, PyroError> {
@@ -494,7 +577,15 @@ impl DataManager {
             }
 
             self.ipc_file_paths.retain(|p| p != &arrow_path);
-            let _ = std::fs::remove_file(&arrow_path);
+            {
+                let mut state = self.shared_state.lock().unwrap();
+                if state.active_readers.contains_key(&arrow_path) {
+                    state.pending_deletions.insert(arrow_path.clone());
+                    debug!("IPC file {:?} is currently being read. Deferring deletion.", arrow_path);
+                } else {
+                    let _ = std::fs::remove_file(&arrow_path);
+                }
+            }
         }
 
         if !all_batches.is_empty() {
@@ -749,6 +840,71 @@ impl DataManager {
                     CapturedError::new("Failed to query global index in SQLite").with_source(e),
                 ))
             }
+        }
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct DataManagerSharedState {
+    /// Maps file path to the number of active queries/table providers currently reading it.
+    pub active_readers: HashMap<PathBuf, usize>,
+    /// Files that have been rolled out to Parquet but are still held by active readers.
+    /// These will be deleted when their reader count drops to 0.
+    pub pending_deletions: HashSet<PathBuf>,
+}
+
+impl DataManagerSharedState {
+    pub fn add_reader(&mut self, path: PathBuf) {
+        *self.active_readers.entry(path).or_insert(0) += 1;
+    }
+
+    pub fn remove_reader(&mut self, path: &Path) {
+        if let std::collections::hash_map::Entry::Occupied(mut entry) = self.active_readers.entry(path.to_path_buf()) {
+            *entry.get_mut() -= 1;
+            if *entry.get() == 0 {
+                entry.remove();
+                if self.pending_deletions.remove(path) {
+                    if path.exists() {
+                        let _ = std::fs::remove_file(path);
+                        tracing::debug!("Deferred deletion of IPC file finished: {:?}", path);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct IpcFileGuard {
+    pub path: PathBuf,
+    pub shared_state: Arc<Mutex<DataManagerSharedState>>,
+}
+
+impl IpcFileGuard {
+    pub fn new(path: PathBuf, shared_state: Arc<Mutex<DataManagerSharedState>>) -> Self {
+        if let Ok(mut state) = shared_state.lock() {
+            state.add_reader(path.clone());
+        }
+        Self { path, shared_state }
+    }
+}
+
+impl Clone for IpcFileGuard {
+    fn clone(&self) -> Self {
+        if let Ok(mut state) = self.shared_state.lock() {
+            state.add_reader(self.path.clone());
+        }
+        Self {
+            path: self.path.clone(),
+            shared_state: self.shared_state.clone(),
+        }
+    }
+}
+
+impl Drop for IpcFileGuard {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.shared_state.lock() {
+            state.remove_reader(&self.path);
         }
     }
 }
