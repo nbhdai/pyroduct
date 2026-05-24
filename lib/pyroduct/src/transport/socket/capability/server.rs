@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::format::header::PyroHeader;
 use crate::format::tokio::Request;
-use crate::transport::{PyroListener, PyroRouter, PyroSocket};
+use crate::transport::socket::{PyroListener, PyroSocket, capability::PyroRouter};
 
 /// A server that listens for incoming [`PyroSocket`] connections and routes
 /// requests using a [`PyroRouter`].

@@ -5,7 +5,7 @@ use crate::PyroError;
 use crate::captured::Capture;
 use crate::format::header::{PyroData, PyroHeader, PyroHeaderMut};
 use crate::format::{Bridgeable, PyroFailure, PyroRow, PyroSuccess};
-use crate::transport::PyroSocket;
+use crate::transport::socket::PyroSocket;
 
 /// A high-level client for communicating with a [`crate::transport::playbook::PlaybookServer`].
 pub struct PlaybookClient {

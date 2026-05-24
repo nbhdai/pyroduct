@@ -9,7 +9,7 @@ use crate::format::tokio::Request;
 use crate::format::{Bridgeable, PyroRow};
 use crate::module::PyroFactory;
 use crate::pipeline::{ExecutionRecord, Pipeline};
-use crate::transport::{PyroListener, PyroSocket};
+use crate::transport::socket::{PyroListener, PyroSocket};
 use crate::{CapturedError, PyroError};
 
 /// A server that listens for incoming [`PyroSocket`] connections and routes

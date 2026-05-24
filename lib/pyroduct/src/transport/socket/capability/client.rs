@@ -9,7 +9,7 @@ use crate::PyroError;
 use crate::captured::Capture;
 use crate::format::header::{PyroData, PyroHeader, PyroHeaderMut};
 use crate::format::{PyroVec, PyroView, SpecWire};
-use crate::transport::PyroSocket;
+use crate::transport::socket::PyroSocket;
 
 /// A high-level client for communicating with a [`crate::transport::PyroServer`].
 ///

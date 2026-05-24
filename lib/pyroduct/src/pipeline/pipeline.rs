@@ -251,7 +251,6 @@ impl PipelineFactory {
                         CapturedError::new("Unable to make the log wal").with_source(io),
                     )
                 })?,
-            input_manager: super::data::DataManager::new(self.input_dir.clone(), input_schema),
             output_manager: super::data::DataManager::new(
                 self.output_dir.clone(),
                 overall_output_schema,
