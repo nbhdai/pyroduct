@@ -31,10 +31,10 @@ host = [
     "dep:pyro-artifacts",
     "dep:pyro-file",
     "dep:rusqlite",
-    "dep:datafusion",
     "pyro-spec/arrow",
 ]
-transport = ["host"]
+sql = ["dep:datafusion"]
+transport = ["host", "dep:axum"]
 module = []
 
 cli = [
@@ -64,6 +64,7 @@ anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+axum = { workspace = true, optional = true }
 
 # Value dependencies
 half.workspace = true
@@ -118,6 +119,7 @@ trybuild.workspace = true
 macrotest = "1.0"
 tracing-test.workspace = true
 tempfile.workspace = true
+reqwest = { version = "0.12", features = ["json"] }
 
 [[test]]
 name = "derive_tests"
@@ -144,9 +146,14 @@ name = "ffi_safety"
 required-features = ["host", "capability"]
 
 [[test]]
-name = "test_pyro_server"
+name = "test_socket_capability_server"
 required-features = ["transport"]
 
 [[test]]
-name = "test_playbook_server"
+name = "test_socket_playbook_server"
 required-features = ["transport", "host"]
+
+[[test]]
+name = "test_http_playbook_server"
+required-features = ["transport", "host"]
+

@@ -318,7 +318,7 @@ impl DataManager {
         }
     }
 
-    #[cfg(feature = "host")]
+    #[cfg(all(feature = "host", feature = "sql"))]
     pub fn sql_provider(
         &self,
     ) -> Result<crate::pipeline::sql::DataManagerTableProvider, PyroError> {

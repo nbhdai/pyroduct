@@ -7,7 +7,7 @@ use pyro_artifacts::{
 use pyroduct::{
     PyroRow,
     pipeline::PipelineConfig,
-    transport::{
+    transport::socket::{
         PyroListener,
         playbook::{PlaybookClient, PlaybookServer},
     },

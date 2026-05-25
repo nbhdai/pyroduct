@@ -1,6 +1,9 @@
 use pyroduct::format::PyroVec;
 use pyroduct::format::header::{DataStatus, PyroHeader, PyroHeaderMut};
-use pyroduct::transport::{PyroListener, PyroRouter, PyroServer, PyroSocket};
+use pyroduct::transport::socket::{
+    PyroListener, PyroSocket,
+    capability::{PyroRouter, PyroServer},
+};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, fmt};
