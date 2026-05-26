@@ -76,7 +76,7 @@ fn test_wal_empty_buffer() {
 
 #[test]
 fn test_wal_large_row_indices() {
-    let big_indices = vec![0, 100, 1000, 100_000, 1_000_000];
+    let big_indices = [0, 100, 1000, 100_000, 1_000_000];
     let records: Vec<_> = big_indices
         .iter()
         .map(|&idx| (idx, make_row(idx)))
