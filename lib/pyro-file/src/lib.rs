@@ -17,7 +17,6 @@
 use arrow::array::RecordBatch;
 use arrow::buffer::Buffer;
 use arrow::datatypes::{Field, Schema};
-use arrow::error::ArrowError;
 use arrow::ipc::{
     convert::fb_to_schema,
     reader::{FileDecoder, read_footer_length},
@@ -754,7 +753,7 @@ mod tests {
         // for reliability. So this should fail immediately.
         assert!(result.is_err());
         match result.unwrap_err() {
-            DataError::InvalidContent(_) | DataError::Arrow(_) => assert!(true),
+            DataError::InvalidContent(_) | DataError::Arrow(_) => {}
             e => panic!("Wrong error type: {:?}", e),
         }
     }

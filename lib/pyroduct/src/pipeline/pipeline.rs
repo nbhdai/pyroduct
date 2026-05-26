@@ -151,10 +151,10 @@ impl PipelineFactory {
         }
         for mut out_field in output_schema_from_func.fields.iter().cloned() {
             out_field.nullable = true;
-            if let crate::format::value::PyroType::Group(ref fields) = out_field.data_type {
-                if fields.is_empty() {
-                    out_field.data_type = last_input_type.clone();
-                }
+            if let crate::format::value::PyroType::Group(ref fields) = out_field.data_type
+                && fields.is_empty()
+            {
+                out_field.data_type = last_input_type.clone();
             }
             group_fields.push(out_field);
         }
@@ -215,10 +215,10 @@ impl PipelineFactory {
             .unwrap_or(crate::format::value::PyroType::Null);
         let mut output_group_fields = Vec::new();
         for mut out_field in output_schema.fields.iter().cloned() {
-            if let crate::format::value::PyroType::Group(ref fields) = out_field.data_type {
-                if fields.is_empty() {
-                    out_field.data_type = last_input_type.clone();
-                }
+            if let crate::format::value::PyroType::Group(ref fields) = out_field.data_type
+                && fields.is_empty()
+            {
+                out_field.data_type = last_input_type.clone();
             }
             output_group_fields.push(out_field);
         }

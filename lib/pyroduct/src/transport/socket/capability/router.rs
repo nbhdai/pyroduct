@@ -84,7 +84,7 @@ impl PyroRouter {
             }
             other => {
                 // Routing: Dispatch to the already-instantiated object.
-                let object = self.objects.get(&(class_id as u8)).ok_or_else(|| {
+                let object = self.objects.get(&class_id).ok_or_else(|| {
                     let err = format!("Object for class ID {} not configured", class_id);
                     tracing::warn!(%err);
                     PyroError::NotFound(err)

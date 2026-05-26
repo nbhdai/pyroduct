@@ -249,16 +249,16 @@ impl SessionPipeline {
         };
 
         for (i, row) in prior.iter().enumerate() {
-            if i >= existing.len() {
-                if let Err(e) = active.data_wal.append(i, row).await {
-                    let _ = self
-                        .output_manager
-                        .set_session_status(session_id as usize, "failed");
-                    return Err(PyroFailure {
-                        result: Err(e.to_string()),
-                        logs: active_logs.clone(),
-                    });
-                }
+            if i >= existing.len()
+                && let Err(e) = active.data_wal.append(i, row).await
+            {
+                let _ = self
+                    .output_manager
+                    .set_session_status(session_id as usize, "failed");
+                return Err(PyroFailure {
+                    result: Err(e.to_string()),
+                    logs: active_logs.clone(),
+                });
             }
         }
 
@@ -414,14 +414,13 @@ impl SessionPipeline {
             wal_rows = crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
         } else {
             // Check rolled up rows in output_manager
-            if let Ok(rolled_up_row) = self.output_manager.get_record(session_id as usize) {
-                if let Some(crate::format::value::PyroValue::List(list_vals)) =
+            if let Ok(rolled_up_row) = self.output_manager.get_record(session_id as usize)
+                && let Some(crate::format::value::PyroValue::List(list_vals)) =
                     rolled_up_row.get("session")
-                {
-                    for val in list_vals {
-                        if let crate::format::value::PyroValue::Group(r) = val {
-                            wal_rows.push(r.clone());
-                        }
+            {
+                for val in list_vals {
+                    if let crate::format::value::PyroValue::Group(r) = val {
+                        wal_rows.push(r.clone());
                     }
                 }
             }
@@ -432,31 +431,26 @@ impl SessionPipeline {
         let mut log_failure = None;
         let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
         if log_dir.exists() {
-            if let Ok(mut reader) = crate::format::log_wal::LogWalReader::open(&log_dir).await {
-                if let Ok(entries) = reader.read_all().await {
-                    if let Some(last_entry) = entries.last() {
-                        logs = PyroLogs {
-                            module_logs: last_entry.module_logs.clone(),
-                            capability_logs: last_entry.capability_logs.clone(),
-                        };
-                        log_failure = last_entry.failure.clone();
-                    }
-                }
+            if let Ok(mut reader) = crate::format::log_wal::LogWalReader::open(&log_dir).await
+                && let Ok(entries) = reader.read_all().await
+                && let Some(last_entry) = entries.last()
+            {
+                logs = PyroLogs {
+                    module_logs: last_entry.module_logs.clone(),
+                    capability_logs: last_entry.capability_logs.clone(),
+                };
+                log_failure = last_entry.failure.clone();
             }
         } else {
             if let Ok(mut reader) = crate::format::log_wal::LogWalReader::open(&self.log_dir).await
+                && let Ok(entries) = reader.read_all().await
+                && let Some(entry) = entries.iter().rfind(|e| e.row_index == session_id as usize)
             {
-                if let Ok(entries) = reader.read_all().await {
-                    if let Some(entry) =
-                        entries.iter().rfind(|e| e.row_index == session_id as usize)
-                    {
-                        logs = PyroLogs {
-                            module_logs: entry.module_logs.clone(),
-                            capability_logs: entry.capability_logs.clone(),
-                        };
-                        log_failure = entry.failure.clone();
-                    }
-                }
+                logs = PyroLogs {
+                    module_logs: entry.module_logs.clone(),
+                    capability_logs: entry.capability_logs.clone(),
+                };
+                log_failure = entry.failure.clone();
             }
         }
 

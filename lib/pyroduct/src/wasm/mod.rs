@@ -281,12 +281,12 @@ pub extern "C" fn borrow_session_input(session_id: u32, index: u32) -> *mut u8 {
         return std::ptr::null_mut();
     }
     let map = registry.as_ref().unwrap();
-    if let Some(vecs) = map.get(&session_id) {
-        if let Some(vec) = vecs.get(index as usize) {
-            let ptr = vec.as_raw_slice().as_ptr() as *mut u8;
-            trace!(session_id, index, ?ptr, "borrow_session_input");
-            return ptr;
-        }
+    if let Some(vecs) = map.get(&session_id)
+        && let Some(vec) = vecs.get(index as usize)
+    {
+        let ptr = vec.as_raw_slice().as_ptr() as *mut u8;
+        trace!(session_id, index, ?ptr, "borrow_session_input");
+        return ptr;
     }
     error!(
         session_id,
@@ -299,12 +299,12 @@ pub extern "C" fn borrow_session_input(session_id: u32, index: u32) -> *mut u8 {
 #[unsafe(no_mangle)]
 pub extern "C" fn session_input_length(session_id: u32) -> u32 {
     let registry = SESSION_INPUT.lock().unwrap();
-    if let Some(map) = registry.as_ref() {
-        if let Some(vecs) = map.get(&session_id) {
-            let len = vecs.len() as u32;
-            trace!(session_id, len, "session_input_length");
-            return len;
-        }
+    if let Some(map) = registry.as_ref()
+        && let Some(vecs) = map.get(&session_id)
+    {
+        let len = vecs.len() as u32;
+        trace!(session_id, len, "session_input_length");
+        return len;
     }
     trace!(session_id, "session_input_length: 0");
     0
@@ -319,12 +319,12 @@ pub extern "C" fn borrow_session_output(session_id: u32, index: u32) -> *mut u8 
         return std::ptr::null_mut();
     }
     let map = registry.as_ref().unwrap();
-    if let Some(vecs) = map.get(&session_id) {
-        if let Some(vec) = vecs.get(index as usize) {
-            let ptr = vec.as_raw_slice().as_ptr() as *mut u8;
-            trace!(session_id, index, ?ptr, "borrow_session_output");
-            return ptr;
-        }
+    if let Some(vecs) = map.get(&session_id)
+        && let Some(vec) = vecs.get(index as usize)
+    {
+        let ptr = vec.as_raw_slice().as_ptr() as *mut u8;
+        trace!(session_id, index, ?ptr, "borrow_session_output");
+        return ptr;
     }
     error!(
         session_id,
@@ -337,12 +337,12 @@ pub extern "C" fn borrow_session_output(session_id: u32, index: u32) -> *mut u8 
 #[unsafe(no_mangle)]
 pub extern "C" fn session_output_length(session_id: u32) -> u32 {
     let registry = SESSION_OUTPUT.lock().unwrap();
-    if let Some(map) = registry.as_ref() {
-        if let Some(vecs) = map.get(&session_id) {
-            let len = vecs.len() as u32;
-            trace!(session_id, len, "session_output_length");
-            return len;
-        }
+    if let Some(map) = registry.as_ref()
+        && let Some(vecs) = map.get(&session_id)
+    {
+        let len = vecs.len() as u32;
+        trace!(session_id, len, "session_output_length");
+        return len;
     }
     trace!(session_id, "session_output_length: 0");
     0

@@ -11,7 +11,7 @@ use pyroduct::{
 use std::collections::{BTreeMap, HashMap};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
-const CODE: &'static str = r#"
+const CODE: &str = r#"
 //! Test module 1: Uses test_cap1 counter capability
 //!
 //! Simple module that increments a counter and returns the result.

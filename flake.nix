@@ -188,7 +188,7 @@
               echo "Development shell loaded!"
               echo ""
               echo "Available commands:"
-              echo "  pyroduct"
+              echo "  pyroduct prepare-pyro test-rust"
               echo ""
             '';
           }

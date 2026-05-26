@@ -47,7 +47,7 @@ impl PlaybookClient {
 
         let resp = self
             .socket
-            .request(None, None, Some(0), req.view().into())
+            .request(None, None, Some(0), req.view())
             .await
             .capture("Transport request failed")
             .map_err(|e| PyroFailure {

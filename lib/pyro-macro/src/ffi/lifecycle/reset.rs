@@ -96,7 +96,7 @@ impl ResetFn {
                     capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
                 ) -> ::pyroduct::ffi::FuturePyroView {
                     ::pyroduct::ffi::guest::execute_safe_async(|| async move {
-                        let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
+                        let mut state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                             Ok(state) => state,
                             Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode().view(),
                         };
@@ -113,7 +113,7 @@ impl ResetFn {
                     capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
                 ) -> ::pyroduct::format::PyroViewPtr {
                     ::pyroduct::ffi::guest::execute_safe(|| {
-                        let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
+                        let mut state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                             Ok(state) => state,
                             Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode().view(),
                         };
@@ -177,7 +177,7 @@ mod tests {
                 capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
             ) -> ::pyroduct::format::PyroViewPtr {
                 ::pyroduct::ffi::guest::execute_safe(|| {
-                    let state_ptr = match unsafe {
+                    let mut state_ptr = match unsafe {
                         ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr)
                     } {
                         Ok(state) => state,
@@ -210,7 +210,7 @@ mod tests {
                 capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
             ) -> ::pyroduct::ffi::FuturePyroView {
                 ::pyroduct::ffi::guest::execute_safe_async(|| async move {
-                    let state_ptr = match unsafe {
+                    let mut state_ptr = match unsafe {
                         ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr)
                     } {
                         Ok(state) => state,

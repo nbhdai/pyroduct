@@ -8,7 +8,7 @@ use pyroduct::{pipeline::PipelineConfig, transport::http::PlaybookHttpServer};
 use std::collections::{BTreeMap, HashMap};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
-const CODE: &'static str = r#"
+const CODE: &str = r#"
 //! Test module: Uses state counter capability and receives string input.
 use state::{CounterClient, CounterClientMethods};
 
@@ -121,7 +121,7 @@ async fn test_http_playbook_server_and_repair() {
     let json_val_repair: serde_json::Value = serde_json::from_str(&resp_body_repair).unwrap();
     // Since start_value was coerced to 42, count starts at 42 and gets incremented
     assert_eq!(json_val_repair["count"], 1);
-    assert_eq!(json_val_repair["incremented"], 42);
+    assert_eq!(json_val_repair["incremented"], 43);
 
     // Test Case 3: Invalid JSON object format (should fail with 400 Bad Request)
     let body_invalid = r#"{"input": {"nested": "not_convertible_to_string"}}"#;

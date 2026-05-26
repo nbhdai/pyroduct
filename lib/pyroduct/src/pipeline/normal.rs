@@ -79,7 +79,7 @@ impl Pipeline {
         debug!(row_index, "Processing row");
         self.input_manager.push_record(row_index, input).await?;
 
-        let record = match self.step.call(input).await {
+        match self.step.call(input).await {
             Ok(output) => {
                 debug!(row_index, "Step succeeded");
                 self.output_manager
@@ -99,7 +99,7 @@ impl Pipeline {
                     success: output.row,
                     logs: output.logs,
                 };
-                record
+                Ok(record)
             }
             Err(f) => {
                 match &f.result {
@@ -121,11 +121,9 @@ impl Pipeline {
                     failure: f.result,
                     logs: f.logs,
                 };
-                record
+                Ok(record)
             }
-        };
-
-        Ok(record)
+        }
     }
 
     /// Retrieve a single record by its global index.
@@ -249,7 +247,7 @@ impl PipelinePool {
         let num_pipelines = pipelines.len();
         debug!(num_pipelines, "Distributing batch across pipelines");
         let (tx, mut rx) = mpsc::channel(100);
-        let chunk_size = min((total_rows + num_pipelines - 1) / num_pipelines, 1000);
+        let chunk_size = min(total_rows.div_ceil(num_pipelines), 1000);
         let mut handles = Vec::with_capacity(num_pipelines);
 
         for (i, mut pipeline) in pipelines.into_iter().enumerate() {

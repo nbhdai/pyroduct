@@ -67,7 +67,7 @@ impl PyroClient {
         req.set_fn_id(0);
 
         let resp = socket
-            .request(None, None, Some(0), req.view().into())
+            .request(None, None, Some(0), req.view())
             .await
             .capture("Transport request failed")
             .map_err(PyroError::local_io)?;
@@ -85,7 +85,7 @@ impl PyroClient {
 
         let resp = self
             .socket
-            .request(None, Some(class_id), Some(1), req.view().into())
+            .request(None, Some(class_id), Some(1), req.view())
             .await
             .capture("Transport request failed")
             .map_err(PyroError::local_io)?;
@@ -124,7 +124,7 @@ impl PyroClient {
 
         let resp = self
             .socket
-            .request(None, None, Some(2), req.view().into())
+            .request(None, None, Some(2), req.view())
             .await
             .capture("Transport request failed")
             .map_err(PyroError::local_io)?;
@@ -154,7 +154,7 @@ impl PyroClient {
 
         let resp = self
             .socket
-            .request(None, Some(class_id), Some(3), req.view().into())
+            .request(None, Some(class_id), Some(3), req.view())
             .await
             .capture("Transport request failed")
             .map_err(PyroError::local_io)?;
@@ -186,12 +186,7 @@ impl PyroClient {
 
         let resp = self
             .socket
-            .request(
-                Some(client_id),
-                Some(class_id),
-                Some(fn_id),
-                req.view().into(),
-            )
+            .request(Some(client_id), Some(class_id), Some(fn_id), req.view())
             .await
             .capture("Transport request failed")
             .map_err(PyroError::local_io)?;

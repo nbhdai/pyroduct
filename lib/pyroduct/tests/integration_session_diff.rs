@@ -143,7 +143,7 @@ async fn test_session_lifecycle() {
     let log_files = std::fs::read_dir(&tmp_path)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "pyrolog"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "pyrolog"))
         .count();
     assert!(
         log_files > 1,

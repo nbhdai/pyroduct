@@ -136,7 +136,7 @@ impl ImplMethod {
             InputParams::None
         } else if inputs.len() == 1 {
             let (n, t) = inputs.pop().unwrap();
-            InputParams::One(n, t)
+            InputParams::One(n, t.into())
         } else {
             InputParams::Many(inputs)
         };
@@ -200,7 +200,7 @@ impl ImplMethod {
         let mut call_args = Vec::new();
 
         let state_retrieval = quote! {
-            let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
+            let mut state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                 Ok(state) => state,
                 Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode().view(),
             };
@@ -574,7 +574,7 @@ mod tests {
             ) -> ::pyroduct::ffi::FuturePyroView {
                 let (_client_id, mux_id, _class_id, _fn_id) = ::pyroduct::format::get_ref_ids(input_ptr);
                 ::pyroduct::ffi::guest::execute_safe_async(|| async move {
-                    let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
+                    let mut state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                         Ok(state) => state,
                         Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode().view(),
                     };
@@ -642,7 +642,7 @@ mod tests {
             ) -> ::pyroduct::format::PyroViewPtr {
                 let (_client_id, mux_id, _class_id, _fn_id) = ::pyroduct::format::get_ref_ids(input_ptr);
                 ::pyroduct::ffi::guest::execute_safe(|| {
-                    let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
+                    let mut state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                         Ok(state) => state,
                         Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode().view(),
                     };
@@ -725,7 +725,7 @@ mod tests {
             ) -> ::pyroduct::ffi::FuturePyroView {
                 let (_client_id, mux_id, _class_id, _fn_id) = ::pyroduct::format::get_ref_ids(input_ptr);
                 ::pyroduct::ffi::guest::execute_safe_async(|| async move {
-                    let state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
+                    let mut state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
                         Ok(state) => state,
                         Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode().view(),
                     };

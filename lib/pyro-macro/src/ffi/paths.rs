@@ -128,7 +128,7 @@ impl Deref for FnName {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputParams {
     None,
-    One(Ident, Type),
+    One(Ident, Box<Type>),
     Many(Vec<(Ident, Type)>),
 }
 
@@ -229,8 +229,8 @@ impl InputParams {
 #[derive(Debug, Clone)]
 pub enum FnOutput {
     None,
-    Single(Type),
-    Result(Type, Type),
+    Single(Box<Type>),
+    Result(Box<Type>, Box<Type>),
 }
 
 impl FnOutput {
@@ -242,7 +242,7 @@ impl FnOutput {
 
             ReturnType::Type(_, ty) => {
                 let ty = ty.as_ref();
-                output = FnOutput::Single(ty.clone());
+                output = FnOutput::Single(ty.clone().into());
                 match ty {
                     Type::Tuple(tuple) if tuple.elems.is_empty() => output = FnOutput::None,
                     Type::Path(type_path) => {
@@ -260,7 +260,7 @@ impl FnOutput {
                                     Some(GenericArgument::Type(e)),
                                 ) = (iter.next(), iter.next())
                                 {
-                                    output = FnOutput::Result(t.clone(), e.clone());
+                                    output = FnOutput::Result(t.clone().into(), e.clone().into());
                                 }
                             }
                         }
@@ -286,7 +286,7 @@ impl FnOutput {
             }
             (FnOutput::Result(val, err_type), Some(target_error)) => {
                 let self_err_str: Type = parse_quote!(Self::Error);
-                if &err_type != target_error && err_type != self_err_str {
+                if &*err_type != target_error && *err_type != self_err_str {
                     let actual_err_str = quote!(#err_type).to_string().replace(" ", "");
                     let target_err_str = quote!(#target_error).to_string().replace(" ", "");
                     Err(Error::new_spanned(
@@ -309,7 +309,7 @@ impl FnOutput {
             FnOutput::None => ReturnType::Default,
 
             // Maps back to "-> T"
-            FnOutput::Single(ty) => ReturnType::Type(RArrow::default(), Box::new(ty.clone())),
+            FnOutput::Single(ty) => ReturnType::Type(RArrow::default(), ty.clone()),
 
             // Maps back to "-> Result<T, E>"
             FnOutput::Result(ok, err) => {
@@ -319,7 +319,7 @@ impl FnOutput {
         }
     }
 
-    pub fn ty(&self) -> Type {
+    pub fn ty(&self) -> Box<Type> {
         match self {
             // Maps back to no return arrow (void)
             FnOutput::None => parse_quote!(()),

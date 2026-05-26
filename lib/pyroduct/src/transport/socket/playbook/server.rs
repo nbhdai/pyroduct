@@ -98,18 +98,17 @@ impl PlaybookServer {
                                         .encode()
                                         .view()
                                     }
-                                    Ok(ExecutionRecord::Success { success, .. }) => {
-                                        success.ship().map(|v| v.view()).unwrap_or_else(|e| {
-                                            crate::PyroError::from(e).encode().view()
-                                        })
-                                    }
-                                    Err(e) => crate::PyroError::from(e).encode().view(),
+                                    Ok(ExecutionRecord::Success { success, .. }) => success
+                                        .ship()
+                                        .map(|v| v.view())
+                                        .unwrap_or_else(|e| e.encode().view()),
+                                    Err(e) => e.encode().view(),
                                 }
                             }
-                            Err(e) => crate::PyroError::from(e).encode().view(),
+                            Err(e) => e.encode().view(),
                         }
                     }
-                    Err(e) => crate::PyroError::from(e).encode().view(),
+                    Err(e) => e.encode().view(),
                 };
 
                 let response = Request {

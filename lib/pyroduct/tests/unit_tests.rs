@@ -20,14 +20,14 @@ fn test_with_capacity_zero() {
 fn test_with_capacity_small() {
     let vec = PyroVec::with_capacity(10);
     assert_eq!(vec.len(), 0);
-    assert!(vec.capacity() >= 10 + 0);
+    assert!(vec.capacity() >= 10);
 }
 
 #[test]
 fn test_with_capacity_large() {
     let vec = PyroVec::with_capacity(10000);
     assert_eq!(vec.len(), 0);
-    assert!(vec.capacity() >= 10000 + 0);
+    assert!(vec.capacity() >= 10000);
 }
 
 // #[test]

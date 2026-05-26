@@ -60,14 +60,13 @@ pub fn object_span(object_id: u64, mux_id: u32) -> tracing::Span {
         let mut cs = client_spans.write().unwrap();
         let span = tracing::span!(tracing::Level::INFO, "object", id = object_id);
         tracing::dispatcher::get_default(|dispatch| {
-            if let Some(id) = span.id() {
-                if let Some(reg) = dispatch.downcast_ref::<Registry>() {
-                    if let Some(span_ref) = reg.span(&id) {
-                        span_ref
-                            .extensions_mut()
-                            .insert(ObjectContext { object_id, mux_id });
-                    }
-                }
+            if let Some(id) = span.id()
+                && let Some(reg) = dispatch.downcast_ref::<Registry>()
+                && let Some(span_ref) = reg.span(&id)
+            {
+                span_ref
+                    .extensions_mut()
+                    .insert(ObjectContext { object_id, mux_id });
             }
         });
         cs.insert(object_id, span.clone());
@@ -97,14 +96,14 @@ impl<'a> MakeWriter<'a> for FfiWriterFactory {
         let current = tracing::Span::current();
         if let Some(current_id) = current.id() {
             tracing::dispatcher::get_default(|dispatch| {
-                if let Some(reg) = dispatch.downcast_ref::<Registry>() {
-                    if let Some(span_ref) = reg.span(&current_id) {
-                        for ancestor in span_ref.scope() {
-                            if let Some(ctx) = ancestor.extensions().get::<ObjectContext>() {
-                                target_id = Some(ctx.object_id);
-                                target_mux = Some(ctx.mux_id);
-                                break;
-                            }
+                if let Some(reg) = dispatch.downcast_ref::<Registry>()
+                    && let Some(span_ref) = reg.span(&current_id)
+                {
+                    for ancestor in span_ref.scope() {
+                        if let Some(ctx) = ancestor.extensions().get::<ObjectContext>() {
+                            target_id = Some(ctx.object_id);
+                            target_mux = Some(ctx.mux_id);
+                            break;
                         }
                     }
                 }

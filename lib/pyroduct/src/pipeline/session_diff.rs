@@ -107,15 +107,15 @@ impl SessionDiffPipeline {
         let mut in_list = Vec::new();
         let mut out_list = Vec::new();
         for row in wal_rows {
-            if let Some(in_val) = row.get("input") {
-                if let crate::format::value::PyroValue::Group(g) = in_val {
-                    in_list.push(crate::format::value::PyroValue::Group(g.clone()));
-                }
+            if let Some(in_val) = row.get("input")
+                && let crate::format::value::PyroValue::Group(g) = in_val
+            {
+                in_list.push(crate::format::value::PyroValue::Group(g.clone()));
             }
-            if let Some(out_val) = row.get("output") {
-                if let crate::format::value::PyroValue::Group(g) = out_val {
-                    out_list.push(crate::format::value::PyroValue::Group(g.clone()));
-                }
+            if let Some(out_val) = row.get("output")
+                && let crate::format::value::PyroValue::Group(g) = out_val
+            {
+                out_list.push(crate::format::value::PyroValue::Group(g.clone()));
             }
         }
 
@@ -487,31 +487,26 @@ impl SessionDiffPipeline {
         let mut log_failure = None;
         let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
         if log_dir.exists() {
-            if let Ok(mut reader) = crate::format::log_wal::LogWalReader::open(&log_dir).await {
-                if let Ok(entries) = reader.read_all().await {
-                    if let Some(last_entry) = entries.last() {
-                        logs = PyroLogs {
-                            module_logs: last_entry.module_logs.clone(),
-                            capability_logs: last_entry.capability_logs.clone(),
-                        };
-                        log_failure = last_entry.failure.clone();
-                    }
-                }
+            if let Ok(mut reader) = crate::format::log_wal::LogWalReader::open(&log_dir).await
+                && let Ok(entries) = reader.read_all().await
+                && let Some(last_entry) = entries.last()
+            {
+                logs = PyroLogs {
+                    module_logs: last_entry.module_logs.clone(),
+                    capability_logs: last_entry.capability_logs.clone(),
+                };
+                log_failure = last_entry.failure.clone();
             }
         } else {
             if let Ok(mut reader) = crate::format::log_wal::LogWalReader::open(&self.log_dir).await
+                && let Ok(entries) = reader.read_all().await
+                && let Some(entry) = entries.iter().rfind(|e| e.row_index == session_id as usize)
             {
-                if let Ok(entries) = reader.read_all().await {
-                    if let Some(entry) =
-                        entries.iter().rfind(|e| e.row_index == session_id as usize)
-                    {
-                        logs = PyroLogs {
-                            module_logs: entry.module_logs.clone(),
-                            capability_logs: entry.capability_logs.clone(),
-                        };
-                        log_failure = entry.failure.clone();
-                    }
-                }
+                logs = PyroLogs {
+                    module_logs: entry.module_logs.clone(),
+                    capability_logs: entry.capability_logs.clone(),
+                };
+                log_failure = entry.failure.clone();
             }
         }
 

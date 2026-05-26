@@ -79,7 +79,7 @@ pub async fn expand_single(path: &Path, no_compile: bool) -> Result<bool> {
     let env = Environment::new(path.to_path_buf(), cache).await?;
     let artifacts = if no_compile {
         // Try to load artifacts from target/release
-        let target_dir = Environment::get_target_dir(&path).await?;
+        let target_dir = Environment::get_target_dir(path).await?;
         env.load_artifacts_from_target(&target_dir).await?
     } else {
         env.package(false).await?

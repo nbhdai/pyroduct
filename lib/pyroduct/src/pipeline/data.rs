@@ -144,75 +144,72 @@ impl DataManager {
                 if let Some(id_str) = filename
                     .strip_prefix("wal_")
                     .and_then(|s| s.split('.').next())
+                    && let Ok(id) = id_str.parse::<usize>()
                 {
-                    if let Ok(id) = id_str.parse::<usize>() {
-                        max_wal_id = max_wal_id.max(id);
-                    }
+                    max_wal_id = max_wal_id.max(id);
                 }
             } else if filename.starts_with("batch_") && filename.ends_with(".arrow") {
                 // Extract ID from batch_N.arrow
                 if let Some(id_str) = filename
                     .strip_prefix("batch_")
                     .and_then(|s| s.split('.').next())
+                    && let Ok(id) = id_str.parse::<usize>()
                 {
-                    if let Ok(id) = id_str.parse::<usize>() {
-                        let bytes = std::fs::read(&path).map_err(|e| {
-                            PyroError::local_io(
-                                CapturedError::new("Failed to read Arrow IPC file").with_source(e),
+                    let bytes = std::fs::read(&path).map_err(|e| {
+                        PyroError::local_io(
+                            CapturedError::new("Failed to read Arrow IPC file").with_source(e),
+                        )
+                    })?;
+                    let batches =
+                        pyro_file::parse_data_to_batch_sync(bytes, &filename).map_err(|e| {
+                            PyroError::validation(
+                                CapturedError::new(
+                                    "Failed to parse Arrow IPC file data to batches",
+                                )
+                                .with_source(e),
                             )
                         })?;
-                        let batches = pyro_file::parse_data_to_batch_sync(bytes, &filename)
-                            .map_err(|e| {
-                                PyroError::validation(
-                                    CapturedError::new(
-                                        "Failed to parse Arrow IPC file data to batches",
-                                    )
-                                    .with_source(e),
-                                )
-                            })?;
-                        let count: usize = batches.iter().map(|b| b.num_rows()).sum();
-                        ipc_counts.insert(id, count);
-                        self.ipc_file_paths.push(path.clone());
+                    let count: usize = batches.iter().map(|b| b.num_rows()).sum();
+                    ipc_counts.insert(id, count);
+                    self.ipc_file_paths.push(path.clone());
 
-                        // Backfill SQLite ipc_index
-                        let _ = self.sqlite_conn.execute(
-                            "INSERT OR IGNORE INTO ipc_index (wal_id) VALUES (?1)",
-                            rusqlite::params![id as i64],
-                        );
-                    }
+                    // Backfill SQLite ipc_index
+                    let _ = self.sqlite_conn.execute(
+                        "INSERT OR IGNORE INTO ipc_index (wal_id) VALUES (?1)",
+                        rusqlite::params![id as i64],
+                    );
                 }
             } else if filename.starts_with("rollout_") && filename.ends_with(".parquet") {
                 // Extract ID from rollout_N.parquet
                 if let Some(id_str) = filename
                     .strip_prefix("rollout_")
                     .and_then(|s| s.split('.').next())
+                    && let Ok(id) = id_str.parse::<usize>()
                 {
-                    if let Ok(id) = id_str.parse::<usize>() {
-                        let bytes = std::fs::read(&path).map_err(|e| {
-                            PyroError::local_io(
-                                CapturedError::new("Failed to read Parquet rollout file")
-                                    .with_source(e),
+                    let bytes = std::fs::read(&path).map_err(|e| {
+                        PyroError::local_io(
+                            CapturedError::new("Failed to read Parquet rollout file")
+                                .with_source(e),
+                        )
+                    })?;
+                    let filename_str = filename.to_string();
+                    let batches = pyro_file::parse_data_to_batch_sync(bytes, &filename_str)
+                        .map_err(|e| {
+                            PyroError::validation(
+                                CapturedError::new(
+                                    "Failed to parse Parquet rollout file data to batches",
+                                )
+                                .with_source(e),
                             )
                         })?;
-                        let filename_str = filename.to_string();
-                        let batches = pyro_file::parse_data_to_batch_sync(bytes, &filename_str)
-                            .map_err(|e| {
-                                PyroError::validation(
-                                    CapturedError::new(
-                                        "Failed to parse Parquet rollout file data to batches",
-                                    )
-                                    .with_source(e),
-                                )
-                            })?;
-                        total_parquet += batches.iter().map(|b| b.num_rows()).sum::<usize>();
-                        self.parquet_file_paths.push(path.clone());
+                    total_parquet += batches.iter().map(|b| b.num_rows()).sum::<usize>();
+                    self.parquet_file_paths.push(path.clone());
 
-                        // Backfill SQLite parquet_index
-                        let _ = self.sqlite_conn.execute(
-                            "INSERT OR IGNORE INTO parquet_index (parquet_id) VALUES (?1)",
-                            rusqlite::params![id as i64],
-                        );
-                    }
+                    // Backfill SQLite parquet_index
+                    let _ = self.sqlite_conn.execute(
+                        "INSERT OR IGNORE INTO parquet_index (parquet_id) VALUES (?1)",
+                        rusqlite::params![id as i64],
+                    );
                 }
             }
         }
@@ -705,14 +702,14 @@ impl DataManager {
                 }
                 std::thread::yield_now();
             };
-            if let Some(&wal_idx) = data.current_wal_rows.get(&index) {
-                if let Some(row) = data.prebatch.get(wal_idx) {
-                    debug!(
-                        index,
-                        wal_idx, "get_record: fast-path hit in current active WAL buffer"
-                    );
-                    return Ok(row.clone());
-                }
+            if let Some(&wal_idx) = data.current_wal_rows.get(&index)
+                && let Some(row) = data.prebatch.get(wal_idx)
+            {
+                debug!(
+                    index,
+                    wal_idx, "get_record: fast-path hit in current active WAL buffer"
+                );
+                return Ok(row.clone());
             }
         }
 
@@ -899,11 +896,9 @@ impl DataManagerSharedState {
             *entry.get_mut() -= 1;
             if *entry.get() == 0 {
                 entry.remove();
-                if self.pending_deletions.remove(path) {
-                    if path.exists() {
-                        let _ = std::fs::remove_file(path);
-                        tracing::debug!("Deferred deletion of IPC file finished: {:?}", path);
-                    }
+                if self.pending_deletions.remove(path) && path.exists() {
+                    let _ = std::fs::remove_file(path);
+                    tracing::debug!("Deferred deletion of IPC file finished: {:?}", path);
                 }
             }
         }

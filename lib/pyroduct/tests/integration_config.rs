@@ -9,7 +9,7 @@ use serde_json::json;
 use std::collections::{BTreeMap, HashMap};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
-const CODE: &'static str = r#"
+const CODE: &str = r#"
 //! The behavior of this module changes based on the configuration 
 //! of the linked capability
 
@@ -95,7 +95,7 @@ async fn test_capability_configuration_respect() {
     let log_files = std::fs::read_dir(&tmp_path)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "pyrolog"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "pyrolog"))
         .count();
     assert!(
         log_files > 1,
