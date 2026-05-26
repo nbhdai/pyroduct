@@ -33,12 +33,11 @@ pub fn generate_interface(
 
     for item in file.items {
         match item {
-            syn::Item::Impl(item_impl) => {
-                if has_attr(&item_impl.attrs, "capability") {
+            syn::Item::Impl(item_impl)
+                if has_attr(&item_impl.attrs, "capability") => {
                     let cap = CapabilityImpl::new(item_impl, true, cap_name, cap_version)?;
                     generated_code.extend(cap.expand_module());
                 }
-            }
             syn::Item::Struct(mut item_struct) => {
                 if let Some(args) = extract_magma_args(&item_struct.attrs)? {
                     item_struct.attrs.retain(|a| !is_magma_attr(a));
@@ -70,12 +69,11 @@ pub fn generate_capability(
 
     for item in file.items {
         match item {
-            syn::Item::Impl(item_impl) => {
-                if has_attr(&item_impl.attrs, "capability") {
+            syn::Item::Impl(item_impl)
+                if has_attr(&item_impl.attrs, "capability") => {
                     let cap = CapabilityImpl::new(item_impl, true, cap_name, cap_version)?;
                     generated_code.extend(cap.expand_capability());
                 }
-            }
             syn::Item::Struct(mut item_struct) => {
                 if let Some(args) = extract_magma_args(&item_struct.attrs)? {
                     let expanded = magma(args, &mut item_struct, &import_location)?;

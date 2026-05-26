@@ -72,8 +72,8 @@ impl BridgeableArgs {
                         .unwrap_or_default();
 
                     for nested_meta in nested {
-                        if let Meta::Path(path) = nested_meta {
-                            if let Some(ident) = path.get_ident() {
+                        if let Meta::Path(path) = nested_meta
+                            && let Some(ident) = path.get_ident() {
                                 let s = ident.to_string();
 
                                 if DERIVE_WHITELIST.contains(&s.as_str()) {
@@ -84,7 +84,6 @@ impl BridgeableArgs {
                                     compares_to_add.push(ident.clone());
                                 }
                             }
-                        }
                     }
                 }
                 other => {
@@ -126,24 +125,24 @@ pub fn magma(
 ) -> syn::Result<TokenStream> {
     // 1. Generate Documentation (takes &Item, &Path)
     let documentation =
-        documentation::generate_documented_impl(&item, &import_location, args.doc_rec)?;
+        documentation::generate_documented_impl(item, import_location, args.doc_rec)?;
     let ref_documentation =
-        documentation::ref_documentation(&item, &import_location, args.doc_rec)?;
+        documentation::ref_documentation(item, import_location, args.doc_rec)?;
 
     // 2. Generate Bridgeable
     // Note: This consumes 'args' and 'item', so we use clones for the others.
     let bridge_tokens = bridgeable::bridgeable(&args, item, import_location)?;
 
     // 3. Generate DeepRef
-    let deep_ref = deep_ref::deep_ref(&item, import_location, &args.derives_to_pass)?;
-    let deep_ref_rkyv = deep_ref::deep_ref_rkyv(&item, import_location)?;
+    let deep_ref = deep_ref::deep_ref(item, import_location, &args.derives_to_pass)?;
+    let deep_ref_rkyv = deep_ref::deep_ref_rkyv(item, import_location)?;
 
     // 4. Generate FromRow
-    let from_row = from_row::from_row(&item, import_location)?;
-    let ref_from_row = from_row::ref_from_row(&item, import_location)?;
+    let from_row = from_row::from_row(item, import_location)?;
+    let ref_from_row = from_row::ref_from_row(item, import_location)?;
 
     // 5. Generate ToRow
-    let to_row = to_row::to_row(&item, import_location)?;
+    let to_row = to_row::to_row(item, import_location)?;
 
     Ok(quote! {
         #documentation

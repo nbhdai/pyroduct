@@ -25,9 +25,9 @@ impl Deref for CapBinary {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            CapBinary::Pe(items) => &*items,
-            CapBinary::MachO(items) => &*items,
-            CapBinary::Elf(items) => &*items,
+            CapBinary::Pe(items) => items,
+            CapBinary::MachO(items) => items,
+            CapBinary::Elf(items) => items,
         }
     }
 }

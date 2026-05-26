@@ -67,7 +67,7 @@ impl ImplMethod {
             }
             None => {
                 return Err(Error::new_spanned(
-                    &sig,
+                    sig,
                     "Capability methods must take &self or &mut self",
                 ));
             }
@@ -107,7 +107,7 @@ impl ImplMethod {
             }
             None => {
                 return Err(Error::new_spanned(
-                    &sig,
+                    sig,
                     format!(
                         "Capability methods must take client: &{} as second parameter",
                         class.client_tn

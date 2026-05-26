@@ -16,15 +16,14 @@ pub fn expand(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStream> {
         .inputs
         .iter()
         .filter_map(|arg| {
-            if let FnArg::Typed(pat_type) = arg {
-                if let Pat::Ident(pat_ident) = &*pat_type.pat {
+            if let FnArg::Typed(pat_type) = arg
+                && let Pat::Ident(pat_ident) = &*pat_type.pat {
                     let name = pat_ident.ident.clone();
                     let ty = (*pat_type.ty).clone();
                     let attrs = pat_type.attrs.clone();
                     let pat = pat_type.pat.clone();
                     return Some((name, ty, attrs, pat));
                 }
-            }
             None
         })
         .collect();
@@ -89,15 +88,14 @@ pub fn expand_session(attrs: ModuleAttrs, input_fn: ItemFn) -> Result<TokenStrea
         .inputs
         .iter()
         .filter_map(|arg| {
-            if let FnArg::Typed(pat_type) = arg {
-                if let Pat::Ident(pat_ident) = &*pat_type.pat {
+            if let FnArg::Typed(pat_type) = arg
+                && let Pat::Ident(pat_ident) = &*pat_type.pat {
                     let name = pat_ident.ident.clone();
                     let ty = (*pat_type.ty).clone();
                     let attrs = pat_type.attrs.clone();
                     let pat = pat_type.pat.clone();
                     return Some((name, ty, attrs, pat));
                 }
-            }
             None
         })
         .collect();
@@ -270,17 +268,13 @@ fn extract_result_ok_type(ret: &ReturnType) -> Result<Type> {
             "Module function must return Result<T>",
         )),
         ReturnType::Type(_, ty) => {
-            if let Type::Path(type_path) = &**ty {
-                if let Some(segment) = type_path.path.segments.last() {
-                    if segment.ident == "Result" {
-                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                            if let Some(syn::GenericArgument::Type(ok_ty)) = args.args.first() {
+            if let Type::Path(type_path) = &**ty
+                && let Some(segment) = type_path.path.segments.last()
+                    && segment.ident == "Result"
+                        && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                            && let Some(syn::GenericArgument::Type(ok_ty)) = args.args.first() {
                                 return Ok(ok_ty.clone());
                             }
-                        }
-                    }
-                }
-            }
             Err(syn::Error::new(
                 Span::call_site(),
                 "Module function must return Result<T>",
@@ -387,32 +381,23 @@ fn extract_session_inner_type(ret: &ReturnType) -> Result<Type> {
             "Session module function must return Result<T>",
         )),
         ReturnType::Type(_, ty) => {
-            if let Type::Path(type_path) = &**ty {
-                if let Some(segment) = type_path.path.segments.last() {
-                    if segment.ident == "Result" {
-                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                            if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+            if let Type::Path(type_path) = &**ty
+                && let Some(segment) = type_path.path.segments.last()
+                    && segment.ident == "Result"
+                        && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                            && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                                 // inner_ty should be SessionResponse<T>
-                                if let Type::Path(inner_path) = inner_ty {
-                                    if let Some(seg) = inner_path.path.segments.last() {
-                                        if seg.ident == "SessionResponse" {
-                                            if let syn::PathArguments::AngleBracketed(inner_args) =
+                                if let Type::Path(inner_path) = inner_ty
+                                    && let Some(seg) = inner_path.path.segments.last()
+                                        && seg.ident == "SessionResponse"
+                                            && let syn::PathArguments::AngleBracketed(inner_args) =
                                                 &seg.arguments
-                                            {
-                                                if let Some(syn::GenericArgument::Type(output_ty)) =
+                                                && let Some(syn::GenericArgument::Type(output_ty)) =
                                                     inner_args.args.first()
                                                 {
                                                     return Ok(output_ty.clone());
                                                 }
-                                            }
-                                        }
-                                    }
-                                }
                             }
-                        }
-                    }
-                }
-            }
             Err(syn::Error::new(
                 Span::call_site(),
                 "Session module must return Result<SessionResponse<T>>",

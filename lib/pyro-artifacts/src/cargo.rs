@@ -179,7 +179,7 @@ impl CapabilityManifest {
             .features
             .push("capability".to_string());
         final_deps.insert("pyroduct".to_string(), pyro_dep);
-        final_deps.extend(self.dependencies.shared.clone().into_iter());
+        final_deps.extend(self.dependencies.shared.clone());
         self.augment_deps(&mut final_deps, &self.dependencies.host, true);
         self.augment_deps(&mut final_deps, &self.dependencies.module, true);
         let final_features = self.create_requisite_features(&self.features);
@@ -214,7 +214,7 @@ impl CapabilityManifest {
         pyro_dep.detail_mut().features.push("module".to_string());
 
         // 1. Shared Dependencies (Required)
-        final_deps.extend(self.dependencies.shared.clone().into_iter());
+        final_deps.extend(self.dependencies.shared.clone());
         final_deps.insert("pyroduct".to_string(), pyro_dep);
 
         // 2. Module Dependencies (Required, NOT optional)
@@ -313,7 +313,7 @@ impl ModuleManifest {
         let mut pyro_dep = self.pyroduct.clone();
         pyro_dep.detail_mut().features.push("module".to_string());
         final_deps.insert("pyroduct".to_string(), pyro_dep);
-        final_deps.extend(self.dependencies.clone().into_iter());
+        final_deps.extend(self.dependencies.clone());
         self.augment_deps(&mut final_deps, &self.capabilities, cache_manager);
 
         #[allow(deprecated)]

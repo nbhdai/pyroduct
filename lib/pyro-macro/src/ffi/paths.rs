@@ -34,7 +34,7 @@ impl CapabilityIdent {
 
     /// Library identifier for a method (e.g., __my_trait__my_state__method_name)
     pub fn cap_id(&self) -> String {
-        format!("{}", self.pkg_name)
+        self.pkg_name.to_string()
     }
 
     /// Library identifier for a method (e.g., __my_trait__my_state__method_name)
@@ -171,7 +171,7 @@ impl InputParams {
         match &self {
             InputParams::Many(_) => {
                 let input_struct_name = class
-                    .map(|c| c.input_struct(&fn_name))
+                    .map(|c| c.input_struct(fn_name))
                     .unwrap_or(fn_name.input_struct_name());
                 quote!(#input_struct_name)
             }
@@ -188,7 +188,7 @@ impl InputParams {
         match &self {
             InputParams::Many(params) => {
                 let input_struct_name = class
-                    .map(|c| c.input_struct(&fn_name))
+                    .map(|c| c.input_struct(fn_name))
                     .unwrap_or(fn_name.input_struct_name());
                 let args = params.iter().map(|(n, _)| quote!(#n));
                 quote!(Some(&#input_struct_name { #(#args),* }))
@@ -210,7 +210,7 @@ impl InputParams {
         match &self {
             InputParams::Many(params) => {
                 let input_struct_name = class
-                    .map(|c| c.input_struct(&fn_name))
+                    .map(|c| c.input_struct(fn_name))
                     .unwrap_or(fn_name.input_struct_name());
                 let fields: Vec<_> = params.iter().map(|(n, t)| quote! { pub #n: #t }).collect();
                 quote! {
@@ -247,9 +247,9 @@ impl FnOutput {
                     Type::Tuple(tuple) if tuple.elems.is_empty() => output = FnOutput::None,
                     Type::Path(type_path) => {
                         // Check if the last segment is "Result" (heuristic)
-                        if let Some(segment) = type_path.path.segments.last() {
-                            if segment.ident == "Result" {
-                                if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                        if let Some(segment) = type_path.path.segments.last()
+                            && segment.ident == "Result"
+                                && let PathArguments::AngleBracketed(args) = &segment.arguments {
                                     // Ensure we have exactly 2 generic arguments: <T, E>
                                     if args.args.len() == 2 {
                                         let mut iter = args.args.iter();
@@ -263,8 +263,6 @@ impl FnOutput {
                                         }
                                     }
                                 }
-                            }
-                        }
                     }
                     _ => {}
                 }
@@ -287,7 +285,7 @@ impl FnOutput {
             }
             (FnOutput::Result(val, err_type), Some(target_error)) => {
                 let self_err_str: Type = parse_quote!(Self::Error);
-                if &err_type != target_error && &err_type != &self_err_str {
+                if &err_type != target_error && err_type != self_err_str {
                     let actual_err_str = quote!(#err_type).to_string().replace(" ", "");
                     let target_err_str = quote!(#target_error).to_string().replace(" ", "");
                     Err(Error::new_spanned(

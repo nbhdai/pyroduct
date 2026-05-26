@@ -251,20 +251,18 @@ impl SchemaBuilder {
 // =============================================================================
 
 fn is_option_type(ty: &syn::Type) -> bool {
-    if let syn::Type::Path(type_path) = ty {
-        if let Some(seg) = type_path.path.segments.last() {
+    if let syn::Type::Path(type_path) = ty
+        && let Some(seg) = type_path.path.segments.last() {
             return seg.ident == "Option";
         }
-    }
     false
 }
 
 fn extract_single_generic_arg(segment: &syn::PathSegment) -> Option<&syn::Type> {
-    if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-        if let Some(syn::GenericArgument::Type(ty)) = args.args.first() {
+    if let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+        && let Some(syn::GenericArgument::Type(ty)) = args.args.first() {
             return Some(ty);
         }
-    }
     None
 }
 
@@ -283,15 +281,12 @@ fn extract_two_generic_args(segment: &syn::PathSegment) -> Option<(&syn::Type, &
 fn extract_doc_string(attrs: &[Attribute]) -> Option<String> {
     let mut lines = Vec::new();
     for attr in attrs {
-        if attr.path().is_ident("doc") {
-            if let Meta::NameValue(nv) = &attr.meta {
-                if let Expr::Lit(expr_lit) = &nv.value {
-                    if let Lit::Str(lit_str) = &expr_lit.lit {
+        if attr.path().is_ident("doc")
+            && let Meta::NameValue(nv) = &attr.meta
+                && let Expr::Lit(expr_lit) = &nv.value
+                    && let Lit::Str(lit_str) = &expr_lit.lit {
                         lines.push(lit_str.value().trim().to_string());
                     }
-                }
-            }
-        }
     }
     if lines.is_empty() {
         None

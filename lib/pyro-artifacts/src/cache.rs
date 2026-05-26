@@ -81,11 +81,11 @@ impl CacheManager {
         let content = fs::read_to_string(&config_path)
             .await
             .map_err(|error| CacheError {
-                context: format!("Failed to read the configuration"),
+                context: "Failed to read the configuration".to_string(),
                 error,
             })?;
         let config = toml::from_str::<PyroductConfig>(&content).map_err(|error| CacheError {
-            context: format!("Failed to parse the configuration"),
+            context: "Failed to parse the configuration".to_string(),
             error: io::Error::new(io::ErrorKind::InvalidData, error),
         })?;
 
@@ -645,11 +645,11 @@ impl CacheManager {
 }
 
 pub(crate) fn resolve_dependency_path(dep: &mut Dependency, base: &std::path::Path) {
-    if let Dependency::Detailed(detail) = dep {
-        if let Some(ref mut p) = detail.path {
+    if let Dependency::Detailed(detail) = dep
+        && let Some(ref mut p) = detail.path {
             let path = std::path::Path::new(p.as_str());
             if path.is_relative() {
-                let absolute = base.join(&path);
+                let absolute = base.join(path);
                 *p = absolute
                     .canonicalize()
                     .unwrap_or(absolute)
@@ -657,5 +657,4 @@ pub(crate) fn resolve_dependency_path(dep: &mut Dependency, base: &std::path::Pa
                     .into_owned();
             }
         }
-    }
 }

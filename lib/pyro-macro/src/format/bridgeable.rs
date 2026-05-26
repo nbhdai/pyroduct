@@ -58,8 +58,8 @@ pub fn bridgeable(
     };
 
     // 5. Output
-    Ok(TokenStream::from(quote! {
+    Ok(quote! {
         #item
         #bridgeable_block
-    }))
+    })
 }

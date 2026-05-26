@@ -73,7 +73,7 @@ impl ResetFn {
                 ));
             }
             None => {
-                return Err(Error::new_spanned(&sig, "fn reset must take &mut self"));
+                return Err(Error::new_spanned(sig, "fn reset must take &mut self"));
             }
         }
 

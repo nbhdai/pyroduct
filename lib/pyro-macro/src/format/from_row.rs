@@ -60,7 +60,7 @@ pub fn from_row(input: &ItemStruct, import_location: &Path) -> syn::Result<Token
             &missing_err,
             &field_err,
             ty,
-            &import_location,
+            import_location,
         )?;
         owned_field_extractions.push(stream);
     }
@@ -130,7 +130,7 @@ pub fn from_row(input: &ItemStruct, import_location: &Path) -> syn::Result<Token
         }
     };
 
-    Ok(TokenStream::from(expanded))
+    Ok(expanded)
 }
 
 /// Generates `impl TryFrom<PyroRow> for StructRef` and `impl TryFrom<PyroValue> for StructRef`
@@ -226,7 +226,7 @@ pub fn ref_from_row(input: &ItemStruct, import_location: &Path) -> syn::Result<T
             &field_err,
             &mapped_type,
             ty,
-            &import_location,
+            import_location,
         )?;
         ref_field_extractions.push(stream);
     }
@@ -304,7 +304,7 @@ pub fn ref_from_row(input: &ItemStruct, import_location: &Path) -> syn::Result<T
         }
     };
 
-    Ok(TokenStream::from(expanded))
+    Ok(expanded)
 }
 
 // =============================================================================
@@ -434,43 +434,36 @@ fn generate_field_try_from_owned(
 // =============================================================================
 
 fn is_option(ty: &Type) -> bool {
-    if let Type::Path(TypePath { path, .. }) = ty {
-        if let Some(seg) = path.segments.last() {
+    if let Type::Path(TypePath { path, .. }) = ty
+        && let Some(seg) = path.segments.last() {
             return seg.ident == "Option";
         }
-    }
     false
 }
 
 fn get_option_inner(ty: &Type) -> Option<&Type> {
-    if let Type::Path(TypePath { path, .. }) = ty {
-        if let Some(seg) = path.segments.last() {
-            if let PathArguments::AngleBracketed(args) = &seg.arguments {
-                if let Some(GenericArgument::Type(inner)) = args.args.first() {
+    if let Type::Path(TypePath { path, .. }) = ty
+        && let Some(seg) = path.segments.last()
+            && let PathArguments::AngleBracketed(args) = &seg.arguments
+                && let Some(GenericArgument::Type(inner)) = args.args.first() {
                     return Some(inner);
                 }
-            }
-        }
-    }
     None
 }
 
 fn get_vec_inner(ty: &Type) -> Option<&Type> {
-    if let Type::Path(TypePath { path, .. }) = ty {
-        if let Some(seg) = path.segments.last() {
-            if let PathArguments::AngleBracketed(args) = &seg.arguments {
-                if let Some(GenericArgument::Type(inner)) = args.args.first() {
+    if let Type::Path(TypePath { path, .. }) = ty
+        && let Some(seg) = path.segments.last()
+            && let PathArguments::AngleBracketed(args) = &seg.arguments
+                && let Some(GenericArgument::Type(inner)) = args.args.first() {
                     return Some(inner);
                 }
-            }
-        }
-    }
     None
 }
 
 fn is_nested_struct(ty: &Type) -> bool {
-    if let Type::Path(TypePath { path, .. }) = ty {
-        if let Some(seg) = path.segments.last() {
+    if let Type::Path(TypePath { path, .. }) = ty
+        && let Some(seg) = path.segments.last() {
             let ident_str = seg.ident.to_string();
             // Expanded list to be safe, but generic T will return true (good)
             return !matches!(
@@ -494,21 +487,16 @@ fn is_nested_struct(ty: &Type) -> bool {
                     | "Option"
             );
         }
-    }
     false
 }
 
 fn is_vec_of_struct(ty: &Type) -> bool {
-    if let Type::Path(TypePath { path, .. }) = ty {
-        if let Some(seg) = path.segments.last() {
-            if seg.ident == "Vec" {
-                if let PathArguments::AngleBracketed(args) = &seg.arguments {
-                    if let Some(GenericArgument::Type(inner)) = args.args.first() {
+    if let Type::Path(TypePath { path, .. }) = ty
+        && let Some(seg) = path.segments.last()
+            && seg.ident == "Vec"
+                && let PathArguments::AngleBracketed(args) = &seg.arguments
+                    && let Some(GenericArgument::Type(inner)) = args.args.first() {
                         return is_nested_struct(inner);
                     }
-                }
-            }
-        }
-    }
     false
 }

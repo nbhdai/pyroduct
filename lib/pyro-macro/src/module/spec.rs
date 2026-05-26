@@ -58,7 +58,7 @@ pub fn generate_module_spec(content: &str) -> syn::Result<Option<ModuleFunc<'sta
             let attrs: ModuleAttrs = syn::parse2(attr_tokens)?;
             let spec = ModuleSpecBuilder::build(item_fn, &attrs, &builder)?;
 
-            return Ok(Some(spec.into()));
+            return Ok(Some(spec));
         }
     }
 
@@ -87,8 +87,8 @@ impl ModuleSpecBuilder {
             .inputs
             .iter()
             .filter_map(|arg| {
-                if let FnArg::Typed(pat_type) = arg {
-                    if let Pat::Ident(pat_ident) = &*pat_type.pat {
+                if let FnArg::Typed(pat_type) = arg
+                    && let Pat::Ident(pat_ident) = &*pat_type.pat {
                         let field_name = pat_ident.ident.to_string();
                         let ty = &*pat_type.ty;
                         let data_type = builder.resolve_type(ty);
@@ -100,7 +100,6 @@ impl ModuleSpecBuilder {
                         }
                         return Some(field);
                     }
-                }
                 None
             })
             .collect();
@@ -109,7 +108,7 @@ impl ModuleSpecBuilder {
 
         // ── Output schema ────────────────────────────────────────────────────
         let ok_type = extract_result_ok_type(&item_fn.sig.output)?;
-        let output = build_output_schema(&attrs.output, &ok_type, builder)?;
+        let output = build_output_schema(&attrs.output, ok_type, builder)?;
 
         let kind = if attrs.session {
             let num_inputs = item_fn.sig.inputs.len();
@@ -221,17 +220,13 @@ fn extract_result_ok_type(ret: &ReturnType) -> syn::Result<&Type> {
             "module function must return Result<T>",
         )),
         ReturnType::Type(_, ty) => {
-            if let Type::Path(type_path) = &**ty {
-                if let Some(seg) = type_path.path.segments.last() {
-                    if seg.ident == "Result" {
-                        if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
-                            if let Some(syn::GenericArgument::Type(ok_ty)) = args.args.first() {
+            if let Type::Path(type_path) = &**ty
+                && let Some(seg) = type_path.path.segments.last()
+                    && seg.ident == "Result"
+                        && let syn::PathArguments::AngleBracketed(args) = &seg.arguments
+                            && let Some(syn::GenericArgument::Type(ok_ty)) = args.args.first() {
                                 return Ok(ok_ty);
                             }
-                        }
-                    }
-                }
-            }
             Err(syn::Error::new_spanned(
                 &**ty,
                 "module function must return Result<T>",
@@ -260,13 +255,11 @@ fn extract_doc_string(attrs: &[Attribute]) -> Option<String> {
             if !attr.path().is_ident("doc") {
                 return None;
             }
-            if let Meta::NameValue(nv) = &attr.meta {
-                if let Expr::Lit(expr_lit) = &nv.value {
-                    if let Lit::Str(s) = &expr_lit.lit {
+            if let Meta::NameValue(nv) = &attr.meta
+                && let Expr::Lit(expr_lit) = &nv.value
+                    && let Lit::Str(s) = &expr_lit.lit {
                         return Some(s.value().trim().to_string());
                     }
-                }
-            }
             None
         })
         .collect();

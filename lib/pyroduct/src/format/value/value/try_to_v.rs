@@ -375,8 +375,8 @@ where
         // SAFETY: We rely on `Typeable::primitive_data_type()` correctly identifying T.
         // If `pdt` matches the variant, `cow` contains `Vec<Prim>`.
         // Since `T` corresponds to `Prim` (via Typeable contract), we can cast `Vec<Prim>` to `Vec<T>`.
-        if !T::is_nullable() {
-            if let (Some(pdt), PyroValue::PrimitiveList(pl)) = (T::primitive_data_type(), &value) {
+        if !T::is_nullable()
+            && let (Some(pdt), PyroValue::PrimitiveList(pl)) = (T::primitive_data_type(), &value) {
                 // Macro to generate match arms: checks if runtime variant matches metadata, then casts.
                 macro_rules! try_cast_primitive {
                     ($variant:ident, $prim_type:ty) => {
@@ -410,7 +410,6 @@ where
                 try_cast_primitive!(F32, f32);
                 try_cast_primitive!(F64, f64);
             }
-        }
 
         // 2. SLOW PATH: Generic List iteration.
         // Fallback for non-primitives (Vec<String>, Vec<Row>) or mismatched types.

@@ -58,7 +58,7 @@ impl NewClientFn {
                 ));
             }
             None => {
-                return Err(Error::new_spanned(&sig, "fn register must take &self"));
+                return Err(Error::new_spanned(sig, "fn register must take &self"));
             }
         }
 
@@ -151,7 +151,7 @@ impl NewClientFn {
         let state_type = &self.class.state_tn;
 
         // Helper to deserialize the client and call the method
-        let body = if let Some(_) = &self.error_type {
+        let body = if self.error_type.is_some() {
             quote! {
                 let client: #client_type = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
                     Ok(v) => v,
@@ -250,11 +250,11 @@ impl NewClientFn {
 
 /// Extract the error type from Result<(), ErrorType>
 fn extract_result_error_type(ty: &Type) -> syn::Result<Option<Type>> {
-    if let Type::Path(tp) = ty {
-        if let Some(segment) = tp.path.segments.last() {
-            if segment.ident == "Result" {
-                if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if args.args.len() == 2 {
+    if let Type::Path(tp) = ty
+        && let Some(segment) = tp.path.segments.last()
+            && segment.ident == "Result"
+                && let PathArguments::AngleBracketed(args) = &segment.arguments
+                    && args.args.len() == 2 {
                         // Validate first arg is ()
                         if let GenericArgument::Type(ok_ty) = &args.args[0] {
                             let ok_str = quote!(#ok_ty).to_string().replace(" ", "");
@@ -271,10 +271,6 @@ fn extract_result_error_type(ty: &Type) -> syn::Result<Option<Type>> {
                             return Ok(Some(err_ty.clone()));
                         }
                     }
-                }
-            }
-        }
-    }
 
     Err(Error::new_spanned(
         ty,

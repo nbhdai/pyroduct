@@ -235,7 +235,7 @@ pub fn symbols(capability: &CapabilityBinary) -> Vec<Result<CapSymbols, String>>
     let mut results = Vec::new();
 
     for (index, bin) in capability.libs.iter().enumerate() {
-        let data: &[u8] = &**bin;
+        let data: &[u8] = bin;
 
         let file = match object::File::parse(data) {
             Ok(f) => f,
@@ -304,7 +304,7 @@ pub fn symbols(capability: &CapabilityBinary) -> Vec<Result<CapSymbols, String>>
             }
         };
 
-        let dwarf = dwarf_sections.borrow(|section| gimli::EndianSlice::new(&*section, endian));
+        let dwarf = dwarf_sections.borrow(|section| gimli::EndianSlice::new(section, endian));
 
         if let Err(e) = enrich_signatures_with_dwarf(&dwarf, endian, &mut symbols) {
             results.push(Err(format!("DWARF parsing error: {}", e)));
@@ -364,8 +364,8 @@ fn enrich_signatures_with_dwarf(
                             break;
                         }
 
-                        if child.tag == gimli::DW_TAG_formal_parameter {
-                            if let Some(gimli::AttributeValue::UnitRef(offset)) =
+                        if child.tag == gimli::DW_TAG_formal_parameter
+                            && let Some(gimli::AttributeValue::UnitRef(offset)) =
                                 child.attr_value(gimli::DW_AT_type)
                             {
                                 // Pass `dwarf` down into the type resolver
@@ -374,7 +374,6 @@ fn enrich_signatures_with_dwarf(
                                         .unwrap_or_else(|| "Unknown".to_string()),
                                 );
                             }
-                        }
                     }
 
                     sym.signature = Some(format!(
@@ -400,11 +399,10 @@ fn resolve_dwarf_type(
     let entry = entries.next_dfs().ok()??;
 
     // 1. If this DWARF node has a name directly (e.g., base type, struct, typedef), return it.
-    if let Some(attr) = entry.attr_value(gimli::DW_AT_name) {
-        if let Ok(s) = dwarf.attr_string(unit, attr) {
+    if let Some(attr) = entry.attr_value(gimli::DW_AT_name)
+        && let Ok(s) = dwarf.attr_string(unit, attr) {
             return Some(s.to_string_lossy().into_owned());
         }
-    }
 
     // 2. Format pointer types natively
     if entry.tag == gimli::DW_TAG_pointer_type {

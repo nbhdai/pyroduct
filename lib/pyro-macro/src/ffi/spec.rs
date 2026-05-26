@@ -19,9 +19,9 @@ use crate::struct_doc::SchemaBuilder;
 // SpecBuilder
 // =============================================================================
 
-pub fn build_class_spec<'b>(
+pub fn build_class_spec(
     cap: &CapabilityImpl,
-    builder: &'b SchemaBuilder,
+    builder: &SchemaBuilder,
 ) -> ClassSpec<'static> {
     let capability = cap.ident.state_tn.to_string();
     let description = extract_doc_string(&cap.attrs);
@@ -117,15 +117,12 @@ pub fn build_spec(file: &syn::File) -> InterfaceSpec<'static> {
 fn extract_doc_string(attrs: &[Attribute]) -> Option<String> {
     let mut lines = Vec::new();
     for attr in attrs {
-        if attr.path().is_ident("doc") {
-            if let Meta::NameValue(nv) = &attr.meta {
-                if let Expr::Lit(expr_lit) = &nv.value {
-                    if let Lit::Str(lit_str) = &expr_lit.lit {
+        if attr.path().is_ident("doc")
+            && let Meta::NameValue(nv) = &attr.meta
+                && let Expr::Lit(expr_lit) = &nv.value
+                    && let Lit::Str(lit_str) = &expr_lit.lit {
                         lines.push(lit_str.value().trim().to_string());
                     }
-                }
-            }
-        }
     }
     if lines.is_empty() {
         None

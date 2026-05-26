@@ -5,7 +5,7 @@ use std::sync::Once;
 use tracing::{debug, error};
 
 thread_local! {
-    static LAST_FFI_PANIC: RefCell<Option<Box<CapturedError>>> = RefCell::new(None);
+    static LAST_FFI_PANIC: RefCell<Option<Box<CapturedError>>> = const { RefCell::new(None) };
 }
 
 static REGISTER_PANIC_HOOK: Once = Once::new();

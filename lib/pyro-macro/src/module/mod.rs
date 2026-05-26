@@ -55,7 +55,7 @@ pub fn generate_module(content: &str) -> syn::Result<syn::File> {
 }
 
 fn has_module_attr(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|a| is_module_attr(a))
+    attrs.iter().any(is_module_attr)
 }
 
 fn is_module_attr(attr: &syn::Attribute) -> bool {

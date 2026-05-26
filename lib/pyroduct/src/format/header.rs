@@ -156,7 +156,7 @@ impl PyroParser {
         if slice.len() < Self::HEADER_SIZE {
             return Err(ParseError::SliceTooSmall);
         }
-        if (slice.as_ptr() as usize) % Self::ALIGN != 0 {
+        if !(slice.as_ptr() as usize).is_multiple_of(Self::ALIGN) {
             return Err(ParseError::MisalignedPointer);
         }
 
@@ -172,7 +172,7 @@ impl PyroParser {
         if ptr.is_null() {
             return Err(ParseError::NullPointer);
         }
-        if (ptr as usize) % Self::ALIGN != 0 {
+        if !(ptr as usize).is_multiple_of(Self::ALIGN) {
             return Err(ParseError::MisalignedPointer);
         }
 
@@ -183,7 +183,7 @@ impl PyroParser {
         if ptr.is_null() {
             return Err(ParseError::NullPointer);
         }
-        if (ptr as usize) % Self::ALIGN != 0 {
+        if !(ptr as usize).is_multiple_of(Self::ALIGN) {
             return Err(ParseError::MisalignedPointer);
         }
 
@@ -392,11 +392,11 @@ pub trait PyroData: private::Sealed + Deref<Target = [u8]> + Sized {
     /// Helper to deserialize a CapturedError from the payload (JSON).
     /// Falls back to a generic error if JSON deserialization fails.
     fn extract_captured_error(&self) -> Box<CapturedError> {
-        if let Ok(captured) = serde_json::from_slice::<CapturedError>(&*self) {
+        if let Ok(captured) = serde_json::from_slice::<CapturedError>(self) {
             Box::new(captured)
         } else {
             Box::new(CapturedError {
-                message: String::from_utf8_lossy(&*self).to_string(),
+                message: String::from_utf8_lossy(self).to_string(),
                 file: "unknown".to_string(),
                 line: 0,
                 column: 0,

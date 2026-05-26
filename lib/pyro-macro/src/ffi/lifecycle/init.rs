@@ -37,7 +37,7 @@ impl InitFn {
                 }
             }
             ReturnType::Default => {
-                return Err(Error::new_spanned(&sig, "fn new must return Self"));
+                return Err(Error::new_spanned(sig, "fn new must return Self"));
             }
         }
 

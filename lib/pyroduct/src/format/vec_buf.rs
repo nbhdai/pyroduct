@@ -302,7 +302,7 @@ impl PyroVec {
 
     pub fn clone_from_pyro<T: PyroData>(source: &T) -> Self {
         let mut new_vec = Self::with_capacity(source.len());
-        new_vec.extend_from_slice(&*source);
+        new_vec.extend_from_slice(source);
         new_vec.header_mut().copy_from_slice(source.header());
         new_vec
     }
@@ -717,7 +717,7 @@ impl<'a> PyroData for PyroRef<'a> {
     }
 
     fn py_ref(&self) -> PyroRef<'_> {
-        self.clone()
+        *self
     }
 
     fn py_ptr(&self) -> PyroRefPtr {
@@ -839,7 +839,7 @@ pub fn get_ref(wasm_memory: &[u8], offset: usize) -> Result<PyroRef<'_>, PyroErr
     if wasm_memory.len() < offset + PyroParser::HEADER_SIZE {
         return Err(ParseError::SliceTooSmall.into());
     }
-    if offset % 16 != 0 {
+    if !offset.is_multiple_of(16) {
         return Err(ParseError::MisalignedPointer.into());
     }
 

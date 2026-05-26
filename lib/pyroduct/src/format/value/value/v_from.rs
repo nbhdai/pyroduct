@@ -227,7 +227,7 @@ impl<'a> From<&'a String> for PyroValue<'a> {
 impl<'a> From<&'a Vec<String>> for PyroValue<'a> {
     fn from(v: &'a Vec<String>) -> Self {
         let values = v
-            .into_iter()
+            .iter()
             .map(|v| PyroValue::Str(Cow::Borrowed(v.as_str())))
             .collect();
         PyroValue::List(values)
@@ -252,7 +252,7 @@ impl<'a> From<&'a str> for PyroValue<'a> {
 impl<'a> From<&'a Vec<&str>> for PyroValue<'a> {
     fn from(v: &'a Vec<&str>) -> Self {
         let values = v
-            .into_iter()
+            .iter()
             .map(|v| PyroValue::Str(Cow::Borrowed(v)))
             .collect();
         PyroValue::List(values)
@@ -376,7 +376,7 @@ impl<'a, T: ToRow + 'a> From<Vec<T>> for PyroValue<'a> {
 impl<'a, T: ToRow + 'a> From<&'a Vec<T>> for PyroValue<'a> {
     fn from(values: &'a Vec<T>) -> Self {
         let values = values
-            .into_iter()
+            .iter()
             .map(|v| {
                 // Safe because T lives for at least 'a
                 unsafe { std::mem::transmute(PyroValue::Group(v.to_row())) }
@@ -389,7 +389,7 @@ impl<'a, T: ToRow + 'a> From<&'a Vec<T>> for PyroValue<'a> {
 impl<'a, T: ToRow + 'a> From<&'a [T]> for PyroValue<'a> {
     fn from(values: &'a [T]) -> Self {
         let values = values
-            .into_iter()
+            .iter()
             .map(|v| {
                 // Safe because T lives for at least 'a
                 unsafe { std::mem::transmute(PyroValue::Group(v.to_row())) }
@@ -557,7 +557,7 @@ impl<'a, 'b> From<&'b ArchivedPyroValue<'a>> for PyroValue<'a> {
             ArchivedPyroValue::List(archived_list) => {
                 let items: Vec<PyroValue<'a>> = archived_list
                     .iter()
-                    .map(|archived_val| PyroValue::from(archived_val))
+                    .map(PyroValue::from)
                     .collect();
                 PyroValue::List(items)
             }

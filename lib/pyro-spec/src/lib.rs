@@ -345,7 +345,7 @@ impl<'a> PyroSchema<'a> {
             documentation: None,
             fields: self
                 .fields
-                .into_iter()
+                .iter()
                 .map(|f| f.clone().into_owned())
                 .collect(),
         }
@@ -393,7 +393,7 @@ pub fn coerce_pyro_types<'a>(a: &PyroType<'a>, b: &PyroType<'a>) -> Option<PyroT
         // --- List coercion (merge nullability) ---
         (List(inner_a, null_a), List(inner_b, null_b)) => {
             let merged_null = *null_a || *null_b;
-            coerce_pyro_types(&inner_a, &inner_b).map(|c| List(Box::new(c), merged_null))
+            coerce_pyro_types(inner_a, inner_b).map(|c| List(Box::new(c), merged_null))
         }
 
         // --- PrimitiveList coercion ---

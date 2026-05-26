@@ -165,8 +165,8 @@ pub(crate) fn map_type_to_ref(ty: &Type) -> (TokenStream, bool) {
                     (quote! { #ident }, true)
                 }
                 "Vec" => {
-                    if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                        if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
+                    if let PathArguments::AngleBracketed(args) = &segment.arguments
+                        && let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
                             let (inner_ref, is_prim) = map_type_to_ref(inner_ty);
                             if is_prim {
                                 return (quote! { &'a [#inner_ref] }, false);
@@ -175,12 +175,11 @@ pub(crate) fn map_type_to_ref(ty: &Type) -> (TokenStream, bool) {
                                 return (quote! { Vec<#inner_ref> }, false);
                             }
                         }
-                    }
                     (quote! { Vec<()> }, false)
                 }
                 "Option" => {
-                    if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                        if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
+                    if let PathArguments::AngleBracketed(args) = &segment.arguments
+                        && let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
                             // Recursively map the inner type
 
                             // 1. If inner is primitive (i32), Option<i32> is Copy (effectively),
@@ -198,7 +197,6 @@ pub(crate) fn map_type_to_ref(ty: &Type) -> (TokenStream, bool) {
                             let (inner_ref, _) = map_type_to_ref(inner_ty);
                             return (quote! { Option<#inner_ref> }, false);
                         }
-                    }
                     (quote! { Option<()> }, false)
                 }
                 // Nested struct - assume it has a Ref variant
@@ -437,21 +435,17 @@ fn is_string_like(ty: &Type) -> bool {
         }
 
         // 2. Wrappers (Arc, Box, Cow)
-        if matches!(ident.as_str(), "Arc" | "Box" | "Cow" | "Rc") {
-            if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
+        if matches!(ident.as_str(), "Arc" | "Box" | "Cow" | "Rc")
+            && let PathArguments::AngleBracketed(args) = &segment.arguments
+                && let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
                     // Check if inner is "str"
                     if let Type::Path(TypePath {
                         path: inner_path, ..
                     }) = inner_ty
-                    {
-                        if let Some(inner_seg) = inner_path.segments.last() {
+                        && let Some(inner_seg) = inner_path.segments.last() {
                             return inner_seg.ident == "str";
                         }
-                    }
                 }
-            }
-        }
     }
     false
 }

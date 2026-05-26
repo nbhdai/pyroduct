@@ -8,6 +8,12 @@ pub struct RkyvReceiver<T> {
     pub(super) tpe: PhantomData<T>,
 }
 
+impl<T> Default for RkyvReceiver<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> RkyvReceiver<T> {
     pub fn new() -> Self {
         Self { tpe: PhantomData }

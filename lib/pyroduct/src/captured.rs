@@ -138,7 +138,7 @@ impl CapturedError {
     }
 
     pub fn encode(&self) -> PyroVec {
-        let mut vec = PyroVec::with_capacity(predict_captured_error_size(&self));
+        let mut vec = PyroVec::with_capacity(predict_captured_error_size(self));
         serde_json::to_writer(&mut vec, self)
             .expect("CapturedError serialization should never fail");
         vec.set_status(crate::format::header::DataStatus::CodeError);

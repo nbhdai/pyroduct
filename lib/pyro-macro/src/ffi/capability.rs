@@ -90,19 +90,16 @@ impl CapabilityImpl {
         let mut other_items = Vec::new();
 
         for item in &input.items {
-            match item {
-                ImplItem::Type(ty) => {
-                    if ty.ident == "Client" {
-                        client_tn = Some(extract_ident_from_type(&ty.ty)?);
-                    } else if ty.ident == "Config" {
-                        config_tn = Some(extract_ident_from_type(&ty.ty)?);
-                    } else if ty.ident == "Error" {
-                        error_tn = Some(ty.ty.clone());
-                    }
-                    // Note: We intentionally do NOT add type aliases to other_items
-                    // because inherent associated types are unstable in Rust
+            if let ImplItem::Type(ty) = item {
+                if ty.ident == "Client" {
+                    client_tn = Some(extract_ident_from_type(&ty.ty)?);
+                } else if ty.ident == "Config" {
+                    config_tn = Some(extract_ident_from_type(&ty.ty)?);
+                } else if ty.ident == "Error" {
+                    error_tn = Some(ty.ty.clone());
                 }
-                _ => {}
+                // Note: We intentionally do NOT add type aliases to other_items
+                // because inherent associated types are unstable in Rust
             }
         }
 

@@ -57,7 +57,7 @@ where
     type Target = <T as rkyv::Archive>::Archived;
 
     fn deref(&self) -> &Self::Target {
-        &self.archived
+        self.archived
     }
 }
 
@@ -117,7 +117,7 @@ where
     type Target = <T as rkyv::Archive>::Archived;
 
     fn deref(&self) -> &Self::Target {
-        &self.archived
+        self.archived
     }
 }
 

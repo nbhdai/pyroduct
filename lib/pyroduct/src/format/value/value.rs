@@ -263,7 +263,7 @@ impl<'a> Iterator for PrimitiveFloatIterator<'a> {
         match self {
             PrimitiveFloatIterator::F16(iter) => iter.next().map(|x| x.to_f64()),
             PrimitiveFloatIterator::F32(iter) => iter.next().map(|&x| x as f64),
-            PrimitiveFloatIterator::F64(iter) => iter.next().map(|&x| x),
+            PrimitiveFloatIterator::F64(iter) => iter.next().copied(),
         }
     }
 }
@@ -360,7 +360,7 @@ impl<'a> Iterator for PrimitiveForceFloatIterator<'a> {
             PrimitiveForceFloatIterator::I64(iter) => iter.next().map(|&x| x as f64),
             PrimitiveForceFloatIterator::F16(iter) => iter.next().map(|x| x.to_f64()),
             PrimitiveForceFloatIterator::F32(iter) => iter.next().map(|&x| x as f64),
-            PrimitiveForceFloatIterator::F64(iter) => iter.next().map(|&x| x),
+            PrimitiveForceFloatIterator::F64(iter) => iter.next().copied(),
         }
     }
 }
@@ -593,7 +593,7 @@ impl<'a> PyroRow<'a> {
                     (PyroType::Group(inner_fields), PyroValue::Group(inner_row)) => {
                         new_vec.push(RowItem {
                             key: item.key.clone(),
-                            value: PyroValue::Group(inner_row.project(&inner_fields)?),
+                            value: PyroValue::Group(inner_row.project(inner_fields)?),
                         });
                     }
 

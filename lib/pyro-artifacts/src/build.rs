@@ -114,11 +114,11 @@ impl Builder {
         let content = tfs::read_to_string(&config_path)
             .await
             .map_err(|error| CacheError {
-                context: format!("Failed to read the configuration"),
+                context: "Failed to read the configuration".to_string(),
                 error,
             })?;
         let config = toml::from_str::<PyroductConfig>(&content).map_err(|error| CacheError {
-            context: format!("Failed to parse the configuration"),
+            context: "Failed to parse the configuration".to_string(),
             error: io::Error::new(io::ErrorKind::InvalidData, error),
         })?;
 
@@ -172,7 +172,7 @@ impl Builder {
         }
 
         // Acquire a file-locked build slot
-        let slot = BuildSlot::acquire_any(&self.build_base_dir(), self.build_slots).await?;
+        let slot = BuildSlot::acquire_any(self.build_base_dir(), self.build_slots).await?;
         tracing::info!(slot = slot.index, hash = %hash, "Compiling in build slot");
 
         let build_dir = &slot.dir;

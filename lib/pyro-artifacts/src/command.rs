@@ -27,7 +27,7 @@ pub async fn run_command(
     capture: bool,
 ) -> Result<String, CommandError> {
     let mut cmd = Command::new("cargo");
-    cmd.args(tool_args).current_dir(&root);
+    cmd.args(tool_args).current_dir(root);
 
     if capture {
         let output = cmd.output().await?;

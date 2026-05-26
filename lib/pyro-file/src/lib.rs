@@ -527,8 +527,7 @@ fn parse_footer_and_batch(buffer: Buffer) -> Result<RecordBatch, DataError> {
     }
 
     let trailer_start = buffer.len() - 10;
-    let footer_len = read_footer_length(buffer[trailer_start..].try_into().unwrap())
-        .map_err(ArrowError::from)?;
+    let footer_len = read_footer_length(buffer[trailer_start..].try_into().unwrap())?;
 
     if trailer_start < footer_len {
         return Err(DataError::InvalidContent(
@@ -546,7 +545,7 @@ fn parse_footer_and_batch(buffer: Buffer) -> Result<RecordBatch, DataError> {
         for block in dicts.iter() {
             let block_len = block.bodyLength() as usize + block.metaDataLength() as usize;
             let data = buffer.slice_with_length(block.offset() as _, block_len);
-            decoder.read_dictionary(&block, &data)?;
+            decoder.read_dictionary(block, &data)?;
         }
     }
 
