@@ -230,12 +230,12 @@ mod execution;
 pub mod format;
 pub mod header;
 pub mod json;
-#[cfg(any(feature = "host"))]
+#[cfg(feature = "host")]
 pub mod log_wal;
 pub mod rkyv_8;
 pub mod value;
 pub mod vec_buf;
-#[cfg(any(feature = "host"))]
+#[cfg(feature = "host")]
 pub mod wal;
 
 pub use bridgeable::{Bridgeable, BridgeableResult};

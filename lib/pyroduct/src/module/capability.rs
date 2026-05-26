@@ -224,7 +224,7 @@ impl CapabilityLibrary {
             );
             e.into_inner()
         });
-        if let Some(lib) = libraries.get(&name).map(|w| w.upgrade()).flatten() {
+        if let Some(lib) = libraries.get(&name).and_then(|w| w.upgrade()) {
             Ok(lib)
         } else {
             let lib = Arc::new(Self::load_inter(&name, path)?);
@@ -233,7 +233,7 @@ impl CapabilityLibrary {
         }
     }
 
-    fn load_inter(name: &String, path: &Path) -> Result<Self, CapabilityError> {
+    fn load_inter(name: &str, path: &Path) -> Result<Self, CapabilityError> {
         let path_str = path.display().to_string();
 
         // 1. Scan
@@ -289,12 +289,13 @@ impl CapabilityLibrary {
 
             let export: ClassExport = unsafe { register_fn(id, log_callback) };
 
-            let class = unsafe { ForeignClass::from_export(name.clone(), library.clone(), export) }
-                .map_err(|e| CapabilityError::Registration {
-                    path: path_str.clone(),
-                    symbol: sym.name.clone(),
-                    reason: e.to_string(),
-                })?;
+            let class =
+                unsafe { ForeignClass::from_export(name.to_string(), library.clone(), export) }
+                    .map_err(|e| CapabilityError::Registration {
+                        path: path_str.clone(),
+                        symbol: sym.name.clone(),
+                        reason: e.to_string(),
+                    })?;
 
             capabilities.insert(class.name().to_string(), Arc::new(class));
         }
@@ -305,7 +306,7 @@ impl CapabilityLibrary {
 
         Ok(Self {
             id,
-            name: name.clone(),
+            name: name.to_string(),
             capabilities,
             interface,
         })

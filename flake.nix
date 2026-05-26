@@ -34,6 +34,8 @@
           combine [
             stable.toolchain
             targets.wasm32-unknown-unknown.stable.rust-std
+            stable.rust-src
+            stable.rust-analyzer
           ];
 
         miriToolchain =
@@ -169,6 +171,7 @@
             ]
             ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.valgrind ];
             RUST_SRC_PATH = "${wasmToolchain}/lib/rustlib/src/rust/library";
+            RUST_ANALYZER_PATH = "${wasmToolchain}/bin/rust-analyzer";
             CARGO = "${wasmToolchain}/bin/cargo";
             RUSTUP_TOOLCHAIN = "${wasmToolchain}";
             PYRODUCT = ROOT_DIR + "/test";

@@ -27,7 +27,7 @@ pub struct PyroStreamSettings {
 
 impl Default for PyroStreamSettings {
     fn default() -> Self {
-        DEFAULT_STREAM_SETTINGS.clone()
+        DEFAULT_STREAM_SETTINGS
     }
 }
 

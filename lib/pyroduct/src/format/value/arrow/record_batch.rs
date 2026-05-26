@@ -149,7 +149,7 @@ impl Rowable for StructArray {
         {
             let row = array.scalar(index).ok();
             if let Some(row) = row {
-                val.insert(key.to_string(), PyroValue::from(row));
+                val.insert(key.to_string(), row);
             } else {
                 return Ok(None);
             }

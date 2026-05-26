@@ -50,7 +50,7 @@ impl WalWriter {
     ) -> Result<(), PyroError> {
         let mut shipped = Vec::with_capacity(records.len());
         let mut vecs = Vec::with_capacity(records.len());
-        for &(_, ref row) in records {
+        for (_, row) in records {
             let owned_row = row.to_static();
             let vec = owned_row
                 .ship()
@@ -73,7 +73,7 @@ impl WalWriter {
             let base_path = path.with_extension("");
             if let Ok(reader) = WalReader::open(&base_path) {
                 for frame in reader.frames() {
-                    if frame.row_index as usize == record_index {
+                    if frame.row_index == record_index {
                         let row_buf = PyroRow::expose_view(frame.packet)
                             .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
                         let row = PyroRow::from(&*row_buf).to_static();
@@ -121,7 +121,7 @@ pub fn recover_with_index(base_path: &Path) -> Result<Vec<(usize, PyroRow<'stati
         let row_buf = PyroRow::expose_view(pyref)
             .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
         let row = PyroRow::from(&*row_buf).to_static();
-        records.push((frame.row_index as usize, row));
+        records.push((frame.row_index, row));
     }
     Ok(records)
 }
@@ -147,7 +147,7 @@ pub fn recover_current_data(
                 CapturedError::new("Failed to push recovered record to PreBatch").with_source(e),
             )
         })?;
-        current_wal_rows.insert(frame.row_index as usize, physical_idx);
+        current_wal_rows.insert(frame.row_index, physical_idx);
     }
 
     Ok(CurrentData {
@@ -246,10 +246,10 @@ impl WalManager {
         // Fast path: check in-memory PreBatch
         {
             let data = self.data.lock().await;
-            if let Some(&physical_idx) = data.current_wal_rows.get(&record_index) {
-                if let Some(row) = data.prebatch.get(physical_idx) {
-                    return Ok(Some(row.clone()));
-                }
+            if let Some(&physical_idx) = data.current_wal_rows.get(&record_index)
+                && let Some(row) = data.prebatch.get(physical_idx)
+            {
+                return Ok(Some(row.clone()));
             }
         }
 

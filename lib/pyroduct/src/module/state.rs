@@ -119,9 +119,10 @@ impl PyroModule {
                 match import.ty() {
                     ExternType::Func(func_type) => {
                         if func_type.params().len() != 1 {
-                            return Err(WasmError::SignatureMismatch(format!(
+                            return Err(WasmError::SignatureMismatch(
                                 "Register function didn't have the correct number of parameters"
-                            )));
+                                    .to_string(),
+                            ));
                         }
                         if !matches!(func_type.param(0), Some(ValType::I32)) {
                             return Err(WasmError::SignatureMismatch(format!(
@@ -131,20 +132,21 @@ impl PyroModule {
                         }
 
                         if func_type.results().len() != 1 {
-                            return Err(WasmError::SignatureMismatch(format!(
+                            return Err(WasmError::SignatureMismatch(
                                 "Register function didn't have the correct number of returns"
-                            )));
+                                    .to_string(),
+                            ));
                         }
                         if !matches!(func_type.result(0), Some(ValType::I32)) {
-                            return Err(WasmError::SignatureMismatch(format!(
-                                "Register function didn't return a pointer"
-                            )));
+                            return Err(WasmError::SignatureMismatch(
+                                "Register function didn't return a pointer".to_string(),
+                            ));
                         }
                     }
                     _ => {
-                        return Err(WasmError::SignatureMismatch(format!(
-                            "Register function didn't return a pointer"
-                        )));
+                        return Err(WasmError::SignatureMismatch(
+                            "Register function didn't return a pointer".to_string(),
+                        ));
                     }
                 }
                 pyro_classes.push(import.module().to_string());
@@ -286,6 +288,12 @@ impl PyroMethods {
 pub struct PyroState {
     methods: Option<PyroMethods>,
     module_log: Mutex<Vec<String>>,
+}
+
+impl Default for PyroState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PyroState {

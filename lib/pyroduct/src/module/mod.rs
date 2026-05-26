@@ -183,7 +183,7 @@ impl PyroFactory {
         for (class_name, object) in objects.iter() {
             for method_name in object.method_names() {
                 // Check what the linker actually holds for this class & method
-                if let Some(ext) = linker.get(&mut store, class_name, &method_name) {
+                if let Some(ext) = linker.get(&mut store, class_name, method_name) {
                     if let Some(func) = ext.into_func() {
                         let ty = func.ty(&store);
 
@@ -426,7 +426,7 @@ impl PyroInstance {
                             Ok(error) => return Err(self.pack_user_error(error)),
                             Err(error) => {
                                 return Err(
-                                    self.pack_pyro_error(PyroError::capture_json(error, &*err_vec))
+                                    self.pack_pyro_error(PyroError::capture_json(error, &err_vec))
                                 );
                             }
                         },
@@ -468,7 +468,7 @@ impl PyroInstance {
                 match serde_json::from_slice(&result_view) {
                     Ok(error) => Err(self.pack_user_error(error)),
                     Err(error) => {
-                        Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view)))
+                        Err(self.pack_pyro_error(PyroError::capture_json(error, &result_view)))
                     }
                 }
             }
@@ -477,7 +477,7 @@ impl PyroInstance {
                 match serde_json::from_slice(&result_view) {
                     Ok(error) => Err(self.pack_user_error(error)),
                     Err(error) => {
-                        Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view)))
+                        Err(self.pack_pyro_error(PyroError::capture_json(error, &result_view)))
                     }
                 }
             }
@@ -524,22 +524,22 @@ impl PyroInstance {
             let input_row_owned = input.to_static();
             let input_vec = input_row_owned
                 .ship()
-                .map_err(|err| Self::pack_setup_pyro_error(err))?;
+                .map_err(Self::pack_setup_pyro_error)?;
             let input_view = input_vec.view();
             io.new_session_input(session_id, input_view)
                 .await
-                .map_err(|err| Self::pack_setup_pyro_error(err))?;
+                .map_err(Self::pack_setup_pyro_error)?;
         }
 
         for output in outputs {
             let output_row_owned = output.to_static();
             let output_vec = output_row_owned
                 .ship()
-                .map_err(|err| Self::pack_setup_pyro_error(err))?;
+                .map_err(Self::pack_setup_pyro_error)?;
             let output_view = output_vec.view();
             io.new_session_output(session_id, output_view)
                 .await
-                .map_err(|err| Self::pack_setup_pyro_error(err))?;
+                .map_err(Self::pack_setup_pyro_error)?;
         }
 
         let state = self.session_states.entry(session_id).or_default();
@@ -593,7 +593,7 @@ impl PyroInstance {
                             Ok(error) => return Err(self.pack_user_error(error)),
                             Err(error) => {
                                 return Err(
-                                    self.pack_pyro_error(PyroError::capture_json(error, &*err_vec))
+                                    self.pack_pyro_error(PyroError::capture_json(error, &err_vec))
                                 );
                             }
                         },
@@ -662,7 +662,7 @@ impl PyroInstance {
                 match serde_json::from_slice(&result_view) {
                     Ok(error) => Err(self.pack_user_error(error)),
                     Err(error) => {
-                        Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view)))
+                        Err(self.pack_pyro_error(PyroError::capture_json(error, &result_view)))
                     }
                 }
             }
@@ -671,7 +671,7 @@ impl PyroInstance {
                 match serde_json::from_slice(&result_view) {
                     Ok(error) => Err(self.pack_user_error(error)),
                     Err(error) => {
-                        Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view)))
+                        Err(self.pack_pyro_error(PyroError::capture_json(error, &result_view)))
                     }
                 }
             }
@@ -690,7 +690,7 @@ impl PyroInstance {
         };
 
         // 5. Update state
-        if let Ok(_) = &res {
+        if res.is_ok() {
             let state = self.session_states.entry(session_id).or_default();
             state.input_len += 1;
             state.output_len += 1;
@@ -716,7 +716,7 @@ impl PyroInstance {
         let actual_len = io
             .session_input_length(session_id)
             .await
-            .map_err(|err| Self::pack_setup_pyro_error(err))?;
+            .map_err(Self::pack_setup_pyro_error)?;
 
         let mut inputs = Vec::with_capacity(actual_len as usize);
 
@@ -732,12 +732,11 @@ impl PyroInstance {
             let view = io
                 .borrow_session_input(session_id, i)
                 .await
-                .map_err(|err| Self::pack_setup_pyro_error(err))?;
+                .map_err(Self::pack_setup_pyro_error)?;
             let row = if view.status() == Ok(DataStatus::Empty) {
                 PyroRow::empty()
             } else {
-                let exposed =
-                    PyroRow::expose_view(view).map_err(|err| Self::pack_setup_pyro_error(err))?;
+                let exposed = PyroRow::expose_view(view).map_err(Self::pack_setup_pyro_error)?;
                 PyroRow::from(&*exposed)
             };
             inputs.push(row);
@@ -765,15 +764,15 @@ impl PyroInstance {
         let actual_len = io
             .session_output_length(session_id)
             .await
-            .map_err(|err| Self::pack_setup_pyro_error(err))?;
+            .map_err(Self::pack_setup_pyro_error)?;
         debug_assert_eq!(actual_len, len);
 
         for i in 0..actual_len {
             let view = io
                 .borrow_session_output(session_id, i)
                 .await
-                .map_err(|err| Self::pack_setup_pyro_error(err))?;
-            let row = PyroRow::expose_view(view).map_err(|err| Self::pack_setup_pyro_error(err))?;
+                .map_err(Self::pack_setup_pyro_error)?;
+            let row = PyroRow::expose_view(view).map_err(Self::pack_setup_pyro_error)?;
             outputs.push(PyroRow::from(&*row));
         }
 
