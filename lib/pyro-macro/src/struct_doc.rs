@@ -252,17 +252,19 @@ impl SchemaBuilder {
 
 fn is_option_type(ty: &syn::Type) -> bool {
     if let syn::Type::Path(type_path) = ty
-        && let Some(seg) = type_path.path.segments.last() {
-            return seg.ident == "Option";
-        }
+        && let Some(seg) = type_path.path.segments.last()
+    {
+        return seg.ident == "Option";
+    }
     false
 }
 
 fn extract_single_generic_arg(segment: &syn::PathSegment) -> Option<&syn::Type> {
     if let syn::PathArguments::AngleBracketed(args) = &segment.arguments
-        && let Some(syn::GenericArgument::Type(ty)) = args.args.first() {
-            return Some(ty);
-        }
+        && let Some(syn::GenericArgument::Type(ty)) = args.args.first()
+    {
+        return Some(ty);
+    }
     None
 }
 
@@ -283,10 +285,11 @@ fn extract_doc_string(attrs: &[Attribute]) -> Option<String> {
     for attr in attrs {
         if attr.path().is_ident("doc")
             && let Meta::NameValue(nv) = &attr.meta
-                && let Expr::Lit(expr_lit) = &nv.value
-                    && let Lit::Str(lit_str) = &expr_lit.lit {
-                        lines.push(lit_str.value().trim().to_string());
-                    }
+            && let Expr::Lit(expr_lit) = &nv.value
+            && let Lit::Str(lit_str) = &expr_lit.lit
+        {
+            lines.push(lit_str.value().trim().to_string());
+        }
     }
     if lines.is_empty() {
         None

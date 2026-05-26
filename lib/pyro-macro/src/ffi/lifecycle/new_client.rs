@@ -252,25 +252,26 @@ impl NewClientFn {
 fn extract_result_error_type(ty: &Type) -> syn::Result<Option<Type>> {
     if let Type::Path(tp) = ty
         && let Some(segment) = tp.path.segments.last()
-            && segment.ident == "Result"
-                && let PathArguments::AngleBracketed(args) = &segment.arguments
-                    && args.args.len() == 2 {
-                        // Validate first arg is ()
-                        if let GenericArgument::Type(ok_ty) = &args.args[0] {
-                            let ok_str = quote!(#ok_ty).to_string().replace(" ", "");
-                            if ok_str != "()" {
-                                return Err(Error::new_spanned(
-                                    ok_ty,
-                                    "new_client must return Result<(), Error>, not Result<T, Error>",
-                                ));
-                            }
-                        }
+        && segment.ident == "Result"
+        && let PathArguments::AngleBracketed(args) = &segment.arguments
+        && args.args.len() == 2
+    {
+        // Validate first arg is ()
+        if let GenericArgument::Type(ok_ty) = &args.args[0] {
+            let ok_str = quote!(#ok_ty).to_string().replace(" ", "");
+            if ok_str != "()" {
+                return Err(Error::new_spanned(
+                    ok_ty,
+                    "new_client must return Result<(), Error>, not Result<T, Error>",
+                ));
+            }
+        }
 
-                        // Extract error type
-                        if let GenericArgument::Type(err_ty) = &args.args[1] {
-                            return Ok(Some(err_ty.clone()));
-                        }
-                    }
+        // Extract error type
+        if let GenericArgument::Type(err_ty) = &args.args[1] {
+            return Ok(Some(err_ty.clone()));
+        }
+    }
 
     Err(Error::new_spanned(
         ty,

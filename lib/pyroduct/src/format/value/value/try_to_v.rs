@@ -376,40 +376,41 @@ where
         // If `pdt` matches the variant, `cow` contains `Vec<Prim>`.
         // Since `T` corresponds to `Prim` (via Typeable contract), we can cast `Vec<Prim>` to `Vec<T>`.
         if !T::is_nullable()
-            && let (Some(pdt), PyroValue::PrimitiveList(pl)) = (T::primitive_data_type(), &value) {
-                // Macro to generate match arms: checks if runtime variant matches metadata, then casts.
-                macro_rules! try_cast_primitive {
-                    ($variant:ident, $prim_type:ty) => {
-                        if let (PrimitiveDataType::$variant, PrimitiveValueList::$variant(cow)) =
-                            (pdt, pl)
-                        {
-                            let vec_prim: Vec<$prim_type> = cow.clone().into_owned();
+            && let (Some(pdt), PyroValue::PrimitiveList(pl)) = (T::primitive_data_type(), &value)
+        {
+            // Macro to generate match arms: checks if runtime variant matches metadata, then casts.
+            macro_rules! try_cast_primitive {
+                ($variant:ident, $prim_type:ty) => {
+                    if let (PrimitiveDataType::$variant, PrimitiveValueList::$variant(cow)) =
+                        (pdt, pl)
+                    {
+                        let vec_prim: Vec<$prim_type> = cow.clone().into_owned();
 
-                            // Transform Vec<$prim_type> -> Vec<T>
-                            // T is semantically identical to $prim_type here.
-                            let mut v = ManuallyDrop::new(vec_prim);
-                            let (ptr, len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
+                        // Transform Vec<$prim_type> -> Vec<T>
+                        // T is semantically identical to $prim_type here.
+                        let mut v = ManuallyDrop::new(vec_prim);
+                        let (ptr, len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
 
-                            // Safe because we verified T's identity via Typeable
-                            let vec_t = unsafe { Vec::from_raw_parts(ptr as *mut T, len, cap) };
-                            return Ok(vec_t);
-                        }
-                    };
-                }
-
-                try_cast_primitive!(Bool, bool);
-                try_cast_primitive!(I8, i8);
-                try_cast_primitive!(I16, i16);
-                try_cast_primitive!(I32, i32);
-                try_cast_primitive!(I64, i64);
-                try_cast_primitive!(U8, u8);
-                try_cast_primitive!(U16, u16);
-                try_cast_primitive!(U32, u32);
-                try_cast_primitive!(U64, u64);
-                try_cast_primitive!(F16, f16);
-                try_cast_primitive!(F32, f32);
-                try_cast_primitive!(F64, f64);
+                        // Safe because we verified T's identity via Typeable
+                        let vec_t = unsafe { Vec::from_raw_parts(ptr as *mut T, len, cap) };
+                        return Ok(vec_t);
+                    }
+                };
             }
+
+            try_cast_primitive!(Bool, bool);
+            try_cast_primitive!(I8, i8);
+            try_cast_primitive!(I16, i16);
+            try_cast_primitive!(I32, i32);
+            try_cast_primitive!(I64, i64);
+            try_cast_primitive!(U8, u8);
+            try_cast_primitive!(U16, u16);
+            try_cast_primitive!(U32, u32);
+            try_cast_primitive!(U64, u64);
+            try_cast_primitive!(F16, f16);
+            try_cast_primitive!(F32, f32);
+            try_cast_primitive!(F64, f64);
+        }
 
         // 2. SLOW PATH: Generic List iteration.
         // Fallback for non-primitives (Vec<String>, Vec<Row>) or mismatched types.

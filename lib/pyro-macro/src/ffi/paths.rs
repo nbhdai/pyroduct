@@ -249,20 +249,21 @@ impl FnOutput {
                         // Check if the last segment is "Result" (heuristic)
                         if let Some(segment) = type_path.path.segments.last()
                             && segment.ident == "Result"
-                                && let PathArguments::AngleBracketed(args) = &segment.arguments {
-                                    // Ensure we have exactly 2 generic arguments: <T, E>
-                                    if args.args.len() == 2 {
-                                        let mut iter = args.args.iter();
-                                        // Ensure both arguments are Types (not lifetimes or consts)
-                                        if let (
-                                            Some(GenericArgument::Type(t)),
-                                            Some(GenericArgument::Type(e)),
-                                        ) = (iter.next(), iter.next())
-                                        {
-                                            output = FnOutput::Result(t.clone(), e.clone());
-                                        }
-                                    }
+                            && let PathArguments::AngleBracketed(args) = &segment.arguments
+                        {
+                            // Ensure we have exactly 2 generic arguments: <T, E>
+                            if args.args.len() == 2 {
+                                let mut iter = args.args.iter();
+                                // Ensure both arguments are Types (not lifetimes or consts)
+                                if let (
+                                    Some(GenericArgument::Type(t)),
+                                    Some(GenericArgument::Type(e)),
+                                ) = (iter.next(), iter.next())
+                                {
+                                    output = FnOutput::Result(t.clone(), e.clone());
                                 }
+                            }
+                        }
                     }
                     _ => {}
                 }

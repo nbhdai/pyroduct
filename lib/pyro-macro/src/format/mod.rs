@@ -73,17 +73,18 @@ impl BridgeableArgs {
 
                     for nested_meta in nested {
                         if let Meta::Path(path) = nested_meta
-                            && let Some(ident) = path.get_ident() {
-                                let s = ident.to_string();
+                            && let Some(ident) = path.get_ident()
+                        {
+                            let s = ident.to_string();
 
-                                if DERIVE_WHITELIST.contains(&s.as_str()) {
-                                    derives_to_pass.push(ident.clone());
-                                }
-
-                                if s == "PartialEq" || s == "PartialOrd" {
-                                    compares_to_add.push(ident.clone());
-                                }
+                            if DERIVE_WHITELIST.contains(&s.as_str()) {
+                                derives_to_pass.push(ident.clone());
                             }
+
+                            if s == "PartialEq" || s == "PartialOrd" {
+                                compares_to_add.push(ident.clone());
+                            }
+                        }
                     }
                 }
                 other => {
@@ -126,8 +127,7 @@ pub fn magma(
     // 1. Generate Documentation (takes &Item, &Path)
     let documentation =
         documentation::generate_documented_impl(item, import_location, args.doc_rec)?;
-    let ref_documentation =
-        documentation::ref_documentation(item, import_location, args.doc_rec)?;
+    let ref_documentation = documentation::ref_documentation(item, import_location, args.doc_rec)?;
 
     // 2. Generate Bridgeable
     // Note: This consumes 'args' and 'item', so we use clones for the others.

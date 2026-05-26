@@ -523,8 +523,7 @@ impl Environment {
                     },
                 };
 
-                let wat =
-                    debug::wat(&binary).map_err(EnvironmentError::InterfaceGeneration)?;
+                let wat = debug::wat(&binary).map_err(EnvironmentError::InterfaceGeneration)?;
 
                 let generated_code = generate_module(&src_lib_rs).map_err(|e| {
                     EnvironmentError::InterfaceGeneration(format!(

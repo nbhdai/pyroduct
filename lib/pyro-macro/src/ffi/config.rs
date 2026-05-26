@@ -50,35 +50,35 @@ impl CapConfig {
         let has_struct_doc = input.attrs.iter().any(|a| a.path().is_ident("doc"));
 
         match doc_rec {
-            DocRec::StructDoc | DocRec::AllDoc
-                if !has_struct_doc => {
-                    return Err(syn::Error::new_spanned(
-                        &input.ident,
-                        "Configuration struct must be documented",
-                    ));
-                }
+            DocRec::StructDoc | DocRec::AllDoc if !has_struct_doc => {
+                return Err(syn::Error::new_spanned(
+                    &input.ident,
+                    "Configuration struct must be documented",
+                ));
+            }
             _ => {}
         }
 
         if doc_rec == DocRec::AllDoc
-            && let syn::Fields::Named(fields) = &input.fields {
-                for field in &fields.named {
-                    let has_field_doc = field.attrs.iter().any(|a| a.path().is_ident("doc"));
-                    if !has_field_doc {
-                        // Use the field identifier for the error location if available
-                        let tokens = if let Some(ident) = &field.ident {
-                            quote! { #ident }
-                        } else {
-                            quote! { #field }
-                        };
+            && let syn::Fields::Named(fields) = &input.fields
+        {
+            for field in &fields.named {
+                let has_field_doc = field.attrs.iter().any(|a| a.path().is_ident("doc"));
+                if !has_field_doc {
+                    // Use the field identifier for the error location if available
+                    let tokens = if let Some(ident) = &field.ident {
+                        quote! { #ident }
+                    } else {
+                        quote! { #field }
+                    };
 
-                        return Err(syn::Error::new_spanned(
-                            tokens,
-                            "Configuration fields must be documented",
-                        ));
-                    }
+                    return Err(syn::Error::new_spanned(
+                        tokens,
+                        "Configuration fields must be documented",
+                    ));
                 }
             }
+        }
         Ok(())
     }
 

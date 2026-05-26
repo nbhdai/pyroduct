@@ -88,18 +88,19 @@ impl ModuleSpecBuilder {
             .iter()
             .filter_map(|arg| {
                 if let FnArg::Typed(pat_type) = arg
-                    && let Pat::Ident(pat_ident) = &*pat_type.pat {
-                        let field_name = pat_ident.ident.to_string();
-                        let ty = &*pat_type.ty;
-                        let data_type = builder.resolve_type(ty);
-                        let nullable = SchemaBuilder::is_option(ty);
-                        let doc = extract_doc_string(&pat_type.attrs);
-                        let mut field = PyroField::new(Cow::Owned(field_name), data_type, nullable);
-                        if let Some(d) = doc {
-                            field = field.add_docstring(Cow::Owned(d));
-                        }
-                        return Some(field);
+                    && let Pat::Ident(pat_ident) = &*pat_type.pat
+                {
+                    let field_name = pat_ident.ident.to_string();
+                    let ty = &*pat_type.ty;
+                    let data_type = builder.resolve_type(ty);
+                    let nullable = SchemaBuilder::is_option(ty);
+                    let doc = extract_doc_string(&pat_type.attrs);
+                    let mut field = PyroField::new(Cow::Owned(field_name), data_type, nullable);
+                    if let Some(d) = doc {
+                        field = field.add_docstring(Cow::Owned(d));
                     }
+                    return Some(field);
+                }
                 None
             })
             .collect();
@@ -222,11 +223,12 @@ fn extract_result_ok_type(ret: &ReturnType) -> syn::Result<&Type> {
         ReturnType::Type(_, ty) => {
             if let Type::Path(type_path) = &**ty
                 && let Some(seg) = type_path.path.segments.last()
-                    && seg.ident == "Result"
-                        && let syn::PathArguments::AngleBracketed(args) = &seg.arguments
-                            && let Some(syn::GenericArgument::Type(ok_ty)) = args.args.first() {
-                                return Ok(ok_ty);
-                            }
+                && seg.ident == "Result"
+                && let syn::PathArguments::AngleBracketed(args) = &seg.arguments
+                && let Some(syn::GenericArgument::Type(ok_ty)) = args.args.first()
+            {
+                return Ok(ok_ty);
+            }
             Err(syn::Error::new_spanned(
                 &**ty,
                 "module function must return Result<T>",
@@ -257,9 +259,10 @@ fn extract_doc_string(attrs: &[Attribute]) -> Option<String> {
             }
             if let Meta::NameValue(nv) = &attr.meta
                 && let Expr::Lit(expr_lit) = &nv.value
-                    && let Lit::Str(s) = &expr_lit.lit {
-                        return Some(s.value().trim().to_string());
-                    }
+                && let Lit::Str(s) = &expr_lit.lit
+            {
+                return Some(s.value().trim().to_string());
+            }
             None
         })
         .collect();

@@ -367,13 +367,13 @@ fn enrich_signatures_with_dwarf(
                         if child.tag == gimli::DW_TAG_formal_parameter
                             && let Some(gimli::AttributeValue::UnitRef(offset)) =
                                 child.attr_value(gimli::DW_AT_type)
-                            {
-                                // Pass `dwarf` down into the type resolver
-                                args.push(
-                                    resolve_dwarf_type(dwarf, &unit, offset)
-                                        .unwrap_or_else(|| "Unknown".to_string()),
-                                );
-                            }
+                        {
+                            // Pass `dwarf` down into the type resolver
+                            args.push(
+                                resolve_dwarf_type(dwarf, &unit, offset)
+                                    .unwrap_or_else(|| "Unknown".to_string()),
+                            );
+                        }
                     }
 
                     sym.signature = Some(format!(
@@ -400,9 +400,10 @@ fn resolve_dwarf_type(
 
     // 1. If this DWARF node has a name directly (e.g., base type, struct, typedef), return it.
     if let Some(attr) = entry.attr_value(gimli::DW_AT_name)
-        && let Ok(s) = dwarf.attr_string(unit, attr) {
-            return Some(s.to_string_lossy().into_owned());
-        }
+        && let Ok(s) = dwarf.attr_string(unit, attr)
+    {
+        return Some(s.to_string_lossy().into_owned());
+    }
 
     // 2. Format pointer types natively
     if entry.tag == gimli::DW_TAG_pointer_type {

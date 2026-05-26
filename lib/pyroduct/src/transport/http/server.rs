@@ -1,19 +1,12 @@
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use axum::{
-    Router,
-    routing::post,
-    extract::State,
-    Json,
-    http::StatusCode,
-    response::IntoResponse,
-};
-use pyro_artifacts::cache::LoadedPlaybook;
-use crate::{CapturedError, PyroError, PyroRow, PyroValue};
 use crate::format::log_wal::LogWal;
+use crate::format::value::PyroSchema;
 use crate::module::PyroFactory;
 use crate::pipeline::{ExecutionRecord, Pipeline};
-use crate::format::value::PyroSchema;
+use crate::{CapturedError, PyroError, PyroRow, PyroValue};
+use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::post};
+use pyro_artifacts::cache::LoadedPlaybook;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// An HTTP server that runs loaded playbooks using Axum.
 pub struct PlaybookHttpServer {
@@ -104,16 +97,14 @@ async fn handle_playbook_query(
     // 3. Process the repaired row in the pipeline
     let mut pipeline = server.pipeline.lock().await;
     match pipeline.process(0, &repaired_row).await {
-        Ok(ExecutionRecord::Success { success, .. }) => {
-            match serde_json::to_value(&success) {
-                Ok(val) => (StatusCode::OK, Json(val)).into_response(),
-                Err(e) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": format!("Serialization error: {}", e) })),
-                )
-                    .into_response(),
-            }
-        }
+        Ok(ExecutionRecord::Success { success, .. }) => match serde_json::to_value(&success) {
+            Ok(val) => (StatusCode::OK, Json(val)).into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("Serialization error: {}", e) })),
+            )
+                .into_response(),
+        },
         Ok(ExecutionRecord::Failure { failure, .. }) => {
             let err_msg = match failure {
                 Ok(captured) => format!("{:?}", captured),

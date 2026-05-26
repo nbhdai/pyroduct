@@ -435,68 +435,73 @@ fn generate_field_try_from_owned(
 
 fn is_option(ty: &Type) -> bool {
     if let Type::Path(TypePath { path, .. }) = ty
-        && let Some(seg) = path.segments.last() {
-            return seg.ident == "Option";
-        }
+        && let Some(seg) = path.segments.last()
+    {
+        return seg.ident == "Option";
+    }
     false
 }
 
 fn get_option_inner(ty: &Type) -> Option<&Type> {
     if let Type::Path(TypePath { path, .. }) = ty
         && let Some(seg) = path.segments.last()
-            && let PathArguments::AngleBracketed(args) = &seg.arguments
-                && let Some(GenericArgument::Type(inner)) = args.args.first() {
-                    return Some(inner);
-                }
+        && let PathArguments::AngleBracketed(args) = &seg.arguments
+        && let Some(GenericArgument::Type(inner)) = args.args.first()
+    {
+        return Some(inner);
+    }
     None
 }
 
 fn get_vec_inner(ty: &Type) -> Option<&Type> {
     if let Type::Path(TypePath { path, .. }) = ty
         && let Some(seg) = path.segments.last()
-            && let PathArguments::AngleBracketed(args) = &seg.arguments
-                && let Some(GenericArgument::Type(inner)) = args.args.first() {
-                    return Some(inner);
-                }
+        && let PathArguments::AngleBracketed(args) = &seg.arguments
+        && let Some(GenericArgument::Type(inner)) = args.args.first()
+    {
+        return Some(inner);
+    }
     None
 }
 
 fn is_nested_struct(ty: &Type) -> bool {
     if let Type::Path(TypePath { path, .. }) = ty
-        && let Some(seg) = path.segments.last() {
-            let ident_str = seg.ident.to_string();
-            // Expanded list to be safe, but generic T will return true (good)
-            return !matches!(
-                ident_str.as_str(),
-                "bool"
-                    | "i8"
-                    | "i16"
-                    | "i32"
-                    | "i64"
-                    | "isize"
-                    | "u8"
-                    | "u16"
-                    | "u32"
-                    | "u64"
-                    | "usize"
-                    | "f16"
-                    | "f32"
-                    | "f64"
-                    | "String"
-                    | "Vec"
-                    | "Option"
-            );
-        }
+        && let Some(seg) = path.segments.last()
+    {
+        let ident_str = seg.ident.to_string();
+        // Expanded list to be safe, but generic T will return true (good)
+        return !matches!(
+            ident_str.as_str(),
+            "bool"
+                | "i8"
+                | "i16"
+                | "i32"
+                | "i64"
+                | "isize"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "u64"
+                | "usize"
+                | "f16"
+                | "f32"
+                | "f64"
+                | "String"
+                | "Vec"
+                | "Option"
+        );
+    }
     false
 }
 
 fn is_vec_of_struct(ty: &Type) -> bool {
     if let Type::Path(TypePath { path, .. }) = ty
         && let Some(seg) = path.segments.last()
-            && seg.ident == "Vec"
-                && let PathArguments::AngleBracketed(args) = &seg.arguments
-                    && let Some(GenericArgument::Type(inner)) = args.args.first() {
-                        return is_nested_struct(inner);
-                    }
+        && seg.ident == "Vec"
+        && let PathArguments::AngleBracketed(args) = &seg.arguments
+        && let Some(GenericArgument::Type(inner)) = args.args.first()
+    {
+        return is_nested_struct(inner);
+    }
     false
 }

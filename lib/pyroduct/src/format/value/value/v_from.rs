@@ -251,10 +251,7 @@ impl<'a> From<&'a str> for PyroValue<'a> {
 
 impl<'a> From<&'a Vec<&str>> for PyroValue<'a> {
     fn from(v: &'a Vec<&str>) -> Self {
-        let values = v
-            .iter()
-            .map(|v| PyroValue::Str(Cow::Borrowed(v)))
-            .collect();
+        let values = v.iter().map(|v| PyroValue::Str(Cow::Borrowed(v))).collect();
         PyroValue::List(values)
     }
 }
@@ -555,10 +552,7 @@ impl<'a, 'b> From<&'b ArchivedPyroValue<'a>> for PyroValue<'a> {
             ArchivedPyroValue::Group(archived_row) => PyroValue::Group(PyroRow::from(archived_row)),
 
             ArchivedPyroValue::List(archived_list) => {
-                let items: Vec<PyroValue<'a>> = archived_list
-                    .iter()
-                    .map(PyroValue::from)
-                    .collect();
+                let items: Vec<PyroValue<'a>> = archived_list.iter().map(PyroValue::from).collect();
                 PyroValue::List(items)
             }
 

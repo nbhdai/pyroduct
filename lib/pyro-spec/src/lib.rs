@@ -343,11 +343,7 @@ impl<'a> PyroSchema<'a> {
     pub fn into_owned(self) -> PyroSchema<'static> {
         PyroSchema {
             documentation: None,
-            fields: self
-                .fields
-                .iter()
-                .map(|f| f.clone().into_owned())
-                .collect(),
+            fields: self.fields.iter().map(|f| f.clone().into_owned()).collect(),
         }
     }
 

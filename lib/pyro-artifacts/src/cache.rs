@@ -646,15 +646,16 @@ impl CacheManager {
 
 pub(crate) fn resolve_dependency_path(dep: &mut Dependency, base: &std::path::Path) {
     if let Dependency::Detailed(detail) = dep
-        && let Some(ref mut p) = detail.path {
-            let path = std::path::Path::new(p.as_str());
-            if path.is_relative() {
-                let absolute = base.join(path);
-                *p = absolute
-                    .canonicalize()
-                    .unwrap_or(absolute)
-                    .to_string_lossy()
-                    .into_owned();
-            }
+        && let Some(ref mut p) = detail.path
+    {
+        let path = std::path::Path::new(p.as_str());
+        if path.is_relative() {
+            let absolute = base.join(path);
+            *p = absolute
+                .canonicalize()
+                .unwrap_or(absolute)
+                .to_string_lossy()
+                .into_owned();
         }
+    }
 }
