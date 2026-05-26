@@ -66,7 +66,7 @@ async fn ensure_index_file(dir: &Path, file_index: usize) -> tokio::io::Result<(
     let log_path = dir.join(format!("{}.pyrolog", file_index));
     let idx_path = dir.join(format!("{}.pyrolog.idx", file_index));
 
-    if !tokio::fs::metadata(&log_path).await.is_ok() {
+    if tokio::fs::metadata(&log_path).await.is_err() {
         return Ok(());
     }
 
@@ -129,12 +129,11 @@ impl LogWal {
         let mut files = Vec::new();
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "pyrolog") {
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    if let Ok(idx) = stem.parse::<usize>() {
-                        files.push(idx);
-                    }
-                }
+            if path.extension().is_some_and(|ext| ext == "pyrolog")
+                && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                && let Ok(idx) = stem.parse::<usize>()
+            {
+                files.push(idx);
             }
         }
         files.sort_unstable();
@@ -383,16 +382,15 @@ impl LogWal {
         let mut entries = tokio::fs::read_dir(&self.dir).await?;
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "pyrolog") {
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    if let Ok(idx) = stem.parse::<usize>() {
-                        // The segment stores entries from idx * capacity to (idx + 1) * capacity - 1.
-                        // If all entries in this segment are strictly less than cutoff, we can delete it.
-                        // We should never delete the active segment being written to.
-                        if idx < self.current_file_index && (idx + 1) * self.capacity <= cutoff {
-                            files_to_delete.push(idx);
-                        }
-                    }
+            if path.extension().is_some_and(|ext| ext == "pyrolog")
+                && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                && let Ok(idx) = stem.parse::<usize>()
+            {
+                // The segment stores entries from idx * capacity to (idx + 1) * capacity - 1.
+                // If all entries in this segment are strictly less than cutoff, we can delete it.
+                // We should never delete the active segment being written to.
+                if idx < self.current_file_index && (idx + 1) * self.capacity <= cutoff {
+                    files_to_delete.push(idx);
                 }
             }
         }
@@ -448,12 +446,11 @@ impl LogWal {
             let mut entries = tokio::fs::read_dir(&self.dir).await?;
             while let Some(entry) = entries.next_entry().await? {
                 let path = entry.path();
-                if path.extension().map_or(false, |ext| ext == "pyrolog") {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        if let Ok(idx) = stem.parse::<usize>() {
-                            remaining_files.push(idx);
-                        }
-                    }
+                if path.extension().is_some_and(|ext| ext == "pyrolog")
+                    && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                    && let Ok(idx) = stem.parse::<usize>()
+                {
+                    remaining_files.push(idx);
                 }
             }
             remaining_files.sort_unstable();
@@ -558,10 +555,10 @@ impl LogManager {
             match handle.await {
                 Ok(res) => res?,
                 Err(join_err) => {
-                    return Err(tokio::io::Error::new(
-                        tokio::io::ErrorKind::Other,
-                        format!("Background task join error: {:?}", join_err),
-                    ));
+                    return Err(tokio::io::Error::other(format!(
+                        "Background task join error: {:?}",
+                        join_err
+                    )));
                 }
             }
         }
@@ -585,12 +582,11 @@ impl LogWalReader {
         let mut files = Vec::new();
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "pyrolog") {
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    if let Ok(idx) = stem.parse::<usize>() {
-                        files.push(idx);
-                    }
-                }
+            if path.extension().is_some_and(|ext| ext == "pyrolog")
+                && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                && let Ok(idx) = stem.parse::<usize>()
+            {
+                files.push(idx);
             }
         }
         files.sort_unstable();
@@ -615,14 +611,14 @@ impl LogWalReader {
         let log_path = self.dir.join(format!("{}.pyrolog", file_index));
         let idx_path = self.dir.join(format!("{}.pyrolog.idx", file_index));
 
-        if !tokio::fs::metadata(&log_path).await.is_ok() {
+        if tokio::fs::metadata(&log_path).await.is_err() {
             return Ok(None);
         }
 
         // Ensure the index file exists and is rebuilt if needed
         ensure_index_file(&self.dir, file_index).await?;
 
-        if !tokio::fs::metadata(&idx_path).await.is_ok() {
+        if tokio::fs::metadata(&idx_path).await.is_err() {
             return Ok(None);
         }
 
@@ -681,22 +677,21 @@ impl LogWalReader {
                 let path = self
                     .dir
                     .join(format!("{}.pyrolog", self.current_file_index));
-                if !tokio::fs::metadata(&path).await.is_ok() {
+                if tokio::fs::metadata(&path).await.is_err() {
                     // Check if there are any higher file indices
                     let mut entries = tokio::fs::read_dir(&self.dir).await?;
                     let mut next_exists = false;
                     let mut min_higher = usize::MAX;
                     while let Some(entry) = entries.next_entry().await? {
                         let p = entry.path();
-                        if p.extension().map_or(false, |ext| ext == "pyrolog") {
-                            if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-                                if let Ok(idx) = stem.parse::<usize>() {
-                                    if idx > self.current_file_index && idx < min_higher {
-                                        min_higher = idx;
-                                        next_exists = true;
-                                    }
-                                }
-                            }
+                        if p.extension().is_some_and(|ext| ext == "pyrolog")
+                            && let Some(stem) = p.file_stem().and_then(|s| s.to_str())
+                            && let Ok(idx) = stem.parse::<usize>()
+                            && idx > self.current_file_index
+                            && idx < min_higher
+                        {
+                            min_higher = idx;
+                            next_exists = true;
                         }
                     }
                     if next_exists {
@@ -819,8 +814,8 @@ mod tests {
         let records = reader.read_all().await.unwrap();
 
         assert_eq!(records.len(), 5);
-        for i in 0..5 {
-            assert_eq!(records[i].row_index, i);
+        for (i, record) in records.iter().enumerate() {
+            assert_eq!(record.row_index, i);
         }
     }
 
@@ -840,8 +835,8 @@ mod tests {
         let records = reader.read_all().await.unwrap();
 
         assert_eq!(records.len(), 5);
-        for i in 0..5 {
-            assert_eq!(records[i].row_index, i);
+        for (i, record) in records.iter().enumerate() {
+            assert_eq!(record.row_index, i);
         }
     }
 

@@ -5,7 +5,7 @@ struct ProcessResult {
 }
 
 #[pyroduct::module(output = ProcessResult)]
-fn call(input: &str) -> anyhow::Result<ProcessResult> {
+fn call(input: &str) -> Result<ProcessResult> {
     Ok(ProcessResult {
         status: "ok".to_string(),
         count: input.len() as u32,

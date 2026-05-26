@@ -252,29 +252,30 @@ macro_rules! bail {
 }
 
 /// Extension trait to convert `Result<T, E>` and `Option<T>` into `Result<T, CapturedError>` with context.
+#[allow(clippy::result_large_err)]
 pub trait Capture<T> {
     /// Adds context to the error, converting it into a `CapturedError`.
     #[track_caller]
-    fn context<C>(self, context: C) -> Result<T, Box<CapturedError>>
+    fn context<C>(self, context: C) -> Result<T, CapturedError>
     where
         C: Display;
 
     /// Adds lazily-evaluated context to the error, converting it into a `CapturedError`.
     #[track_caller]
-    fn with_context<C, F>(self, f: F) -> Result<T, Box<CapturedError>>
+    fn with_context<C, F>(self, f: F) -> Result<T, CapturedError>
     where
         C: Display,
         F: FnOnce() -> C;
 
     /// Alias for `context`.
     #[track_caller]
-    fn capture<C>(self, context: C) -> Result<T, Box<CapturedError>>
+    fn capture<C>(self, context: C) -> Result<T, CapturedError>
     where
         C: Display;
 
     /// Alias for `with_context`.
     #[track_caller]
-    fn with_capture<C, F>(self, f: F) -> Result<T, Box<CapturedError>>
+    fn with_capture<C, F>(self, f: F) -> Result<T, CapturedError>
     where
         C: Display,
         F: FnOnce() -> C;
@@ -285,7 +286,7 @@ where
     E: std::error::Error,
 {
     #[track_caller]
-    fn context<C>(self, context: C) -> Result<T, Box<CapturedError>>
+    fn context<C>(self, context: C) -> Result<T, CapturedError>
     where
         C: Display,
     {
@@ -294,13 +295,12 @@ where
             Err(e) => Err(CapturedError::new(context)
                 .with_source(e)
                 .with_location(std::panic::Location::caller())
-                .with_backtrace(std::backtrace::Backtrace::capture())
-                .into()),
+                .with_backtrace(std::backtrace::Backtrace::capture())),
         }
     }
 
     #[track_caller]
-    fn with_context<C, F>(self, f: F) -> Result<T, Box<CapturedError>>
+    fn with_context<C, F>(self, f: F) -> Result<T, CapturedError>
     where
         C: Display,
         F: FnOnce() -> C,
@@ -310,13 +310,12 @@ where
             Err(e) => Err(CapturedError::new(f())
                 .with_source(e)
                 .with_location(std::panic::Location::caller())
-                .with_backtrace(std::backtrace::Backtrace::capture())
-                .into()),
+                .with_backtrace(std::backtrace::Backtrace::capture())),
         }
     }
 
     #[track_caller]
-    fn capture<C>(self, context: C) -> Result<T, Box<CapturedError>>
+    fn capture<C>(self, context: C) -> Result<T, CapturedError>
     where
         C: Display,
     {
@@ -324,7 +323,7 @@ where
     }
 
     #[track_caller]
-    fn with_capture<C, F>(self, f: F) -> Result<T, Box<CapturedError>>
+    fn with_capture<C, F>(self, f: F) -> Result<T, CapturedError>
     where
         C: Display,
         F: FnOnce() -> C,
@@ -335,7 +334,7 @@ where
 
 impl<T> Capture<T> for Option<T> {
     #[track_caller]
-    fn context<C>(self, context: C) -> Result<T, Box<CapturedError>>
+    fn context<C>(self, context: C) -> Result<T, CapturedError>
     where
         C: Display,
     {
@@ -343,13 +342,12 @@ impl<T> Capture<T> for Option<T> {
             Some(t) => Ok(t),
             None => Err(CapturedError::new(context)
                 .with_location(std::panic::Location::caller())
-                .with_backtrace(std::backtrace::Backtrace::capture())
-                .into()),
+                .with_backtrace(std::backtrace::Backtrace::capture())),
         }
     }
 
     #[track_caller]
-    fn with_context<C, F>(self, f: F) -> Result<T, Box<CapturedError>>
+    fn with_context<C, F>(self, f: F) -> Result<T, CapturedError>
     where
         C: Display,
         F: FnOnce() -> C,
@@ -358,13 +356,12 @@ impl<T> Capture<T> for Option<T> {
             Some(t) => Ok(t),
             None => Err(CapturedError::new(f())
                 .with_location(std::panic::Location::caller())
-                .with_backtrace(std::backtrace::Backtrace::capture())
-                .into()),
+                .with_backtrace(std::backtrace::Backtrace::capture())),
         }
     }
 
     #[track_caller]
-    fn capture<C>(self, context: C) -> Result<T, Box<CapturedError>>
+    fn capture<C>(self, context: C) -> Result<T, CapturedError>
     where
         C: Display,
     {
@@ -372,7 +369,7 @@ impl<T> Capture<T> for Option<T> {
     }
 
     #[track_caller]
-    fn with_capture<C, F>(self, f: F) -> Result<T, Box<CapturedError>>
+    fn with_capture<C, F>(self, f: F) -> Result<T, CapturedError>
     where
         C: Display,
         F: FnOnce() -> C,

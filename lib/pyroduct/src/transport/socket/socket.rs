@@ -155,7 +155,9 @@ impl PyroSocket {
     /// NOTE: This currently only affects the handle. Background tasks use the settings
     /// provided at creation.
     pub fn with_settings(mut self, settings: PyroStreamSettings) -> Self {
-        Arc::get_mut(&mut self.inner).map(|i| i.settings = settings);
+        if let Some(i) = Arc::get_mut(&mut self.inner) {
+            i.settings = settings;
+        }
         self
     }
 

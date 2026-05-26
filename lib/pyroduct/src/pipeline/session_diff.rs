@@ -523,9 +523,9 @@ impl SessionDiffPipeline {
             let len = steps.len();
             let mut prior_in = Vec::with_capacity(len - 1);
             let mut prior_out = Vec::with_capacity(len - 1);
-            for i in 0..(len - 1) {
-                prior_in.push(steps[i].0.clone());
-                prior_out.push(steps[i].1.clone());
+            for step in steps.iter().take(len - 1) {
+                prior_in.push(step.0.clone());
+                prior_out.push(step.1.clone());
             }
             let input = steps[len - 1].0.clone();
             let success = steps[len - 1].1.clone();

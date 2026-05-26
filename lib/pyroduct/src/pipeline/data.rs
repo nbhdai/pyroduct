@@ -240,6 +240,10 @@ impl DataManager {
         Ok(())
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Returns the total number of rows across all stages:
     /// Parquet files + IPC files + current in-memory buffer.
     pub fn len(&self) -> usize {
