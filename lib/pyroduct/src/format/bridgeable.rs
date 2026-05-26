@@ -75,7 +75,7 @@ pub trait Bridgeable: UserHeaderValues + Sized {
     }
 
     /// Parse a borrowed `PyroRef` without taking ownership.
-    /// Only available for zero-copy formats (rkyv, zerovec, …).
+    /// Only available for zero-copy formats (rkyv, …).
     fn expose_view<'a>(
         vec: PyroRef<'a>,
     ) -> Result<

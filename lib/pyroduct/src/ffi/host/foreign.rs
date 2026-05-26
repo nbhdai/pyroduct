@@ -44,14 +44,14 @@ struct ForeignMethod {
 }
 
 impl ForeignMethod {
-    fn new(method: &MethodExport) -> Result<Self, CapturedError> {
+    fn new(method: &MethodExport) -> Result<Self, Box<CapturedError>> {
         if method.name.is_null() {
-            return Err(CapturedError::new(
-                "Found a method with an empty name (null pointer)",
-            ));
+            return Err(
+                CapturedError::new("Found a method with an empty name (null pointer)").into(),
+            );
         }
         if method.name_len == 0 {
-            return Err(CapturedError::new("Found a method with an empty name"));
+            return Err(CapturedError::new("Found a method with an empty name").into());
         }
         let name_bytes = unsafe { slice::from_raw_parts(method.name, method.name_len) };
         let func_name = std::str::from_utf8(name_bytes).map_err(|err| {
@@ -74,11 +74,14 @@ impl ForeignClass {
         self.methods.iter().map(|m| m.name.as_str())
     }
 
+    /// # Safety
+    ///
+    /// ClassExport needs to be correctly formed.
     pub unsafe fn from_export(
         lib_name: String,
         library: Arc<Library>,
         export: ClassExport,
-    ) -> Result<Self, CapturedError> {
+    ) -> Result<Self, Box<CapturedError>> {
         unsafe { Self::from_export_inter(lib_name, Some(library), export) }
     }
 
@@ -86,9 +89,9 @@ impl ForeignClass {
         lib_name: String,
         library: Option<Arc<Library>>,
         export: ClassExport,
-    ) -> Result<Self, CapturedError> {
+    ) -> Result<Self, Box<CapturedError>> {
         let name = if export.name.is_null() || export.name_len == 0 {
-            return Err(CapturedError::new("Empty name, unable to link"));
+            return Err(CapturedError::new("Empty name, unable to link").into());
         } else {
             let name_bytes = unsafe { slice::from_raw_parts(export.name, export.name_len) };
             let name_str = std::str::from_utf8(name_bytes).map_err(|err| {
@@ -106,7 +109,7 @@ impl ForeignClass {
         let methods = methods_slice
             .iter()
             .map(ForeignMethod::new)
-            .collect::<Result<Vec<_>, CapturedError>>()?;
+            .collect::<Result<Vec<_>, Box<CapturedError>>>()?;
 
         Ok(Self {
             name,

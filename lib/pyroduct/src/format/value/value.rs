@@ -150,17 +150,17 @@ impl<'a> PrimitiveValueList<'a> {
     }
 
     pub fn is_number(&self) -> bool {
-        match self {
-            PrimitiveValueList::U8(_) => true,
-            PrimitiveValueList::U16(_) => true,
-            PrimitiveValueList::U32(_) => true,
-            PrimitiveValueList::U64(_) => true,
-            PrimitiveValueList::I8(_) => true,
-            PrimitiveValueList::I16(_) => true,
-            PrimitiveValueList::I32(_) => true,
-            PrimitiveValueList::I64(_) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            PrimitiveValueList::U8(_)
+                | PrimitiveValueList::U16(_)
+                | PrimitiveValueList::U32(_)
+                | PrimitiveValueList::U64(_)
+                | PrimitiveValueList::I8(_)
+                | PrimitiveValueList::I16(_)
+                | PrimitiveValueList::I32(_)
+                | PrimitiveValueList::I64(_)
+        )
     }
 
     pub fn iter_floats(&self) -> Option<PrimitiveFloatIterator<'_>> {
@@ -173,12 +173,10 @@ impl<'a> PrimitiveValueList<'a> {
     }
 
     pub fn is_float(&self) -> bool {
-        match self {
-            PrimitiveValueList::F16(_) => true,
-            PrimitiveValueList::F32(_) => true,
-            PrimitiveValueList::F64(_) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            PrimitiveValueList::F16(_) | PrimitiveValueList::F32(_) | PrimitiveValueList::F64(_)
+        )
     }
 
     /// Returns an iterator that yields all values as `i128`.

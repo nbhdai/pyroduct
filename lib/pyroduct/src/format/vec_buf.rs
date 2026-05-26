@@ -733,6 +733,10 @@ impl<'a> PyroRef<'a> {
 
     ///
     /// The slice must contain the 16-byte header followed by the payload.
+    ///
+    /// # Safety
+    ///
+    /// The other side needs to be a fully allocated pyroref
     pub unsafe fn try_from_ptr(data: PyroRefPtr) -> Result<Self, PyroError> {
         // Validate the raw pointer and header fields
         if let Err(parse_error) = unsafe { PyroParser::check_raw(data.0) } {

@@ -165,7 +165,7 @@ where
 // PyroFormat — base trait for ALL formats (owned deserialization)
 // =============================================================================
 
-/// Base format trait implemented by every pyro format (JSON, rkyv, zerovec, …).
+/// Base format trait implemented by every pyro format (JSON, rkyv, …).
 ///
 /// Provides:
 /// - Serialization (`ship`) via `Writer`

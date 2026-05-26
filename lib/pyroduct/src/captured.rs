@@ -38,6 +38,9 @@ pub fn library() -> Option<&'static LibraryInfo<'static>> {
     APP_IDENTITY.get().map(|l| &l.0)
 }
 
+/// # Safety
+///
+/// Len needs to be valid for the full call, returns a pointer to the data.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn library_json(len: *mut usize) -> *const u8 {
     // 1. Retrieve the encoded JSON string from the global OnceLock
@@ -164,10 +167,9 @@ fn predict_captured_error_size(err: &CapturedError) -> usize {
     size += err.file.len();
     size += MAX_U32_DIGITS * 2; // line + column
 
-    match &err.error {
-        Some(s) => size += s.len() + 2, // + quotes
-        None => {}                      // null
-    }
+    if let Some(s) = &err.error {
+        size += s.len() + 2
+    } // + quotes
 
     if let Some(lib) = &err.library {
         // Keys overhead: {"meta":"","name":"","version":"","authors":"","filename":""}
@@ -253,26 +255,26 @@ macro_rules! bail {
 pub trait Capture<T> {
     /// Adds context to the error, converting it into a `CapturedError`.
     #[track_caller]
-    fn context<C>(self, context: C) -> Result<T, CapturedError>
+    fn context<C>(self, context: C) -> Result<T, Box<CapturedError>>
     where
         C: Display;
 
     /// Adds lazily-evaluated context to the error, converting it into a `CapturedError`.
     #[track_caller]
-    fn with_context<C, F>(self, f: F) -> Result<T, CapturedError>
+    fn with_context<C, F>(self, f: F) -> Result<T, Box<CapturedError>>
     where
         C: Display,
         F: FnOnce() -> C;
 
     /// Alias for `context`.
     #[track_caller]
-    fn capture<C>(self, context: C) -> Result<T, CapturedError>
+    fn capture<C>(self, context: C) -> Result<T, Box<CapturedError>>
     where
         C: Display;
 
     /// Alias for `with_context`.
     #[track_caller]
-    fn with_capture<C, F>(self, f: F) -> Result<T, CapturedError>
+    fn with_capture<C, F>(self, f: F) -> Result<T, Box<CapturedError>>
     where
         C: Display,
         F: FnOnce() -> C;
@@ -283,7 +285,7 @@ where
     E: std::error::Error,
 {
     #[track_caller]
-    fn context<C>(self, context: C) -> Result<T, CapturedError>
+    fn context<C>(self, context: C) -> Result<T, Box<CapturedError>>
     where
         C: Display,
     {
@@ -292,12 +294,13 @@ where
             Err(e) => Err(CapturedError::new(context)
                 .with_source(e)
                 .with_location(std::panic::Location::caller())
-                .with_backtrace(std::backtrace::Backtrace::capture())),
+                .with_backtrace(std::backtrace::Backtrace::capture())
+                .into()),
         }
     }
 
     #[track_caller]
-    fn with_context<C, F>(self, f: F) -> Result<T, CapturedError>
+    fn with_context<C, F>(self, f: F) -> Result<T, Box<CapturedError>>
     where
         C: Display,
         F: FnOnce() -> C,
@@ -307,12 +310,13 @@ where
             Err(e) => Err(CapturedError::new(f())
                 .with_source(e)
                 .with_location(std::panic::Location::caller())
-                .with_backtrace(std::backtrace::Backtrace::capture())),
+                .with_backtrace(std::backtrace::Backtrace::capture())
+                .into()),
         }
     }
 
     #[track_caller]
-    fn capture<C>(self, context: C) -> Result<T, CapturedError>
+    fn capture<C>(self, context: C) -> Result<T, Box<CapturedError>>
     where
         C: Display,
     {
@@ -320,7 +324,7 @@ where
     }
 
     #[track_caller]
-    fn with_capture<C, F>(self, f: F) -> Result<T, CapturedError>
+    fn with_capture<C, F>(self, f: F) -> Result<T, Box<CapturedError>>
     where
         C: Display,
         F: FnOnce() -> C,
@@ -331,7 +335,7 @@ where
 
 impl<T> Capture<T> for Option<T> {
     #[track_caller]
-    fn context<C>(self, context: C) -> Result<T, CapturedError>
+    fn context<C>(self, context: C) -> Result<T, Box<CapturedError>>
     where
         C: Display,
     {
@@ -339,12 +343,13 @@ impl<T> Capture<T> for Option<T> {
             Some(t) => Ok(t),
             None => Err(CapturedError::new(context)
                 .with_location(std::panic::Location::caller())
-                .with_backtrace(std::backtrace::Backtrace::capture())),
+                .with_backtrace(std::backtrace::Backtrace::capture())
+                .into()),
         }
     }
 
     #[track_caller]
-    fn with_context<C, F>(self, f: F) -> Result<T, CapturedError>
+    fn with_context<C, F>(self, f: F) -> Result<T, Box<CapturedError>>
     where
         C: Display,
         F: FnOnce() -> C,
@@ -353,12 +358,13 @@ impl<T> Capture<T> for Option<T> {
             Some(t) => Ok(t),
             None => Err(CapturedError::new(f())
                 .with_location(std::panic::Location::caller())
-                .with_backtrace(std::backtrace::Backtrace::capture())),
+                .with_backtrace(std::backtrace::Backtrace::capture())
+                .into()),
         }
     }
 
     #[track_caller]
-    fn capture<C>(self, context: C) -> Result<T, CapturedError>
+    fn capture<C>(self, context: C) -> Result<T, Box<CapturedError>>
     where
         C: Display,
     {
@@ -366,7 +372,7 @@ impl<T> Capture<T> for Option<T> {
     }
 
     #[track_caller]
-    fn with_capture<C, F>(self, f: F) -> Result<T, CapturedError>
+    fn with_capture<C, F>(self, f: F) -> Result<T, Box<CapturedError>>
     where
         C: Display,
         F: FnOnce() -> C,

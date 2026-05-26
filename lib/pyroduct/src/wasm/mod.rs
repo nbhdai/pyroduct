@@ -107,9 +107,7 @@ fn get_output_session_registry()
     lock
 }
 
-/// 1. Input Management (Host -> WASM)
-/// -------------------------------------------------------------------------
-
+/// Allocates an input and provides the pointer
 #[unsafe(no_mangle)]
 pub extern "C" fn new_input(capacity: u32) -> *mut u8 {
     trace!(capacity, "new_input");
@@ -158,7 +156,7 @@ pub fn get_input(ptr: *mut u8) -> Option<PyroVec> {
 }
 
 /// Lend a read-only pointer to data owned inside wasm, for the host to read.
-pub unsafe fn lend(vec: &PyroVec) -> *const u8 {
+pub fn lend(vec: &PyroVec) -> *const u8 {
     let raw = vec.as_raw_slice();
     raw.as_ptr()
 }
@@ -198,7 +196,7 @@ pub extern "C" fn new_session_input(session_id: u32, capacity: u32) -> *mut u8 {
     let mut vec = PyroVec::with_capacity(capacity as usize);
     let raw = vec.as_raw_slice_mut();
     let ptr = raw.as_mut_ptr();
-    let vecs = map.entry(session_id).or_insert_with(Vec::new);
+    let vecs = map.entry(session_id).or_default();
     vecs.push(vec);
     ptr
 }
@@ -212,7 +210,7 @@ pub extern "C" fn grow_session_input(session_id: u32, new_capacity: u32) -> *mut
         *registry = Some(HashMap::new());
     }
     let map = registry.as_mut().unwrap();
-    let vecs = map.entry(session_id).or_insert_with(Vec::new);
+    let vecs = map.entry(session_id).or_default();
 
     if let Some(last) = vecs.last_mut() {
         let current_cap = last.capacity();
@@ -242,7 +240,7 @@ pub extern "C" fn new_session_output(session_id: u32, capacity: u32) -> *mut u8 
     let mut vec = PyroVec::with_capacity(capacity as usize);
     let raw = vec.as_raw_slice_mut();
     let ptr = raw.as_mut_ptr();
-    let vecs = map.entry(session_id).or_insert_with(Vec::new);
+    let vecs = map.entry(session_id).or_default();
     vecs.push(vec);
     ptr
 }
@@ -256,7 +254,7 @@ pub extern "C" fn grow_session_output(session_id: u32, new_capacity: u32) -> *mu
         *registry = Some(HashMap::new());
     }
     let map = registry.as_mut().unwrap();
-    let vecs = map.entry(session_id).or_insert_with(Vec::new);
+    let vecs = map.entry(session_id).or_default();
 
     if let Some(last) = vecs.last_mut() {
         let current_cap = last.capacity();
@@ -427,18 +425,7 @@ where
             return to_output(err.encode());
         }
     };
-    let input_row = PyroRow::from(&*input_row);
-    let input = match input_row.try_into() {
-        Ok(input) => input,
-        Err(_) => {
-            error!("Unable to extract input from PyroRow");
-            let result = Err(CapturedError::new("Unable to extract input"));
-            return to_output(match encode_result(result) {
-                Ok(r) => r,
-                Err(r) => r,
-            });
-        }
-    };
+    let input = PyroRow::from(&*input_row);
 
     register_ffi_panic_hook();
 
@@ -467,7 +454,7 @@ where
     let mut sessions_guard = get_input_session_registry();
     let sessions = sessions_guard.as_mut().unwrap();
 
-    let inputs = sessions.entry(session_id).or_insert_with(Vec::new);
+    let inputs = sessions.entry(session_id).or_default();
 
     if inputs.is_empty() {
         error!(session_id, "The input is missing for session");
@@ -555,7 +542,7 @@ where
     let last = sessions.last().unwrap();
     tracing::debug!(header = ?*last.header(), "wasm_row_main_session: before return");
     // Return pointer to PyroInner (the allocation base that host get_ref expects)
-    last.raw_ptr() as *const u8
+    last.raw_ptr()
 }
 
 pub fn wasm_row_main_session_diff<'a, O, F>(session_id: u32, func: F) -> *const u8
@@ -569,8 +556,8 @@ where
     let input_sessions = input_sessions_guard.as_mut().unwrap();
     let output_sessions = output_sessions_guard.as_mut().unwrap();
 
-    let inputs = input_sessions.entry(session_id).or_insert_with(Vec::new);
-    let outputs = output_sessions.entry(session_id).or_insert_with(Vec::new);
+    let inputs = input_sessions.entry(session_id).or_default();
+    let outputs = output_sessions.entry(session_id).or_default();
 
     if outputs.len() + 1 != inputs.len() {
         error!(
@@ -686,7 +673,7 @@ where
     let sessions = output_sessions.entry(session_id).or_default();
     sessions.push(result);
     // Return pointer to PyroInner (the allocation base that host get_ref expects)
-    sessions.last().unwrap().raw_ptr() as *const u8
+    sessions.last().unwrap().raw_ptr()
 }
 
 fn encode_result<'a>(result: Result<PyroRow<'a>, CapturedError>) -> Result<PyroVec, PyroVec> {
@@ -697,8 +684,7 @@ fn encode_result<'a>(result: Result<PyroRow<'a>, CapturedError>) -> Result<PyroV
         }
         Err(err) => {
             error!(?err, "encode_result: result is Err");
-            let captured: CapturedError = err.into();
-            let mut vec = captured.encode();
+            let mut vec = err.encode();
             vec.set_status(DataStatus::RkyvError);
             return Err(vec);
         }
@@ -744,7 +730,7 @@ impl<T> Client<T> {
         };
 
         // Execute the registration via the provided callback (Host Import)
-        let view_ptr = unsafe { lend(&config_buf) };
+        let view_ptr = lend(&config_buf);
         let result_raw = register_func(view_ptr);
         let result_vec = match get_input(result_raw) {
             Some(result_vec) => result_vec,
@@ -785,7 +771,7 @@ impl<T> Client<T> {
         };
 
         // Execute the registration via the provided callback (Host Import)
-        let view_ptr = unsafe { lend(&config_buf) };
+        let view_ptr = lend(&config_buf);
         let result_raw = register_func(view_ptr);
         let result_vec = match get_input(result_raw) {
             Some(result_vec) => result_vec,
@@ -828,7 +814,7 @@ impl<T> Client<T> {
             None => PyroVec::ok(),
         };
 
-        let result_ptr = (func)(unsafe { lend(&self.config_buf) }, unsafe { lend(&input) });
+        let result_ptr = (func)(lend(&self.config_buf), lend(&input));
         let result_vec = match get_input(result_ptr) {
             Some(result_vec) => result_vec,
             None => {
@@ -872,7 +858,7 @@ impl<T> Client<T> {
             None => PyroVec::ok(),
         };
 
-        let result_ptr = (func)(unsafe { lend(&self.config_buf) }, unsafe { lend(&input) });
+        let result_ptr = (func)(lend(&self.config_buf), lend(&input));
         let result_vec = match get_input(result_ptr) {
             Some(result_vec) => result_vec,
             None => {

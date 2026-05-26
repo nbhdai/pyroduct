@@ -24,7 +24,7 @@ mod tests {
     use std::ptr;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
-    const NAME: &'static str = "TestName";
+    const NAME: &str = "TestName";
 
     /// Holds the actual flags for a specific test instance.
     /// This will be Boxed and passed as the `state` (*mut c_void) of the PyroObject.
@@ -37,7 +37,7 @@ mod tests {
     // Thread local storage to safely pass the state pointer into `mock_init`
     // without requiring argument threading. This works perfectly with parallel cargo tests.
     thread_local! {
-        static NEXT_OBJ_STATE: RefCell<Option<*mut c_void>> = RefCell::new(None);
+        static NEXT_OBJ_STATE: RefCell<Option<*mut c_void>> = const { RefCell::new(None) };
     }
 
     unsafe extern "C" fn mock_dropper(ptr: *mut c_void) {
