@@ -73,15 +73,15 @@ pub fn test_config() -> PyroductConfig {
 
     // Ensure the pyroduct dependency path is absolute before we pass it to
     // a CacheManager running inside a temporary directory.
-    if let Some(Dependency::Detailed(detail)) = &mut config.pyroduct {
-        if let Some(path) = &mut detail.path {
-            let absolute_path = std::path::Path::new(&root).join(&path);
-            *path = absolute_path
-                .canonicalize()
-                .unwrap_or(absolute_path)
-                .to_string_lossy()
-                .into_owned();
-        }
+    if let Some(Dependency::Detailed(detail)) = &mut config.pyroduct
+        && let Some(path) = &mut detail.path
+    {
+        let absolute_path = std::path::Path::new(&root).join(&path);
+        *path = absolute_path
+            .canonicalize()
+            .unwrap_or(absolute_path)
+            .to_string_lossy()
+            .into_owned();
     }
 
     PyroductConfig {

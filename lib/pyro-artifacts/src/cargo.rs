@@ -420,13 +420,13 @@ serde = { version = "1.0", features = ["derive"] }
 
         // Check Host (converted to optional)
         match deps.get("tokio").unwrap() {
-            Dependency::Detailed(d) => assert_eq!(d.optional, true),
+            Dependency::Detailed(d) => assert!(d.optional),
             _ => panic!("tokio should be detailed"),
         }
 
         // Check Shared (remains not optional)
         match deps.get("serde").unwrap() {
-            Dependency::Detailed(d) => assert_eq!(d.optional, false),
+            Dependency::Detailed(d) => assert!(!d.optional),
             _ => panic!("serde should be detailed"),
         }
 
