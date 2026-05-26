@@ -162,6 +162,7 @@
               microvmTests.bin
               miriTests.bin
               rustTests.bin
+              rustTests.prepare
               pkgs.jq
               pkgs.bzip2
             ]

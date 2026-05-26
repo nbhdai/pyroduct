@@ -1,6 +1,15 @@
 { pkgs, craneLib, commonArgs, pyroduct }:
 
 let
+  prepare = pkgs.writeShellScriptBin "prepare-pyro" ''
+    pyroduct clean ./capabilities
+    pyroduct ship ./capabilities -d
+    pyroduct expand ./capabilities
+    pyroduct clean ./modules
+    pyroduct ship ./modules -d
+    pyroduct expand ./modules
+  '';
+
   test-rust = pkgs.writeShellScriptBin "test-rust" ''
     cargo test --manifest-path lib/Cargo.toml --all-features "$@"
   '';
@@ -19,7 +28,13 @@ in
 
     checkPhase = ''
       export RUST_BACKTRACE=1
-      pyroduct clean ./capabilities && pyroduct ship ./capabilities -d && pyroduct expand ./capabilities && test-rust
+      pyroduct clean ./capabilities
+      pyroduct ship ./capabilities -d
+      pyroduct expand ./capabilities
+      pyroduct clean ./modules
+      pyroduct ship ./modules -d
+      pyroduct expand ./modules
+      test-rust
     '';
 
     buildPhase = "true";
@@ -27,4 +42,5 @@ in
   });
 
   bin = test-rust;
+  prepare = prepare;
 }
