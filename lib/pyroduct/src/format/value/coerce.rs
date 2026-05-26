@@ -651,6 +651,7 @@ mod tests {
         assert_eq!(42i32.coerce(), PyroValue::I32(42));
     }
 
+    #[allow(clippy::approx_constant)]
     #[test]
     fn test_coerce_f64() {
         assert_eq!(3.14f64.coerce(), PyroValue::F64(3.14));
@@ -765,6 +766,7 @@ mod tests {
         );
     }
 
+    #[allow(clippy::approx_constant)]
     #[test]
     fn test_f64_to_i32_lossy() {
         let x: f64 = 3.14;
@@ -974,6 +976,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::approx_constant)]
     #[test]
     fn test_struct_coerce_to_schema_type_repair() {
         let schema = PyroSchema::new(vec![
@@ -1001,6 +1004,7 @@ mod tests {
         assert_eq!(row.get("label"), None);
     }
 
+    #[allow(clippy::approx_constant)]
     #[test]
     fn test_struct_coerce_missing_nullable() {
         let schema = PyroSchema::new(vec![

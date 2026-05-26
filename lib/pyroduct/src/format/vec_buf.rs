@@ -596,7 +596,8 @@ impl From<PyroView> for PyroViewPtr {
 /// * `wasm_memory` - The entire available memory buffer.
 /// * `offset` - The index into `wasm_memory` where the `PyroInner` struct begins.
 ///
-/// SAFETY: The caller needs to own the memory and the counter for this. It can only drop once the counter is 0 again.
+/// # Safety
+/// The caller needs to own the memory and the counter for this. It can only drop once the counter is 0 again.
 pub unsafe fn make_view(
     counter: &AtomicU32,
     reference: PyroRef<'_>,

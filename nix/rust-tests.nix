@@ -24,7 +24,7 @@ in
 
     doCheck = true;
     
-    nativeBuildInputs = (commonArgs.nativeBuildInputs or []) ++ [ pyroduct test-rust ];
+    nativeBuildInputs = (commonArgs.nativeBuildInputs or []) ++ [ pyroduct test-rust pkgs.cargo-expand ];
 
     checkPhase = ''
       export RUST_BACKTRACE=1

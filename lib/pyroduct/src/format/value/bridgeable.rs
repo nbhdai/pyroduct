@@ -69,7 +69,7 @@ mod tests {
             vec.status(),
             Ok(crate::format::header::DataStatus::RkyvValid)
         );
-        assert!(vec.len() > 0);
+        assert!(!vec.is_empty());
 
         // Expose
         let typed = PyroRowOwned::expose(vec.view()).expect("expose failed");

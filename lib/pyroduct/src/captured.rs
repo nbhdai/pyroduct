@@ -39,7 +39,7 @@ pub fn library() -> Option<&'static LibraryInfo<'static>> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn library_json(len: *mut usize) -> *const u8 {
+pub unsafe extern "C" fn library_json(len: *mut usize) -> *const u8 {
     // 1. Retrieve the encoded JSON string from the global OnceLock
     // If it hasn't been set yet, we return an empty result.
     let json_str = match APP_IDENTITY.get() {

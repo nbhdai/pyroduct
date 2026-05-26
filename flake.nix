@@ -165,6 +165,7 @@
               rustTests.prepare
               pkgs.jq
               pkgs.bzip2
+              pkgs.cargo-expand
             ]
             ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.valgrind ];
             RUST_SRC_PATH = "${wasmToolchain}/lib/rustlib/src/rust/library";

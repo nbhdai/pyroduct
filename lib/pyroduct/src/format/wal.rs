@@ -148,11 +148,10 @@ impl<W: WalWriterInner> WalWriter<W> {
     }
 
     pub fn into_inner(self) -> W {
-        let w = match self.wal_writer.into_inner() {
+        match self.wal_writer.into_inner() {
             Ok(inner) => inner,
             Err(e) => panic!("failed to flush wal writer: {e}"),
-        };
-        w
+        }
     }
 }
 
@@ -453,10 +452,10 @@ impl WalManager {
             match handle.await {
                 Ok(res) => res?,
                 Err(join_err) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("Background task join error during rotation: {:?}", join_err),
-                    ));
+                    return Err(io::Error::other(format!(
+                        "Background task join error during rotation: {:?}",
+                        join_err
+                    )));
                 }
             }
         }
@@ -517,10 +516,10 @@ impl WalManager {
             match handle.await {
                 Ok(res) => res?,
                 Err(join_err) => {
-                    return Err(tokio::io::Error::new(
-                        tokio::io::ErrorKind::Other,
-                        format!("Background task join error: {:?}", join_err),
-                    ));
+                    return Err(tokio::io::Error::other(format!(
+                        "Background task join error: {:?}",
+                        join_err
+                    )));
                 }
             }
         }
@@ -642,12 +641,9 @@ mod tests {
         let frames: Vec<_> = reader.frames().collect();
 
         assert_eq!(frames.len(), 5);
-        for i in 0..5 {
-            assert_eq!(frames[i].row_index, i);
-            assert_eq!(
-                frames[i].packet.as_slice(),
-                format!("data {}", i).as_bytes()
-            );
+        for (i, frame) in frames.iter().enumerate() {
+            assert_eq!(frame.row_index, i);
+            assert_eq!(frame.packet.as_slice(), format!("data {}", i).as_bytes());
         }
     }
 
@@ -823,12 +819,9 @@ mod tests {
         let reader1 = WalReader::open(&base_path1).unwrap();
         let frames1: Vec<_> = reader1.frames().collect();
         assert_eq!(frames1.len(), 3);
-        for i in 0..3 {
-            assert_eq!(frames1[i].row_index, i);
-            assert_eq!(
-                frames1[i].packet.as_slice(),
-                format!("rec {}", i).as_bytes()
-            );
+        for (i, frame) in frames1.iter().enumerate() {
+            assert_eq!(frame.row_index, i);
+            assert_eq!(frame.packet.as_slice(), format!("rec {}", i).as_bytes());
         }
 
         // Verify second segment
