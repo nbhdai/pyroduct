@@ -72,6 +72,14 @@ pub struct SessionDiffPipeline {
 }
 
 impl SessionDiffPipeline {
+    pub fn next_session_id(&self) -> u32 {
+        let mut id = self.output_manager.len() as u32;
+        while self.active_sessions.contains_key(&id) {
+            id += 1;
+        }
+        id
+    }
+
     async fn get_or_open_session(
         &mut self,
         session_id: u32,
@@ -207,13 +215,11 @@ impl SessionDiffPipeline {
 
         match self.call(session_id, input).await {
             Ok(res) => {
-                let row = match res {
-                    SessionResult::Continue(r) => r,
-                    SessionResult::End(r) => r,
-                    SessionResult::Terminate => PyroRow::empty(),
+                let (row, logs) = match res {
+                    SessionResult::Continue { result, logs } => (result, logs),
+                    SessionResult::End { result, logs } => (result, logs),
+                    SessionResult::Terminate { logs } => (PyroRow::empty(), logs),
                 };
-
-                let logs = self.step.unpack_logs();
                 let record = SessionDiffExecutionRecord::Success {
                     row_index,
                     prior_input: prior_inputs
@@ -310,12 +316,12 @@ impl SessionDiffPipeline {
 
         // PERSIST STATUS
         match &res {
-            Ok(SessionResult::Continue(_)) => {
+            Ok(SessionResult::Continue { .. }) => {
                 let _ = self
                     .output_manager
                     .set_session_status(session_id as usize, "active");
             }
-            Ok(SessionResult::End(_)) | Ok(SessionResult::Terminate) => {
+            Ok(SessionResult::End { .. }) | Ok(SessionResult::Terminate { .. }) => {
                 let _ = self
                     .output_manager
                     .set_session_status(session_id as usize, "succeeded");
@@ -328,10 +334,10 @@ impl SessionDiffPipeline {
         }
 
         let output_row = match &res {
-            Ok(SessionResult::Continue(r)) => {
+            Ok(SessionResult::Continue { result: r, .. }) => {
                 crate::format::value::PyroValue::Group(r.clone().into_owned())
             }
-            Ok(SessionResult::End(r)) => {
+            Ok(SessionResult::End { result: r, .. }) => {
                 crate::format::value::PyroValue::Group(r.clone().into_owned())
             }
             _ => crate::format::value::PyroValue::Null,
@@ -395,7 +401,7 @@ impl SessionDiffPipeline {
         }
 
         match &res {
-            Ok(SessionResult::End(_)) | Ok(SessionResult::Terminate) => {
+            Ok(SessionResult::End { .. }) | Ok(SessionResult::Terminate { .. }) => {
                 if let Err(e) = self.rollup_and_cleanup_session(session_id).await {
                     tracing::error!(
                         "Failed to rollup and cleanup session {}: {:?}",

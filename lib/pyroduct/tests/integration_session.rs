@@ -94,7 +94,7 @@ async fn test_session_lifecycle() {
         .expect("Session call turn 1 should succeed");
 
     match result1 {
-        SessionResult::Continue(row) => {
+        SessionResult::Continue { result: row, .. } => {
             assert_eq!(row.get_str("message").unwrap(), "Hello! Turn 1");
         }
         other => panic!("Expected Continue, got {:?}", other),
@@ -108,7 +108,7 @@ async fn test_session_lifecycle() {
         .expect("Session call turn 2 should succeed");
 
     match result2 {
-        SessionResult::End(row) => {
+        SessionResult::End { result: row, .. } => {
             assert_eq!(row.get_str("message").unwrap(), "Goodbye! Turn 2");
         }
         other => panic!("Expected End, got {:?}", other),
@@ -122,7 +122,7 @@ async fn test_session_lifecycle() {
         .expect("Session call turn 3 should succeed");
 
     match result3 {
-        SessionResult::Terminate => {}
+        SessionResult::Terminate { .. } => {}
         other => panic!("Expected Terminate, got {:?}", other),
     }
 

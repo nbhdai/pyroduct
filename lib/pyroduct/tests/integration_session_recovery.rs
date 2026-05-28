@@ -132,7 +132,7 @@ async fn test_session_recovery_lifecycle() {
         .await
         .expect("Call 1 should succeed");
 
-    assert!(matches!(result1, SessionResult::Continue(_)));
+    assert!(matches!(result1, SessionResult::Continue { .. }));
 
     // Verify state is "active" in SQLite status
     let status_active = pipeline
@@ -166,7 +166,7 @@ async fn test_session_recovery_lifecycle() {
         .await
         .expect("Call 2 should succeed");
 
-    assert!(matches!(result2, SessionResult::End(_)));
+    assert!(matches!(result2, SessionResult::End { .. }));
 
     // Verify state is "succeeded" in SQLite status
     let status_success = pipeline
@@ -347,7 +347,7 @@ async fn test_session_diff_recovery_lifecycle() {
         .await
         .expect("Call 1 should succeed");
 
-    assert!(matches!(result1, SessionResult::Continue(_)));
+    assert!(matches!(result1, SessionResult::Continue { .. }));
 
     // Verify state is "active" in SQLite status
     let status_active = pipeline
@@ -383,7 +383,7 @@ async fn test_session_diff_recovery_lifecycle() {
         .await
         .expect("Call 2 should succeed");
 
-    assert!(matches!(result2, SessionResult::End(_)));
+    assert!(matches!(result2, SessionResult::End { .. }));
 
     // Verify state is "succeeded" in SQLite status
     let status_success = pipeline

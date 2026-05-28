@@ -8,7 +8,7 @@ use clap::ValueEnum;
 use fs_err as fs;
 
 use pyro_artifacts::cache::CacheManager;
-use pyroduct::pipeline::pipeline::LoadedPipelineConfig;
+use pyroduct::pipeline::factory::LoadedPipelineConfig;
 use pyroduct::{
     PyroRow,
     format::value::arrow::PreBatch,

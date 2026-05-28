@@ -160,7 +160,7 @@
           // {
             packages = [
               wasmToolchain
-              pyroduct
+              # pyroduct
               microvmTests.bin
               miriTests.bin
               rustTests.bin

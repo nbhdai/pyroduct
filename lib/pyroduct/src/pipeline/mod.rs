@@ -1,14 +1,16 @@
 pub mod data;
+pub mod factory;
 pub mod normal;
-pub mod pipeline;
+pub mod repository;
 pub mod session;
 pub mod session_diff;
 
 #[cfg(feature = "sql")]
 pub mod sql;
 
+pub use factory::{PipelineConfig, PipelineFactory};
 pub use normal::{ExecutionRecord, Failure, Pipeline, PipelinePool};
-pub use pipeline::{PipelineConfig, PipelineFactory};
+pub use repository::PlaybookRepository;
 use thiserror::Error;
 
 use crate::PyroError;

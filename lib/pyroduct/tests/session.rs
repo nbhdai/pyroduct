@@ -81,13 +81,13 @@ async fn test_multiple_sessions_isolation() {
     let res_a = pipeline.call(id_a, &input_a).await.unwrap();
     let res_b = pipeline.call(id_b, &input_b).await.unwrap();
 
-    if let SessionResult::Continue(row) = res_a {
+    if let SessionResult::Continue { result: row, .. } = res_a {
         assert_eq!(row.get_str("message").unwrap(), "Hello! Turn 1");
     } else {
         panic!("A should continue")
     }
 
-    if let SessionResult::Continue(row) = res_b {
+    if let SessionResult::Continue { result: row, .. } = res_b {
         assert_eq!(row.get_str("message").unwrap(), "Hello! Turn 1");
     } else {
         panic!("B should continue")
@@ -95,7 +95,7 @@ async fn test_multiple_sessions_isolation() {
 
     let input_a2 = PyroRow::from([("input", "A2".into())]);
     let res_a2 = pipeline.call(id_a, &input_a2).await.unwrap();
-    if let SessionResult::End(row) = res_a2 {
+    if let SessionResult::End { result: row, .. } = res_a2 {
         assert_eq!(row.get_str("message").unwrap(), "Goodbye! Turn 2");
     } else {
         panic!("A should end")
@@ -103,7 +103,7 @@ async fn test_multiple_sessions_isolation() {
 
     let input_b2 = PyroRow::from([("input", "B2".into())]);
     let res_b2 = pipeline.call(id_b, &input_b2).await.unwrap();
-    if let SessionResult::End(row) = res_b2 {
+    if let SessionResult::End { result: row, .. } = res_b2 {
         assert_eq!(row.get_str("message").unwrap(), "Goodbye! Turn 2");
     } else {
         panic!("B should end")

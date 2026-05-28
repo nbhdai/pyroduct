@@ -70,6 +70,14 @@ pub struct SessionPipeline {
 }
 
 impl SessionPipeline {
+    pub fn next_session_id(&self) -> u32 {
+        let mut id = self.output_manager.len() as u32;
+        while self.active_sessions.contains_key(&id) {
+            id += 1;
+        }
+        id
+    }
+
     async fn get_or_open_session(
         &mut self,
         session_id: u32,
@@ -189,13 +197,12 @@ impl SessionPipeline {
 
         match self.call(session_id, input).await {
             Ok(res) => {
-                let row = match res {
-                    SessionResult::Continue(r) => r,
-                    SessionResult::End(r) => r,
-                    SessionResult::Terminate => PyroRow::empty(),
+                let (row, logs) = match res {
+                    SessionResult::Continue { result, logs } => (result, logs),
+                    SessionResult::End { result, logs } => (result, logs),
+                    SessionResult::Terminate { logs } => (PyroRow::empty(), logs),
                 };
 
-                let logs = self.step.unpack_logs();
                 let record = SessionExecutionRecord::Success {
                     row_index,
                     prior: prior.iter().map(|r| r.clone().into_owned()).collect(),
@@ -301,12 +308,12 @@ impl SessionPipeline {
 
         // PERSIST STATUS
         match &res {
-            Ok(SessionResult::Continue(_)) => {
+            Ok(SessionResult::Continue { .. }) => {
                 let _ = self
                     .output_manager
                     .set_session_status(session_id as usize, "active");
             }
-            Ok(SessionResult::End(_)) | Ok(SessionResult::Terminate) => {
+            Ok(SessionResult::End { .. }) | Ok(SessionResult::Terminate { .. }) => {
                 let _ = self
                     .output_manager
                     .set_session_status(session_id as usize, "succeeded");
@@ -330,7 +337,7 @@ impl SessionPipeline {
                 }
             };
 
-            if let Ok(SessionResult::Continue(output_row)) | Ok(SessionResult::End(output_row)) =
+            if let Ok(SessionResult::Continue { result: output_row, .. }) | Ok(SessionResult::End { result: output_row, .. }) =
                 &res
             {
                 let record_index = active.data_wal.records_written() as usize;
@@ -372,7 +379,7 @@ impl SessionPipeline {
         }
 
         match &res {
-            Ok(SessionResult::End(_)) | Ok(SessionResult::Terminate) => {
+            Ok(SessionResult::End { .. }) | Ok(SessionResult::Terminate { .. }) => {
                 if let Err(e) = self.rollup_and_cleanup_session(session_id).await {
                     tracing::error!(
                         "Failed to rollup and cleanup session {}: {:?}",
