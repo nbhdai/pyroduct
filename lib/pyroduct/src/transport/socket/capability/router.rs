@@ -13,7 +13,7 @@ use crate::module::capability::CapabilityLibrary;
 
 /// A router that dispatches requests to foreign objects loaded from a library.
 ///
-/// The router maintains a [`CapabilityLibrary`] and a map of instantiated
+/// The router maintains a [`CapabilityLibrary`] and a vector of instantiated
 /// [`ForeignObject`]s. Requests are routed based on their `class_id` and `fn_id`:
 ///
 /// - `fn_id == 0`: Configures the class identified by `class_id`. The request
@@ -22,7 +22,7 @@ use crate::module::capability::CapabilityLibrary;
 ///   with `class_id`.
 pub struct PyroRouter {
     library: Arc<CapabilityLibrary>,
-    objects: DashMap<u8, ForeignObject>,
+    objects: Vec<Option<ForeignObject>>,
     client_id: AtomicU32,
     clients: DashMap<u32, PyroView>,
 }
@@ -33,12 +33,33 @@ impl PyroRouter {
         tracing::info!(%name, ?path, "Loading capability library");
         let library = CapabilityLibrary::load(name, path.as_ref())
             .map_err(|e| PyroError::NotFound(e.to_string()))?;
+        let len = library.capabilities.len();
         Ok(Self {
             library,
-            objects: DashMap::new(),
+            objects: vec![None; len],
             client_id: AtomicU32::new(1),
             clients: DashMap::new(),
         })
+    }
+
+    /// Configure a capability class by instantiating it and storing it in the objects vector.
+    pub async fn configure(&mut self, class_id: u8, request: PyroView) -> Result<(), PyroError> {
+        tracing::info!(%class_id, "Instantiating class");
+        let object = self
+            .library
+            .instantiate_class_raw(class_id, request)
+            .await
+            .map_err(|e| PyroError::NotFound(e.to_string()))?;
+
+        if (class_id as usize) >= self.objects.len() {
+            return Err(PyroError::NotFound(format!(
+                "Class ID {} is out of range for library capabilities (length {})",
+                class_id,
+                self.objects.len()
+            )));
+        }
+        self.objects[class_id as usize] = Some(object);
+        Ok(())
     }
 
     /// Handle an incoming request.
@@ -52,17 +73,7 @@ impl PyroRouter {
 
         match fn_id {
             0 => self.library.interface.to_wire(),
-            1 => {
-                tracing::info!(%class_id, "Instantiating class");
-                let object = self
-                    .library
-                    .instantiate_class_raw(class_id, request)
-                    .await
-                    .map_err(|e| PyroError::NotFound(e.to_string()))?;
-
-                self.objects.insert(class_id, object);
-                Ok(PyroVec::ok().view())
-            }
+            1 => Err(PyroError::not_permitted("Cannot configure remote object")),
             2 => {
                 tracing::info!("Registering new client");
                 let id = self
@@ -73,22 +84,30 @@ impl PyroRouter {
             }
             3 => {
                 tracing::info!(%class_id, "Resetting object");
-                let object = self.objects.get(&class_id).ok_or_else(|| {
-                    let err = format!("Object for class ID {} not configured", class_id);
-                    tracing::warn!(%err);
-                    PyroError::NotFound(err)
-                })?;
+                let object = self
+                    .objects
+                    .get(class_id as usize)
+                    .and_then(|o| o.as_ref())
+                    .ok_or_else(|| {
+                        let err = format!("Object for class ID {} not configured", class_id);
+                        tracing::warn!(%err);
+                        PyroError::NotFound(err)
+                    })?;
 
                 object.reset().await?;
                 Ok(PyroVec::ok().view())
             }
             other => {
                 // Routing: Dispatch to the already-instantiated object.
-                let object = self.objects.get(&class_id).ok_or_else(|| {
-                    let err = format!("Object for class ID {} not configured", class_id);
-                    tracing::warn!(%err);
-                    PyroError::NotFound(err)
-                })?;
+                let object = self
+                    .objects
+                    .get(class_id as usize)
+                    .and_then(|o| o.as_ref())
+                    .ok_or_else(|| {
+                        let err = format!("Object for class ID {} not configured", class_id);
+                        tracing::warn!(%err);
+                        PyroError::NotFound(err)
+                    })?;
                 // fn_id 4 maps to methods[0], etc.
                 let method_index = (other - 4) as usize;
                 let client_id = request.client_id();

@@ -12,7 +12,10 @@
 //! get zero-copy access to the archived data in wasm linear memory.
 //!
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, atomic::AtomicU32},
+};
 
 use pyro_artifacts::artifacts::ModuleSpec;
 use pyro_artifacts::build::BuildError;
@@ -22,11 +25,12 @@ use wasmtime::{
     Caller, Engine, FuncType, Instance, Linker, Memory, Store, TypedFunc, Val, ValType,
 };
 
-use crate::ffi::host::ForeignObject;
+use crate::ffi::host::ForeignCapability;
 use crate::format::Bridgeable;
 use crate::format::{
     ParseError, PyroFailure, PyroLogs, PyroRow, PyroSuccess, PyroView,
     header::{DataStatus, PyroData, PyroHeader},
+    make_view,
 };
 use crate::module::call::PyroCallIo;
 use crate::{CapturedError, PyroError};
@@ -38,7 +42,7 @@ mod state;
 // #[cfg(all(test, feature = "module"))]
 // mod tests;
 
-use capability::CapabilityLibrary;
+use capability::{CapabilityError, CapabilityLibrary};
 pub use sessions::SessionResult;
 pub use state::{PyroModule, PyroState};
 
@@ -155,14 +159,41 @@ impl PyroFactory {
     }
 
     // Todo: make this more robust.
-    async fn create_capabilities(&self) -> Result<HashMap<String, ForeignObject>, WasmError> {
+    async fn create_capabilities(
+        &self,
+    ) -> Result<HashMap<String, Box<dyn ForeignCapability>>, WasmError> {
         let mut objects = HashMap::new();
         for (class, config) in &self.configurations {
             tracing::debug!(class = %class, "Instantiating capability class");
+            let mut found = false;
+
             for library in self.libraries.iter() {
-                if let Ok(object) = library.instantiate_class(class, config.as_ref()).await {
-                    objects.insert(class.clone(), object);
+                match library.instantiate_class(class, config.as_ref()).await {
+                    Ok(object) => {
+                        objects.insert(
+                            class.clone(),
+                            Box::new(object) as Box<dyn ForeignCapability>,
+                        );
+                        found = true;
+                        break;
+                    }
+                    Err(CapabilityError::CapabilityNotFound { .. }) => {
+                        // Class not in this library, keep looking
+                    }
+                    Err(err) => {
+                        return Err(WasmError::InstantiationFailed(format!(
+                            "Failed to build capability class '{}': {}",
+                            class, err
+                        )));
+                    }
                 }
+            }
+
+            if !found {
+                return Err(WasmError::InstantiationFailed(format!(
+                    "Capability class '{}' was configured but not found in any loaded libraries",
+                    class
+                )));
             }
         }
 
@@ -182,7 +213,7 @@ impl PyroFactory {
         for (class_name, object) in objects.iter() {
             for method_name in object.method_names() {
                 // Check what the linker actually holds for this class & method
-                if let Some(ext) = linker.get(&mut store, class_name, method_name) {
+                if let Some(ext) = linker.get(&mut store, class_name, &method_name) {
                     if let Some(func) = ext.into_func() {
                         let ty = func.ty(&store);
 
@@ -274,7 +305,7 @@ impl PyroFactory {
     /// Links all capabilities from the provided libraries into the linker.
     fn link_capabilities(
         linker: &mut Linker<PyroState>,
-        objects: &HashMap<String, ForeignObject>,
+        objects: &HashMap<String, Box<dyn ForeignCapability>>,
     ) -> Result<(), WasmError> {
         for (class_name, object) in objects.iter() {
             // Capture lib for the closures (Arc clone is cheap)
@@ -311,12 +342,18 @@ impl PyroFactory {
                                 );
 
                                 let mut io = PyroCallIo::from_caller(caller)?;
-                                let client_view = io.borrow_argument(client_ptr).await?;
-                                let input_view = io.borrow_argument(input_ptr).await?;
+                                let client_ref = io.borrow_argument(client_ptr).await?;
+                                let input_ref = io.borrow_argument(input_ptr).await?;
+
+                                let counter = AtomicU32::new(1);
+                                let client_view = unsafe { make_view(&counter, client_ref) }?;
+                                let input_view = unsafe { make_view(&counter, input_ref) }?;
 
                                 let output_view =
                                     object.call(&fn_name, client_view, input_view).await?;
                                 output_view.parse_as_error()?;
+
+                                debug_assert_eq!(counter.load(std::sync::atomic::Ordering::Acquire), 1, "Pyro object method must not hold a reference to Pyro state after returning");
 
                                 let ptr = io.new_input(&output_view).await?;
 
@@ -351,10 +388,14 @@ impl PyroFactory {
 
                             // Read input and get state — both are &self borrows.
                             let client_view = io.borrow_argument(client_ptr).await?;
+                            let counter = AtomicU32::new(1);
+                            let view = unsafe { make_view(&counter, client_view) }?;
 
                             // Call user function — consumes both borrows on return.
-                            let output_view = object.register(client_view).await?;
+                            let output_view = object.register(view).await?;
                             output_view.parse_as_error()?;
+
+                            debug_assert_eq!(counter.load(std::sync::atomic::Ordering::Acquire), 1, "Pyro object method must not hold a reference to Pyro state after returning");
 
                             // Write output back into wasm memory.
                             let ptr = io.new_input(&output_view).await?;
@@ -376,7 +417,7 @@ pub struct PyroInstance {
     pub(crate) store: Store<PyroState>,
     pub(crate) instance: Instance,
     pub(crate) memory: Memory,
-    pub(crate) objects: HashMap<String, ForeignObject>,
+    pub(crate) objects: HashMap<String, Box<dyn ForeignCapability>>,
     pub(crate) session_states: HashMap<u32, SessionState>,
 }
 

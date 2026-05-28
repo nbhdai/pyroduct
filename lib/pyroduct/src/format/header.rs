@@ -71,6 +71,7 @@ define_data_status! {
     LocalLayoutError     = 107,
     LocalUnexpectedEof   = 108,
     LocalNotFound          = 109,
+    LocalNotPermitted      = 110,
 
     // --- Remote Errors (150-199) ---
     RemoteSerialization   = 150,
@@ -83,6 +84,7 @@ define_data_status! {
     RemoteLayoutError     = 157,
     RemoteUnexpectedEof   = 158,
     RemoteNotFound          = 159,
+    RemoteNotPermitted      = 160,
 }
 
 /// Errors that occur when parsing or validating a PyroVec header.
@@ -384,6 +386,12 @@ pub trait PyroData: private::Sealed + Deref<Target = [u8]> + Sized {
                 }
                 Ok(DataStatus::RemoteNotFound) => {
                     PyroError::remote(ErrorKind::NotFound("not found".into()))
+                }
+                Ok(DataStatus::LocalNotPermitted) => {
+                    PyroError::not_permitted(self.extract_captured_error().message.clone())
+                }
+                Ok(DataStatus::RemoteNotPermitted) => {
+                    PyroError::not_permitted(self.extract_captured_error().message.clone())
                 }
             },
         )

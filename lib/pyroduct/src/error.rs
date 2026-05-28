@@ -46,6 +46,9 @@ pub enum PyroError {
 
     #[error("not found: {0}")]
     NotFound(String),
+
+    #[error("not permitted: {0}")]
+    NotPermitted(String),
 }
 
 impl PyroError {
@@ -91,12 +94,17 @@ impl PyroError {
         Self::NotFound(missing.to_string())
     }
 
+    pub fn not_permitted<S: std::fmt::Display>(msg: S) -> Self {
+        Self::NotPermitted(msg.to_string())
+    }
+
     /// Returns true if this error originated remotely.
     pub fn library(&self) -> Option<&LibraryInfo<'static>> {
         match self {
             PyroError::IncorrectParse(_) => library(),
             PyroError::Header(_) => library(),
             PyroError::NotFound(_) => library(),
+            PyroError::NotPermitted(_) => library(),
             PyroError::HeaderFfi(captured_error) => captured_error.library.as_ref(),
             PyroError::CodePanic(captured_error) => captured_error.library.as_ref(),
             PyroError::Pyro { kind, .. } => match kind {
@@ -110,6 +118,7 @@ impl PyroError {
                 ErrorKind::LayoutError => library(),
                 ErrorKind::UnexpectedEof => library(),
                 ErrorKind::NotFound(_) => library(),
+                ErrorKind::NotPermitted(_) => library(),
             },
         }
     }
@@ -157,6 +166,7 @@ impl fmt::Debug for PyroError {
                 .field("kind", kind)
                 .finish(),
             Self::NotFound(arg0) => f.debug_tuple("NotFound").field(arg0).finish(),
+            Self::NotPermitted(arg0) => f.debug_tuple("NotPermitted").field(arg0).finish(),
         }
     }
 }
@@ -192,6 +202,7 @@ pub enum ErrorKind {
     LayoutError,
     /// Stream ended unexpectedly.
     UnexpectedEof,
+    NotPermitted(String),
 }
 
 impl ErrorKind {
@@ -207,6 +218,7 @@ impl ErrorKind {
             ErrorKind::InvalidHeader => ErrorStatus::InvalidHeader,
             ErrorKind::LayoutError => ErrorStatus::LayoutError,
             ErrorKind::UnexpectedEof => ErrorStatus::UnexpectedEof,
+            ErrorKind::NotPermitted(_) => ErrorStatus::NotPermitted,
         }
     }
 }
@@ -224,6 +236,7 @@ pub enum ErrorStatus {
     InvalidHeader,
     LayoutError,
     UnexpectedEof,
+    NotPermitted,
 }
 
 impl ErrorStatus {
@@ -239,6 +252,7 @@ impl ErrorStatus {
             ErrorStatus::InvalidHeader => DataStatus::LocalInvalidHeader,
             ErrorStatus::LayoutError => DataStatus::LocalLayoutError,
             ErrorStatus::UnexpectedEof => DataStatus::LocalUnexpectedEof,
+            ErrorStatus::NotPermitted => DataStatus::LocalNotPermitted,
         }
     }
 
@@ -254,6 +268,7 @@ impl ErrorStatus {
             ErrorStatus::InvalidHeader => DataStatus::RemoteInvalidHeader,
             ErrorStatus::LayoutError => DataStatus::RemoteLayoutError,
             ErrorStatus::UnexpectedEof => DataStatus::RemoteUnexpectedEof,
+            ErrorStatus::NotPermitted => DataStatus::RemoteNotPermitted,
         }
     }
 }
@@ -271,6 +286,7 @@ impl fmt::Display for ErrorKind {
             ErrorKind::InvalidHeader => write!(f, "invalid header"),
             ErrorKind::LayoutError => write!(f, "layout/capacity error"),
             ErrorKind::UnexpectedEof => write!(f, "unexpected end of stream"),
+            ErrorKind::NotPermitted(msg) => write!(f, "not permitted: {}", msg),
         }
     }
 }

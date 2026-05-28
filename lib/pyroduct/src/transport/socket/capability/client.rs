@@ -106,7 +106,7 @@ impl PyroClient {
     /// The data is hashed with SHA-256. If the hash is already cached, the stored
     /// client_id is returned. Otherwise, the server is contacted (fn_id = 2) to
     /// receive a new client_id, which is then cached.
-    async fn get_or_register_client_id(&mut self, client_data: PyroView) -> Result<u32, PyroError> {
+    pub async fn register_client_id(&mut self, client_data: PyroView) -> Result<u32, PyroError> {
         let hash = Self::hash_data(&client_data);
 
         // Check cache first
@@ -181,12 +181,10 @@ impl PyroClient {
     ) -> Result<PyroView, PyroError> {
         tracing::debug!(%class_id, %method_index, %client_id, "Calling remote method");
         let fn_id = (method_index + 4) as u8;
-        let mut req = data.clone_to_vec();
-        req.set_fn_id(fn_id);
 
         let resp = self
             .socket
-            .request(Some(client_id), Some(class_id), Some(fn_id), req.view())
+            .request(Some(client_id), Some(class_id), Some(fn_id), data)
             .await
             .capture("Transport request failed")
             .map_err(PyroError::local_io)?;
@@ -227,7 +225,7 @@ impl PyroClient {
             })?;
 
         // Get or register client_id based on client_data hash
-        let client_id = self.get_or_register_client_id(client_data).await?;
+        let client_id = self.register_client_id(client_data).await?;
 
         self.call_method(class_id as u8, method_index, client_id, data)
             .await
@@ -236,5 +234,10 @@ impl PyroClient {
     /// Access the underlying [`PyroSocket`].
     pub fn socket(&self) -> &PyroSocket {
         &self.socket
+    }
+
+    /// Access the interface spec.
+    pub fn interface(&self) -> &pyro_spec::InterfaceSpec<'static> {
+        &self.interface
     }
 }

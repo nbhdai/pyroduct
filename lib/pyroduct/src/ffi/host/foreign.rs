@@ -5,6 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use async_trait::async_trait;
 use libloading::Library;
 use tokio::sync::oneshot;
 
@@ -320,5 +321,64 @@ impl Drop for LogTaskHandle {
         if let Some(tx) = self.kill_tx.take() {
             let _ = tx.send(());
         }
+    }
+}
+
+#[async_trait]
+pub trait ForeignCapability: Send + Sync + 'static {
+    fn name(&self) -> &str;
+    fn lib_name(&self) -> &str;
+    fn method_names(&self) -> Vec<String>;
+    async fn call(
+        &self,
+        method_name: &str,
+        client_data: PyroView,
+        input_data: PyroView,
+    ) -> Result<PyroView, PyroError>;
+    async fn register(&self, client_state: PyroView) -> Result<PyroView, PyroError>;
+    fn take_logs(&self) -> Vec<String>;
+    fn clone_box(&self) -> Box<dyn ForeignCapability>;
+}
+
+impl Clone for Box<dyn ForeignCapability> {
+    fn clone(&self) -> Self {
+        self.clone_box()
+    }
+}
+
+#[async_trait]
+impl ForeignCapability for ForeignObject {
+    fn name(&self) -> &str {
+        self.name()
+    }
+
+    fn lib_name(&self) -> &str {
+        self.lib_name()
+    }
+
+    fn method_names(&self) -> Vec<String> {
+        self.method_names().map(|s| s.to_string()).collect()
+    }
+
+    async fn call(
+        &self,
+        method_name: &str,
+        client_data: PyroView,
+        input_data: PyroView,
+    ) -> Result<PyroView, PyroError> {
+        self.call(method_name, client_data.py_ref(), input_data.py_ref())
+            .await
+    }
+
+    async fn register(&self, client_state: PyroView) -> Result<PyroView, PyroError> {
+        self.register(client_state.py_ref()).await
+    }
+
+    fn take_logs(&self) -> Vec<String> {
+        self.take_logs()
+    }
+
+    fn clone_box(&self) -> Box<dyn ForeignCapability> {
+        Box::new(self.clone())
     }
 }

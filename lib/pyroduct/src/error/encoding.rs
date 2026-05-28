@@ -51,6 +51,7 @@ impl PyroError {
                     ErrorKind::LayoutError => None,
                     ErrorKind::UnexpectedEof => None,
                     ErrorKind::NotFound(_) => None,
+                    ErrorKind::NotPermitted(_) => None,
                 };
                 let status_code = kind.to_status().to_remote();
 
@@ -66,6 +67,13 @@ impl PyroError {
             PyroError::HeaderFfi(captured_error) => {
                 let mut vec = captured_error.encode();
                 vec.set_status(DataStatus::PyroFfiFail);
+                vec
+            }
+            PyroError::NotPermitted(msg) => {
+                let mut vec = CapturedError::new(msg)
+                    .with_location(Location::caller())
+                    .encode();
+                vec.set_status(DataStatus::RemoteNotPermitted);
                 vec
             }
         }
