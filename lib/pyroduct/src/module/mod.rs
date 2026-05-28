@@ -16,19 +16,20 @@ use std::{collections::HashMap, sync::Arc};
 
 use pyro_artifacts::artifacts::{CapabilityConfig, ModuleSpec};
 use pyro_artifacts::build::BuildError;
-use pyro_artifacts::cache::{CacheError, LoadedPlaybook};
+use pyro_artifacts::cache::{CacheError, LoadedPlaybook, RemoteAddress};
 use pyro_artifacts::environment::EnvironmentError;
 use wasmtime::{
     Caller, Engine, FuncType, Instance, Linker, Memory, Store, TypedFunc, Val, ValType,
 };
 
-use crate::ffi::host::ForeignObject;
+use crate::ffi::host::ForeignCapability;
 use crate::format::Bridgeable;
 use crate::format::{
-    ParseError, PyroFailure, PyroLogs, PyroRow, PyroSuccess, PyroView,
+    ParseError, PyroFailure, PyroLogs, PyroRow, PyroSuccess, PyroVec, PyroView,
     header::{DataStatus, PyroData, PyroHeader},
 };
 use crate::module::call::PyroCallIo;
+use crate::transport::socket::capability::SocketForeignCapability;
 use crate::{CapturedError, PyroError};
 
 mod call;
@@ -115,6 +116,7 @@ pub struct PyroFactory {
     configurations: HashMap<String, CapabilityConfig>,
     libraries: Vec<Arc<CapabilityLibrary>>,
     module: PyroModule,
+    remote: HashMap<String, RemoteAddress>,
 }
 
 impl PyroFactory {
@@ -151,15 +153,59 @@ impl PyroFactory {
             libraries: libs,
             configurations: playbook.configurations.clone(),
             module: pyro_module,
+            remote: playbook.remote.clone(),
         })
     }
 
     // Todo: make this more robust.
-    async fn create_capabilities(&self) -> Result<HashMap<String, ForeignObject>, WasmError> {
+    async fn create_capabilities(
+        &self,
+    ) -> Result<HashMap<String, Box<dyn ForeignCapability>>, WasmError> {
         let mut objects = HashMap::new();
         for (lib_name, cap_config) in &self.configurations {
             for (class, config) in &cap_config.classes {
                 tracing::debug!(class = %class, lib = %lib_name, "Instantiating capability class");
+
+                // First check if this capability class maps to a remote address
+                if let Some(remote_addr) = self.remote.get(lib_name) {
+                    tracing::info!(
+                        class = %class,
+                        lib = %lib_name,
+                        addr = ?remote_addr,
+                        "Connecting to remote capability server"
+                    );
+                    let socket_cap = match remote_addr {
+                        RemoteAddress::Unix(path) => {
+                            SocketForeignCapability::connect_unix(
+                                lib_name.clone(),
+                                class.clone(),
+                                path,
+                            )
+                            .await
+                        }
+                        RemoteAddress::Tcp(addr) => {
+                            SocketForeignCapability::connect_tcp(
+                                lib_name.clone(),
+                                class.clone(),
+                                addr,
+                            )
+                            .await
+                        }
+                    }
+                    .map_err(|e| {
+                        WasmError::InstantiationFailed(format!(
+                            "Failed to connect to remote capability '{}': {}",
+                            lib_name, e
+                        ))
+                    })?;
+
+                    objects.insert(
+                        class.clone(),
+                        Box::new(socket_cap) as Box<dyn ForeignCapability>,
+                    );
+                    continue;
+                }
+
                 let mut library_found = false;
                 for library in self.libraries.iter() {
                     if library.name == *lib_name {
@@ -170,7 +216,10 @@ impl PyroFactory {
                                 class, lib_name, e
                             ))
                         })?;
-                        objects.insert(class.clone(), object);
+                        objects.insert(
+                            class.clone(),
+                            Box::new(object) as Box<dyn ForeignCapability>,
+                        );
                         break;
                     }
                 }
@@ -199,7 +248,7 @@ impl PyroFactory {
         for (class_name, object) in objects.iter() {
             for method_name in object.method_names() {
                 // Check what the linker actually holds for this class & method
-                if let Some(ext) = linker.get(&mut store, class_name, method_name) {
+                if let Some(ext) = linker.get(&mut store, class_name, &method_name) {
                     if let Some(func) = ext.into_func() {
                         let ty = func.ty(&store);
 
@@ -291,7 +340,7 @@ impl PyroFactory {
     /// Links all capabilities from the provided libraries into the linker.
     fn link_capabilities(
         linker: &mut Linker<PyroState>,
-        objects: &HashMap<String, ForeignObject>,
+        objects: &HashMap<String, Box<dyn ForeignCapability>>,
     ) -> Result<(), WasmError> {
         for (class_name, object) in objects.iter() {
             // Capture lib for the closures (Arc clone is cheap)
@@ -328,8 +377,12 @@ impl PyroFactory {
                                 );
 
                                 let mut io = PyroCallIo::from_caller(caller)?;
-                                let client_view = io.borrow_argument(client_ptr).await?;
-                                let input_view = io.borrow_argument(input_ptr).await?;
+                                let client_view_ref = io.borrow_argument(client_ptr).await?;
+                                let input_view_ref = io.borrow_argument(input_ptr).await?;
+
+                                // Clone references into owned PyroViews to pass to Box<dyn ForeignCapability>
+                                let client_view = PyroVec::clone_from_pyro(&client_view_ref).view();
+                                let input_view = PyroVec::clone_from_pyro(&input_view_ref).view();
 
                                 let output_view =
                                     object.call(&fn_name, client_view, input_view).await?;
@@ -367,7 +420,8 @@ impl PyroFactory {
                             let client_ptr = params[0].unwrap_i32();
 
                             // Read input and get state — both are &self borrows.
-                            let client_view = io.borrow_argument(client_ptr).await?;
+                            let client_view_ref = io.borrow_argument(client_ptr).await?;
+                            let client_view = PyroVec::clone_from_pyro(&client_view_ref).view();
 
                             // Call user function — consumes both borrows on return.
                             let output_view = object.register(client_view).await?;
@@ -393,7 +447,7 @@ pub struct PyroInstance {
     pub(crate) store: Store<PyroState>,
     pub(crate) instance: Instance,
     pub(crate) memory: Memory,
-    pub(crate) objects: HashMap<String, ForeignObject>,
+    pub(crate) objects: HashMap<String, Box<dyn ForeignCapability>>,
     pub(crate) session_states: HashMap<u32, SessionState>,
 }
 
