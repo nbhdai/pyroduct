@@ -4,5 +4,6 @@ pub mod expand;
 pub mod init;
 pub mod replay;
 pub mod run;
+pub mod serve;
 pub mod ship;
 pub mod spec;

@@ -43,8 +43,14 @@ impl PyroRouter {
     }
 
     /// Configure a capability class by instantiating it and storing it in the objects vector.
-    pub async fn configure(&mut self, class_id: u8, request: PyroView) -> Result<(), PyroError> {
-        tracing::info!(%class_id, "Instantiating class");
+    pub async fn configure(&mut self, class_name: &str, request: PyroView) -> Result<(), PyroError> {
+        tracing::info!(%class_name, "Instantiating class");
+        let class_id = self
+            .library
+            .capabilities
+            .get_index_of(class_name)
+            .ok_or_else(|| PyroError::NotFound(format!("Class '{}' not found in library", class_name)))? as u8;
+
         let object = self
             .library
             .instantiate_class_raw(class_id, request)
@@ -53,8 +59,9 @@ impl PyroRouter {
 
         if (class_id as usize) >= self.objects.len() {
             return Err(PyroError::NotFound(format!(
-                "Class ID {} is out of range for library capabilities (length {})",
+                "Class ID {} (name {}) is out of range for library capabilities (length {})",
                 class_id,
+                class_name,
                 self.objects.len()
             )));
         }

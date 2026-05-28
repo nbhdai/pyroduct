@@ -102,6 +102,44 @@ enum Commands {
         #[arg(value_name = "INPUT")]
         input: PathBuf,
     },
+    /// Starts a playbook server or capability server.
+    Serve {
+        /// Path to JSON configuration file
+        #[arg(long)]
+        config: Option<PathBuf>,
+
+        /// JSON encoded configuration string
+        #[arg(long)]
+        config_json: Option<String>,
+
+        /// Server type to run (playbook or capability)
+        #[arg(long, value_enum)]
+        server_type: Option<commands::serve::ServerType>,
+
+        /// Address or path to listen on (e.g. 127.0.0.1:8080 or /tmp/pyro.sock)
+        #[arg(long)]
+        socket: Option<String>,
+
+        /// Run playbook server as an HTTP server instead of TCP/Unix
+        #[arg(long)]
+        http: bool,
+
+        /// Path to the playbook config file (playbook only)
+        #[arg(long)]
+        playbook_config: Option<PathBuf>,
+
+        /// Name of the capability library (capability only)
+        #[arg(long)]
+        cap_name: Option<String>,
+
+        /// Path to the capability library file (capability only)
+        #[arg(long)]
+        cap_path: Option<PathBuf>,
+
+        /// Capability's class configuration as a JSON string (capability only)
+        #[arg(long)]
+        cap_config: Option<String>,
+    },
 }
 
 pub fn start_logging() {
@@ -154,5 +192,28 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Tui { config, input } => tui::run_tui(&config, &input).await,
+        Commands::Serve {
+            config,
+            config_json,
+            server_type,
+            socket,
+            http,
+            playbook_config,
+            cap_name,
+            cap_path,
+            cap_config,
+        } => {
+            commands::serve::serve(
+                config.as_deref(),
+                config_json.as_deref(),
+                server_type,
+                socket,
+                http,
+                playbook_config.as_deref(),
+                cap_name.as_deref(),
+                cap_path.as_deref(),
+                cap_config.as_deref(),
+            ).await
+        }
     }
 }
