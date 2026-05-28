@@ -154,6 +154,11 @@ name = "test_socket_playbook_server"
 required-features = ["transport", "host"]
 
 [[test]]
+name = "test_socket_session_server"
+required-features = ["transport", "host"]
+
+[[test]]
 name = "test_http_playbook_server"
 required-features = ["transport", "host"]
+
 

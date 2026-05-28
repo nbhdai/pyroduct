@@ -72,6 +72,47 @@ impl PlaybookClient {
         }
     }
 
+    /// Call the remote playbook pipeline with a row inside a session, encoding session_id as mux_id.
+    pub async fn call_session(
+        &mut self,
+        session_id: u32,
+        row: &PyroRow<'_>,
+    ) -> Result<PyroSuccess, PyroFailure> {
+        let req_vec = row.to_static().ship().map_err(|e| PyroFailure {
+            result: Err(e.to_string()),
+            logs: crate::format::PyroLogs::empty(),
+        })?;
+
+        let mut req = req_vec;
+        req.set_fn_id(0);
+
+        let resp = self
+            .socket
+            .request(Some(session_id), None, Some(0), req.view())
+            .await
+            .capture("Transport request failed")
+            .map_err(|e| PyroFailure {
+                result: Err(e.to_string()),
+                logs: crate::format::PyroLogs::empty(),
+            })?;
+
+        if resp.is_ok() {
+            let row_ref = PyroRow::expose_view(resp.py_ref()).map_err(|e| PyroFailure {
+                result: Err(e.to_string()),
+                logs: crate::format::PyroLogs::empty(),
+            })?;
+            Ok(PyroSuccess {
+                row: PyroRow::from(&*row_ref).to_static(),
+                logs: crate::format::PyroLogs::empty(),
+            })
+        } else {
+            Err(PyroFailure {
+                result: Err(format!("Request failed with status: {}", resp.status_u8())),
+                logs: crate::format::PyroLogs::empty(),
+            })
+        }
+    }
+
     /// Access the underlying [`PyroSocket`].
     pub fn socket(&self) -> &PyroSocket {
         &self.socket
