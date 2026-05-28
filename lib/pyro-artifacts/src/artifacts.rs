@@ -98,13 +98,20 @@ pub enum Module {
     Binary(ModuleBinary),
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub struct CapabilityConfig {
+    /// Per-class capability configuration. Keys are class names.
+    pub classes: HashMap<String, Option<serde_json::Value>>,
+}
+
 /// A single wasm module in the pipeline intent.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct Playbook {
     pub hash: String,
     /// Per-class capability configuration. Keys are class names.
     #[serde(default)]
-    pub configurations: HashMap<String, Option<serde_json::Value>>,
+    pub configurations: HashMap<String, CapabilityConfig>,
 }
 
 impl ModuleSource {

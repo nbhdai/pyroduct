@@ -6,7 +6,8 @@
 //! them #[ignore] if you only want fast unit tests in CI.
 
 use crate::artifacts::{
-    Artifact, Artifacts, CapabilityBinary, ModuleDependencies, ModuleSource, Playbook,
+    Artifact, Artifacts, CapabilityBinary, CapabilityConfig, ModuleDependencies, ModuleSource,
+    Playbook,
 };
 use crate::build::Builder;
 use crate::cache::{CacheManager, PyroductConfig};
@@ -288,7 +289,12 @@ async fn test_load_playbook() {
         hash: binary.spec.hash.clone(),
         configurations: HashMap::from([(
             "httpc".to_string(),
-            Some(serde_json::json!({"timeout": 30})),
+            CapabilityConfig {
+                classes: HashMap::from([(
+                    "CounterClient".to_string(),
+                    Some(serde_json::json!({"timeout": 30})),
+                )]),
+            },
         )]),
     };
 

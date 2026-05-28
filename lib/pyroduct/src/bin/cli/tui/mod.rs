@@ -121,7 +121,10 @@ impl App {
                 if let Ok(source_module) = cache.get_source(&playbook.hash).await {
                     let mut capabilities = HashMap::new();
                     for cap in source_module.dependencies.capabilities {
-                        let config = playbook.configurations.get(&cap.package).cloned().flatten();
+                        let config = playbook
+                            .configurations
+                            .get(&cap.package)
+                            .and_then(|cap_cfg| cap_cfg.classes.values().next().cloned().flatten());
                         capabilities.insert(cap, config);
                     }
                     pipelines.push(SourcePipeline {
@@ -233,12 +236,30 @@ impl App {
         let log_dir = root_dir.join("log");
 
         for (i, source_pipeline) in self.pipeline.pipelines.iter().enumerate() {
-            let mut configurations: HashMap<String, Option<serde_json::Value>> = HashMap::new();
+            let mut configurations: HashMap<String, pyro_artifacts::artifacts::CapabilityConfig> =
+                HashMap::new();
             let mut capabilities = Vec::new();
 
             for (cap, config) in &source_pipeline.capabilities {
                 capabilities.push(cap.clone());
-                configurations.insert(cap.package.clone(), config.clone());
+
+                let mut class_name = format!("{}Client", cap.package); // standard fallback
+                if let Ok(json) = self
+                    .cache
+                    .capability_interface_spec(&cap.author, &cap.package, &cap.version)
+                    .await
+                {
+                    if let Ok(spec) = serde_json::from_str::<pyro_spec::InterfaceSpec>(&json) {
+                        if let Some(cls) = spec.classes.first() {
+                            class_name = cls.name.to_string();
+                        }
+                    }
+                }
+
+                let cap_config = pyro_artifacts::artifacts::CapabilityConfig {
+                    classes: HashMap::from([(class_name, config.clone())]),
+                };
+                configurations.insert(cap.package.clone(), cap_config);
             }
 
             let dependencies = pyro_artifacts::artifacts::ModuleDependencies {

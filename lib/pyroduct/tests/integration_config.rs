@@ -1,5 +1,5 @@
 use pyro_artifacts::{
-    artifacts::{ModuleDependencies, ModuleSource, Playbook},
+    artifacts::{CapabilityConfig, ModuleDependencies, ModuleSource, Playbook},
     build::Builder,
     cache::CacheManager,
     cargo::ResolvedCapability,
@@ -69,10 +69,15 @@ async fn test_capability_configuration_respect() {
             hash: binary.hash(),
             configurations: HashMap::from([(
                 "config".to_string(),
-                Some(json!({
-                    "uppercase": true,
-                    "suffix": "!!!"
-                })),
+                CapabilityConfig {
+                    classes: HashMap::from([(
+                        "TransformClient".to_string(),
+                        Some(json!({
+                            "uppercase": true,
+                            "suffix": "!!!"
+                        })),
+                    )]),
+                },
             )]),
         },
         wal_capacity: 2,

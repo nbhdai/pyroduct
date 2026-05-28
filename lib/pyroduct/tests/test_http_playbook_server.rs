@@ -1,5 +1,5 @@
 use pyro_artifacts::{
-    artifacts::{ModuleDependencies, ModuleSource, Playbook},
+    artifacts::{ModuleDependencies, ModuleSource, Playbook, CapabilityConfig},
     build::Builder,
     cache::CacheManager,
     cargo::ResolvedCapability,
@@ -75,7 +75,12 @@ async fn test_http_playbook_server_and_repair() {
     let config = PipelineConfig {
         playbook: Playbook {
             hash: binary.hash(),
-            configurations: HashMap::from([("state".to_string(), None)]),
+            configurations: HashMap::from([(
+                "state".to_string(),
+                CapabilityConfig {
+                    classes: HashMap::from([("CounterClient".to_string(), None)]),
+                },
+            )]),
         },
         wal_capacity: 1000,
         success_log_retention_secs: 3600,

@@ -1,4 +1,6 @@
-use crate::artifacts::{Artifact, Artifacts, Module, ModuleBinary, ModuleSource, Playbook};
+use crate::artifacts::{
+    Artifact, Artifacts, CapabilityConfig, Module, ModuleBinary, ModuleSource, Playbook,
+};
 
 use cargo_toml::Dependency;
 use std::path::{Path, PathBuf};
@@ -21,13 +23,21 @@ pub struct PyroductConfig {
     pub build_slots: Option<usize>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum RemoteAddress {
+    Tcp(String),
+    Unix(std::path::PathBuf),
+}
+
 /// A loaded playbook where all the libraries are on disk and the binary is loaded
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct LoadedPlaybook {
     pub binary: ModuleBinary,
     /// Per-class capability configuration. Keys are class names.
     #[serde(default)]
-    pub configurations: HashMap<String, Option<serde_json::Value>>,
+    pub configurations: HashMap<String, CapabilityConfig>,
+    pub remote: HashMap<String, RemoteAddress>,
     #[serde(default)]
     pub paths: HashMap<String, PathBuf>,
 
@@ -606,6 +616,7 @@ impl CacheManager {
         Ok(LoadedPlaybook {
             binary,
             configurations: playbook.configurations,
+            remote: HashMap::new(),
             paths,
             log_dir: log_dir.as_ref().to_path_buf(),
             input_dir: input_dir.as_ref().to_path_buf(),
@@ -636,6 +647,7 @@ impl CacheManager {
         Ok(LoadedPlaybook {
             binary,
             configurations: Default::default(),
+            remote: HashMap::new(),
             paths,
             log_dir: log_dir.as_ref().to_path_buf(),
             input_dir: input_dir.as_ref().to_path_buf(),
