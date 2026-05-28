@@ -13,14 +13,14 @@ pub struct TransformConfig {
     pub suffix: String,
 }
 
-pub struct TransformServer {
+pub struct Transform {
     uppercase: bool,
     suffix: String,
     transform_log: Mutex<Vec<String>>,
 }
 
 #[pyroduct::capability]
-impl TransformServer {
+impl Transform {
     type Client = TransformClient;
     type Config = TransformConfig;
     type Error = String;

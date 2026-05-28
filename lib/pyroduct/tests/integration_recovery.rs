@@ -1,5 +1,5 @@
 use pyro_artifacts::{
-    artifacts::{ModuleDependencies, ModuleSource, Playbook, CapabilityConfig},
+    artifacts::{CapabilityConfig, ModuleDependencies, ModuleSource, Playbook},
     build::Builder,
     cache::CacheManager,
     cargo::ResolvedCapability,
@@ -73,7 +73,7 @@ async fn test_pipeline_get_record() {
             configurations: HashMap::from([(
                 "state".to_string(),
                 CapabilityConfig {
-                    classes: HashMap::from([("CounterClient".to_string(), None)]),
+                    classes: HashMap::from([("Counter".to_string(), None)]),
                 },
             )]),
         },

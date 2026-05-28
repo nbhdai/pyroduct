@@ -1,7 +1,6 @@
-use std::path::PathBuf;
 use std::time::Duration;
-use tokio::net::UnixStream;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::UnixStream;
 use uuid::Uuid;
 
 use pyro_daemon::{DaemonRequest, DaemonResponse, PyroDaemon};
@@ -13,7 +12,6 @@ async fn test_daemon_control_protocol() {
 
     // 1. Spawn PyroDaemon in the background
     let daemon = PyroDaemon::new(control_socket.clone());
-    let control_socket_clone = control_socket.clone();
 
     let daemon_handle = tokio::spawn(async move {
         daemon.run().await.unwrap();
@@ -44,7 +42,10 @@ async fn test_daemon_control_protocol() {
     let line = lines.next_line().await.unwrap().unwrap();
     let resp: DaemonResponse = serde_json::from_str(&line).unwrap();
     match resp {
-        DaemonResponse::StatusInfo { active_workers, version } => {
+        DaemonResponse::StatusInfo {
+            active_workers,
+            version,
+        } => {
             assert_eq!(active_workers, 0);
             assert_eq!(version, env!("CARGO_PKG_VERSION"));
         }
@@ -67,7 +68,9 @@ async fn test_daemon_control_protocol() {
     }
 
     // 8. Try to stop a non-existent playbook
-    let req = DaemonRequest::StopPlaybook { playbook_id: Uuid::new_v4() };
+    let req = DaemonRequest::StopPlaybook {
+        playbook_id: Uuid::new_v4(),
+    };
     let req_str = serde_json::to_string(&req).unwrap() + "\n";
     writer.write_all(req_str.as_bytes()).await.unwrap();
 
@@ -78,7 +81,10 @@ async fn test_daemon_control_protocol() {
         DaemonResponse::Error { message } => {
             assert!(message.contains("No active playbook worker found"));
         }
-        other => panic!("Unexpected response for invalid StopPlaybook request: {:?}", other),
+        other => panic!(
+            "Unexpected response for invalid StopPlaybook request: {:?}",
+            other
+        ),
     }
 
     // 10. Shutdown the daemon

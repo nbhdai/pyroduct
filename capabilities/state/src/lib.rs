@@ -1,4 +1,3 @@
-
 //! Provides basic stateful operations for demonstrating capability lifecycle and method calls.
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -14,13 +13,13 @@ pub struct CounterConfig {
     pub max_value: u64,
 }
 
-pub struct CounterServer {
+pub struct Counter {
     max_value: u64,
     call_count: AtomicU64,
 }
 
 #[pyroduct::capability]
-impl CounterServer {
+impl Counter {
     type Client = CounterClient;
     type Config = CounterConfig;
     type Error = String;
@@ -69,10 +68,15 @@ impl CounterServer {
 
     /// Add a value to the counter
     fn add(&self, client: &CounterClient, value: u64) -> Result<u64, String> {
-        let current = client.start_value.saturating_add(self.call_count.load(Ordering::SeqCst));
+        let current = client
+            .start_value
+            .saturating_add(self.call_count.load(Ordering::SeqCst));
         let result = current.saturating_add(value);
         if result > self.max_value {
-            Err(format!("Result {} exceeds max_value {}", result, self.max_value))
+            Err(format!(
+                "Result {} exceeds max_value {}",
+                result, self.max_value
+            ))
         } else {
             Ok(result)
         }

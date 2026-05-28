@@ -1,16 +1,16 @@
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
-use tokio::net::{UnixListener, UnixStream};
-use tokio::process::{Command, Child};
-use tokio::sync::{mpsc, Mutex};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use serde::{Deserialize, Serialize};
+use tokio::net::{UnixListener, UnixStream};
+use tokio::process::{Child, Command};
+use tokio::sync::{Mutex, mpsc};
 use uuid::Uuid;
-use anyhow::{Context, Result};
 
-use pyro_artifacts::cache::{CacheManager, LoadedPlaybook, RemoteAddress};
+use pyro_artifacts::cache::{CacheManager, RemoteAddress};
 use pyroduct::pipeline::factory::PipelineConfig;
 use pyroduct::transport::socket::PyroListener;
 use pyroduct::transport::socket::playbook::PlaybookServer;
@@ -90,10 +90,14 @@ impl CapabilityProcess {
 
         let mut cmd = Command::new(pyroduct_bin);
         cmd.arg("serve")
-            .arg("--server-type").arg("capability")
-            .arg("--socket").arg(socket_path)
-            .arg("--cap-name").arg(cap_name)
-            .arg("--cap-path").arg(cap_lib_path);
+            .arg("--server-type")
+            .arg("capability")
+            .arg("--socket")
+            .arg(socket_path)
+            .arg("--cap-name")
+            .arg(cap_name)
+            .arg("--cap-path")
+            .arg(cap_lib_path);
 
         if let Some(config) = cap_config {
             let config_json = serde_json::to_string(config)?;
@@ -104,7 +108,9 @@ impl CapabilityProcess {
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        let mut child = cmd.spawn().context("Failed to spawn capability runner child process")?;
+        let mut child = cmd
+            .spawn()
+            .context("Failed to spawn capability runner child process")?;
 
         // Start tasks to read stdout/stderr and trace them
         let stdout = child.stdout.take().unwrap();
@@ -133,7 +139,10 @@ impl CapabilityProcess {
         while !socket_path.exists() {
             if retries > 100 {
                 let _ = child.kill().await;
-                anyhow::bail!("Capability process failed to bind socket at {:?}", socket_path);
+                anyhow::bail!(
+                    "Capability process failed to bind socket at {:?}",
+                    socket_path
+                );
             }
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
             retries += 1;
@@ -188,16 +197,25 @@ impl PlaybookWorker {
         let config_str = fs::read_to_string(&playbook_config_path)
             .await
             .context("Failed to read playbook config file")?;
-        
-        let pipeline_config: PipelineConfig = match playbook_config_path.extension().and_then(|s| s.to_str()) {
+
+        let pipeline_config: PipelineConfig = match playbook_config_path
+            .extension()
+            .and_then(|s| s.to_str())
+        {
             Some("toml") => toml::from_str(&config_str).context("Failed to parse pipeline TOML")?,
-            Some("yaml") | Some("yml") => serde_yaml::from_str(&config_str).context("Failed to parse pipeline YAML")?,
-            Some("json") => serde_json::from_str(&config_str).context("Failed to parse pipeline JSON")?,
+            Some("yaml") | Some("yml") => {
+                serde_yaml::from_str(&config_str).context("Failed to parse pipeline YAML")?
+            }
+            Some("json") => {
+                serde_json::from_str(&config_str).context("Failed to parse pipeline JSON")?
+            }
             _ => anyhow::bail!("Unknown playbook config extension; supports toml, yaml and json"),
         };
 
         // 2. Load the playbook binary via CacheManager
-        let cache = CacheManager::from_env().await.context("Failed to initialize CacheManager")?;
+        let cache = CacheManager::from_env()
+            .await
+            .context("Failed to initialize CacheManager")?;
         let mut loaded_playbook = cache
             .load_playbook(
                 pipeline_config.playbook,
@@ -216,8 +234,10 @@ impl PlaybookWorker {
             let socket_path = PathBuf::from(format!("/tmp/pyro-cap-{}-{}.sock", id, cap_name));
             let cap_config = cap_configs.get(&cap_name);
 
-            let cap_proc = CapabilityProcess::spawn(&cap_name, &cap_lib_path, &socket_path, cap_config).await?;
-            
+            let cap_proc =
+                CapabilityProcess::spawn(&cap_name, &cap_lib_path, &socket_path, cap_config)
+                    .await?;
+
             // Map the capability to UDS socket path
             remote_mappings.insert(cap_name.clone(), RemoteAddress::Unix(socket_path));
             capability_processes.push(cap_proc);
@@ -247,7 +267,7 @@ impl PlaybookWorker {
 
         tokio::spawn(async move {
             tracing::info!(socket = %playbook_socket_clone, "PlaybookServer running worker loop");
-            
+
             tokio::select! {
                 res = server.run(listener) => {
                     if let Err(e) = res {
@@ -260,7 +280,10 @@ impl PlaybookWorker {
             }
 
             // Cleanup socket file if Unix UDS
-            if playbook_socket_clone.parse::<std::net::SocketAddr>().is_err() {
+            if playbook_socket_clone
+                .parse::<std::net::SocketAddr>()
+                .is_err()
+            {
                 let path = Path::new(&playbook_socket_clone);
                 if path.exists() {
                     let _ = std::fs::remove_file(path);
@@ -277,7 +300,7 @@ impl PlaybookWorker {
         })
     }
 
-    pub async fn shutdown(mut self) -> Result<()> {
+    pub async fn shutdown(self) -> Result<()> {
         let _ = self.kill_tx.send(()).await;
         for mut cap in self.capability_processes {
             let _ = cap.kill().await;
@@ -398,7 +421,8 @@ async fn handle_client(
                         let mut guard = workers.lock().await;
                         guard.insert(id, worker);
                         DaemonResponse::Success {
-                            message: "Playbook worker and capability servers started successfully".to_string(),
+                            message: "Playbook worker and capability servers started successfully"
+                                .to_string(),
                             playbook_id: Some(id),
                         }
                     }
@@ -412,7 +436,9 @@ async fn handle_client(
                 if let Some(worker) = guard.remove(&playbook_id) {
                     match worker.shutdown().await {
                         Ok(()) => DaemonResponse::Success {
-                            message: "Playbook worker and capability processes shut down successfully".to_string(),
+                            message:
+                                "Playbook worker and capability processes shut down successfully"
+                                    .to_string(),
                             playbook_id: Some(playbook_id),
                         },
                         Err(e) => DaemonResponse::Error {
@@ -421,7 +447,10 @@ async fn handle_client(
                     }
                 } else {
                     DaemonResponse::Error {
-                        message: format!("No active playbook worker found with ID: {}", playbook_id),
+                        message: format!(
+                            "No active playbook worker found with ID: {}",
+                            playbook_id
+                        ),
                     }
                 }
             }

@@ -71,7 +71,7 @@ async fn test_capability_configuration_respect() {
                 "config".to_string(),
                 CapabilityConfig {
                     classes: HashMap::from([(
-                        "TransformClient".to_string(),
+                        "Transform".to_string(),
                         Some(json!({
                             "uppercase": true,
                             "suffix": "!!!"
