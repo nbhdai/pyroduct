@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path};
 use toml::Value;
 
+use crate::artifacts::CapabilityConfig;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CapabilityIdent {
     pub name: String,
@@ -109,6 +111,14 @@ pub struct ResolvedCapability {
     pub version: String,
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ConfiguredCapability {
+    pub author: String,
+    pub package: String,
+    pub version: String,
+    pub configuration: CapabilityConfig,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct ModuleManifest<Metadata = Value> {
@@ -117,7 +127,7 @@ pub struct ModuleManifest<Metadata = Value> {
     #[serde(default = "default_pyroduct")]
     pub pyroduct: Dependency,
     #[serde(default)]
-    pub capabilities: BTreeMap<String, ResolvedCapability>,
+    pub capabilities: BTreeMap<String, ConfiguredCapability>,
     #[serde(default)]
     pub dependencies: DepsSet,
     #[serde(default)]
@@ -341,7 +351,7 @@ impl ModuleManifest {
     fn augment_deps(
         &self,
         target_map: &mut DepsSet,
-        capabilities: &BTreeMap<String, ResolvedCapability>,
+        capabilities: &BTreeMap<String, ConfiguredCapability>,
         cache_manager: Option<&crate::cache::CacheManager>,
     ) {
         for (name, cap) in capabilities.iter() {

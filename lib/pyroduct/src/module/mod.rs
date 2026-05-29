@@ -14,7 +14,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use pyro_artifacts::artifacts::{CapabilityConfig, ModuleSpec};
+use pyro_artifacts::artifacts::{CapabilityConfig, PlaybookSpec};
 use pyro_artifacts::build::BuildError;
 use pyro_artifacts::cache::{CacheError, LoadedPlaybook, RemoteAddress};
 use pyro_artifacts::environment::EnvironmentError;
@@ -112,7 +112,7 @@ pub(crate) struct SessionState {
 /// Host functions registered through `define_async` / `define_sync` receive
 /// a clean `(&T, PyroView)` signature — all wasm memory plumbing is hidden.
 pub struct PyroFactory {
-    spec: Arc<ModuleSpec>,
+    spec: Arc<PlaybookSpec>,
     configurations: HashMap<String, CapabilityConfig>,
     libraries: Vec<Arc<CapabilityLibrary>>,
     module: PyroModule,
@@ -120,7 +120,7 @@ pub struct PyroFactory {
 }
 
 impl PyroFactory {
-    pub fn spec(&self) -> &ModuleSpec {
+    pub fn spec(&self) -> &PlaybookSpec {
         &self.spec
     }
 
@@ -147,11 +147,15 @@ impl PyroFactory {
         }
 
         let spec = Arc::new(playbook.binary.spec.clone());
+        let mut configurations = HashMap::new();
+        for cap in &playbook.binary.configurations {
+            configurations.insert(cap.package.clone(), cap.configuration.clone());
+        }
 
         Ok(PyroFactory {
             spec,
             libraries: libs,
-            configurations: playbook.configurations.clone(),
+            configurations,
             module: pyro_module,
             remote: playbook.remote.clone(),
         })
@@ -469,7 +473,7 @@ impl PyroFactory {
 }
 
 pub struct PyroInstance {
-    pub(crate) spec: Arc<ModuleSpec>,
+    pub(crate) spec: Arc<PlaybookSpec>,
     pub(crate) store: Store<PyroState>,
     pub(crate) instance: Instance,
     pub(crate) memory: Memory,
@@ -478,7 +482,7 @@ pub struct PyroInstance {
 }
 
 impl PyroInstance {
-    pub fn spec(&self) -> &ModuleSpec {
+    pub fn spec(&self) -> &PlaybookSpec {
         &self.spec
     }
 

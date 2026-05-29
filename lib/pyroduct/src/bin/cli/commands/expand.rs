@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use fs_err as fs;
 use pyro_artifacts::{
-    artifacts::{Artifact, Artifacts, Module},
+    artifacts::{Artifact, Artifacts, Playbook},
     cache::CacheManager,
     debug::CapSymbols,
     environment::Environment,
@@ -130,13 +130,13 @@ pub async fn expand_single(path: &Path, no_compile: bool) -> Result<bool> {
                 fs::create_dir_all(&output_dir)?;
                 fs::write(output_dir.join("cap.rs"), code)?;
             }
-            Artifacts::Module(Module::Source(source)) => {
+            Artifacts::Playbook(Playbook::Source(source)) => {
                 let code = generate_module(&source.source).context("Module code")?;
                 let code = prettyplease::unparse(&code);
                 fs::create_dir_all(&output_dir)?;
                 fs::write(output_dir.join("cap.rs"), code)?;
             }
-            Artifacts::Module(Module::Binary(binary)) => match pyro_artifacts::debug::wat(binary) {
+            Artifacts::Playbook(Playbook::Binary(binary)) => match pyro_artifacts::debug::wat(binary) {
                 Ok(wat) => fs::write(output_dir.join("mod.wat"), wat)?,
                 Err(error) => {
                     tracing::error!(error, "Unable to create wat");

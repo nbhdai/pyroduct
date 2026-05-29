@@ -1,5 +1,5 @@
 use pyro_artifacts::{
-    artifacts::{ModuleDependencies, ModuleSource, Playbook},
+    artifacts::{ModuleDependencies, PlaybookSource},
     build::Builder,
     cache::CacheManager,
 };
@@ -43,13 +43,14 @@ async fn test_playbook_server_client() {
     let cache = std::sync::Arc::new(CacheManager::from_env().await.unwrap());
     let builder = Builder::from_env(cache.clone()).await.unwrap();
 
-    let source = ModuleSource {
+    let source = PlaybookSource {
         dependencies: ModuleDependencies {
             dependencies: BTreeMap::new(),
             capabilities: vec![],
         },
         source: CODE.to_string(),
         ident: None,
+        configurations: Vec::new(),
     };
 
     let binary = builder
@@ -58,10 +59,7 @@ async fn test_playbook_server_client() {
         .expect("Valid module should compile");
 
     let config = PipelineConfig {
-        playbook: Playbook {
-            hash: binary.hash(),
-            configurations: HashMap::new(),
-        },
+        playbook_hash: binary.hash(),
         remote: HashMap::new(),
         wal_capacity: 1000,
         success_log_retention_secs: 3600,

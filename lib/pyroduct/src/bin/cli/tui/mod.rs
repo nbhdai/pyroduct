@@ -117,14 +117,19 @@ impl App {
 
             let mut pipelines = Vec::new();
             for (name, pipeline_config) in configs {
-                let playbook = pipeline_config.playbook;
-                if let Ok(source_module) = cache.get_source(&playbook.hash).await {
+                let hash = pipeline_config.playbook_hash.clone();
+                if let Ok(source_module) = cache.get_source(&hash).await {
                     let mut capabilities = HashMap::new();
+                    let binary = cache.get_binary(&hash).await.ok();
                     for cap in source_module.dependencies.capabilities {
-                        let config = playbook
-                            .configurations
-                            .get(&cap.package)
-                            .and_then(|cap_cfg| cap_cfg.classes.values().next().cloned().flatten());
+                        let config = binary
+                            .as_ref()
+                            .and_then(|bin| {
+                                bin.configurations
+                                    .iter()
+                                    .find(|c| c.author == cap.author && c.package == cap.package && c.version == cap.version)
+                            })
+                            .and_then(|cap_cfg| cap_cfg.configuration.classes.values().next().cloned().flatten());
                         capabilities.insert(cap, config);
                     }
                     pipelines.push(SourcePipeline {
@@ -236,8 +241,7 @@ impl App {
         let log_dir = root_dir.join("log");
 
         for (i, source_pipeline) in self.pipeline.pipelines.iter().enumerate() {
-            let mut configurations: HashMap<String, pyro_artifacts::artifacts::CapabilityConfig> =
-                HashMap::new();
+            let mut configurations = Vec::new();
             let mut capabilities = Vec::new();
 
             for (cap, config) in &source_pipeline.capabilities {
@@ -259,7 +263,12 @@ impl App {
                 let cap_config = pyro_artifacts::artifacts::CapabilityConfig {
                     classes: HashMap::from([(class_name, config.clone())]),
                 };
-                configurations.insert(cap.package.clone(), cap_config);
+                configurations.push(pyro_artifacts::cargo::ConfiguredCapability {
+                    author: cap.author.clone(),
+                    package: cap.package.clone(),
+                    version: cap.version.clone(),
+                    configuration: cap_config,
+                });
             }
 
             let dependencies = pyro_artifacts::artifacts::ModuleDependencies {
@@ -267,10 +276,11 @@ impl App {
                 capabilities,
             };
 
-            let module_source = pyro_artifacts::artifacts::ModuleSource {
+            let module_source = pyro_artifacts::artifacts::PlaybookSource {
                 dependencies,
                 source: source_pipeline.source.clone(),
                 ident: None,
+                configurations,
             };
 
             let binary = self
@@ -279,13 +289,8 @@ impl App {
                 .await
                 .context(format!("Compilation failed for pipeline {}", i))?;
 
-            let playbook = pyro_artifacts::artifacts::Playbook {
-                hash: binary.hash(),
-                configurations,
-            };
-
             let pipeline_config = pyroduct::pipeline::PipelineConfig {
-                playbook,
+                playbook_hash: binary.hash(),
                 remote: HashMap::new(),
                 wal_capacity: source_pipeline.wal_capacity,
                 success_log_retention_secs: source_pipeline.success_log_retention_secs,

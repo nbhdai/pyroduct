@@ -3,7 +3,7 @@
 use std::{borrow::Cow, collections::HashMap};
 
 use crate::artifacts::append_file;
-use crate::artifacts::{Artifact, CapabilityBinary, ModuleBinary};
+use crate::artifacts::{Artifact, CapabilityBinary, PlaybookBinary};
 use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
@@ -13,7 +13,7 @@ use std::path::Path;
 use tar::Builder;
 use tokio::fs;
 
-pub fn wat(module: &ModuleBinary) -> Result<String, String> {
+pub fn wat(module: &PlaybookBinary) -> Result<String, String> {
     wasmprinter::print_bytes(&module.wasm)
         .map_err(|e| format!("Failed to convert WASM to WAT: {}", e))
 }
@@ -231,7 +231,9 @@ impl Artifact for ModuleDebug {
 }
 
 /// Scans a dynamic library and uses DWARF debug info to reconstruct signatures
+#[tracing::instrument(skip(capability), fields(ident = ?capability.ident))]
 pub fn symbols(capability: &CapabilityBinary) -> Vec<Result<CapSymbols, String>> {
+    tracing::debug!("Extracting symbols from capability binary");
     let mut results = Vec::new();
 
     for (index, bin) in capability.libs.iter().enumerate() {
@@ -316,11 +318,13 @@ pub fn symbols(capability: &CapabilityBinary) -> Vec<Result<CapSymbols, String>>
     results
 }
 
+#[tracing::instrument(skip(dwarf, symbols))]
 fn enrich_signatures_with_dwarf(
     dwarf: &gimli::Dwarf<gimli::EndianSlice<gimli::RunTimeEndian>>,
     _endian: gimli::RunTimeEndian,
     symbols: &mut HashMap<String, CapSymbol>,
 ) -> Result<(), gimli::Error> {
+    tracing::debug!("Enriching symbol signatures using DWARF info");
     let mut iter = dwarf.units();
 
     while let Some(header) = iter.next()? {

@@ -1,4 +1,4 @@
-use crate::artifacts::{ModuleBinary, ModuleSource, ModuleSpec};
+use crate::artifacts::{PlaybookBinary, PlaybookSource, PlaybookSpec};
 use crate::cache::{CacheError, CacheManager, PyroductConfig};
 use crate::cargo::ensure_cdylib;
 use crate::command::{CommandError, format_syn_error, run_command};
@@ -56,14 +56,20 @@ pub struct Builder {
 }
 
 impl Builder {
+    #[tracing::instrument(skip(root, cache_manager), fields(root = %root.display()))]
     pub async fn new(
         root: &Path,
         mut config: PyroductConfig,
         cache_manager: Arc<CacheManager>,
     ) -> Result<Self, CacheError> {
-        tfs::create_dir_all(root).await.map_err(|e| CacheError {
-            context: "Failed to create build root".to_string(),
-            error: e,
+        tracing::debug!("Creating Builder instance");
+        tfs::create_dir_all(root).await.map_err(|e| {
+            let err = CacheError::Io {
+                context: "Failed to create build root".to_string(),
+                error: e,
+            };
+            tracing::error!(error = ?err, "Failed to create build root directory");
+            err
         })?;
 
         let pyroduct_dep = if let Some(dep) = &mut config.pyroduct {
@@ -84,7 +90,7 @@ impl Builder {
         };
 
         let build_slots = config.build_slots.unwrap_or(4).max(1);
-        tracing::info!(?root, "Setup Build directory");
+        tracing::debug!(?root, "Setup Build directory");
 
         let builder = Self {
             root: root.to_path_buf(),
@@ -99,7 +105,9 @@ impl Builder {
         Ok(builder)
     }
 
+    #[tracing::instrument(skip(cache_manager))]
     pub async fn from_env(cache_manager: Arc<CacheManager>) -> Result<Self, CacheError> {
+        tracing::debug!("Loading Builder from environment");
         let root = std::env::var("PYRODUCT")
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
@@ -111,15 +119,21 @@ impl Builder {
             });
 
         let config_path = root.join("config.toml");
-        let content = tfs::read_to_string(&config_path)
-            .await
-            .map_err(|error| CacheError {
+        let content = tfs::read_to_string(&config_path).await.map_err(|error| {
+            let err = CacheError::Io {
                 context: "Failed to read the configuration".to_string(),
                 error,
-            })?;
-        let config = toml::from_str::<PyroductConfig>(&content).map_err(|error| CacheError {
-            context: "Failed to parse the configuration".to_string(),
-            error: io::Error::new(io::ErrorKind::InvalidData, error),
+            };
+            tracing::error!(error = ?err, "Failed to read config file at {:?}", config_path);
+            err
+        })?;
+        let config = toml::from_str::<PyroductConfig>(&content).map_err(|error| {
+            let err = CacheError::Io {
+                context: "Failed to parse the configuration".to_string(),
+                error: io::Error::new(io::ErrorKind::InvalidData, error),
+            };
+            tracing::error!(error = ?err, "Failed to parse configuration toml");
+            err
         })?;
 
         Self::new(&root, config, cache_manager).await
@@ -129,45 +143,57 @@ impl Builder {
         &self.root
     }
 
+    #[tracing::instrument(skip(self))]
     async fn init(&self) -> Result<(), CacheError> {
+        tracing::debug!("Initializing Builder directories");
         // Create all build slot directories
         let build_base = self.build_base_dir();
         for i in 0..self.build_slots {
             let slot_dir = build_base.join(i.to_string());
-            tfs::create_dir_all(&slot_dir)
-                .await
-                .map_err(|error| CacheError {
+            tfs::create_dir_all(&slot_dir).await.map_err(|error| {
+                let err = CacheError::Io {
                     context: format!("Failed to create build slot dir {}", i),
                     error,
-                })?;
+                };
+                tracing::error!(error = ?err, "Failed to create build slot directory {}", i);
+                err
+            })?;
         }
 
         let cargo_dir = self.root.join(".cargo");
-        tfs::create_dir_all(&cargo_dir)
-            .await
-            .map_err(|error| CacheError {
+        tfs::create_dir_all(&cargo_dir).await.map_err(|error| {
+            let err = CacheError::Io {
                 context: "Failed to create .cargo dir".to_string(),
                 error,
-            })?;
+            };
+            tracing::error!(error = ?err, "Failed to create .cargo directory");
+            err
+        })?;
 
         tfs::write(
             cargo_dir.join("config.toml"),
             format!("[build]\ntarget-dir = \"{}\"", self.target_dir.display()),
         )
         .await
-        .map_err(|error| CacheError {
-            context: "Failed to write target config.toml".to_string(),
-            error,
+        .map_err(|error| {
+            let err = CacheError::Io {
+                context: "Failed to write target config.toml".to_string(),
+                error,
+            };
+            tracing::error!(error = ?err, "Failed to write .cargo/config.toml");
+            err
         })?;
         Ok(())
     }
 
     #[cfg(feature = "compiler")]
-    pub async fn compile(&self, source: &ModuleSource) -> Result<ModuleBinary, BuildError> {
+    #[tracing::instrument(skip(self, source), fields(source_hash = %source.hash()))]
+    pub async fn compile(&self, source: &PlaybookSource) -> Result<PlaybookBinary, BuildError> {
         let hash = source.hash();
 
         // Check if binary is already in cache
         if let Ok(binary) = self.cache_manager.get_binary(&hash).await {
+            tracing::debug!("Playbook binary found in cache, skipping compilation");
             return Ok(binary);
         }
 
@@ -177,12 +203,18 @@ impl Builder {
 
         let build_dir = &slot.dir;
         let src_dir = build_dir.join("src");
-        tfs::create_dir_all(&src_dir)
-            .await
-            .map_err(|e| BuildError::io("create src dir", e))?;
+        tfs::create_dir_all(&src_dir).await.map_err(|e| {
+            let err = BuildError::io("create src dir", e);
+            tracing::error!(error = ?err, "Failed to create src directory in slot");
+            err
+        })?;
         tfs::write(src_dir.join("lib.rs"), &source.source)
             .await
-            .map_err(|e| BuildError::io("write lib.rs", e))?;
+            .map_err(|e| {
+                let err = BuildError::io("write lib.rs", e);
+                tracing::error!(error = ?err, "Failed to write lib.rs in slot");
+                err
+            })?;
 
         let crate_name = format!("mod_slot{}", slot.index);
         let basic_toml = format!(
@@ -202,8 +234,11 @@ name = "mod_slot"
 "#
         );
 
-        let mut manifest: cargo_toml::Manifest = toml::from_str(&basic_toml)
-            .map_err(|e| BuildError::Manifest(format!("Couldn't build base manifest: {}", e)))?;
+        let mut manifest: cargo_toml::Manifest = toml::from_str(&basic_toml).map_err(|e| {
+            let err = BuildError::Manifest(format!("Couldn't build base manifest: {}", e));
+            tracing::error!(error = ?err, "Failed to parse base basic_toml");
+            err
+        })?;
         let mut pyro_dep = self.pyroduct_dep.clone();
         pyro_dep.detail_mut().features.push("module".to_string());
         manifest
@@ -226,18 +261,30 @@ name = "mod_slot"
         }
         manifest.lib = ensure_cdylib(manifest.lib.take());
 
-        let cargo_toml_content =
-            toml::to_string_pretty(&manifest).map_err(|e| BuildError::Manifest(e.to_string()))?;
+        let cargo_toml_content = toml::to_string_pretty(&manifest).map_err(|e| {
+            let err = BuildError::Manifest(e.to_string());
+            tracing::error!(error = ?err, "Failed to serialize slot Cargo.toml");
+            err
+        })?;
         tfs::write(build_dir.join("Cargo.toml"), &cargo_toml_content)
             .await
-            .map_err(|e| BuildError::io("write Cargo.toml", e))?;
+            .map_err(|e| {
+                let err = BuildError::io("write Cargo.toml", e);
+                tracing::error!(error = ?err, "Failed to write slot Cargo.toml");
+                err
+            })?;
 
+        tracing::debug!("Running cargo compilation command in slot {}", slot.index);
         run_command(
             build_dir,
             &["build", "--release", "--target", "wasm32-unknown-unknown"],
             true,
         )
-        .await?;
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, "Cargo compilation failed");
+            BuildError::Command(e)
+        })?;
 
         let wasm_path = self
             .target_dir
@@ -245,42 +292,59 @@ name = "mod_slot"
             .join("release")
             .join("mod_slot.wasm");
 
-        let wasm = tfs::read(wasm_path)
+        let wasm = tfs::read(&wasm_path)
             .await
-            .map_err(|e| BuildError::io("read compiled wasm", e))?;
+            .map_err(|e| {
+                let err = BuildError::io("read compiled wasm", e);
+                tracing::error!(error = ?err, "Failed to read compiled WASM artifact at {:?}", wasm_path);
+                err
+            })?;
 
         drop(slot);
 
         let func = generate_module_spec(&source.source)
             .map_err(|s| {
-                BuildError::Documentation(format_syn_error("Cannot generate docstring", s))
+                let err = BuildError::Documentation(format_syn_error("Cannot generate docstring", s));
+                tracing::error!(error = ?err, "Failed to generate module spec from source docstrings");
+                err
             })?
-            .ok_or(BuildError::Documentation(
-                "Module main functions is missing".to_string(),
-            ))?;
-        let spec = ModuleSpec {
+            .ok_or_else(|| {
+                let err = BuildError::Documentation("Module main functions is missing".to_string());
+                tracing::error!(error = ?err, "Module main function is missing");
+                err
+            })?;
+        let spec = PlaybookSpec {
             hash,
             func,
             capabilities: source.dependencies.capabilities.clone(),
             ident: None,
         };
 
-        let binary = ModuleBinary {
+        let binary = PlaybookBinary {
             ident: None,
             wasm,
             spec,
+            configurations: source.configurations.clone(),
         };
 
         // Save to cache
-        let _ = self
+        tracing::debug!("Saving source and compiled binary to CacheManager");
+        if let Err(e) = self
             .cache_manager
             .write_artifacts(&source.clone().into())
-            .await;
-        let _ = self
+            .await
+        {
+            tracing::error!(error = ?e, "Failed to save playbook source to cache");
+        }
+        if let Err(e) = self
             .cache_manager
             .write_artifacts(&binary.clone().into())
-            .await;
+            .await
+        {
+            tracing::error!(error = ?e, "Failed to save playbook binary to cache");
+        }
 
+        tracing::info!("Playbook compilation completed successfully");
         Ok(binary)
     }
 }
@@ -292,9 +356,11 @@ pub struct BuildSlot {
 }
 
 impl BuildSlot {
+    #[tracing::instrument(skip(build_base))]
     fn try_acquire(build_base: &Path, index: usize) -> io::Result<Option<Self>> {
         use fs2::FileExt;
 
+        tracing::debug!("Probing build slot lock file");
         let slot_dir = build_base.join(index.to_string());
         std::fs::create_dir_all(&slot_dir)?;
 
@@ -306,30 +372,33 @@ impl BuildSlot {
             .open(&lock_path)?;
 
         if lock_file.try_lock_exclusive().is_ok() {
+            tracing::debug!("Lock acquired successfully for build slot {}", index);
             Ok(Some(BuildSlot {
                 index,
                 dir: slot_dir,
                 _lock_file: lock_file,
             }))
         } else {
+            tracing::debug!("Build slot {} lock is already held", index);
             Ok(None)
         }
     }
 
+    #[tracing::instrument(skip(build_base))]
     async fn acquire_any(build_base: &Path, slot_count: usize) -> Result<Self, BuildError> {
+        tracing::debug!("Acquiring any available build slot...");
         loop {
             for i in 0..slot_count {
                 match Self::try_acquire(build_base, i) {
                     Ok(Some(slot)) => {
-                        tracing::info!(slot = i, "Acquired build slot");
+                        tracing::debug!(slot = i, "Acquired build slot");
                         return Ok(slot);
                     }
                     Ok(None) => continue,
                     Err(e) => {
-                        return Err(BuildError::NoSlot(format!(
-                            "Failed to probe slot {}: {}",
-                            i, e
-                        )));
+                        let err = BuildError::NoSlot(format!("Failed to probe slot {}: {}", i, e));
+                        tracing::error!(error = ?err, "Failed to probe build slot lock file");
+                        return Err(err);
                     }
                 }
             }

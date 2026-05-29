@@ -1,5 +1,5 @@
 use pyro_artifacts::{
-    artifacts::{CapabilityConfig, ModuleDependencies, ModuleSource, Playbook},
+    artifacts::{CapabilityConfig, ModuleDependencies, PlaybookSource},
     build::Builder,
     cache::{CacheManager, RemoteAddress},
     cargo::ResolvedCapability,
@@ -41,7 +41,7 @@ async fn test_socket_capability_remote() {
     let cache = std::sync::Arc::new(CacheManager::from_env().await.unwrap());
     let builder = Builder::from_env(cache.clone()).await.unwrap();
 
-    let source = ModuleSource {
+    let source = PlaybookSource {
         dependencies: ModuleDependencies {
             dependencies: BTreeMap::new(),
             capabilities: vec![ResolvedCapability {
@@ -52,6 +52,7 @@ async fn test_socket_capability_remote() {
         },
         source: CODE.to_string(),
         ident: None,
+        configurations: Vec::new(),
     };
     cache.remove_anon(&source.hash()).await.unwrap();
 
@@ -101,10 +102,7 @@ async fn test_socket_capability_remote() {
     let tmp_path = tmp_dir.path().to_path_buf();
 
     let config = PipelineConfig {
-        playbook: Playbook {
-            hash: binary.hash(),
-            configurations: HashMap::new(),
-        },
+        playbook_hash: binary.hash(),
         remote: HashMap::from([("config".to_string(), RemoteAddress::Tcp(addr.to_string()))]),
         wal_capacity: 10,
         success_log_retention_secs: 3600,

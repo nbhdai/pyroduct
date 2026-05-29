@@ -7,8 +7,11 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-pyroduct = { workspace = true, features = ["host", "transport", "cli"] }
+pyroduct = { workspace = true, features = ["host", "transport", "cli", "sql"] }
 pyro-artifacts = { workspace = true }
+pyro-spec.workspace = true
+arrow.workspace = true
+datafusion.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true

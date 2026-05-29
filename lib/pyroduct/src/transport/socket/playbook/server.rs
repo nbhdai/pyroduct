@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use pyro_artifacts::artifacts::ModuleSpec;
+use pyro_artifacts::artifacts::PlaybookSpec;
 use pyro_artifacts::cache::LoadedPlaybook;
 
 use crate::format::header::{PyroData, PyroHeader};
@@ -26,7 +26,7 @@ enum ServerPipeline {
 /// requests using a single-level [`Pipeline`] instantiated from a playbook.
 pub struct PlaybookServer {
     pipeline: Arc<Mutex<ServerPipeline>>,
-    spec: Arc<ModuleSpec>,
+    spec: Arc<PlaybookSpec>,
 }
 
 impl PlaybookServer {
@@ -118,7 +118,7 @@ impl PlaybookServer {
     }
 
     /// Get the `ModuleSpec` for the playbook.
-    pub fn spec(&self) -> Arc<ModuleSpec> {
+    pub fn spec(&self) -> Arc<PlaybookSpec> {
         self.spec.clone()
     }
 

@@ -1,5 +1,5 @@
 use pyro_artifacts::{
-    artifacts::{CapabilityConfig, ModuleDependencies, ModuleSource, Playbook},
+    artifacts::{CapabilityConfig, ModuleDependencies, PlaybookSource},
     build::Builder,
     cache::CacheManager,
     cargo::ResolvedCapability,
@@ -54,7 +54,7 @@ async fn test_http_playbook_server_and_repair() {
     cache.init().await.unwrap();
     let builder = Builder::from_env(cache.clone()).await.unwrap();
 
-    let source = ModuleSource {
+    let source = PlaybookSource {
         dependencies: ModuleDependencies {
             dependencies: BTreeMap::new(),
             capabilities: vec![ResolvedCapability {
@@ -65,6 +65,14 @@ async fn test_http_playbook_server_and_repair() {
         },
         source: CODE.to_string(),
         ident: None,
+        configurations: vec![pyro_artifacts::cargo::ConfiguredCapability {
+            package: "state".to_string(),
+            author: "nbhdai".to_string(),
+            version: "0.1.0".to_string(),
+            configuration: CapabilityConfig {
+                classes: HashMap::from([("counter".to_string(), None)]),
+            },
+        }],
     };
 
     let binary = builder
@@ -73,15 +81,7 @@ async fn test_http_playbook_server_and_repair() {
         .expect("Valid module should compile");
 
     let config = PipelineConfig {
-        playbook: Playbook {
-            hash: binary.hash(),
-            configurations: HashMap::from([(
-                "state".to_string(),
-                CapabilityConfig {
-                    classes: HashMap::from([("counter".to_string(), None)]),
-                },
-            )]),
-        },
+        playbook_hash: binary.hash(),
         remote: HashMap::new(),
         wal_capacity: 1000,
         success_log_retention_secs: 3600,

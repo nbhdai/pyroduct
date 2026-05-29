@@ -1,5 +1,5 @@
 use pyro_artifacts::{
-    artifacts::{CapabilityConfig, ModuleDependencies, ModuleSource, Playbook},
+    artifacts::{CapabilityConfig, ModuleDependencies, PlaybookSource},
     build::Builder,
     cache::CacheManager,
     cargo::ResolvedCapability,
@@ -42,7 +42,7 @@ async fn test_capability_configuration_respect() {
         .init();
     let cache = std::sync::Arc::new(CacheManager::from_env().await.unwrap());
     let builder = Builder::from_env(cache.clone()).await.unwrap();
-    let source = ModuleSource {
+    let source = PlaybookSource {
         dependencies: ModuleDependencies {
             dependencies: BTreeMap::new(),
             capabilities: vec![ResolvedCapability {
@@ -53,6 +53,20 @@ async fn test_capability_configuration_respect() {
         },
         source: CODE.to_string(),
         ident: None,
+        configurations: vec![pyro_artifacts::cargo::ConfiguredCapability {
+            package: "config".to_string(),
+            author: "nbhdai".to_string(),
+            version: "0.1.0".to_string(),
+            configuration: CapabilityConfig {
+                classes: HashMap::from([(
+                    "transform".to_string(),
+                    Some(json!({
+                        "uppercase": true,
+                        "suffix": "!!!"
+                    })),
+                )]),
+            },
+        }],
     };
     cache.remove_anon(&source.hash()).await.unwrap();
 
@@ -65,21 +79,7 @@ async fn test_capability_configuration_respect() {
     let tmp_path = tmp_dir.path().to_path_buf();
 
     let config = PipelineConfig {
-        playbook: Playbook {
-            hash: binary.hash(),
-            configurations: HashMap::from([(
-                "config".to_string(),
-                CapabilityConfig {
-                    classes: HashMap::from([(
-                        "transform".to_string(),
-                        Some(json!({
-                            "uppercase": true,
-                            "suffix": "!!!"
-                        })),
-                    )]),
-                },
-            )]),
-        },
+        playbook_hash: binary.hash(),
         remote: HashMap::new(),
         wal_capacity: 2,
         success_log_retention_secs: 3600,

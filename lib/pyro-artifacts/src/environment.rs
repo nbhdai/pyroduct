@@ -2,7 +2,7 @@ use crate::artifacts::{
     Artifact, Artifacts, CapBinary, CapabilityBinary, CapabilitySource, Interface,
 };
 use crate::cache::{CacheError, CacheManager};
-use crate::cargo::{CapabilityIdent, ProjectManifest};
+use crate::cargo::{CapabilityIdent, ProjectManifest, ResolvedCapability};
 use crate::debug::{self, CapabilityDebug, ModuleDebug};
 use crate::{
     build::BuildError,
@@ -73,19 +73,31 @@ pub struct Environment {
 
 impl Environment {
     /// Create a new Environment by fetching metadata and detecting manifests from the given root
+    #[tracing::instrument(skip(root, cache_manager), fields(root = %root.display()))]
     pub async fn new(root: PathBuf, cache_manager: Arc<CacheManager>) -> EnvResult<Self> {
-        let manifest = Self::load_manifest(&root).await?;
-        Self::ensure_cargo_toml(&root, &manifest, &cache_manager).await?;
-        let target_dir = Self::get_target_dir(&root).await?;
-        Ok(Self {
-            root,
-            target_dir,
-            manifest,
-            cache_manager,
-        })
+        tracing::debug!("Creating Environment instance");
+        let res = async {
+            let manifest = Self::load_manifest(&root).await?;
+            Self::ensure_cargo_toml(&root, &manifest, &cache_manager).await?;
+            let target_dir = Self::get_target_dir(&root).await?;
+            Ok(Self {
+                root,
+                target_dir,
+                manifest,
+                cache_manager,
+            })
+        }.await;
+
+        if let Err(ref e) = res {
+            tracing::error!(error = ?e, "Failed to create Environment");
+        } else {
+            tracing::debug!("Environment successfully created");
+        }
+        res
     }
 
     /// Write Cargo.toml from Module.toml or Capability.toml if it doesn't exist
+    #[tracing::instrument(skip(root, manifest, cache_manager), fields(root = %root.display()))]
     async fn ensure_cargo_toml(
         root: &Path,
         manifest: &crate::cargo::ProjectManifest,
@@ -93,12 +105,22 @@ impl Environment {
     ) -> EnvResult<()> {
         let cargo_toml_path = root.join("Cargo.toml");
         if cargo_toml_path.exists() {
+            tracing::debug!("Cargo.toml already exists, skipping generation");
             return Ok(());
         }
+        tracing::debug!("Cargo.toml not found, generating from Pyroduct manifest");
         let contents =
             toml::to_string_pretty(&manifest.clone().to_cargo_manifest(Some(cache_manager)))
-                .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
-        fs::write(&cargo_toml_path, contents).await?;
+                .map_err(|e| {
+                    let err = EnvironmentError::ParseManifest(e.to_string());
+                    tracing::error!(error = ?err, "Failed to serialize generated Cargo.toml");
+                    err
+                })?;
+        fs::write(&cargo_toml_path, contents).await.map_err(|e| {
+            tracing::error!(error = ?e, "Failed to write generated Cargo.toml at {:?}", cargo_toml_path);
+            e
+        })?;
+        tracing::debug!("Successfully wrote Cargo.toml");
         Ok(())
     }
 
@@ -115,42 +137,60 @@ impl Environment {
     }
 
     /// Detect Capability.toml or Module.toml to extract name and version
+    #[tracing::instrument(skip(root), fields(root = %root.display()))]
     async fn load_manifest(root: &Path) -> EnvResult<ProjectManifest> {
         tracing::debug!("Loading manifest from {:?}", root);
         let capability_toml = root.join("Capability.toml");
         if capability_toml.exists() {
+            tracing::debug!("Detected Capability.toml");
             let content = tokio::fs::read_to_string(&capability_toml).await?;
             let manifest: crate::cargo::CapabilityManifest = toml::from_str(&content)
-                .map_err(|e| EnvironmentError::ParseManifest(format!("Capability.toml: {}", e)))?;
+                .map_err(|e| {
+                    let err = EnvironmentError::ParseManifest(format!("Capability.toml: {}", e));
+                    tracing::error!(error = ?err, "Failed to parse Capability.toml");
+                    err
+                })?;
             return Ok(crate::cargo::ProjectManifest::Capability(manifest));
         }
 
         let module_toml = root.join("Module.toml");
         if module_toml.exists() {
+            tracing::debug!("Detected Module.toml");
             let content = tokio::fs::read_to_string(&module_toml).await?;
             let manifest: crate::cargo::ModuleManifest = toml::from_str(&content)
-                .map_err(|e| EnvironmentError::ParseManifest(format!("Module.toml: {}", e)))?;
+                .map_err(|e| {
+                    let err = EnvironmentError::ParseManifest(format!("Module.toml: {}", e));
+                    tracing::error!(error = ?err, "Failed to parse Module.toml");
+                    err
+                })?;
             return Ok(crate::cargo::ProjectManifest::Module(manifest));
         }
 
         // Default for anon compilations or when no package section is found
-        Err(EnvironmentError::ParseManifest(
+        let err = EnvironmentError::ParseManifest(
             "No manifest found".to_string(),
-        ))
+        );
+        tracing::error!(error = ?err, "No Capability.toml or Module.toml manifest found in {:?}", root);
+        Err(err)
     }
 
     /// Run `cargo metadata` to find the target directory
+    #[tracing::instrument(skip(path), fields(path = %path.display()))]
     pub async fn get_target_dir(path: &Path) -> EnvResult<PathBuf> {
+        tracing::debug!("Retrieving cargo metadata target directory");
         let output = Command::new("cargo")
             .args(["metadata", "--format-version=1", "--no-deps"])
             .current_dir(path)
             .output()
-            .await?;
+            .await.map_err(|e| {
+                tracing::error!(error = ?e, "Failed to launch cargo metadata");
+                e
+            })?;
 
         if !output.status.success() {
-            return Err(EnvironmentError::Metadata(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ));
+            let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
+            tracing::error!(stderr = %stderr_str, "Cargo metadata execution failed");
+            return Err(EnvironmentError::Metadata(stderr_str));
         }
 
         let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)?;
@@ -158,20 +198,38 @@ impl Environment {
         metadata["target_directory"]
             .as_str()
             .map(PathBuf::from)
-            .ok_or(EnvironmentError::MissingTargetDir)
+            .ok_or_else(|| {
+                tracing::error!("Missing target_directory in cargo metadata JSON");
+                EnvironmentError::MissingTargetDir
+            })
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn generate_lockfile(&self) -> EnvResult<String> {
-        run_command(&self.root, &["generate-lockfile"], true).await?;
+        tracing::debug!("Generating Cargo.lock file");
+        run_command(&self.root, &["generate-lockfile"], true).await.map_err(|e| {
+            tracing::error!(error = ?e, "Failed to generate Cargo.lock");
+            EnvironmentError::CommandError(e)
+        })?;
 
-        Ok(fs::read_to_string(self.root.join("Cargo.lock")).await?)
+        let lockfile_path = self.root.join("Cargo.lock");
+        fs::read_to_string(&lockfile_path).await.map_err(|e| {
+            tracing::error!(error = ?e, "Failed to read generated Cargo.lock");
+            EnvironmentError::Io(e)
+        })
     }
 
     /// Compile the project (defaults to release)
+    #[tracing::instrument(skip(self))]
     pub async fn compile(&self, extra_args: &[&str], capture: bool) -> EnvResult<()> {
+        tracing::debug!("Starting Cargo compilation in environment");
         let mut args = vec!["build", "--release"];
         args.extend_from_slice(extra_args);
-        run_command(&self.root, &args, capture).await?;
+        run_command(&self.root, &args, capture).await.map_err(|e| {
+            tracing::error!(error = ?e, "Cargo compilation failed");
+            EnvironmentError::CommandError(e)
+        })?;
+        tracing::debug!("Cargo compilation completed successfully");
         Ok(())
     }
 
@@ -210,8 +268,9 @@ impl Environment {
     }
 
     /// Load artifacts from an existing target directory without compiling
+    #[tracing::instrument(skip(self, target_dir), fields(target_dir = %target_dir.display()))]
     pub async fn load_artifacts_from_target(&self, target_dir: &Path) -> EnvResult<Vec<Artifacts>> {
-        tracing::info!("Loading artifacts from target directory: {:?}", target_dir);
+        tracing::debug!("Loading artifacts from target directory");
 
         let name = self.name();
         let version = self.version();
@@ -224,84 +283,245 @@ impl Environment {
             String::new()
         };
 
-        match &self.manifest {
-            crate::cargo::ProjectManifest::Capability(cap_manifest) => {
-                let lib = self.get_library_artifact(&name).await.ok();
+        let res = async {
+            match &self.manifest {
+                crate::cargo::ProjectManifest::Capability(cap_manifest) => {
+                    let lib = self.get_library_artifact(&name).await.ok();
 
-                let lock_path = self.root.join("Cargo.lock");
-                let cargo_lock = if lock_path.exists() {
-                    fs::read_to_string(&lock_path).await?
-                } else {
-                    String::new()
-                };
+                    let lock_path = self.root.join("Cargo.lock");
+                    let cargo_lock = if lock_path.exists() {
+                        fs::read_to_string(&lock_path).await?
+                    } else {
+                        String::new()
+                    };
 
-                let (interface_rs, interface) =
-                    pyro_macro::ffi::generate_interface(&src_lib_rs, &name, &version).map_err(
-                        |r| EnvironmentError::InterfaceGeneration(format_syn_error(&src_lib_rs, r)),
-                    )?;
+                    let (interface_rs, interface) =
+                        pyro_macro::ffi::generate_interface(&src_lib_rs, &name, &version).map_err(
+                            |r| EnvironmentError::InterfaceGeneration(format_syn_error(&src_lib_rs, r)),
+                        )?;
 
-                let interface_rs = prettyplease::unparse(&interface_rs);
+                    let interface_rs = prettyplease::unparse(&interface_rs);
 
-                let mut artifacts = vec![
-                    Artifacts::CapabilitySource(CapabilitySource {
-                        manifest: cap_manifest.clone(),
-                        cargo_toml: toml::to_string_pretty(
-                            &cap_manifest.clone().to_capability_manifest(),
-                        )
-                        .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?,
-                        cargo_lock,
-                        src_lib_rs,
-                    }),
-                    Artifacts::Interface(Interface {
-                        manifest: cap_manifest.clone(),
-                        src_lib_rs: interface_rs,
-                        interface: interface.clone(),
-                    }),
-                ];
+                    let mut artifacts = vec![
+                        Artifacts::CapabilitySource(CapabilitySource {
+                            manifest: cap_manifest.clone(),
+                            cargo_toml: toml::to_string_pretty(
+                                &cap_manifest.clone().to_capability_manifest(),
+                            )
+                            .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?,
+                            cargo_lock,
+                            src_lib_rs,
+                        }),
+                        Artifacts::Interface(Interface {
+                            manifest: cap_manifest.clone(),
+                            src_lib_rs: interface_rs,
+                            interface: interface.clone(),
+                        }),
+                    ];
 
-                if let Some(lib) = lib {
-                    artifacts.push(Artifacts::CapabilityBinary(CapabilityBinary {
-                        ident: CapabilityIdent {
-                            name,
-                            version,
-                            author,
-                        },
-                        libs: vec![lib],
-                        interface: interface.clone(),
-                    }));
+                    if let Some(lib) = lib {
+                        artifacts.push(Artifacts::CapabilityBinary(CapabilityBinary {
+                            ident: CapabilityIdent {
+                                name,
+                                version,
+                                author,
+                            },
+                            libs: vec![lib],
+                            interface: interface.clone(),
+                        }));
+                    }
+
+                    Ok(artifacts)
                 }
+                crate::cargo::ProjectManifest::Module(module_manifest) => {
+                    let wasm_path = self.get_wasm_artifact(&name).ok();
 
-                Ok(artifacts)
+                    let ident = crate::artifacts::PlaybookIdent {
+                        author: self.author(),
+                        name: self.name(),
+                        version: self.version(),
+                    };
+
+                    let mut configurations = Vec::new();
+                    let mut resolved_capabilities = Vec::new();
+                    for cap in module_manifest.capabilities.values() {
+                        let resolved = ResolvedCapability {
+                            author: cap.author.clone(),
+                            package: cap.package.clone(),
+                            version: cap.version.clone(),
+                        };
+                        configurations.push(cap.clone());
+                        resolved_capabilities.push(resolved);
+                    }
+
+                    let source = crate::artifacts::PlaybookSource {
+                        ident: Some(ident.clone()),
+                        dependencies: crate::artifacts::ModuleDependencies {
+                            dependencies: module_manifest.dependencies.clone(),
+                            capabilities: resolved_capabilities.clone(),
+                        },
+                        source: src_lib_rs.clone(),
+                        configurations: configurations.clone(),
+                    };
+                    let hash = source.hash();
+
+                    let mut artifacts =
+                        vec![Artifacts::Playbook(crate::artifacts::Playbook::Source(source))];
+
+                    if let Some(path) = wasm_path {
+                        let spec = pyro_macro::module::generate_module_spec(&src_lib_rs)
+                            .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
+                            .map(|func| crate::artifacts::PlaybookSpec {
+                                hash,
+                                func,
+                                capabilities: resolved_capabilities,
+                                ident: Some(ident.clone()),
+                            })
+                            .ok_or_else(|| {
+                                EnvironmentError::InterfaceGeneration(
+                                    "Module main function missing".to_string(),
+                                )
+                            })?;
+
+                        let binary = crate::artifacts::PlaybookBinary {
+                            ident: Some(ident),
+                            wasm: fs::read(path).await?,
+                            spec,
+                            configurations,
+                        };
+                        artifacts.push(Artifacts::Playbook(crate::artifacts::Playbook::Binary(binary)));
+                    }
+
+                    Ok(artifacts)
+                }
             }
-            crate::cargo::ProjectManifest::Module(module_manifest) => {
-                let wasm_path = self.get_wasm_artifact(&name).ok();
+        }.await;
 
-                let ident = crate::artifacts::ModuleIdent {
-                    author: self.author(),
-                    name: self.name(),
-                    version: self.version(),
-                };
+        if let Err(ref e) = res {
+            tracing::error!(error = ?e, "Failed to load artifacts from target directory");
+        } else {
+            tracing::debug!("Successfully loaded artifacts from target directory");
+        }
+        res
+    }
 
-                let source = crate::artifacts::ModuleSource {
-                    ident: Some(ident.clone()),
-                    dependencies: crate::artifacts::ModuleDependencies {
-                        dependencies: module_manifest.dependencies.clone(),
-                        capabilities: module_manifest.capabilities.values().cloned().collect(),
-                    },
-                    source: src_lib_rs.clone(),
-                };
-                let hash = source.hash();
+    #[tracing::instrument(skip(self))]
+    pub async fn package(&self, capture: bool) -> EnvResult<Vec<Artifacts>> {
+        tracing::debug!("Packaging project artifacts");
+        let name = self.name();
+        let version = self.version();
+        let author = self.author();
 
-                let mut artifacts =
-                    vec![Artifacts::Module(crate::artifacts::Module::Source(source))];
+        let res = async {
+            match &self.manifest {
+                crate::cargo::ProjectManifest::Capability(cap_manifest) => {
+                    tracing::debug!(dir = ?self.root, "Packaging capability");
 
-                if let Some(path) = wasm_path {
+                    let cargo_toml =
+                        toml::to_string_pretty(&cap_manifest.clone().to_capability_manifest())
+                            .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
+
+                    tracing::info!(dir = ?self.root, "Compiling capability binary...");
+                    self.compile(&["--features", "capability", "-p", &name], capture)
+                        .await?;
+
+                    let lib = self.get_library_artifact(&name).await?;
+
+                    let lock_path = self.root.join("Cargo.lock");
+                    let cargo_lock = if lock_path.exists() {
+                        fs::read_to_string(&lock_path).await?
+                    } else {
+                        String::new()
+                    };
+
+                    let src_path = self.root.join("src").join("lib.rs");
+                    let src_lib_rs = if src_path.exists() {
+                        fs::read_to_string(&src_path).await?
+                    } else {
+                        String::new()
+                    };
+
+                    tracing::debug!(dir = ?self.root, "Generating interface for capability...");
+                    let (interface_rs, interface) =
+                        pyro_macro::ffi::generate_interface(&src_lib_rs, &name, &version).map_err(
+                            |r| EnvironmentError::InterfaceGeneration(format_syn_error(&src_lib_rs, r)),
+                        )?;
+
+                    let interface_rs = prettyplease::unparse(&interface_rs);
+
+                    Ok(vec![
+                        Artifacts::CapabilitySource(CapabilitySource {
+                            manifest: cap_manifest.clone(),
+                            cargo_toml,
+                            cargo_lock,
+                            src_lib_rs,
+                        }),
+                        Artifacts::CapabilityBinary(CapabilityBinary {
+                            ident: CapabilityIdent {
+                                name,
+                                version,
+                                author,
+                            },
+                            libs: vec![lib],
+                            interface: interface.clone(),
+                        }),
+                        Artifacts::Interface(Interface {
+                            manifest: cap_manifest.clone(),
+                            src_lib_rs: interface_rs,
+                            interface: interface.clone(),
+                        }),
+                    ])
+                }
+                crate::cargo::ProjectManifest::Module(module_manifest) => {
+                    tracing::debug!("Packaging module: {:?}", self.root);
+
+                    tracing::info!("Compiling module binary...");
+                    self.compile(&["-p", &name], capture).await?;
+
+                    let wasm_artifact = self.get_wasm_artifact(&name)?;
+
+                    let src_path = self.root.join("src").join("lib.rs");
+                    let src_lib_rs = if src_path.exists() {
+                        fs::read_to_string(&src_path).await?
+                    } else {
+                        String::new()
+                    };
+
+                    let ident = crate::artifacts::PlaybookIdent {
+                        author: self.author(),
+                        name: self.name(),
+                        version: self.version(),
+                    };
+
+                    let mut configurations = Vec::new();
+                    let mut resolved_capabilities = Vec::new();
+                    for cap in module_manifest.capabilities.values() {
+                        let resolved = ResolvedCapability {
+                            author: cap.author.clone(),
+                            package: cap.package.clone(),
+                            version: cap.version.clone(),
+                        };
+                        configurations.push(cap.clone());
+                        resolved_capabilities.push(resolved);
+                    }
+
+                    let source = crate::artifacts::PlaybookSource {
+                        ident: Some(ident.clone()),
+                        dependencies: crate::artifacts::ModuleDependencies {
+                            dependencies: module_manifest.dependencies.clone(),
+                            capabilities: resolved_capabilities.clone(),
+                        },
+                        source: src_lib_rs.clone(),
+                        configurations: configurations.clone(),
+                    };
+                    let hash = source.hash();
+
                     let spec = pyro_macro::module::generate_module_spec(&src_lib_rs)
                         .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
-                        .map(|func| crate::artifacts::ModuleSpec {
+                        .map(|func| crate::artifacts::PlaybookSpec {
                             hash,
                             func,
-                            capabilities: module_manifest.capabilities.values().cloned().collect(),
+                            capabilities: resolved_capabilities,
                             ident: Some(ident.clone()),
                         })
                         .ok_or_else(|| {
@@ -310,305 +530,253 @@ impl Environment {
                             )
                         })?;
 
-                    let binary = crate::artifacts::ModuleBinary {
+                    let binary = crate::artifacts::PlaybookBinary {
                         ident: Some(ident),
-                        wasm: fs::read(path).await?,
+                        wasm: fs::read(wasm_artifact).await?,
                         spec,
+                        configurations,
                     };
-                    artifacts.push(Artifacts::Module(crate::artifacts::Module::Binary(binary)));
+
+                    Ok(vec![
+                        Artifacts::Playbook(crate::artifacts::Playbook::Source(source)),
+                        Artifacts::Playbook(crate::artifacts::Playbook::Binary(binary)),
+                    ])
                 }
-
-                Ok(artifacts)
             }
+        }.await;
+
+        if let Err(ref e) = res {
+            tracing::error!(error = ?e, "Failed to package project artifacts");
+        } else {
+            tracing::debug!("Successfully packaged project artifacts");
         }
+        res
     }
 
-    pub async fn package(&self, capture: bool) -> EnvResult<Vec<Artifacts>> {
-        let name = self.name();
-        let version = self.version();
-        let author = self.author();
-
-        match &self.manifest {
-            crate::cargo::ProjectManifest::Capability(cap_manifest) => {
-                tracing::info!(dir = ?self.root, "Packaging capability");
-
-                let cargo_toml =
-                    toml::to_string_pretty(&cap_manifest.clone().to_capability_manifest())
-                        .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
-
-                tracing::info!(dir = ?self.root, "Compiling capability binary...");
-                self.compile(&["--features", "capability", "-p", &name], capture)
-                    .await?;
-
-                let lib = self.get_library_artifact(&name).await?;
-
-                let lock_path = self.root.join("Cargo.lock");
-                let cargo_lock = if lock_path.exists() {
-                    fs::read_to_string(&lock_path).await?
-                } else {
-                    String::new()
-                };
-
-                let src_path = self.root.join("src").join("lib.rs");
-                let src_lib_rs = if src_path.exists() {
-                    fs::read_to_string(&src_path).await?
-                } else {
-                    String::new()
-                };
-
-                tracing::info!(dir = ?self.root, "Generating interface for capability...");
-                let (interface_rs, interface) =
-                    pyro_macro::ffi::generate_interface(&src_lib_rs, &name, &version).map_err(
-                        |r| EnvironmentError::InterfaceGeneration(format_syn_error(&src_lib_rs, r)),
-                    )?;
-
-                let interface_rs = prettyplease::unparse(&interface_rs);
-
-                Ok(vec![
-                    Artifacts::CapabilitySource(CapabilitySource {
-                        manifest: cap_manifest.clone(),
-                        cargo_toml,
-                        cargo_lock,
-                        src_lib_rs,
-                    }),
-                    Artifacts::CapabilityBinary(CapabilityBinary {
-                        ident: CapabilityIdent {
-                            name,
-                            version,
-                            author,
-                        },
-                        libs: vec![lib],
-                        interface: interface.clone(),
-                    }),
-                    Artifacts::Interface(Interface {
-                        manifest: cap_manifest.clone(),
-                        src_lib_rs: interface_rs,
-                        interface: interface.clone(),
-                    }),
-                ])
-            }
-            crate::cargo::ProjectManifest::Module(module_manifest) => {
-                tracing::info!("Packaging module: {:?}", self.root);
-
-                tracing::info!("Compiling module binary...");
-                self.compile(&["-p", &name], capture).await?;
-
-                let wasm_artifact = self.get_wasm_artifact(&name)?;
-
-                let src_path = self.root.join("src").join("lib.rs");
-                let src_lib_rs = if src_path.exists() {
-                    fs::read_to_string(&src_path).await?
-                } else {
-                    String::new()
-                };
-
-                let ident = crate::artifacts::ModuleIdent {
-                    author: self.author(),
-                    name: self.name(),
-                    version: self.version(),
-                };
-
-                let source = crate::artifacts::ModuleSource {
-                    ident: Some(ident.clone()),
-                    dependencies: crate::artifacts::ModuleDependencies {
-                        dependencies: module_manifest.dependencies.clone(),
-                        capabilities: module_manifest.capabilities.values().cloned().collect(),
-                    },
-                    source: src_lib_rs.clone(),
-                };
-                let hash = source.hash();
-
-                let spec = pyro_macro::module::generate_module_spec(&src_lib_rs)
-                    .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
-                    .map(|func| crate::artifacts::ModuleSpec {
-                        hash,
-                        func,
-                        capabilities: module_manifest.capabilities.values().cloned().collect(),
-                        ident: Some(ident.clone()),
-                    })
-                    .ok_or_else(|| {
-                        EnvironmentError::InterfaceGeneration(
-                            "Module main function missing".to_string(),
-                        )
-                    })?;
-
-                let binary = crate::artifacts::ModuleBinary {
-                    ident: Some(ident),
-                    wasm: fs::read(wasm_artifact).await?,
-                    spec,
-                };
-
-                Ok(vec![
-                    Artifacts::Module(crate::artifacts::Module::Source(source)),
-                    Artifacts::Module(crate::artifacts::Module::Binary(binary)),
-                ])
-            }
-        }
-    }
-
+    #[tracing::instrument(skip(self))]
     pub async fn expand_debug(&self) -> EnvResult<()> {
         let debug_dir = self.root.join("debug");
         fs::create_dir_all(&debug_dir).await?;
 
-        match &self.manifest {
-            crate::cargo::ProjectManifest::Capability(cap_manifest) => {
-                tracing::info!("Generating debug info for capability: {}", self.name());
-                let name = self.name();
-                let version = self.version();
+        tracing::debug!("Generating expanded debug files");
+        let res = async {
+            match &self.manifest {
+                crate::cargo::ProjectManifest::Capability(cap_manifest) => {
+                    tracing::debug!("Generating debug info for capability: {}", self.name());
+                    let name = self.name();
+                    let version = self.version();
 
-                let lib = self.get_library_artifact(&name).await?;
+                    let lib = self.get_library_artifact(&name).await?;
 
-                let src_path = self.root.join("src").join("lib.rs");
-                let src_lib_rs = fs::read_to_string(&src_path)
-                    .await
-                    .map_err(|_| EnvironmentError::SourceNotFound(src_path))?;
+                    let src_path = self.root.join("src").join("lib.rs");
+                    let src_lib_rs = fs::read_to_string(&src_path)
+                        .await
+                        .map_err(|_| EnvironmentError::SourceNotFound(src_path))?;
 
-                let (_, interface) =
-                    pyro_macro::ffi::generate_interface(&src_lib_rs, &name, &version).map_err(
-                        |r| EnvironmentError::InterfaceGeneration(format_syn_error(&src_lib_rs, r)),
-                    )?;
+                    let (_, interface) =
+                        pyro_macro::ffi::generate_interface(&src_lib_rs, &name, &version).map_err(
+                            |r| EnvironmentError::InterfaceGeneration(format_syn_error(&src_lib_rs, r)),
+                        )?;
 
-                let binary = CapabilityBinary {
-                    ident: cap_manifest.capability.clone(),
-                    libs: vec![lib],
-                    interface,
-                };
+                    let binary = CapabilityBinary {
+                        ident: cap_manifest.capability.clone(),
+                        libs: vec![lib],
+                        interface,
+                    };
 
-                let symbols = debug::symbols(&binary);
+                    let symbols = debug::symbols(&binary);
 
-                let code = generate_capability(&src_lib_rs, &name, &version)
-                    .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?;
+                    let code = generate_capability(&src_lib_rs, &name, &version)
+                        .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?;
 
-                let cap_rs = Some(prettyplease::unparse(&code));
-                let debug_info = CapabilityDebug { symbols, cap_rs };
-                debug_info.write_to_directory(&debug_dir).await?;
-            }
-            crate::cargo::ProjectManifest::Module(module_manifest) => {
-                tracing::info!("Generating debug info for module: {}", self.name());
-                let name = self.name();
+                    let cap_rs = Some(prettyplease::unparse(&code));
+                    let debug_info = CapabilityDebug { symbols, cap_rs };
+                    debug_info.write_to_directory(&debug_dir).await?;
+                }
+                crate::cargo::ProjectManifest::Module(module_manifest) => {
+                    tracing::debug!("Generating debug info for module: {}", self.name());
+                    let name = self.name();
 
-                let wasm_path = self.get_wasm_artifact(&name)?;
-                let wasm_bytes = fs::read(wasm_path).await?;
+                    let wasm_path = self.get_wasm_artifact(&name)?;
+                    let wasm_bytes = fs::read(wasm_path).await?;
 
-                let src_path = self.root.join("src").join("lib.rs");
-                let src_lib_rs = fs::read_to_string(&src_path)
-                    .await
-                    .map_err(|_| EnvironmentError::SourceNotFound(src_path))?;
+                    let src_path = self.root.join("src").join("lib.rs");
+                    let src_lib_rs = fs::read_to_string(&src_path)
+                        .await
+                        .map_err(|_| EnvironmentError::SourceNotFound(src_path))?;
 
-                let spec = pyro_macro::module::generate_module_spec(&src_lib_rs)
-                    .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
-                    .ok_or_else(|| {
-                        EnvironmentError::InterfaceGeneration(
-                            "Module main function missing".to_string(),
-                        )
-                    })?;
+                    let spec = pyro_macro::module::generate_module_spec(&src_lib_rs)
+                        .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
+                        .ok_or_else(|| {
+                            EnvironmentError::InterfaceGeneration(
+                                "Module main function missing".to_string(),
+                            )
+                        })?;
 
-                let source = crate::artifacts::ModuleSource {
-                    ident: None,
-                    dependencies: crate::artifacts::ModuleDependencies {
-                        dependencies: module_manifest.dependencies.clone(),
-                        capabilities: module_manifest.capabilities.values().cloned().collect(),
-                    },
-                    source: src_lib_rs.clone(),
-                };
-                let hash = source.hash();
+                    let mut resolved_capabilities = Vec::new();
+                    for cap in module_manifest.capabilities.values() {
+                        resolved_capabilities.push(ResolvedCapability {
+                            author: cap.author.clone(),
+                            package: cap.package.clone(),
+                            version: cap.version.clone(),
+                        });
+                    }
 
-                let binary = crate::artifacts::ModuleBinary {
-                    ident: None,
-                    wasm: wasm_bytes,
-                    spec: crate::artifacts::ModuleSpec {
-                        hash,
-                        func: spec,
-                        capabilities: vec![], // Capabilities not needed for WAT/RS generation
+                    let source = crate::artifacts::PlaybookSource {
                         ident: None,
-                    },
-                };
+                        dependencies: crate::artifacts::ModuleDependencies {
+                            dependencies: module_manifest.dependencies.clone(),
+                            capabilities: resolved_capabilities.clone(),
+                        },
+                        source: src_lib_rs.clone(),
+                        configurations: std::vec::Vec::new(),
+                    };
+                    let hash = source.hash();
 
-                let wat = debug::wat(&binary).map_err(EnvironmentError::InterfaceGeneration)?;
+                    let binary = crate::artifacts::PlaybookBinary {
+                        ident: None,
+                        wasm: wasm_bytes,
+                        spec: crate::artifacts::PlaybookSpec {
+                            hash,
+                            func: spec,
+                            capabilities: vec![], // Capabilities not needed for WAT/RS generation
+                            ident: None,
+                        },
+                        configurations: std::vec::Vec::new(),
+                    };
 
-                let generated_code = generate_module(&src_lib_rs).map_err(|e| {
-                    EnvironmentError::InterfaceGeneration(format!(
-                        "Module code generation error: {}",
-                        e
-                    ))
-                })?;
-                let cap_rs = Some(prettyplease::unparse(&generated_code));
+                    let wat = debug::wat(&binary).map_err(EnvironmentError::InterfaceGeneration)?;
 
-                let debug_info = ModuleDebug {
-                    wat: Some(wat),
-                    cap_rs,
-                };
-                debug_info.write_to_directory(&debug_dir).await?;
+                    let generated_code = generate_module(&src_lib_rs).map_err(|e| {
+                        EnvironmentError::InterfaceGeneration(format!(
+                            "Module code generation error: {}",
+                            e
+                        ))
+                    })?;
+                    let cap_rs = Some(prettyplease::unparse(&generated_code));
+
+                    let debug_info = ModuleDebug {
+                        wat: Some(wat),
+                        cap_rs,
+                    };
+                    debug_info.write_to_directory(&debug_dir).await?;
+                }
             }
-        }
+            Ok(())
+        }.await;
 
-        Ok(())
+        if let Err(ref e) = res {
+            tracing::error!(error = ?e, "Failed to generate expanded debug files");
+        } else {
+            tracing::debug!("Successfully generated expanded debug files");
+        }
+        res
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn capability_spec(&self) -> EnvResult<InterfaceSpec<'static>> {
+        tracing::debug!("Resolving capability spec");
         let name = self.name();
         let version = self.version();
         let src_path = self.root.join("src").join("lib.rs");
         let src_lib_rs = fs::read_to_string(&src_path)
             .await
-            .map_err(|_| EnvironmentError::SourceNotFound(src_path))?;
+            .map_err(|_| {
+                let err = EnvironmentError::SourceNotFound(src_path.clone());
+                tracing::error!(error = ?err, "Failed to read src/lib.rs for capability spec");
+                err
+            })?;
 
-        match &self.manifest {
+        let res = match &self.manifest {
             crate::cargo::ProjectManifest::Capability(_) => {
                 let (_, interface) =
                     pyro_macro::ffi::generate_interface(&src_lib_rs, &name, &version).map_err(
-                        |r| EnvironmentError::InterfaceGeneration(format_syn_error(&src_lib_rs, r)),
+                        |r| {
+                            let err = EnvironmentError::InterfaceGeneration(format_syn_error(&src_lib_rs, r));
+                            tracing::error!(error = ?err, "Failed to generate interface spec");
+                            err
+                        },
                     )?;
                 Ok(interface)
             }
-            crate::cargo::ProjectManifest::Module(_) => Err(EnvironmentError::InterfaceGeneration(
-                "Capability spec is only supported for capabilities".to_string(),
-            )),
-        }
+            crate::cargo::ProjectManifest::Module(_) => {
+                let err = EnvironmentError::InterfaceGeneration(
+                    "Capability spec is only supported for capabilities".to_string(),
+                );
+                tracing::error!(error = ?err, "Invalid manifest type for capability spec");
+                Err(err)
+            }
+        };
+        res
     }
 
-    pub async fn module_spec(&self) -> EnvResult<crate::artifacts::ModuleSpec> {
+    #[tracing::instrument(skip(self))]
+    pub async fn playbook_spec(&self) -> EnvResult<crate::artifacts::PlaybookSpec> {
+        tracing::debug!("Resolving playbook spec");
         let src_path = self.root.join("src").join("lib.rs");
         let src_lib_rs = fs::read_to_string(&src_path)
             .await
-            .map_err(|_| EnvironmentError::SourceNotFound(src_path))?;
+            .map_err(|_| {
+                let err = EnvironmentError::SourceNotFound(src_path.clone());
+                tracing::error!(error = ?err, "Failed to read src/lib.rs for playbook spec");
+                err
+            })?;
 
-        match &self.manifest {
+        let res = match &self.manifest {
             crate::cargo::ProjectManifest::Module(module_manifest) => {
-                let source = crate::artifacts::ModuleSource {
+                let mut resolved_capabilities = Vec::new();
+                for cap in module_manifest.capabilities.values() {
+                    resolved_capabilities.push(ResolvedCapability {
+                        author: cap.author.clone(),
+                        package: cap.package.clone(),
+                        version: cap.version.clone(),
+                    });
+                }
+
+                let source = crate::artifacts::PlaybookSource {
                     ident: None,
                     dependencies: crate::artifacts::ModuleDependencies {
                         dependencies: module_manifest.dependencies.clone(),
-                        capabilities: module_manifest.capabilities.values().cloned().collect(),
+                        capabilities: resolved_capabilities.clone(),
                     },
                     source: src_lib_rs.clone(),
+                    configurations: std::vec::Vec::new(),
                 };
                 let hash = source.hash();
 
                 pyro_macro::module::generate_module_spec(&src_lib_rs)
-                    .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
-                    .map(|func| crate::artifacts::ModuleSpec {
+                    .map_err(|e| {
+                        let err = EnvironmentError::InterfaceGeneration(e.to_string());
+                        tracing::error!(error = ?err, "Failed to generate playbook spec");
+                        err
+                    })?
+                    .map(|func| crate::artifacts::PlaybookSpec {
                         hash,
                         func,
-                        capabilities: module_manifest.capabilities.values().cloned().collect(),
-                        ident: Some(crate::artifacts::ModuleIdent {
+                        capabilities: resolved_capabilities,
+                        ident: Some(crate::artifacts::PlaybookIdent {
                             author: self.author(),
                             name: self.name(),
                             version: self.version(),
                         }),
                     })
                     .ok_or_else(|| {
-                        EnvironmentError::InterfaceGeneration(
+                        let err = EnvironmentError::InterfaceGeneration(
                             "Module main function missing".to_string(),
-                        )
+                        );
+                        tracing::error!(error = ?err, "Playbook spec missing main function");
+                        err
                     })
             }
             crate::cargo::ProjectManifest::Capability(_) => {
-                Err(EnvironmentError::InterfaceGeneration(
+                let err = EnvironmentError::InterfaceGeneration(
                     "Module spec is only supported for modules".to_string(),
-                ))
+                );
+                tracing::error!(error = ?err, "Invalid manifest type for playbook spec");
+                Err(err)
             }
-        }
+        };
+        res
     }
 }
 

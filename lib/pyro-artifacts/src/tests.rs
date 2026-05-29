@@ -6,12 +6,11 @@
 //! them #[ignore] if you only want fast unit tests in CI.
 
 use crate::artifacts::{
-    Artifact, Artifacts, CapabilityBinary, CapabilityConfig, ModuleDependencies, ModuleSource,
-    Playbook,
+    Artifact, Artifacts, CapabilityBinary, CapabilityConfig, ModuleDependencies, PlaybookSource,
 };
 use crate::build::Builder;
 use crate::cache::{CacheManager, PyroductConfig};
-use crate::cargo::ResolvedCapability;
+use crate::cargo::{ConfiguredCapability, ResolvedCapability};
 use crate::environment::Environment;
 use cargo_toml::Dependency;
 use std::collections::{BTreeMap, HashMap};
@@ -93,6 +92,7 @@ pub fn test_config() -> PyroductConfig {
     }
 }
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn ship_httpc_capability_to_cache() {
     let dir = TempDir::new().unwrap();
@@ -131,6 +131,7 @@ async fn ship_httpc_capability_to_cache() {
     assert!(has_lib, "expected a native library in the cache");
 }
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_anon_compile_with_interface() {
     let dir = TempDir::new().unwrap();
@@ -159,13 +160,14 @@ async fn test_anon_compile_with_interface() {
         version: "0.1.0".to_string(),
     };
 
-    let mod_source = ModuleSource {
+    let mod_source = PlaybookSource {
         ident: None,
         dependencies: ModuleDependencies {
             dependencies: BTreeMap::new(),
             capabilities: vec![cap],
         },
         source: HTTPC_MODULE.to_string(),
+        configurations: Vec::new(),
     };
     let anon = builder.compile(&mod_source).await.unwrap();
 
@@ -180,6 +182,7 @@ async fn test_anon_compile_with_interface() {
 // Data Integrity Roundtrip Tests
 // -----------------------------------------------------------------------------
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_module_wasm_exact_match() {
     let dir = TempDir::new().unwrap();
@@ -188,13 +191,14 @@ async fn test_module_wasm_exact_match() {
         .await
         .unwrap();
 
-    let source = ModuleSource {
+    let source = PlaybookSource {
         ident: None,
         dependencies: ModuleDependencies {
             dependencies: BTreeMap::new(),
             capabilities: vec![],
         },
         source: BASIC_MODULE.to_string(),
+        configurations: Vec::new(),
     };
     cache.write_artifacts(&source.clone().into()).await.unwrap();
     let binary = builder.compile(&source).await.unwrap();
@@ -211,6 +215,7 @@ async fn test_module_wasm_exact_match() {
     );
 }
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_capability_lib_exact_match() {
     let dir = TempDir::new().unwrap();
@@ -246,6 +251,7 @@ async fn test_capability_lib_exact_match() {
     );
 }
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_load_playbook() {
     let dir = TempDir::new().unwrap();
@@ -274,39 +280,53 @@ async fn test_load_playbook() {
         version: "0.1.0".to_string(),
     };
 
-    let mod_source = ModuleSource {
+    let mod_source = PlaybookSource {
         ident: None,
         dependencies: ModuleDependencies {
             dependencies: BTreeMap::new(),
-            capabilities: vec![cap],
+            capabilities: vec![cap.clone()],
         },
         source: HTTPC_MODULE.to_string(),
-    };
-    let binary = builder.compile(&mod_source).await.unwrap();
-
-    // 2. Create a Playbook
-    let playbook = Playbook {
-        hash: binary.spec.hash.clone(),
-        configurations: HashMap::from([(
-            "httpc".to_string(),
-            CapabilityConfig {
+        configurations: vec![ConfiguredCapability {
+            author: cap.author.clone(),
+            package: cap.package.clone(),
+            version: cap.version.clone(),
+            configuration: CapabilityConfig {
                 classes: HashMap::from([(
-                    "CounterClient".to_string(),
+                    "counter".to_string(),
                     Some(serde_json::json!({"timeout": 30})),
                 )]),
             },
-        )]),
+        }],
     };
+    let binary = builder.compile(&mod_source).await.unwrap();
 
-    // 3. Load the Playbook
+    tracing::debug!(capabilities = ?binary.spec.capabilities, "Binary spec capabilities");
+    tracing::debug!(
+        config_keys = ?binary
+            .configurations
+            .iter()
+            .map(|c| &c.package)
+            .collect::<Vec<_>>(),
+        "Binary configurations keys"
+    );
+
+    // 2. Load the Playbook by hash
     let loaded = cache
-        .load_playbook(playbook.clone(), HashMap::new(), "", "", "")
+        .load_playbook(binary.spec.hash.clone(), HashMap::new(), "", "", "")
         .await
         .unwrap();
 
-    // 4. Verify
+    // 3. Verify
     assert_eq!(loaded.binary.spec.hash, binary.spec.hash);
-    assert_eq!(loaded.configurations, playbook.configurations);
+    let cap_config = loaded
+        .binary
+        .configurations
+        .iter()
+        .find(|c| c.author == cap.author && c.package == cap.package && c.version == cap.version)
+        .map(|c| &c.configuration)
+        .unwrap();
+    assert!(cap_config.classes.contains_key("counter"));
     assert!(loaded.paths.contains_key("httpc"));
     let cap_path = loaded.paths.get("httpc").unwrap();
     assert!(cap_path.exists());

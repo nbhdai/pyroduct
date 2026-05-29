@@ -8,7 +8,7 @@ use crate::pipeline::{
 use crate::{CapturedError, PyroError, PyroRow, PyroValue};
 use axum::response::Response;
 use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::post};
-use pyro_artifacts::artifacts::ModuleSpec;
+use pyro_artifacts::artifacts::PlaybookSpec;
 use pyro_artifacts::cache::LoadedPlaybook;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -23,7 +23,7 @@ enum ServerPipeline {
 pub struct PlaybookHttpServer {
     pipeline: Arc<Mutex<ServerPipeline>>,
     input_schema: PyroSchema<'static>,
-    spec: Arc<ModuleSpec>,
+    spec: Arc<PlaybookSpec>,
 }
 
 impl PlaybookHttpServer {

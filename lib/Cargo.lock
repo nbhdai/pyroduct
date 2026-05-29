@@ -3657,6 +3657,7 @@ dependencies = [
  "tokio",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
+ "tracing-test",
  "wasmprinter 0.244.0",
 ]
 
@@ -3665,7 +3666,10 @@ name = "pyro-daemon"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrow",
+ "datafusion",
  "pyro-artifacts",
+ "pyro-spec",
  "pyroduct",
  "serde",
  "serde_json",

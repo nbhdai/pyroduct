@@ -21,9 +21,9 @@ pub async fn spec(path: &Path, out: Option<&Path>) -> Result<()> {
         }
         pyro_artifacts::cargo::ProjectManifest::Module(_) => {
             let spec = env
-                .module_spec()
+                .playbook_spec()
                 .await
-                .context("Failed to generate module spec")?;
+                .context("Failed to generate playbook spec")?;
             (
                 serde_json::to_string_pretty(&spec).context("Failed to serialize module spec")?,
                 "module.json",

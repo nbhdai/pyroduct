@@ -53,7 +53,7 @@ async fn test_daemon_control_protocol() {
     }
 
     // 6. Send "ListPlaybooks" request
-    let req = DaemonRequest::ListPlaybooks;
+    let req = DaemonRequest::Playbook(pyro_daemon::playbooks::PlaybookRequest::List);
     let req_str = serde_json::to_string(&req).unwrap() + "\n";
     writer.write_all(req_str.as_bytes()).await.unwrap();
 
@@ -61,16 +61,18 @@ async fn test_daemon_control_protocol() {
     let line = lines.next_line().await.unwrap().unwrap();
     let resp: DaemonResponse = serde_json::from_str(&line).unwrap();
     match resp {
-        DaemonResponse::Playbooks { playbooks } => {
+        DaemonResponse::Playbook(pyro_daemon::playbooks::PlaybookResponse::Playbooks {
+            playbooks,
+        }) => {
             assert!(playbooks.is_empty());
         }
-        other => panic!("Unexpected response for ListPlaybooks request: {:?}", other),
+        other => panic!("Unexpected response for List request: {:?}", other),
     }
 
     // 8. Try to stop a non-existent playbook
-    let req = DaemonRequest::StopPlaybook {
+    let req = DaemonRequest::Playbook(pyro_daemon::playbooks::PlaybookRequest::Stop {
         playbook_id: Uuid::new_v4(),
-    };
+    });
     let req_str = serde_json::to_string(&req).unwrap() + "\n";
     writer.write_all(req_str.as_bytes()).await.unwrap();
 
@@ -78,13 +80,10 @@ async fn test_daemon_control_protocol() {
     let line = lines.next_line().await.unwrap().unwrap();
     let resp: DaemonResponse = serde_json::from_str(&line).unwrap();
     match resp {
-        DaemonResponse::Error { message } => {
+        DaemonResponse::Playbook(pyro_daemon::playbooks::PlaybookResponse::Error { message }) => {
             assert!(message.contains("No active playbook worker found"));
         }
-        other => panic!(
-            "Unexpected response for invalid StopPlaybook request: {:?}",
-            other
-        ),
+        other => panic!("Unexpected response for invalid Stop request: {:?}", other),
     }
 
     // 10. Shutdown the daemon
