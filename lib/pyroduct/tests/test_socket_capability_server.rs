@@ -34,8 +34,19 @@ async fn test_pyro_server_capability_call() {
     let lib_path = lib_path
         .canonicalize()
         .expect("Failed to canonicalize lib_path");
-    let router =
+    let mut router =
         PyroRouter::load("state".into(), &lib_path).expect("Failed to load capability library");
+
+    let cap_config = pyro_artifacts::artifacts::CapabilityConfig {
+        classes: std::collections::HashMap::from([(
+            "counter".to_string(),
+            Some(serde_json::json!({"max_value": 100u64})),
+        )]),
+    };
+    router
+        .configure(&cap_config)
+        .await
+        .expect("Failed to configure capability");
 
     let server = PyroServer::new(router);
     let listener = PyroListener::bind_tcp("127.0.0.1:0")
@@ -62,17 +73,6 @@ async fn test_pyro_server_capability_call() {
         .await
         .expect("Failed to fetch interface");
     assert!(fetch_resp.is_ok(), "Interface fetch should be successful");
-
-    // 4. Configure Class (fn_id = 1) - instantiates the class
-    let mut config_req = PyroVec::ok();
-    config_req.set_class_id(0);
-    config_req.set_fn_id(1);
-
-    let config_resp = socket
-        .request(None, Some(0), Some(1), config_req.view())
-        .await
-        .expect("Failed to configure class");
-    assert!(config_resp.is_ok(), "Configuration should be successful");
 
     // 5. Register Client (fn_id = 2) - returns client_id
     let mut reg_req = PyroVec::ok();

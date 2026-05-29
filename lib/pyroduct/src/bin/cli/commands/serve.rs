@@ -5,9 +5,6 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use pyro_artifacts::cache::CacheManager;
-use pyroduct::format::PyroVec;
-use pyroduct::format::format::{PyroFormat, Writer};
-use pyroduct::format::json::Json;
 use pyroduct::pipeline::factory::PipelineConfig;
 use pyroduct::transport::http::PlaybookHttpServer;
 use pyroduct::transport::socket::PyroListener;
@@ -188,27 +185,28 @@ pub async fn serve_capability(serve_config: &ServeConfig) -> Result<()> {
 
     // Pre-configure capability classes if config provided
     if let Some(ref cap_config) = serve_config.cap_config {
-        if let serde_json::Value::Object(obj) = cap_config {
-            for (class_name, class_config) in obj {
-                tracing::info!("Pre-configuring capability class '{}'", class_name);
-                let writer = Json::<serde_json::Value>::new_writer(PyroVec::with_capacity(300));
-                let vec = writer.write(class_config).map_err(|e| {
-                    anyhow!(
-                        "Failed to serialize config for class '{}': {}",
-                        class_name,
-                        e
-                    )
-                })?;
-                router
-                    .configure(class_name, vec.view())
-                    .await
-                    .context(format!("Failed to configure class '{}'", class_name))?;
-            }
+        let capability_config = if let Ok(parsed) = serde_json::from_value::<
+            pyro_artifacts::artifacts::CapabilityConfig,
+        >(cap_config.clone())
+        {
+            parsed
+        } else if let serde_json::Value::Object(obj) = cap_config {
+            let classes = obj
+                .clone()
+                .into_iter()
+                .map(|(class_name, class_config)| (class_name, Some(class_config)))
+                .collect();
+            pyro_artifacts::artifacts::CapabilityConfig { classes }
         } else {
             anyhow::bail!(
                 "Capability configuration must be a JSON object mapping class names to their configurations"
             );
-        }
+        };
+
+        router
+            .configure(&capability_config)
+            .await
+            .context("Failed to configure capability classes")?;
     }
 
     tracing::info!("Starting capability TCP/Unix socket server...");

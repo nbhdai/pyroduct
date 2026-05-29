@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 
 use dashmap::DashMap;
+use pyro_artifacts::artifacts::CapabilityConfig;
 
 use crate::PyroError;
 use crate::ffi::host::ForeignObject;
@@ -43,29 +44,33 @@ impl PyroRouter {
     }
 
     /// Configure a capability class by instantiating it and storing it in the objects vector.
-    pub async fn configure(&mut self, class_name: &str, request: PyroView) -> Result<(), PyroError> {
-        tracing::info!(%class_name, "Instantiating class");
-        let class_id = self
-            .library
-            .capabilities
-            .get_index_of(class_name)
-            .ok_or_else(|| PyroError::NotFound(format!("Class '{}' not found in library", class_name)))? as u8;
+    pub async fn configure(&mut self, configuration: &CapabilityConfig) -> Result<(), PyroError> {
+        for (class_name, config) in &configuration.classes {
+            tracing::info!(%class_name, "Instantiating class");
+            let class_id = self
+                .library
+                .capabilities
+                .get_index_of(class_name)
+                .ok_or_else(|| {
+                    PyroError::NotFound(format!("Class '{}' not found in library", class_name))
+                })? as u8;
 
-        let object = self
-            .library
-            .instantiate_class_raw(class_id, request)
-            .await
-            .map_err(|e| PyroError::NotFound(e.to_string()))?;
+            let object = self
+                .library
+                .instantiate_class(class_name, config.as_ref())
+                .await
+                .map_err(|e| PyroError::NotFound(e.to_string()))?;
 
-        if (class_id as usize) >= self.objects.len() {
-            return Err(PyroError::NotFound(format!(
-                "Class ID {} (name {}) is out of range for library capabilities (length {})",
-                class_id,
-                class_name,
-                self.objects.len()
-            )));
+            if (class_id as usize) >= self.objects.len() {
+                return Err(PyroError::NotFound(format!(
+                    "Class ID {} (name {}) is out of range for library capabilities (length {})",
+                    class_id,
+                    class_name,
+                    self.objects.len()
+                )));
+            }
+            self.objects[class_id as usize] = Some(object);
         }
-        self.objects[class_id as usize] = Some(object);
         Ok(())
     }
 

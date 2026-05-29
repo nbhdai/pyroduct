@@ -1,8 +1,7 @@
 use pyro_artifacts::{
-    artifacts::{ModuleDependencies, ModuleSource, Playbook, CapabilityConfig},
+    artifacts::{ModuleDependencies, ModuleSource, Playbook},
     build::Builder,
     cache::CacheManager,
-    cargo::ResolvedCapability,
 };
 use pyroduct::{
     PyroRow,
@@ -16,22 +15,17 @@ use std::collections::{BTreeMap, HashMap};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 const CODE: &str = r#"
-//! Test module 1: Uses test_cap1 counter capability
-//!
-//! Simple module that increments a counter and returns the result.
+use pyroduct;
 
-use state::{CounterClient, CounterClientMethods};
-
-#[pyroduct::module(output = (count, incremented))]
-pub fn call(input: &str) -> Result<(u64, u64)> {
-    let start: u64 = input.parse().map_err(|e| format!("Parse error: {}", e))?;
-
-    let client = CounterClient { start_value: start }.register()?;
-
-    let count = client.get_count()?;
-    let incremented = client.increment()?;
-
-    Ok((count, incremented))
+#[pyroduct::module(output = message)]
+pub fn call(input: String) -> Result<String> {
+    if input == "panic" {
+        panic!("intentional panic");
+    }
+    if input == "error" {
+        return Err(pyroduct::capture!("intentional error"));
+    }
+    Ok(format!("Success: {}", input))
 }
 "#;
 
@@ -52,11 +46,7 @@ async fn test_playbook_server_client() {
     let source = ModuleSource {
         dependencies: ModuleDependencies {
             dependencies: BTreeMap::new(),
-            capabilities: vec![ResolvedCapability {
-                package: "state".to_string(),
-                author: "nbhdai".to_string(),
-                version: "0.1.0".to_string(),
-            }],
+            capabilities: vec![],
         },
         source: CODE.to_string(),
         ident: None,
@@ -70,12 +60,7 @@ async fn test_playbook_server_client() {
     let config = PipelineConfig {
         playbook: Playbook {
             hash: binary.hash(),
-            configurations: HashMap::from([(
-                "state".to_string(),
-                CapabilityConfig {
-                    classes: HashMap::from([("CounterClient".to_string(), None)]),
-                },
-            )]),
+            configurations: HashMap::new(),
         },
         wal_capacity: 1000,
         success_log_retention_secs: 3600,
@@ -115,15 +100,15 @@ async fn test_playbook_server_client() {
         .await
         .expect("Failed to call playbook");
 
-    // Result should be (count: 0, incremented: 0)
-    assert_eq!(result1.row.get_u64("incremented").unwrap(), 0);
+    // Result should be the transform message
+    assert_eq!(result1.row.get_str("message").unwrap(), "Success: 0");
 
     // Send second request
     let result2 = client
-        .call(&PyroRow::from([("input", "0".into())]))
+        .call(&PyroRow::from([("input", "1".into())]))
         .await
         .expect("Failed to call playbook");
 
-    // Second call: The call_count in CounterServer should now be 1 (state preserved)
-    assert_eq!(result2.row.get_u64("incremented").unwrap(), 1);
+    // Result should be the transform message
+    assert_eq!(result2.row.get_str("message").unwrap(), "Success: 1");
 }

@@ -6,6 +6,7 @@ use crate::pipeline::{
     ExecutionRecord, Pipeline, session::SessionPipeline, session_diff::SessionDiffPipeline,
 };
 use crate::{CapturedError, PyroError, PyroRow, PyroValue};
+use axum::response::Response;
 use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::post};
 use pyro_artifacts::artifacts::ModuleSpec;
 use pyro_artifacts::cache::LoadedPlaybook;
@@ -434,10 +435,8 @@ async fn handle_playbook_session_query(
     }
 }
 
-async fn handle_playbook_schema(
-    State(server): State<Arc<PlaybookHttpServer>>,
-) -> impl IntoResponse {
-    (StatusCode::OK, Json(server.spec.clone())).into_response()
+async fn handle_playbook_schema(State(server): State<Arc<PlaybookHttpServer>>) -> Response {
+    Json((*server.spec).clone()).into_response()
 }
 
 fn json_to_pyro_value(value: serde_json::Value) -> PyroValue<'static> {
