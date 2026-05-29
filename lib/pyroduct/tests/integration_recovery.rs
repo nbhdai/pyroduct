@@ -73,7 +73,7 @@ async fn test_pipeline_get_record() {
             configurations: HashMap::from([(
                 "state".to_string(),
                 CapabilityConfig {
-                    classes: HashMap::from([("Counter".to_string(), None)]),
+                    classes: HashMap::from([("counter".to_string(), None)]),
                 },
             )]),
         },

@@ -314,7 +314,7 @@ impl CapabilityImpl {
         let server_upper = server_snake.to_uppercase();
 
         let class_name_static = format_ident!("p__{}", server_upper);
-        let class_name_string = format!("p__{}", server_snake);
+        let class_name_string = format!("{}", server_snake);
 
         let static_strs: Vec<_> = self
             .methods
@@ -348,8 +348,8 @@ impl CapabilityImpl {
                 ::pyroduct::ffi::guest::logger::init_logging(id, log_callback);
 
                 ::pyroduct::ffi::ClassExport {
-                    name: CAPABILITY_NAME_VERSION.as_ptr(),
-                    name_len: CAPABILITY_NAME_VERSION.len(),
+                    name: #class_name_static.as_ptr(),
+                    name_len: #class_name_static.len(),
                     len: #exports_array_name.len(),
                     ptr: #exports_array_name.as_ptr() as *mut _,
                     init: #init_export,
@@ -373,7 +373,7 @@ impl CapabilityImpl {
     }
 
     fn generate_wasm_imports(&self) -> TokenStream {
-        let cap_id = self.ident.cap_id();
+        let class_id = self.ident.class_name();
         let new_client_decl = self.register_fn.generate_client_wasm();
 
         let method_decls: Vec<_> = self
@@ -385,7 +385,7 @@ impl CapabilityImpl {
         quote! {
             mod wasm {
                 use super::*;
-                #[link(wasm_import_module = #cap_id)]
+                #[link(wasm_import_module = #class_id)]
                 unsafe extern "C" {
                     #new_client_decl
                     #(#method_decls)*
@@ -528,7 +528,7 @@ mod tests {
 
         let expected = quote! {
             const CAPABILITY_NAME_VERSION: &'static str = "cap_name";
-            const p__TEST_SERVER: &'static str = "p__test_server";
+            const p__TEST_SERVER: &'static str = "test_server";
             const p__TEST_SERVER__GET_VALUE: &'static str = "p__test_server__get_value__wasm";
 
             const p__TEST_SERVER__METHODS: [::pyroduct::ffi::MethodExport; 1usize] = [
@@ -547,8 +547,8 @@ mod tests {
                 ::pyroduct::ffi::guest::logger::init_logging(id, log_callback);
 
                 ::pyroduct::ffi::ClassExport {
-                    name: CAPABILITY_NAME_VERSION.as_ptr(),
-                    name_len: CAPABILITY_NAME_VERSION.len(),
+                    name: p__TEST_SERVER.as_ptr(),
+                    name_len: p__TEST_SERVER.len(),
                     len: p__TEST_SERVER__METHODS.len(),
                     ptr: p__TEST_SERVER__METHODS.as_ptr() as *mut _,
                     init: ::pyroduct::ffi::ClassInitFn::Sync(p__test_server__ffi_init),
@@ -558,6 +558,23 @@ mod tests {
             }
         };
 
+        crate::fmt::assert_code_eq_token(&output, &expected);
+
+        let output = cap.generate_wasm_imports();
+
+        let expected = quote! {
+            mod wasm {
+                use super::*;
+                #[link(wasm_import_module = "test_server")]
+                unsafe extern "C" {
+                    pub fn register(ptr: *const u8) -> *mut u8;
+                    pub fn p__test_server__get_value__wasm(
+                        cs_ptr: *const u8,
+                        in_ptr: *const u8,
+                    ) -> *mut u8;
+                }
+            }
+        };
         crate::fmt::assert_code_eq_token(&output, &expected);
     }
 

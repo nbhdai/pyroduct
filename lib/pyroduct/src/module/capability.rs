@@ -296,7 +296,7 @@ impl CapabilityLibrary {
                         symbol: sym.name.clone(),
                         reason: e.to_string(),
                     })?;
-
+            tracing::debug!("Loaded capability class {}", class.name());
             capabilities.insert(class.name().to_string(), Arc::new(class));
         }
 

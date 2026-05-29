@@ -78,7 +78,7 @@ async fn test_http_playbook_server_and_repair() {
             configurations: HashMap::from([(
                 "state".to_string(),
                 CapabilityConfig {
-                    classes: HashMap::from([("Counter".to_string(), None)]),
+                    classes: HashMap::from([("counter".to_string(), None)]),
                 },
             )]),
         },

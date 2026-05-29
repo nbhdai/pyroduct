@@ -45,6 +45,11 @@ impl CapabilityIdent {
     }
 
     /// Library identifier for a method (e.g., __my_trait__my_state__method_name)
+    pub fn class_name(&self) -> String {
+        AsSnakeCase(self.state_tn.to_string()).to_string()
+    }
+
+    /// Library identifier for a method (e.g., __my_trait__my_state__method_name)
     pub fn class_name_static(&self) -> Ident {
         let state_snake = AsSnakeCase(self.state_tn.to_string())
             .to_string()

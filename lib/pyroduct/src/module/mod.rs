@@ -162,12 +162,38 @@ impl PyroFactory {
         &self,
     ) -> Result<HashMap<String, Box<dyn ForeignCapability>>, WasmError> {
         let mut objects = HashMap::new();
-        for (lib_name, cap_config) in &self.configurations {
-            for (class, config) in &cap_config.classes {
-                tracing::debug!(class = %class, lib = %lib_name, "Instantiating capability class");
 
-                // First check if this capability class maps to a remote address
-                if let Some(remote_addr) = self.remote.get(lib_name) {
+        // 1. Validate that all configured libraries are loaded (unless remote)
+        for lib_name in self.configurations.keys() {
+            if !self.remote.contains_key(lib_name)
+                && !self.libraries.iter().any(|l| l.name == *lib_name)
+            {
+                return Err(WasmError::InstantiationFailed(format!(
+                    "Capability library '{}' not found",
+                    lib_name
+                )));
+            }
+        }
+
+        // 2. Validate that all configured classes exist in their respective loaded libraries
+        for library in &self.libraries {
+            let lib_name = &library.name;
+            if let Some(cap_config) = self.configurations.get(lib_name) {
+                for class_name in cap_config.classes.keys() {
+                    if !library.capabilities.contains_key(class_name) {
+                        return Err(WasmError::InstantiationFailed(format!(
+                            "Capability library '{}' does not contain class '{}'",
+                            lib_name, class_name
+                        )));
+                    }
+                }
+            }
+        }
+
+        // 3. Handle remote capabilities
+        for (lib_name, cap_config) in &self.configurations {
+            if let Some(remote_addr) = self.remote.get(lib_name) {
+                for (class, _config) in &cap_config.classes {
                     tracing::info!(
                         class = %class,
                         lib = %lib_name,
@@ -203,31 +229,36 @@ impl PyroFactory {
                         class.clone(),
                         Box::new(socket_cap) as Box<dyn ForeignCapability>,
                     );
+                }
+            }
+        }
+
+        // 4. Handle local capability libraries
+        for library in &self.libraries {
+            let lib_name = &library.name;
+            if let Some(cap_config) = self.configurations.get(lib_name) {
+                // If it maps to a remote address, it was already handled above.
+                if self.remote.contains_key(lib_name) {
                     continue;
                 }
 
-                let mut library_found = false;
-                for library in self.libraries.iter() {
-                    if library.name == *lib_name {
-                        library_found = true;
-                        let object = library.instantiate_class(class, config.as_ref()).await.map_err(|e| {
+                for (class_name, config) in &cap_config.classes {
+                    tracing::debug!(class = %class_name, lib = %lib_name, "Instantiating capability class");
+
+                    let object = library
+                        .instantiate_class(class_name, config.as_ref())
+                        .await
+                        .map_err(|e| {
                             WasmError::InstantiationFailed(format!(
                                 "Failed to instantiate class '{}' from capability library '{}': {}",
-                                class, lib_name, e
+                                class_name, lib_name, e
                             ))
                         })?;
-                        objects.insert(
-                            class.clone(),
-                            Box::new(object) as Box<dyn ForeignCapability>,
-                        );
-                        break;
-                    }
-                }
-                if !library_found {
-                    return Err(WasmError::InstantiationFailed(format!(
-                        "Capability library '{}' not found for class '{}'",
-                        lib_name, class
-                    )));
+
+                    objects.insert(
+                        class_name.clone(),
+                        Box::new(object) as Box<dyn ForeignCapability>,
+                    );
                 }
             }
         }
@@ -245,7 +276,8 @@ impl PyroFactory {
         Self::link_logger(&mut linker)?;
         Self::link_capabilities(&mut linker, &objects)?;
 
-        for (class_name, object) in objects.iter() {
+        for (_, object) in objects.iter() {
+            let class_name = object.name();
             for method_name in object.method_names() {
                 // Check what the linker actually holds for this class & method
                 if let Some(ext) = linker.get(&mut store, class_name, &method_name) {
@@ -342,12 +374,13 @@ impl PyroFactory {
         linker: &mut Linker<PyroState>,
         objects: &HashMap<String, Box<dyn ForeignCapability>>,
     ) -> Result<(), WasmError> {
-        for (class_name, object) in objects.iter() {
+        for (_, object) in objects.iter() {
             // Capture lib for the closures (Arc clone is cheap)
+            let class_name = object.name();
 
             for method_name in object.method_names() {
                 let method_name = method_name.to_string();
-                let class_name = class_name.clone();
+                let class_name = class_name.to_string();
                 let fn_name = method_name.clone();
                 let object = object.clone();
 
@@ -405,7 +438,7 @@ impl PyroFactory {
                     })?;
             }
 
-            let class_name = class_name.clone();
+            let class_name = class_name.to_string();
             let object = object.clone();
             let ty = FuncType::new(linker.engine(), [ValType::I32], [ValType::I32]);
             linker
