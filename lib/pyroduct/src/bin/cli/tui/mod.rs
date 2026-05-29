@@ -120,7 +120,7 @@ impl App {
                 if let Ok(source_module) = cache.get_named_source(&pipeline_config.playbook_author, &pipeline_config.playbook_name, &pipeline_config.playbook_version).await {
                     let mut capabilities = HashMap::new();
                     let binary = cache.get_named_binary(&pipeline_config.playbook_author, &pipeline_config.playbook_name, &pipeline_config.playbook_version).await.ok();
-                    for cap in source_module.dependencies.capabilities {
+                    for cap in source_module.dependencies().capabilities {
                         let config = binary
                             .as_ref()
                             .and_then(|bin| {
@@ -270,25 +270,16 @@ impl App {
                 });
             }
 
-            let dependencies = pyro_artifacts::artifacts::ModuleDependencies {
+            let playbook = pyro_artifacts::build::AnonPlaybook {
+                name: source_pipeline.name.clone(),
                 dependencies: std::collections::BTreeMap::new(),
-                capabilities,
-            };
-
-            let module_source = pyro_artifacts::artifacts::PlaybookSource {
-                dependencies,
-                source: source_pipeline.source.clone(),
-                ident: pyro_artifacts::artifacts::PlaybookIdent {
-                    author: "anon".to_string(),
-                    name: source_pipeline.name.clone(),
-                    version: "0.1.0".to_string(),
-                },
                 configurations,
+                source: source_pipeline.source.clone(),
             };
 
             let binary = self
                 .builder
-                .compile(&module_source)
+                .compile_anon(&playbook)
                 .await
                 .context(format!("Compilation failed for pipeline {}", i))?;
 

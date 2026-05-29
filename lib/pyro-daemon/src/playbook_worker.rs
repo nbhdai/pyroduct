@@ -142,7 +142,6 @@ impl PlaybookWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyro_artifacts::artifacts::{ModuleDependencies, PlaybookSource};
     use pyro_artifacts::build::Builder;
     use pyroduct::PyroRow;
     use pyroduct::transport::socket::playbook::PlaybookClient;
@@ -163,22 +162,15 @@ pub fn call(input: String) -> Result<String> {
         let cache = std::sync::Arc::new(CacheManager::from_env().await.unwrap());
         let builder = Builder::from_env(cache.clone()).await.unwrap();
 
-        let source = PlaybookSource {
-            dependencies: ModuleDependencies {
-                dependencies: BTreeMap::new(),
-                capabilities: vec![],
-            },
-            source: TEST_CODE.to_string(),
-            ident: pyro_artifacts::artifacts::PlaybookIdent {
-                author: "anon".to_string(),
-                name: "test_playbook".to_string(),
-                version: "0.1.0".to_string(),
-            },
+        let playbook = pyro_artifacts::build::AnonPlaybook {
+            name: "test_playbook".to_string(),
+            dependencies: BTreeMap::new(),
             configurations: std::vec::Vec::new(),
+            source: TEST_CODE.to_string(),
         };
 
         let binary = builder
-            .compile(&source)
+            .compile_anon(&playbook)
             .await
             .expect("Valid module should compile");
 

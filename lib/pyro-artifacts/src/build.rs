@@ -1,9 +1,17 @@
 use crate::artifacts::{PlaybookBinary, PlaybookSource, PlaybookSpec};
 use crate::cache::{CacheError, CacheManager, PyroductConfig};
-use crate::cargo::ensure_cdylib;
+use crate::cargo::{ensure_cdylib, ConfiguredCapability};
 use crate::command::{CommandError, format_syn_error, run_command};
 use cargo_toml::Dependency;
 use pyro_macro::module::generate_module_spec;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnonPlaybook {
+    pub name: String,
+    pub dependencies: std::collections::BTreeMap<String, Dependency>,
+    pub configurations: Vec<ConfiguredCapability>,
+    pub source: String,
+}
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -187,10 +195,17 @@ impl Builder {
     }
 
     #[cfg(feature = "compiler")]
+    #[tracing::instrument(skip(self, playbook))]
+    pub async fn compile_anon(&self, playbook: &AnonPlaybook) -> Result<PlaybookBinary, BuildError> {
+        let source = self.cache_manager.convert_anon_playbook(playbook.clone());
+        self.compile(&source).await
+    }
+
+    #[cfg(feature = "compiler")]
     #[tracing::instrument(skip(self, source), fields(source_hash = %source.hash()))]
     pub async fn compile(&self, source: &PlaybookSource) -> Result<PlaybookBinary, BuildError> {
         let hash = source.hash();
-        let source_ident = source.ident.clone();
+        let source_ident = source.ident();
         if source_ident.name == "anon" {
             return Err(BuildError::Manifest("Playbook name cannot be 'anon'".to_string()));
         }
@@ -282,10 +297,10 @@ name = "mod_slot"
         manifest
             .dependencies
             .insert("pyroduct".to_string(), pyro_dep);
-        for (dep_name, dep) in source.dependencies.dependencies.iter() {
+        for (dep_name, dep) in source.dependencies().dependencies.iter() {
             manifest.dependencies.insert(dep_name.clone(), dep.clone());
         }
-        for cap in source.dependencies.capabilities.iter() {
+        for cap in source.dependencies().capabilities.iter() {
             let path = self
                 .cache_manager
                 .interface_dir(&cap.author, &cap.package, &cap.version)
@@ -359,17 +374,17 @@ name = "mod_slot"
             },
             hash,
             func,
-            capabilities: source.dependencies.capabilities.clone(),
+            capabilities: source.dependencies().capabilities.clone(),
         };
 
         let binary = PlaybookBinary {
             wasm,
             spec,
-            configurations: source.configurations.clone(),
+            configurations: source.configurations().clone(),
         };
 
         let mut updated_source = source.clone();
-        updated_source.ident = crate::artifacts::PlaybookIdent {
+        updated_source.manifest.module = crate::cargo::CapabilityIdent {
             author: source_ident.author.clone(),
             name: source_ident.name.clone(),
             version: resolved_version.clone(),

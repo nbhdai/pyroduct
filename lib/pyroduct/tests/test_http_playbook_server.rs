@@ -1,8 +1,7 @@
 use pyro_artifacts::{
-    artifacts::{CapabilityConfig, ModuleDependencies, PlaybookSource},
-    build::Builder,
+    artifacts::CapabilityConfig,
+    build::{AnonPlaybook, Builder},
     cache::CacheManager,
-    cargo::ResolvedCapability,
 };
 use pyroduct::{pipeline::PipelineConfig, transport::http::PlaybookHttpServer};
 use std::collections::{BTreeMap, HashMap};
@@ -54,21 +53,9 @@ async fn test_http_playbook_server_and_repair() {
     cache.init().await.unwrap();
     let builder = Builder::from_env(cache.clone()).await.unwrap();
 
-    let source = PlaybookSource {
-        dependencies: ModuleDependencies {
-            dependencies: BTreeMap::new(),
-            capabilities: vec![ResolvedCapability {
-                package: "state".to_string(),
-                author: "nbhdai".to_string(),
-                version: "0.1.0".to_string(),
-            }],
-        },
-        source: CODE.to_string(),
-        ident: pyro_artifacts::artifacts::PlaybookIdent {
-            author: "anon".to_string(),
-            name: "test_http_playbook".to_string(),
-            version: "0.1.0".to_string(),
-        },
+    let source = AnonPlaybook {
+        name: "test_http_playbook".to_string(),
+        dependencies: BTreeMap::new(),
         configurations: vec![pyro_artifacts::cargo::ConfiguredCapability {
             package: "state".to_string(),
             author: "nbhdai".to_string(),
@@ -77,10 +64,11 @@ async fn test_http_playbook_server_and_repair() {
                 classes: HashMap::from([("counter".to_string(), None)]),
             },
         }],
+        source: CODE.to_string(),
     };
 
     let binary = builder
-        .compile(&source)
+        .compile_anon(&source)
         .await
         .expect("Valid module should compile");
 

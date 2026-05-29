@@ -1,5 +1,8 @@
 use crate::artifacts::{Artifact, Artifacts, Playbook, PlaybookBinary, PlaybookSource};
 
+#[cfg(feature = "compiler")]
+use crate::build::AnonPlaybook;
+
 use cargo_toml::Dependency;
 use std::path::{Path, PathBuf};
 use std::{collections::HashMap, io};
@@ -50,11 +53,16 @@ pub struct LoadedPlaybook {
 pub struct CacheManager {
     pub root: PathBuf,
     pub pyroduct: Option<Dependency>,
+    pub author: Option<String>,
 }
 
 impl CacheManager {
     #[tracing::instrument(skip(root), fields(root = %root.display()))]
-    pub async fn new(root: &Path, pyroduct: Option<Dependency>) -> Result<Self, CacheError> {
+    pub async fn new(
+        root: &Path,
+        pyroduct: Option<Dependency>,
+        author: Option<String>,
+    ) -> Result<Self, CacheError> {
         tracing::debug!("Creating CacheManager instance");
         if !root.exists() {
             fs::create_dir_all(&root).await.map_err(|e| {
@@ -77,6 +85,7 @@ impl CacheManager {
         let manager = Self {
             root: root.to_path_buf(),
             pyroduct,
+            author,
         };
 
         Ok(manager)
@@ -114,7 +123,7 @@ impl CacheManager {
             err
         })?;
 
-        Self::new(&root, config.pyroduct).await
+        Self::new(&root, config.pyroduct, config.author).await
     }
 
     #[tracing::instrument(skip(self))]
@@ -481,7 +490,7 @@ impl CacheManager {
                      tracing::error!(error = ?err, "Failed to load named module source from {:?}", path);
                      err
                  })?;
-            source.ident = crate::artifacts::PlaybookIdent {
+            source.manifest.module = crate::cargo::CapabilityIdent {
                 author: author.to_string(),
                 name: name.to_string(),
                 version: version.to_string(),
@@ -580,7 +589,7 @@ impl CacheManager {
                         })
                 }
                 Artifacts::Playbook(Playbook::Source(source)) => {
-                    let ident = &source.ident;
+                    let ident = source.ident();
                     let path = self.module_dir(&ident.author, &ident.name, &ident.version);
                     fs::create_dir_all(&path).await.map_err(|e| CacheError::Io {
                         context: format!("Failed to create module dir {}", path.display()),
@@ -709,6 +718,32 @@ impl CacheManager {
             tracing::debug!("Successfully loaded named playbook");
         }
         res
+    }
+
+    #[cfg(feature = "compiler")]
+    pub fn convert_anon_playbook(&self, playbook: AnonPlaybook) -> PlaybookSource {
+        let author = self.author.clone().unwrap_or_else(|| "anon".to_string());
+        let mut resolved_capabilities = Vec::new();
+        for cap in &playbook.configurations {
+            resolved_capabilities.push(crate::cargo::ResolvedCapability {
+                author: cap.author.clone(),
+                package: cap.package.clone(),
+                version: cap.version.clone(),
+            });
+        }
+        PlaybookSource::new(
+            crate::artifacts::PlaybookIdent {
+                author,
+                name: playbook.name,
+                version: "0.1.0".to_string(),
+            },
+            crate::artifacts::ModuleDependencies {
+                dependencies: playbook.dependencies,
+                capabilities: resolved_capabilities,
+            },
+            playbook.configurations,
+            playbook.source,
+        )
     }
 }
 

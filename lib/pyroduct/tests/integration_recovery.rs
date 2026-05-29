@@ -1,8 +1,7 @@
 use pyro_artifacts::{
-    artifacts::{CapabilityConfig, ModuleDependencies, PlaybookSource},
-    build::Builder,
+    artifacts::CapabilityConfig,
+    build::{AnonPlaybook, Builder},
     cache::CacheManager,
-    cargo::ResolvedCapability,
 };
 use pyroduct::{
     PyroRow,
@@ -45,21 +44,9 @@ async fn test_pipeline_get_record() {
     let cache = std::sync::Arc::new(CacheManager::from_env().await.unwrap());
     let builder = Builder::from_env(cache.clone()).await.unwrap();
 
-    let source = PlaybookSource {
-        dependencies: ModuleDependencies {
-            dependencies: BTreeMap::new(),
-            capabilities: vec![ResolvedCapability {
-                package: "state".to_string(),
-                author: "nbhdai".to_string(),
-                version: "0.1.0".to_string(),
-            }],
-        },
-        source: CODE.to_string(),
-        ident: pyro_artifacts::artifacts::PlaybookIdent {
-            author: "anon".to_string(),
-            name: "test_recovery".to_string(),
-            version: "0.1.0".to_string(),
-        },
+    let source = AnonPlaybook {
+        name: "test_recovery".to_string(),
+        dependencies: BTreeMap::new(),
         configurations: vec![pyro_artifacts::cargo::ConfiguredCapability {
             package: "state".to_string(),
             author: "nbhdai".to_string(),
@@ -68,11 +55,12 @@ async fn test_pipeline_get_record() {
                 classes: HashMap::from([("counter".to_string(), None)]),
             },
         }],
+        source: CODE.to_string(),
     };
     cache.remove_module("anon", "test_recovery", "0.1.0").await.unwrap();
 
     let binary = builder
-        .compile(&source)
+        .compile_anon(&source)
         .await
         .expect("Valid module should compile");
 

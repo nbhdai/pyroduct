@@ -139,9 +139,6 @@ pub struct ModuleManifest<Metadata = Value> {
     #[serde(default)]
     pub features: FeatureSet,
     #[serde(default)]
-    #[deprecated(note = "Cargo recommends patch instead")]
-    pub replace: DepsSet,
-    #[serde(default)]
     pub patch: PatchSet,
     pub lib: Option<Product>,
     #[serde(default)]

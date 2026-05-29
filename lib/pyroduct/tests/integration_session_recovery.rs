@@ -1,6 +1,5 @@
 use pyro_artifacts::{
-    artifacts::{ModuleDependencies, PlaybookSource},
-    build::Builder,
+    build::{AnonPlaybook, Builder},
     cache::CacheManager,
 };
 use pyroduct::module::sessions::SessionResult;
@@ -81,23 +80,16 @@ async fn test_session_recovery_lifecycle() {
     let cache = std::sync::Arc::new(CacheManager::from_env().await.unwrap());
     let builder = Builder::from_env(cache.clone()).await.unwrap();
 
-    let source = PlaybookSource {
-        dependencies: ModuleDependencies {
-            dependencies: std::collections::BTreeMap::new(),
-            capabilities: vec![],
-        },
-        source: RECOVERY_SESSION_MODULE.to_string(),
-        ident: pyro_artifacts::artifacts::PlaybookIdent {
-            author: "anon".to_string(),
-            name: "test_session_rec".to_string(),
-            version: "0.1.0".to_string(),
-        },
+    let source = AnonPlaybook {
+        name: "test_session_rec".to_string(),
+        dependencies: std::collections::BTreeMap::new(),
         configurations: Vec::new(),
+        source: RECOVERY_SESSION_MODULE.to_string(),
     };
     cache.remove_module("anon", "test_session_rec", "0.1.0").await.unwrap();
-
+ 
     let binary = builder
-        .compile(&source)
+        .compile_anon(&source)
         .await
         .expect("Valid session module should compile");
 
@@ -303,23 +295,16 @@ async fn test_session_diff_recovery_lifecycle() {
     let cache = std::sync::Arc::new(CacheManager::from_env().await.unwrap());
     let builder = Builder::from_env(cache.clone()).await.unwrap();
 
-    let source = PlaybookSource {
-        dependencies: ModuleDependencies {
-            dependencies: std::collections::BTreeMap::new(),
-            capabilities: vec![],
-        },
-        source: RECOVERY_SESSION_DIFF_MODULE.to_string(),
-        ident: pyro_artifacts::artifacts::PlaybookIdent {
-            author: "anon".to_string(),
-            name: "test_session_diff_rec".to_string(),
-            version: "0.1.0".to_string(),
-        },
+    let source = AnonPlaybook {
+        name: "test_session_diff_rec".to_string(),
+        dependencies: std::collections::BTreeMap::new(),
         configurations: Vec::new(),
+        source: RECOVERY_SESSION_DIFF_MODULE.to_string(),
     };
     cache.remove_module("anon", "test_session_diff_rec", "0.1.0").await.unwrap();
-
+ 
     let binary = builder
-        .compile(&source)
+        .compile_anon(&source)
         .await
         .expect("Valid session diff module should compile");
 

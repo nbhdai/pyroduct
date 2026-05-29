@@ -96,7 +96,7 @@ pub fn test_config() -> PyroductConfig {
 #[tokio::test]
 async fn ship_httpc_capability_to_cache() {
     let dir = TempDir::new().unwrap();
-    let cache = Arc::new(CacheManager::new(dir.path(), None).await.unwrap());
+    let cache = Arc::new(CacheManager::new(dir.path(), None, None).await.unwrap());
 
     let httpc_path = repo_root().join("capabilities/httpc");
     assert!(
@@ -138,7 +138,7 @@ async fn test_anon_compile_with_interface() {
     let config = test_config();
 
     let cache = Arc::new(
-        CacheManager::new(dir.path(), config.pyroduct.clone())
+        CacheManager::new(dir.path(), config.pyroduct.clone(), None)
             .await
             .unwrap(),
     );
@@ -154,26 +154,22 @@ async fn test_anon_compile_with_interface() {
         cache.write_artifacts(artifact).await.unwrap();
     }
 
-    let cap = ResolvedCapability {
+    let cap = ConfiguredCapability {
         author: "nbhdai".to_string(),
         package: "httpc".to_string(),
         version: "0.1.0".to_string(),
+        configuration: CapabilityConfig {
+            classes: std::collections::HashMap::new(),
+        },
     };
 
-    let mod_source = PlaybookSource {
-        ident: crate::artifacts::PlaybookIdent {
-            author: "anon".to_string(),
-            name: "test_anon".to_string(),
-            version: "0.1.0".to_string(),
-        },
-        dependencies: ModuleDependencies {
-            dependencies: BTreeMap::new(),
-            capabilities: vec![cap],
-        },
+    let anon_playbook = crate::build::AnonPlaybook {
+        name: "test_anon".to_string(),
+        dependencies: BTreeMap::new(),
+        configurations: vec![cap],
         source: HTTPC_MODULE.to_string(),
-        configurations: Vec::new(),
     };
-    let anon = builder.compile(&mod_source).await.unwrap();
+    let anon = builder.compile_anon(&anon_playbook).await.unwrap();
 
     assert!(!anon.wasm.is_empty());
     assert!(
@@ -190,24 +186,24 @@ async fn test_anon_compile_with_interface() {
 #[tokio::test]
 async fn test_module_wasm_exact_match() {
     let dir = TempDir::new().unwrap();
-    let cache = Arc::new(CacheManager::new(dir.path(), None).await.unwrap());
+    let cache = Arc::new(CacheManager::new(dir.path(), None, None).await.unwrap());
     let builder = Builder::new(&dir.path().join("build"), test_config(), Arc::clone(&cache))
         .await
         .unwrap();
 
-    let source = PlaybookSource {
-        ident: crate::artifacts::PlaybookIdent {
+    let source = PlaybookSource::new(
+        crate::artifacts::PlaybookIdent {
             author: "anon".to_string(),
             name: "test_wasm_match".to_string(),
             version: "0.1.0".to_string(),
         },
-        dependencies: ModuleDependencies {
+        ModuleDependencies {
             dependencies: BTreeMap::new(),
             capabilities: vec![],
         },
-        source: BASIC_MODULE.to_string(),
-        configurations: Vec::new(),
-    };
+        Vec::new(),
+        BASIC_MODULE.to_string(),
+    );
     cache.write_artifacts(&source.clone().into()).await.unwrap();
     let binary = builder.compile(&source).await.unwrap();
     let original_wasm = binary.wasm.clone();
@@ -225,7 +221,7 @@ async fn test_module_wasm_exact_match() {
 #[tokio::test]
 async fn test_capability_lib_exact_match() {
     let dir = TempDir::new().unwrap();
-    let cache = Arc::new(CacheManager::new(dir.path(), None).await.unwrap());
+    let cache = Arc::new(CacheManager::new(dir.path(), None, None).await.unwrap());
 
     let httpc_path = repo_root().join("capabilities/httpc");
     let env = Environment::new(httpc_path, cache.clone()).await.unwrap();
@@ -264,7 +260,7 @@ async fn test_load_playbook() {
     let config = test_config();
 
     let cache = Arc::new(
-        CacheManager::new(dir.path(), config.pyroduct.clone())
+        CacheManager::new(dir.path(), config.pyroduct.clone(), None)
             .await
             .unwrap(),
     );
@@ -286,18 +282,17 @@ async fn test_load_playbook() {
         version: "0.1.0".to_string(),
     };
 
-    let mod_source = PlaybookSource {
-        ident: crate::artifacts::PlaybookIdent {
+    let mod_source = PlaybookSource::new(
+        crate::artifacts::PlaybookIdent {
             author: "anon".to_string(),
             name: "test_load".to_string(),
             version: "0.1.0".to_string(),
         },
-        dependencies: ModuleDependencies {
+        ModuleDependencies {
             dependencies: BTreeMap::new(),
             capabilities: vec![cap.clone()],
         },
-        source: HTTPC_MODULE.to_string(),
-        configurations: vec![ConfiguredCapability {
+        vec![ConfiguredCapability {
             author: cap.author.clone(),
             package: cap.package.clone(),
             version: cap.version.clone(),
@@ -308,7 +303,8 @@ async fn test_load_playbook() {
                 )]),
             },
         }],
-    };
+        HTTPC_MODULE.to_string(),
+    );
     let binary = builder.compile(&mod_source).await.unwrap();
 
     tracing::debug!(capabilities = ?binary.spec.capabilities, "Binary spec capabilities");

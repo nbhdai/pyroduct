@@ -336,46 +336,23 @@ impl Environment {
                 crate::cargo::ProjectManifest::Module(module_manifest) => {
                     let wasm_path = self.get_wasm_artifact(&name).ok();
 
-                    let ident = crate::artifacts::PlaybookIdent {
-                        author: self.author(),
-                        name: self.name(),
-                        version: self.version(),
-                    };
-
-                    let mut configurations = Vec::new();
-                    let mut resolved_capabilities = Vec::new();
-                    for cap in module_manifest.capabilities.values() {
-                        let resolved = ResolvedCapability {
-                            author: cap.author.clone(),
-                            package: cap.package.clone(),
-                            version: cap.version.clone(),
-                        };
-                        configurations.push(cap.clone());
-                        resolved_capabilities.push(resolved);
-                    }
-
                     let source = crate::artifacts::PlaybookSource {
-                        ident: ident.clone(),
-                        dependencies: crate::artifacts::ModuleDependencies {
-                            dependencies: module_manifest.dependencies.clone(),
-                            capabilities: resolved_capabilities.clone(),
-                        },
+                        manifest: module_manifest.clone(),
                         source: src_lib_rs.clone(),
-                        configurations: configurations.clone(),
                     };
                     let hash = source.hash();
 
                     let mut artifacts =
-                        vec![Artifacts::Playbook(crate::artifacts::Playbook::Source(source))];
+                        vec![Artifacts::Playbook(crate::artifacts::Playbook::Source(source.clone()))];
 
                     if let Some(path) = wasm_path {
                         let spec = pyro_macro::module::generate_module_spec(&src_lib_rs)
                             .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
                             .map(|func| crate::artifacts::PlaybookSpec {
-                                ident: ident.clone(),
+                                ident: source.ident(),
                                 hash,
                                 func,
-                                capabilities: resolved_capabilities,
+                                capabilities: source.dependencies().capabilities,
                             })
                             .ok_or_else(|| {
                                 EnvironmentError::InterfaceGeneration(
@@ -386,7 +363,7 @@ impl Environment {
                         let binary = crate::artifacts::PlaybookBinary {
                             wasm: fs::read(path).await?,
                             spec,
-                            configurations,
+                            configurations: source.configurations(),
                         };
                         artifacts.push(Artifacts::Playbook(crate::artifacts::Playbook::Binary(binary)));
                     }
@@ -486,42 +463,19 @@ impl Environment {
                         String::new()
                     };
 
-                    let ident = crate::artifacts::PlaybookIdent {
-                        author: self.author(),
-                        name: self.name(),
-                        version: self.version(),
-                    };
-
-                    let mut configurations = Vec::new();
-                    let mut resolved_capabilities = Vec::new();
-                    for cap in module_manifest.capabilities.values() {
-                        let resolved = ResolvedCapability {
-                            author: cap.author.clone(),
-                            package: cap.package.clone(),
-                            version: cap.version.clone(),
-                        };
-                        configurations.push(cap.clone());
-                        resolved_capabilities.push(resolved);
-                    }
-
                     let source = crate::artifacts::PlaybookSource {
-                        ident: ident.clone(),
-                        dependencies: crate::artifacts::ModuleDependencies {
-                            dependencies: module_manifest.dependencies.clone(),
-                            capabilities: resolved_capabilities.clone(),
-                        },
+                        manifest: module_manifest.clone(),
                         source: src_lib_rs.clone(),
-                        configurations: configurations.clone(),
                     };
                     let hash = source.hash();
 
                     let spec = pyro_macro::module::generate_module_spec(&src_lib_rs)
                         .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
                         .map(|func| crate::artifacts::PlaybookSpec {
-                            ident: ident.clone(),
+                            ident: source.ident(),
                             hash,
                             func,
-                            capabilities: resolved_capabilities,
+                            capabilities: source.dependencies().capabilities,
                         })
                         .ok_or_else(|| {
                             EnvironmentError::InterfaceGeneration(
@@ -532,7 +486,7 @@ impl Environment {
                     let binary = crate::artifacts::PlaybookBinary {
                         wasm: fs::read(wasm_artifact).await?,
                         spec,
-                        configurations,
+                        configurations: source.configurations(),
                     };
 
                     Ok(vec![
@@ -625,15 +579,15 @@ impl Environment {
                         name: "dummy".to_string(),
                         version: "0.0.0".to_string(),
                     };
-                    let source = crate::artifacts::PlaybookSource {
-                        ident: dummy_ident.clone(),
-                        dependencies: crate::artifacts::ModuleDependencies {
+                    let source = crate::artifacts::PlaybookSource::new(
+                        dummy_ident.clone(),
+                        crate::artifacts::ModuleDependencies {
                             dependencies: module_manifest.dependencies.clone(),
                             capabilities: resolved_capabilities.clone(),
                         },
-                        source: src_lib_rs.clone(),
-                        configurations: std::vec::Vec::new(),
-                    };
+                        std::vec::Vec::new(),
+                        src_lib_rs.clone(),
+                    );
                     let hash = source.hash();
 
                     let binary = crate::artifacts::PlaybookBinary {
@@ -740,15 +694,15 @@ impl Environment {
                     name: self.name(),
                     version: self.version(),
                 };
-                let source = crate::artifacts::PlaybookSource {
-                    ident: ident.clone(),
-                    dependencies: crate::artifacts::ModuleDependencies {
+                let source = crate::artifacts::PlaybookSource::new(
+                    ident.clone(),
+                    crate::artifacts::ModuleDependencies {
                         dependencies: module_manifest.dependencies.clone(),
                         capabilities: resolved_capabilities.clone(),
                     },
-                    source: src_lib_rs.clone(),
-                    configurations: std::vec::Vec::new(),
-                };
+                    std::vec::Vec::new(),
+                    src_lib_rs.clone(),
+                );
                 let hash = source.hash();
 
                 pyro_macro::module::generate_module_spec(&src_lib_rs)
