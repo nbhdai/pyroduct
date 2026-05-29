@@ -82,6 +82,7 @@ async fn test_http_playbook_server_and_repair() {
                 },
             )]),
         },
+        remote: HashMap::new(),
         wal_capacity: 1000,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,

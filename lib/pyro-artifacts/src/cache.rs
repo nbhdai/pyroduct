@@ -599,24 +599,38 @@ impl CacheManager {
     pub async fn load_playbook(
         &self,
         playbook: Playbook,
+        remotes: HashMap<String, RemoteAddress>,
         log_dir: impl AsRef<Path>,
         input_dir: impl AsRef<Path>,
         output_dir: impl AsRef<Path>,
     ) -> Result<LoadedPlaybook, CacheError> {
         let binary = self.get_binary(&playbook.hash).await?;
         let mut paths = HashMap::new();
+        let mut remote = HashMap::new();
 
         for cap in &binary.spec.capabilities {
-            let path = self
-                .capability_binary_path(&cap.author, &cap.package, &cap.version)
-                .await?;
-            paths.insert(cap.package.clone(), path);
+            if playbook.configurations.contains_key(&cap.package) {
+                let path = self
+                    .capability_binary_path(&cap.author, &cap.package, &cap.version)
+                    .await?;
+                paths.insert(cap.package.clone(), path);
+            } else if remotes.contains_key(&cap.package) {
+                remote.insert(
+                    cap.package.clone(),
+                    remotes.get(&cap.package).unwrap().clone(),
+                );
+            } else {
+                return Err(CacheError {
+                    context: format!("Capability {} not found", cap.package),
+                    error: io::Error::new(io::ErrorKind::NotFound, "Capability not found"),
+                });
+            }
         }
 
         Ok(LoadedPlaybook {
             binary,
             configurations: playbook.configurations,
-            remote: HashMap::new(),
+            remote,
             paths,
             log_dir: log_dir.as_ref().to_path_buf(),
             input_dir: input_dir.as_ref().to_path_buf(),

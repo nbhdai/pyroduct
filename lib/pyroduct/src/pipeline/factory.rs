@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+
 use pyro_artifacts::{
     artifacts::Playbook,
-    cache::{CacheManager, LoadedPlaybook},
+    cache::{CacheManager, LoadedPlaybook, RemoteAddress},
 };
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +22,7 @@ use super::PipelineError;
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct PipelineConfig {
     pub playbook: Playbook,
+    pub remote: HashMap<String, RemoteAddress>,
     #[serde(default = "default_wal_capacity")]
     pub wal_capacity: usize,
     #[serde(default = "default_success_retention")]
@@ -52,7 +55,13 @@ pub struct LoadedPipelineConfig {
 impl PipelineConfig {
     pub async fn load(self, cache: &CacheManager) -> Result<LoadedPipelineConfig, WasmError> {
         let loaded_playbook = cache
-            .load_playbook(self.playbook, self.log_dir, self.input_dir, self.output_dir)
+            .load_playbook(
+                self.playbook,
+                self.remote,
+                self.log_dir,
+                self.input_dir,
+                self.output_dir,
+            )
             .await?;
         Ok(LoadedPipelineConfig {
             playbook: loaded_playbook,
@@ -262,4 +271,3 @@ impl PipelineFactory {
         })
     }
 }
-

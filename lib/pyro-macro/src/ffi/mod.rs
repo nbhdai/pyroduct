@@ -22,7 +22,7 @@ pub fn generate_interface(
     cap_version: &str,
 ) -> syn::Result<(syn::File, InterfaceSpec<'static>)> {
     let file = parse_file(content)?;
-    let spec = build_spec(&file);
+    let spec = build_spec(cap_name, &file);
     let import_location: syn::Path = syn::parse_quote!(::pyroduct);
 
     let mut generated_code = quote::quote! {

@@ -286,6 +286,7 @@ impl App {
 
             let pipeline_config = pyroduct::pipeline::PipelineConfig {
                 playbook,
+                remote: HashMap::new(),
                 wal_capacity: source_pipeline.wal_capacity,
                 success_log_retention_secs: source_pipeline.success_log_retention_secs,
                 error_log_retention_secs: source_pipeline.error_log_retention_secs,

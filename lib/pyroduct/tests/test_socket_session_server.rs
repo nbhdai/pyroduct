@@ -71,6 +71,7 @@ async fn test_socket_session_server_client() {
             hash: binary.hash(),
             configurations: HashMap::new(),
         },
+        remote: HashMap::new(),
         wal_capacity: 1000,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
@@ -108,42 +109,66 @@ async fn test_socket_session_server_client() {
 
     // --- Session 1: Turn 1 ---
     let result1_t1 = client
-        .call_session(session_id_1, &PyroRow::from([("input", "Hello S1!".into())]))
+        .call_session(
+            session_id_1,
+            &PyroRow::from([("input", "Hello S1!".into())]),
+        )
         .await
         .expect("Session 1 call turn 1 should succeed");
     assert_eq!(result1_t1.row.get_str("message").unwrap(), "Hello! Turn 1");
 
     // --- Session 2: Turn 1 ---
     let result2_t1 = client
-        .call_session(session_id_2, &PyroRow::from([("input", "Hello S2!".into())]))
+        .call_session(
+            session_id_2,
+            &PyroRow::from([("input", "Hello S2!".into())]),
+        )
         .await
         .expect("Session 2 call turn 1 should succeed");
     assert_eq!(result2_t1.row.get_str("message").unwrap(), "Hello! Turn 1");
 
     // --- Session 1: Turn 2 ---
     let result1_t2 = client
-        .call_session(session_id_1, &PyroRow::from([("input", "S1 Turn 2".into())]))
+        .call_session(
+            session_id_1,
+            &PyroRow::from([("input", "S1 Turn 2".into())]),
+        )
         .await
         .expect("Session 1 call turn 2 should succeed");
-    assert_eq!(result1_t2.row.get_str("message").unwrap(), "Goodbye! Turn 2");
+    assert_eq!(
+        result1_t2.row.get_str("message").unwrap(),
+        "Goodbye! Turn 2"
+    );
 
     // --- Session 2: Turn 2 ---
     let result2_t2 = client
-        .call_session(session_id_2, &PyroRow::from([("input", "S2 Turn 2".into())]))
+        .call_session(
+            session_id_2,
+            &PyroRow::from([("input", "S2 Turn 2".into())]),
+        )
         .await
         .expect("Session 2 call turn 2 should succeed");
-    assert_eq!(result2_t2.row.get_str("message").unwrap(), "Goodbye! Turn 2");
+    assert_eq!(
+        result2_t2.row.get_str("message").unwrap(),
+        "Goodbye! Turn 2"
+    );
 
     // --- Session 1: Turn 3 ---
     let result1_t3 = client
-        .call_session(session_id_1, &PyroRow::from([("input", "S1 Terminate".into())]))
+        .call_session(
+            session_id_1,
+            &PyroRow::from([("input", "S1 Terminate".into())]),
+        )
         .await
         .expect("Session 1 call turn 3 should succeed");
     assert!(result1_t3.row.is_empty());
 
     // --- Session 2: Turn 3 ---
     let result2_t3 = client
-        .call_session(session_id_2, &PyroRow::from([("input", "S2 Terminate".into())]))
+        .call_session(
+            session_id_2,
+            &PyroRow::from([("input", "S2 Terminate".into())]),
+        )
         .await
         .expect("Session 2 call turn 3 should succeed");
     assert!(result2_t3.row.is_empty());

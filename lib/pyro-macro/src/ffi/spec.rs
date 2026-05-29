@@ -7,6 +7,7 @@
 
 use std::borrow::Cow;
 
+use heck::AsSnakeCase;
 use pyro_spec::{CapabilityFunc, ClassSpec, InterfaceSpec, PyroField, PyroSchema, PyroType};
 use syn::{Attribute, Expr, Lit, Meta};
 
@@ -20,7 +21,7 @@ use crate::struct_doc::SchemaBuilder;
 // =============================================================================
 
 pub fn build_class_spec(cap: &CapabilityImpl, builder: &SchemaBuilder) -> ClassSpec<'static> {
-    let capability = cap.ident.state_tn.to_string();
+    let capability = AsSnakeCase(cap.ident.state_tn.to_string()).to_string();
     let description = extract_doc_string(&cap.attrs);
 
     let methods = cap
@@ -71,7 +72,7 @@ pub fn build_class_spec(cap: &CapabilityImpl, builder: &SchemaBuilder) -> ClassS
     }
 }
 
-pub fn build_spec(file: &syn::File) -> InterfaceSpec<'static> {
+pub fn build_spec(name: &str, file: &syn::File) -> InterfaceSpec<'static> {
     // Pass 1: collect all MagmaDocumentation from structs in the file.
     let builder = SchemaBuilder::from_file(file);
 
@@ -95,14 +96,11 @@ pub fn build_spec(file: &syn::File) -> InterfaceSpec<'static> {
         }
     }
 
-    let (capability, description) = classes
-        .first()
-        .map(|c| (c.name.clone(), c.description.clone()))
-        .unwrap_or_else(|| (Cow::Borrowed(""), None));
+    let description = extract_doc_string(&file.attrs);
 
     InterfaceSpec {
-        capability,
-        description,
+        capability: name.to_string().into(),
+        description: description.map(|s| s.into()),
         classes,
     }
 }
@@ -182,15 +180,15 @@ mod tests {
         }
     }).unwrap();
 
-        let output = build_spec(&file);
+        let output = build_spec("MyServer", &file);
 
         let expected: InterfaceSpec<'static> = serde_json::from_str(
             r#"{
             "capability": "MyServer",
-            "description": "The Server Implementation",
+            "description": null,
             "classes": [
                 {
-                    "name": "MyServer",
+                    "name": "my_server",
                     "description": "The Server Implementation",
                     "client": {
                         "name": "MyClient",

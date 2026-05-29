@@ -62,6 +62,7 @@ async fn test_module_errors_and_panics() {
             hash: binary.hash(),
             configurations: HashMap::new(),
         },
+        remote: HashMap::new(),
         wal_capacity: 5,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,

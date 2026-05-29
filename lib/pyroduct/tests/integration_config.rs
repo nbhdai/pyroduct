@@ -80,6 +80,7 @@ async fn test_capability_configuration_respect() {
                 },
             )]),
         },
+        remote: HashMap::new(),
         wal_capacity: 2,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,

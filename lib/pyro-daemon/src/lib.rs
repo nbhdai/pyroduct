@@ -219,6 +219,7 @@ impl PlaybookWorker {
         let mut loaded_playbook = cache
             .load_playbook(
                 pipeline_config.playbook,
+                HashMap::new(),
                 pipeline_config.log_dir,
                 pipeline_config.input_dir,
                 pipeline_config.output_dir,

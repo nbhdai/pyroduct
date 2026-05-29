@@ -300,7 +300,7 @@ async fn test_load_playbook() {
 
     // 3. Load the Playbook
     let loaded = cache
-        .load_playbook(playbook.clone(), "", "", "")
+        .load_playbook(playbook.clone(), HashMap::new(), "", "", "")
         .await
         .unwrap();
 

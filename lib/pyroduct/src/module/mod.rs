@@ -29,7 +29,7 @@ use crate::format::{
     header::{DataStatus, PyroData, PyroHeader},
 };
 use crate::module::call::PyroCallIo;
-use crate::transport::socket::capability::SocketForeignCapability;
+use crate::transport::socket::capability::RemoteLibrary;
 use crate::{CapturedError, PyroError};
 
 mod call;
@@ -191,45 +191,38 @@ impl PyroFactory {
         }
 
         // 3. Handle remote capabilities
-        for (lib_name, cap_config) in &self.configurations {
-            if let Some(remote_addr) = self.remote.get(lib_name) {
-                for (class, _config) in &cap_config.classes {
-                    tracing::info!(
-                        class = %class,
-                        lib = %lib_name,
-                        addr = ?remote_addr,
-                        "Connecting to remote capability server"
-                    );
-                    let socket_cap = match remote_addr {
-                        RemoteAddress::Unix(path) => {
-                            SocketForeignCapability::connect_unix(
-                                lib_name.clone(),
-                                class.clone(),
-                                path,
-                            )
-                            .await
-                        }
-                        RemoteAddress::Tcp(addr) => {
-                            SocketForeignCapability::connect_tcp(
-                                lib_name.clone(),
-                                class.clone(),
-                                addr,
-                            )
-                            .await
-                        }
-                    }
-                    .map_err(|e| {
-                        WasmError::InstantiationFailed(format!(
-                            "Failed to connect to remote capability '{}': {}",
-                            lib_name, e
-                        ))
-                    })?;
-
-                    objects.insert(
-                        class.clone(),
-                        Box::new(socket_cap) as Box<dyn ForeignCapability>,
-                    );
+        for (lib_name, remote_addr) in self.remote.iter() {
+            tracing::info!(
+                lib = %lib_name,
+                addr = ?remote_addr,
+                "Connecting to remote capability library"
+            );
+            let remote_lib = match remote_addr {
+                RemoteAddress::Unix(path) => {
+                    RemoteLibrary::connect_unix(lib_name.clone(), path).await
                 }
+                RemoteAddress::Tcp(addr) => {
+                    RemoteLibrary::connect_tcp(lib_name.clone(), addr).await
+                }
+            }
+            .map_err(|e| {
+                WasmError::InstantiationFailed(format!(
+                    "Failed to connect to remote capability library '{}': {}",
+                    lib_name, e
+                ))
+            })?;
+
+            for remote_class in remote_lib.classes() {
+                tracing::info!(
+                    class = remote_class.name(),
+                    lib = %lib_name,
+                    "Fetching remote class"
+                );
+
+                objects.insert(
+                    remote_class.name().to_string(),
+                    Box::new(remote_class) as Box<dyn ForeignCapability>,
+                );
             }
         }
 
