@@ -64,7 +64,11 @@ async fn test_http_playbook_server_and_repair() {
             }],
         },
         source: CODE.to_string(),
-        ident: None,
+        ident: pyro_artifacts::artifacts::PlaybookIdent {
+            author: "anon".to_string(),
+            name: "test_http_playbook".to_string(),
+            version: "0.1.0".to_string(),
+        },
         configurations: vec![pyro_artifacts::cargo::ConfiguredCapability {
             package: "state".to_string(),
             author: "nbhdai".to_string(),
@@ -80,8 +84,12 @@ async fn test_http_playbook_server_and_repair() {
         .await
         .expect("Valid module should compile");
 
+    let ident = &binary.spec.ident;
+
     let config = PipelineConfig {
-        playbook_hash: binary.hash(),
+        playbook_author: ident.author.clone(),
+        playbook_name: ident.name.clone(),
+        playbook_version: ident.version.clone(),
         remote: HashMap::new(),
         wal_capacity: 1000,
         success_log_retention_secs: 3600,

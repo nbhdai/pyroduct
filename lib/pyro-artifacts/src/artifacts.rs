@@ -68,8 +68,7 @@ pub struct PlaybookIdent {
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct PlaybookSource {
     /// Named module identity (author/name/version), if this is a named module.
-    #[serde(default)]
-    pub ident: Option<PlaybookIdent>,
+    pub ident: PlaybookIdent,
     pub dependencies: ModuleDependencies,
     pub source: String,
     #[serde(default)]
@@ -78,18 +77,15 @@ pub struct PlaybookSource {
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct PlaybookSpec {
+    pub ident: PlaybookIdent,
     pub hash: String,
     pub func: ModuleFunc<'static>,
     pub capabilities: Vec<ResolvedCapability>,
-    #[serde(default)]
-    pub ident: Option<PlaybookIdent>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct PlaybookBinary {
     /// Named module identity (author/name/version), if this is a named module.
-    #[serde(default)]
-    pub ident: Option<PlaybookIdent>,
     pub wasm: Vec<u8>,
     pub spec: PlaybookSpec,
     #[serde(default)]
@@ -653,6 +649,11 @@ impl Artifact for PlaybookSource {
     async fn write_to_directory(&self, path: &Path) -> io::Result<()> {
         tracing::debug!("Writing PlaybookSource to directory");
         fs::create_dir_all(path).await?;
+        let ident = serde_json::to_string_pretty(&self.ident).map_err(|e| {
+            let err = io::Error::new(io::ErrorKind::InvalidData, e);
+            tracing::error!(error = ?err, "Failed to serialize ident");
+            err
+        })?;
         let dependencies = serde_json::to_string_pretty(&self.dependencies).map_err(|e| {
             let err = io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -669,6 +670,7 @@ impl Artifact for PlaybookSource {
             tracing::error!(error = ?err, "Failed to serialize configurations.json");
             err
         })?;
+        fs::write(path.join("ident.json"), &ident).await?;
         fs::write(path.join("source.rs"), &self.source).await?;
         fs::write(path.join("dependencies.json"), &dependencies).await?;
         fs::write(path.join("configurations.json"), &configurations).await?;
@@ -678,6 +680,9 @@ impl Artifact for PlaybookSource {
     fn to_tarball(&self) -> Result<Vec<u8>, io::Error> {
         let encoder = GzEncoder::new(Vec::new(), Compression::default());
         let mut tar = Builder::new(encoder);
+        let ident = serde_json::to_string_pretty(&self.ident).map_err(|e| {
+            io::Error::new(io::ErrorKind::InvalidData, e)
+        })?;
         let dependencies = serde_json::to_string_pretty(&self.dependencies).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -690,6 +695,7 @@ impl Artifact for PlaybookSource {
                 format!("Unable to serialize configurations: {}", e),
             )
         })?;
+        append_file(&mut tar, "ident.json", ident.as_bytes())?;
         append_file(&mut tar, "source.rs", self.source.as_bytes())?;
         append_file(&mut tar, "dependencies.json", dependencies.as_bytes())?;
         append_file(&mut tar, "configurations.json", configurations.as_bytes())?;
@@ -699,6 +705,7 @@ impl Artifact for PlaybookSource {
     fn from_tarball(bytes: &[u8]) -> Result<Self, io::Error> {
         let tar = GzDecoder::new(bytes);
         let mut archive = tar::Archive::new(tar);
+        let mut ident = None;
         let mut source = None;
         let mut dependencies = None;
         let mut configurations = Vec::new();
@@ -710,6 +717,14 @@ impl Artifact for PlaybookSource {
             file.read_to_end(&mut content)?;
 
             match path.to_string_lossy().as_ref() {
+                "ident.json" => {
+                    ident = serde_json::from_slice(&content).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Unable to deserialize ident: {}", e),
+                        )
+                    })?;
+                }
                 "source.rs" => source = String::from_utf8(content).ok(),
                 "dependencies.json" => {
                     dependencies = serde_json::from_slice(&content).map_err(|e| {
@@ -732,7 +747,7 @@ impl Artifact for PlaybookSource {
         }
 
         Ok(PlaybookSource {
-            ident: None,
+            ident: ident.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Missing ident.json"))?,
             source: source
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Missing source.rs"))?,
             dependencies: dependencies.ok_or_else(|| {
@@ -745,6 +760,15 @@ impl Artifact for PlaybookSource {
     #[tracing::instrument(skip(path), fields(path = %path.display()))]
     async fn from_dir(path: &Path) -> Result<Self, io::Error> {
         tracing::debug!("Loading PlaybookSource from directory");
+        let ident_string = fs::read(path.join("ident.json")).await?;
+        let ident = serde_json::from_slice(&ident_string).map_err(|e| {
+            let err = io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unable to deserialize ident: {}", e),
+            );
+            tracing::error!(error = ?err, "Failed to deserialize ident.json");
+            err
+        })?;
         let dependencies_string = fs::read(path.join("dependencies.json")).await?;
         let dependencies = serde_json::from_slice(&dependencies_string).map_err(|e| {
             let err = io::Error::new(
@@ -771,7 +795,7 @@ impl Artifact for PlaybookSource {
             Vec::new()
         };
         Ok(PlaybookSource {
-            ident: None,
+            ident,
             source: fs::read_to_string(path.join("source.rs")).await?,
             dependencies,
             configurations,
@@ -780,7 +804,7 @@ impl Artifact for PlaybookSource {
 }
 
 impl Artifact for PlaybookBinary {
-    #[tracing::instrument(skip(self, path), fields(path = %path.display(), ident = ?self.ident))]
+    #[tracing::instrument(skip(self, path), fields(path = %path.display()))]
     async fn write_to_directory(&self, path: &Path) -> io::Result<()> {
         tracing::debug!("Writing PlaybookBinary to directory");
         fs::create_dir_all(path).await?;
@@ -831,7 +855,7 @@ impl Artifact for PlaybookBinary {
         let tar = GzDecoder::new(bytes);
         let mut archive = tar::Archive::new(tar);
         let mut wasm = None;
-        let mut spec = None;
+        let mut spec: Option<PlaybookSpec> = None;
         let mut configurations = Vec::new();
 
         for file in archive.entries()? {
@@ -863,7 +887,6 @@ impl Artifact for PlaybookBinary {
         }
 
         Ok(PlaybookBinary {
-            ident: None,
             wasm: wasm
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Missing mod.wasm"))?,
             spec: spec
@@ -876,7 +899,7 @@ impl Artifact for PlaybookBinary {
     async fn from_dir(path: &Path) -> Result<Self, io::Error> {
         tracing::debug!("Loading PlaybookBinary from directory");
         let spec_string = fs::read(path.join("spec.json")).await?;
-        let spec = serde_json::from_slice(&spec_string).map_err(|e| {
+        let spec: PlaybookSpec = serde_json::from_slice(&spec_string).map_err(|e| {
             let err = io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Unable to deserialize spec: {}", e),
@@ -901,7 +924,6 @@ impl Artifact for PlaybookBinary {
             Vec::new()
         };
         Ok(PlaybookBinary {
-            ident: None,
             wasm: fs::read(path.join("mod.wasm")).await?,
             spec,
             configurations,

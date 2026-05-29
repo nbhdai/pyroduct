@@ -161,7 +161,11 @@ async fn test_anon_compile_with_interface() {
     };
 
     let mod_source = PlaybookSource {
-        ident: None,
+        ident: crate::artifacts::PlaybookIdent {
+            author: "anon".to_string(),
+            name: "test_anon".to_string(),
+            version: "0.1.0".to_string(),
+        },
         dependencies: ModuleDependencies {
             dependencies: BTreeMap::new(),
             capabilities: vec![cap],
@@ -192,7 +196,11 @@ async fn test_module_wasm_exact_match() {
         .unwrap();
 
     let source = PlaybookSource {
-        ident: None,
+        ident: crate::artifacts::PlaybookIdent {
+            author: "anon".to_string(),
+            name: "test_wasm_match".to_string(),
+            version: "0.1.0".to_string(),
+        },
         dependencies: ModuleDependencies {
             dependencies: BTreeMap::new(),
             capabilities: vec![],
@@ -205,9 +213,7 @@ async fn test_module_wasm_exact_match() {
     let original_wasm = binary.wasm.clone();
     cache.write_artifacts(&binary.clone().into()).await.unwrap();
 
-    let hash = source.hash();
-
-    let loaded_artifact = cache.get_binary(&hash).await.unwrap();
+    let loaded_artifact = cache.get_named_binary("anon", "test_wasm_match", "0.1.0").await.unwrap();
 
     assert_eq!(
         original_wasm, loaded_artifact.wasm,
@@ -281,7 +287,11 @@ async fn test_load_playbook() {
     };
 
     let mod_source = PlaybookSource {
-        ident: None,
+        ident: crate::artifacts::PlaybookIdent {
+            author: "anon".to_string(),
+            name: "test_load".to_string(),
+            version: "0.1.0".to_string(),
+        },
         dependencies: ModuleDependencies {
             dependencies: BTreeMap::new(),
             capabilities: vec![cap.clone()],
@@ -311,9 +321,9 @@ async fn test_load_playbook() {
         "Binary configurations keys"
     );
 
-    // 2. Load the Playbook by hash
+    // 2. Load the Playbook by name/version
     let loaded = cache
-        .load_playbook(binary.spec.hash.clone(), HashMap::new(), "", "", "")
+        .load_playbook("anon".to_string(), "test_load".to_string(), "0.1.0".to_string(), HashMap::new(), "", "", "")
         .await
         .unwrap();
 

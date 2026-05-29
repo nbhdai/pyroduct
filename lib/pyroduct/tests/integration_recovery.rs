@@ -55,7 +55,11 @@ async fn test_pipeline_get_record() {
             }],
         },
         source: CODE.to_string(),
-        ident: None,
+        ident: pyro_artifacts::artifacts::PlaybookIdent {
+            author: "anon".to_string(),
+            name: "test_recovery".to_string(),
+            version: "0.1.0".to_string(),
+        },
         configurations: vec![pyro_artifacts::cargo::ConfiguredCapability {
             package: "state".to_string(),
             author: "nbhdai".to_string(),
@@ -65,7 +69,7 @@ async fn test_pipeline_get_record() {
             },
         }],
     };
-    cache.remove_anon(&source.hash()).await.unwrap();
+    cache.remove_module("anon", "test_recovery", "0.1.0").await.unwrap();
 
     let binary = builder
         .compile(&source)
@@ -75,8 +79,12 @@ async fn test_pipeline_get_record() {
     let tmp_dir = tempfile::tempdir().unwrap();
     let tmp_path = tmp_dir.path().to_path_buf();
 
+    let ident = &binary.spec.ident;
+
     let config = PipelineConfig {
-        playbook_hash: binary.hash(),
+        playbook_author: ident.author.clone(),
+        playbook_name: ident.name.clone(),
+        playbook_version: ident.version.clone(),
         remote: HashMap::new(),
         wal_capacity: 5,
         success_log_retention_secs: 3600,

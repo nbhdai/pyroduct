@@ -190,11 +190,48 @@ impl Builder {
     #[tracing::instrument(skip(self, source), fields(source_hash = %source.hash()))]
     pub async fn compile(&self, source: &PlaybookSource) -> Result<PlaybookBinary, BuildError> {
         let hash = source.hash();
+        let source_ident = source.ident.clone();
+        if source_ident.name == "anon" {
+            return Err(BuildError::Manifest("Playbook name cannot be 'anon'".to_string()));
+        }
 
-        // Check if binary is already in cache
-        if let Ok(binary) = self.cache_manager.get_binary(&hash).await {
-            tracing::debug!("Playbook binary found in cache, skipping compilation");
-            return Ok(binary);
+        let mut resolved_version = source_ident.version.clone();
+        let mut found_existing = false;
+
+        if source_ident.author == "anon" {
+            let mut version_num = 1;
+            loop {
+                let version_str = format!("0.{}.0", version_num);
+                match self.cache_manager.get_named_source("anon", &source_ident.name, &version_str).await {
+                    Ok(existing_source) => {
+                        if existing_source.hash() == hash {
+                            resolved_version = version_str;
+                            found_existing = true;
+                            break;
+                        } else {
+                            version_num += 1;
+                        }
+                    }
+                    Err(_) => {
+                        resolved_version = version_str;
+                        break;
+                    }
+                }
+            }
+        } else {
+            if let Ok(binary) = self.cache_manager.get_named_binary(&source_ident.author, &source_ident.name, &source_ident.version).await {
+                if binary.spec.hash == hash {
+                    tracing::debug!("Named playbook binary found in cache, skipping compilation");
+                    return Ok(binary);
+                }
+            }
+        }
+
+        if found_existing {
+            if let Ok(binary) = self.cache_manager.get_named_binary("anon", &source_ident.name, &resolved_version).await {
+                tracing::debug!("Playbook binary found in cache (conflict resolved), skipping compilation");
+                return Ok(binary);
+            }
         }
 
         // Acquire a file-locked build slot
@@ -217,12 +254,13 @@ impl Builder {
             })?;
 
         let crate_name = format!("mod_slot{}", slot.index);
+        let author = &source_ident.author;
         let basic_toml = format!(
             r#"
 [package]
 name = "{crate_name}"
-version = "0.1.0"
-author = "anon"
+version = "{resolved_version}"
+authors = ["{author}"]
 edition = "2024"
 
 [workspace]
@@ -314,24 +352,34 @@ name = "mod_slot"
                 err
             })?;
         let spec = PlaybookSpec {
+            ident: crate::artifacts::PlaybookIdent {
+                author: source_ident.author.clone(),
+                name: source_ident.name.clone(),
+                version: resolved_version.clone(),
+            },
             hash,
             func,
             capabilities: source.dependencies.capabilities.clone(),
-            ident: None,
         };
 
         let binary = PlaybookBinary {
-            ident: None,
             wasm,
             spec,
             configurations: source.configurations.clone(),
+        };
+
+        let mut updated_source = source.clone();
+        updated_source.ident = crate::artifacts::PlaybookIdent {
+            author: source_ident.author.clone(),
+            name: source_ident.name.clone(),
+            version: resolved_version.clone(),
         };
 
         // Save to cache
         tracing::debug!("Saving source and compiled binary to CacheManager");
         if let Err(e) = self
             .cache_manager
-            .write_artifacts(&source.clone().into())
+            .write_artifacts(&updated_source.into())
             .await
         {
             tracing::error!(error = ?e, "Failed to save playbook source to cache");

@@ -117,10 +117,9 @@ impl App {
 
             let mut pipelines = Vec::new();
             for (name, pipeline_config) in configs {
-                let hash = pipeline_config.playbook_hash.clone();
-                if let Ok(source_module) = cache.get_source(&hash).await {
+                if let Ok(source_module) = cache.get_named_source(&pipeline_config.playbook_author, &pipeline_config.playbook_name, &pipeline_config.playbook_version).await {
                     let mut capabilities = HashMap::new();
-                    let binary = cache.get_binary(&hash).await.ok();
+                    let binary = cache.get_named_binary(&pipeline_config.playbook_author, &pipeline_config.playbook_name, &pipeline_config.playbook_version).await.ok();
                     for cap in source_module.dependencies.capabilities {
                         let config = binary
                             .as_ref()
@@ -279,7 +278,11 @@ impl App {
             let module_source = pyro_artifacts::artifacts::PlaybookSource {
                 dependencies,
                 source: source_pipeline.source.clone(),
-                ident: None,
+                ident: pyro_artifacts::artifacts::PlaybookIdent {
+                    author: "anon".to_string(),
+                    name: source_pipeline.name.clone(),
+                    version: "0.1.0".to_string(),
+                },
                 configurations,
             };
 
@@ -289,8 +292,12 @@ impl App {
                 .await
                 .context(format!("Compilation failed for pipeline {}", i))?;
 
+            let ident = &binary.spec.ident;
+
             let pipeline_config = pyroduct::pipeline::PipelineConfig {
-                playbook_hash: binary.hash(),
+                playbook_author: ident.author.clone(),
+                playbook_name: ident.name.clone(),
+                playbook_version: ident.version.clone(),
                 remote: HashMap::new(),
                 wal_capacity: source_pipeline.wal_capacity,
                 success_log_retention_secs: source_pipeline.success_log_retention_secs,

@@ -53,7 +53,9 @@ impl PlaybookWorker {
             .context("Failed to initialize CacheManager")?;
         let mut loaded_playbook = cache
             .load_playbook(
-                pipeline_config.playbook_hash,
+                pipeline_config.playbook_author,
+                pipeline_config.playbook_name,
+                pipeline_config.playbook_version,
                 HashMap::new(),
                 pipeline_config.log_dir,
                 pipeline_config.input_dir,
@@ -167,7 +169,11 @@ pub fn call(input: String) -> Result<String> {
                 capabilities: vec![],
             },
             source: TEST_CODE.to_string(),
-            ident: None,
+            ident: pyro_artifacts::artifacts::PlaybookIdent {
+                author: "anon".to_string(),
+                name: "test_playbook".to_string(),
+                version: "0.1.0".to_string(),
+            },
             configurations: std::vec::Vec::new(),
         };
 
@@ -180,9 +186,13 @@ pub fn call(input: String) -> Result<String> {
         let config_path = tmp_dir.path().join("pipeline.json");
         let socket_path = tmp_dir.path().join("playbook.sock");
 
+        let ident = &binary.spec.ident;
+
         // Write the pipeline config json
         let config_json = serde_json::json!({
-            "playbook_hash": binary.hash(),
+            "playbook_author": ident.author,
+            "playbook_name": ident.name,
+            "playbook_version": ident.version,
             "remote": {},
             "wal_capacity": 10,
             "success_log_retention_secs": 3600,

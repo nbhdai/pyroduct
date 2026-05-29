@@ -51,10 +51,14 @@ async fn test_session_lifecycle() {
             capabilities: vec![],
         },
         source: SIMPLE_SESSION_MODULE.to_string(),
-        ident: None,
+        ident: pyro_artifacts::artifacts::PlaybookIdent {
+            author: "anon".to_string(),
+            name: "test_session".to_string(),
+            version: "0.1.0".to_string(),
+        },
         configurations: Vec::new(),
     };
-    cache.remove_anon(&source.hash()).await.unwrap();
+    cache.remove_module("anon", "test_session", "0.1.0").await.unwrap();
 
     let binary = builder
         .compile(&source)
@@ -64,8 +68,12 @@ async fn test_session_lifecycle() {
     let tmp_dir = tempfile::tempdir().unwrap();
     let tmp_path = tmp_dir.path().to_path_buf();
 
+    let ident = &binary.spec.ident;
+
     let config = PipelineConfig {
-        playbook_hash: binary.hash(),
+        playbook_author: ident.author.clone(),
+        playbook_name: ident.name.clone(),
+        playbook_version: ident.version.clone(),
         remote: HashMap::new(),
         wal_capacity: 2,
         success_log_retention_secs: 3600,

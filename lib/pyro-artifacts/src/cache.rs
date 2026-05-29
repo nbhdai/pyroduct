@@ -157,18 +157,6 @@ impl CacheManager {
                 err
             })?;
 
-        let anon_dir = self.root.join("anon");
-        fs::create_dir_all(&anon_dir)
-            .await
-            .map_err(|error| {
-                let err = CacheError::Io {
-                    context: "Failed to create anon cache dir".to_string(),
-                    error,
-                };
-                tracing::error!(error = ?err, "Failed to initialize anon dir");
-                err
-            })?;
-
         Ok(())
     }
 
@@ -179,7 +167,6 @@ impl CacheManager {
             self.capabilities_base_dir(),
             self.interfaces_base_dir(),
             self.root.join("modules"),
-            self.root.join("anon"),
         ];
         for dir in dirs {
             if dir.exists() {
@@ -423,32 +410,9 @@ impl CacheManager {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn get_binary(&self, hash: &str) -> Result<PlaybookBinary, CacheError> {
-        tracing::debug!("Retrieving anonymous playbook binary");
-        let path = self.root.join("anon").join(hash);
-        if path.exists() {
-            let binary = PlaybookBinary::from_dir(&path)
-                .await
-                .map_err(|error| {
-                    let err = CacheError::Io {
-                        context: "Unable to load binary".to_string(),
-                        error,
-                    };
-                    tracing::error!(error = ?err, "Failed to load anonymous playbook binary from path {:?}", path);
-                    err
-                })?;
-            Ok(binary)
-        } else {
-            let err = CacheError::NotFound(format!("Missing {} binary", path.display()));
-            tracing::debug!("Anonymous playbook binary not found at path {:?}", path);
-            Err(err)
-        }
-    }
-
-    #[tracing::instrument(skip(self))]
-    pub async fn remove_anon(&self, hash: &str) -> Result<(), CacheError> {
-        tracing::debug!("Removing anonymous playbook from cache");
-        let path = self.root.join("anon").join(hash);
+    pub async fn remove_module(&self, author: &str, name: &str, version: &str) -> Result<(), CacheError> {
+        tracing::debug!("Removing module from cache");
+        let path = self.module_dir(author, name, version);
         if path.exists() {
             tokio::fs::remove_dir_all(&path)
                 .await
@@ -457,34 +421,11 @@ impl CacheManager {
                         context: "Unable to remove module".to_string(),
                         error,
                     };
-                    tracing::error!(error = ?err, "Failed to remove anonymous playbook at {:?}", path);
+                    tracing::error!(error = ?err, "Failed to remove playbook at {:?}", path);
                     err
                 })?;
         }
         Ok(())
-    }
-
-    #[tracing::instrument(skip(self))]
-    pub async fn get_source(&self, hash: &str) -> Result<PlaybookSource, CacheError> {
-        tracing::debug!("Retrieving anonymous playbook source");
-        let path = self.root.join("anon").join(hash);
-        if path.exists() {
-            let source = PlaybookSource::from_dir(&path)
-                .await
-                .map_err(|error| {
-                    let err = CacheError::Io {
-                        context: "Unable to load source".to_string(),
-                        error,
-                    };
-                    tracing::error!(error = ?err, "Failed to load anonymous playbook source from path {:?}", path);
-                    err
-                })?;
-            Ok(source)
-        } else {
-            let err = CacheError::NotFound(format!("Missing {} source", path.display()));
-            tracing::debug!("Anonymous playbook source not found at path {:?}", path);
-            Err(err)
-        }
     }
 
     // --- Named module lookup ---
@@ -530,16 +471,21 @@ impl CacheManager {
         tracing::debug!("Retrieving named playbook source");
         let path = self.module_dir(author, name, version);
         if path.exists() {
-            let source = PlaybookSource::from_dir(&path)
-                .await
-                .map_err(|error| {
-                    let err = CacheError::Io {
-                        context: "Unable to load named module source".to_string(),
-                        error,
-                    };
-                    tracing::error!(error = ?err, "Failed to load named module source from {:?}", path);
-                    err
-                })?;
+            let mut source = PlaybookSource::from_dir(&path)
+                 .await
+                 .map_err(|error| {
+                     let err = CacheError::Io {
+                         context: "Unable to load named module source".to_string(),
+                         error,
+                     };
+                     tracing::error!(error = ?err, "Failed to load named module source from {:?}", path);
+                     err
+                 })?;
+            source.ident = crate::artifacts::PlaybookIdent {
+                author: author.to_string(),
+                name: name.to_string(),
+                version: version.to_string(),
+            };
             Ok(source)
         } else {
             let err = CacheError::NotFound(format!(
@@ -619,59 +565,34 @@ impl CacheManager {
                         })
                 }
                 Artifacts::Playbook(Playbook::Binary(binary)) => {
-                    if let Some(ref ident) = binary.ident {
-                        // Named module: store at modules/$author/$name/$version
-                        let path = self.module_dir(&ident.author, &ident.name, &ident.version);
-                        fs::create_dir_all(&path).await.map_err(|e| CacheError::Io {
-                            context: format!("Failed to create module dir {}", path.display()),
+                    let ident = &binary.spec.ident;
+                    let path = self.module_dir(&ident.author, &ident.name, &ident.version);
+                    fs::create_dir_all(&path).await.map_err(|e| CacheError::Io {
+                        context: format!("Failed to create module dir {}", path.display()),
+                        error: e,
+                    })?;
+                    binary
+                        .write_to_directory(&path)
+                        .await
+                        .map_err(|e| CacheError::Io {
+                            context: format!("Failed to write artifacts to {}", path.display()),
                             error: e,
-                        })?;
-                        binary
-                            .write_to_directory(&path)
-                            .await
-                            .map_err(|e| CacheError::Io {
-                                context: format!("Failed to write artifacts to {}", path.display()),
-                                error: e,
-                            })
-                    } else {
-                        // Anonymous module: store at anon/$hash
-                        let path = self.root.join("anon").join(&binary.spec.hash);
-                        binary
-                            .write_to_directory(&path)
-                            .await
-                            .map_err(|e| CacheError::Io {
-                                context: format!("Failed to write artifacts to {}", path.display()),
-                                error: e,
-                            })
-                    }
+                        })
                 }
                 Artifacts::Playbook(Playbook::Source(source)) => {
-                    if let Some(ref ident) = source.ident {
-                        // Named module: store at modules/$author/$name/$version
-                        let path = self.module_dir(&ident.author, &ident.name, &ident.version);
-                        fs::create_dir_all(&path).await.map_err(|e| CacheError::Io {
-                            context: format!("Failed to create module dir {}", path.display()),
+                    let ident = &source.ident;
+                    let path = self.module_dir(&ident.author, &ident.name, &ident.version);
+                    fs::create_dir_all(&path).await.map_err(|e| CacheError::Io {
+                        context: format!("Failed to create module dir {}", path.display()),
+                        error: e,
+                    })?;
+                    source
+                        .write_to_directory(&path)
+                        .await
+                        .map_err(|e| CacheError::Io {
+                            context: format!("Failed to write artifacts to {}", path.display()),
                             error: e,
-                        })?;
-                        source
-                            .write_to_directory(&path)
-                            .await
-                            .map_err(|e| CacheError::Io {
-                                context: format!("Failed to write artifacts to {}", path.display()),
-                                error: e,
-                            })
-                    } else {
-                        // Anonymous module: store at anon/$hash
-                        let hash = source.hash();
-                        let path = self.root.join("anon").join(hash);
-                        source
-                            .write_to_directory(&path)
-                            .await
-                            .map_err(|e| CacheError::Io {
-                                context: format!("Failed to write artifacts to {}", path.display()),
-                                error: e,
-                            })
-                    }
+                        })
                 }
             }
         }.await;
@@ -684,10 +605,12 @@ impl CacheManager {
         res
     }
 
-    #[tracing::instrument(skip(self, remotes, log_dir, input_dir, output_dir), fields(playbook_hash = %playbook_hash))]
+    #[tracing::instrument(skip(self, remotes, log_dir, input_dir, output_dir), fields(author = %playbook_author, name = %playbook_name, version = %playbook_version))]
     pub async fn load_playbook(
         &self,
-        playbook_hash: String,
+        playbook_author: String,
+        playbook_name: String,
+        playbook_version: String,
         remotes: HashMap<String, RemoteAddress>,
         log_dir: impl AsRef<Path>,
         input_dir: impl AsRef<Path>,
@@ -695,7 +618,7 @@ impl CacheManager {
     ) -> Result<LoadedPlaybook, CacheError> {
         tracing::debug!("Loading playbook");
         let res = async {
-            let binary = self.get_binary(&playbook_hash).await?;
+            let binary = self.get_named_binary(&playbook_author, &playbook_name, &playbook_version).await?;
             let mut paths = HashMap::new();
             let mut remote = HashMap::new();
 

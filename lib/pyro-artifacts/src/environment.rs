@@ -355,7 +355,7 @@ impl Environment {
                     }
 
                     let source = crate::artifacts::PlaybookSource {
-                        ident: Some(ident.clone()),
+                        ident: ident.clone(),
                         dependencies: crate::artifacts::ModuleDependencies {
                             dependencies: module_manifest.dependencies.clone(),
                             capabilities: resolved_capabilities.clone(),
@@ -372,10 +372,10 @@ impl Environment {
                         let spec = pyro_macro::module::generate_module_spec(&src_lib_rs)
                             .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
                             .map(|func| crate::artifacts::PlaybookSpec {
+                                ident: ident.clone(),
                                 hash,
                                 func,
                                 capabilities: resolved_capabilities,
-                                ident: Some(ident.clone()),
                             })
                             .ok_or_else(|| {
                                 EnvironmentError::InterfaceGeneration(
@@ -384,7 +384,6 @@ impl Environment {
                             })?;
 
                         let binary = crate::artifacts::PlaybookBinary {
-                            ident: Some(ident),
                             wasm: fs::read(path).await?,
                             spec,
                             configurations,
@@ -506,7 +505,7 @@ impl Environment {
                     }
 
                     let source = crate::artifacts::PlaybookSource {
-                        ident: Some(ident.clone()),
+                        ident: ident.clone(),
                         dependencies: crate::artifacts::ModuleDependencies {
                             dependencies: module_manifest.dependencies.clone(),
                             capabilities: resolved_capabilities.clone(),
@@ -519,10 +518,10 @@ impl Environment {
                     let spec = pyro_macro::module::generate_module_spec(&src_lib_rs)
                         .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
                         .map(|func| crate::artifacts::PlaybookSpec {
+                            ident: ident.clone(),
                             hash,
                             func,
                             capabilities: resolved_capabilities,
-                            ident: Some(ident.clone()),
                         })
                         .ok_or_else(|| {
                             EnvironmentError::InterfaceGeneration(
@@ -531,7 +530,6 @@ impl Environment {
                         })?;
 
                     let binary = crate::artifacts::PlaybookBinary {
-                        ident: Some(ident),
                         wasm: fs::read(wasm_artifact).await?,
                         spec,
                         configurations,
@@ -622,8 +620,13 @@ impl Environment {
                         });
                     }
 
+                    let dummy_ident = crate::artifacts::PlaybookIdent {
+                        author: "dummy".to_string(),
+                        name: "dummy".to_string(),
+                        version: "0.0.0".to_string(),
+                    };
                     let source = crate::artifacts::PlaybookSource {
-                        ident: None,
+                        ident: dummy_ident.clone(),
                         dependencies: crate::artifacts::ModuleDependencies {
                             dependencies: module_manifest.dependencies.clone(),
                             capabilities: resolved_capabilities.clone(),
@@ -634,13 +637,12 @@ impl Environment {
                     let hash = source.hash();
 
                     let binary = crate::artifacts::PlaybookBinary {
-                        ident: None,
                         wasm: wasm_bytes,
                         spec: crate::artifacts::PlaybookSpec {
+                            ident: dummy_ident,
                             hash,
                             func: spec,
                             capabilities: vec![], // Capabilities not needed for WAT/RS generation
-                            ident: None,
                         },
                         configurations: std::vec::Vec::new(),
                     };
@@ -733,8 +735,13 @@ impl Environment {
                     });
                 }
 
+                let ident = crate::artifacts::PlaybookIdent {
+                    author: self.author(),
+                    name: self.name(),
+                    version: self.version(),
+                };
                 let source = crate::artifacts::PlaybookSource {
-                    ident: None,
+                    ident: ident.clone(),
                     dependencies: crate::artifacts::ModuleDependencies {
                         dependencies: module_manifest.dependencies.clone(),
                         capabilities: resolved_capabilities.clone(),
@@ -751,14 +758,10 @@ impl Environment {
                         err
                     })?
                     .map(|func| crate::artifacts::PlaybookSpec {
+                        ident,
                         hash,
                         func,
                         capabilities: resolved_capabilities,
-                        ident: Some(crate::artifacts::PlaybookIdent {
-                            author: self.author(),
-                            name: self.name(),
-                            version: self.version(),
-                        }),
                     })
                     .ok_or_else(|| {
                         let err = EnvironmentError::InterfaceGeneration(
