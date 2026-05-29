@@ -49,7 +49,8 @@ cli = [
     "dep:pyro-macro",
     "dep:prettyplease",
     "host", # The CLI needs the host feature to execute pipelines
-    "dep:pyro-file"
+    "dep:pyro-file",
+    "transport"
 ]
 
 [dependencies]
