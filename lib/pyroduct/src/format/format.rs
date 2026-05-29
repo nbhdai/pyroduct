@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-use tracing::trace;
+use tracing::{error, trace};
 
 use crate::error::ErrorKind;
 use crate::format::{PyroRef, PyroView};
@@ -91,7 +91,7 @@ where
             trace!("Parser::parse unchecked_parse succeeded");
             Ok(buf)
         } else {
-            trace!(
+            error!(
                 ?status,
                 "Parser::parse status mismatch, returning InvalidCode"
             );
@@ -215,7 +215,7 @@ where
                 capacity = v.capacity(),
                 "PyroFormat::ship succeeded"
             ),
-            Err(e) => trace!(error = ?e, "PyroFormat::ship failed"),
+            Err(e) => error!(error = ?e, "PyroFormat::ship failed"),
         }
         result
     }

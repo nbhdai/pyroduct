@@ -319,10 +319,13 @@ impl PyroListener {
     pub fn local_addr_tcp(&self) -> std::io::Result<std::net::SocketAddr> {
         match &self.inner {
             ListenerInner::Tcp(l) => l.local_addr(),
-            ListenerInner::Unix(_) => Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "not a TCP listener",
-            )),
+            ListenerInner::Unix(_) => {
+                tracing::error!("not a TCP listener");
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "not a TCP listener",
+                ))
+            }
         }
     }
 }

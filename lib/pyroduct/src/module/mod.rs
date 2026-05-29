@@ -383,6 +383,7 @@ impl PyroFactory {
                     [ValType::I32],
                 );
 
+                tracing::debug!(class_name, method_name, "Linking");
                 linker
                     .func_new_async(
                         &class_name,
@@ -394,7 +395,6 @@ impl PyroFactory {
 
                             let object = object.clone();
                             let fn_name = fn_name.clone();
-
                             Box::new(async move {
                                 tracing::debug!(
                                     class_name = object.name(),

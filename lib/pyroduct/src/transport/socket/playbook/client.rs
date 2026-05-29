@@ -65,8 +65,10 @@ impl PlaybookClient {
                 logs: crate::format::PyroLogs::empty(),
             })
         } else {
+            let err_msg = format!("Request failed with status: {}", resp.status_u8());
+            tracing::error!("{}", err_msg);
             Err(PyroFailure {
-                result: Err(format!("Request failed with status: {}", resp.status_u8())),
+                result: Err(err_msg),
                 logs: crate::format::PyroLogs::empty(),
             })
         }
@@ -106,8 +108,10 @@ impl PlaybookClient {
                 logs: crate::format::PyroLogs::empty(),
             })
         } else {
+            let err_msg = format!("Request failed with status: {}", resp.status_u8());
+            tracing::error!("{}", err_msg);
             Err(PyroFailure {
-                result: Err(format!("Request failed with status: {}", resp.status_u8())),
+                result: Err(err_msg),
                 logs: crate::format::PyroLogs::empty(),
             })
         }

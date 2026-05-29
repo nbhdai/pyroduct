@@ -484,6 +484,10 @@ fn json_to_pyro_row(value: serde_json::Value) -> Result<PyroRow<'static>, String
             }
             Ok(PyroRow(items))
         }
-        _ => Err("Input JSON must be an object representing a Row".to_string()),
+        _ => {
+            let err = "Input JSON must be an object representing a Row".to_string();
+            tracing::error!("{}", err);
+            Err(err)
+        }
     }
 }

@@ -113,7 +113,10 @@ impl ForeignCapability for RemoteClass {
     }
 
     fn method_names(&self) -> Vec<String> {
-        self.methods.clone()
+        self.methods
+            .iter()
+            .map(|m| format!("p__{}__{}__wasm", self.class_name, m))
+            .collect()
     }
 
     async fn call(
@@ -124,8 +127,16 @@ impl ForeignCapability for RemoteClass {
     ) -> Result<PyroView, PyroError> {
         let mut client = self.client.lock().await;
 
+        let prefix = format!("p__{}__", self.class_name);
+        let suffix = "__wasm";
+        let simple_name = if method_name.starts_with(&prefix) && method_name.ends_with(suffix) {
+            &method_name[prefix.len()..(method_name.len() - suffix.len())]
+        } else {
+            method_name
+        };
+
         client
-            .call(&self.class_name, method_name, client_data, input_data)
+            .call(&self.class_name, simple_name, client_data, input_data)
             .await
     }
 

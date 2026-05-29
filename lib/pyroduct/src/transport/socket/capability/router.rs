@@ -62,12 +62,14 @@ impl PyroRouter {
                 .map_err(|e| PyroError::NotFound(e.to_string()))?;
 
             if (class_id as usize) >= self.objects.len() {
-                return Err(PyroError::NotFound(format!(
+                let err_msg = format!(
                     "Class ID {} (name {}) is out of range for library capabilities (length {})",
                     class_id,
                     class_name,
                     self.objects.len()
-                )));
+                );
+                tracing::error!("{}", err_msg);
+                return Err(PyroError::NotFound(err_msg));
             }
             self.objects[class_id as usize] = Some(object);
         }
@@ -85,7 +87,10 @@ impl PyroRouter {
 
         match fn_id {
             0 => self.library.interface.to_wire(),
-            1 => Err(PyroError::not_permitted("Cannot configure remote object")),
+            1 => {
+                tracing::error!("Cannot configure remote object");
+                Err(PyroError::not_permitted("Cannot configure remote object"))
+            }
             2 => {
                 tracing::info!("Registering new client");
                 let id = self

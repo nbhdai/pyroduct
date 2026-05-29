@@ -117,10 +117,8 @@ impl PyroClient {
 
         tracing::debug!("Registering new client ID with server");
         // Register with server to get a new client_id
-        let mut req = PyroVec::ok();
+        let mut req = PyroVec::clone_from_pyro(&client_data);
         req.set_fn_id(2);
-        // Send the raw client_data in the payload
-        req.extend_from_slice(client_data.as_slice());
 
         let resp = self
             .socket

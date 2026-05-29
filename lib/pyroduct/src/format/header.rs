@@ -137,33 +137,19 @@ impl PyroParser {
     pub const OFFSET_FN_ID: usize = 11;
     pub const OFFSET_MUX_ID: usize = 12;
 
-    pub fn check_strict(slice: &[u8]) -> Result<(), ParseError> {
-        Self::check(slice)?;
-
-        let len = Self::read_u32(slice, Self::OFFSET_LEN);
-        if len as usize > slice.len() {
-            return Err(ParseError::LengthExceedsCapacity);
-        }
-
-        let wire = slice[Self::OFFSET_WIRE];
-        if wire != PROTOCOL_VERSION {
-            return Err(ParseError::UnsupportedWireFormat);
-        }
-        // Todo: check status codes aren't an error
-
-        Ok(())
-    }
-
     pub fn check(slice: &[u8]) -> Result<(), ParseError> {
         if slice.len() < Self::HEADER_SIZE {
+            tracing::error!("Slice Too Small");
             return Err(ParseError::SliceTooSmall);
         }
         if !(slice.as_ptr() as usize).is_multiple_of(Self::ALIGN) {
+            tracing::error!("Misaligned Pointer");
             return Err(ParseError::MisalignedPointer);
         }
 
         let len = Self::read_u32(slice, Self::OFFSET_LEN);
         if len as usize > slice.len() {
+            tracing::error!("LengthExceedsCapacity");
             return Err(ParseError::LengthExceedsCapacity);
         }
 
@@ -172,9 +158,11 @@ impl PyroParser {
 
     pub unsafe fn check_raw(ptr: *const u8) -> Result<(), ParseError> {
         if ptr.is_null() {
+            tracing::error!("Null Pointer");
             return Err(ParseError::NullPointer);
         }
         if !(ptr as usize).is_multiple_of(Self::ALIGN) {
+            tracing::error!("Misaligned Pointer");
             return Err(ParseError::MisalignedPointer);
         }
 
@@ -183,19 +171,23 @@ impl PyroParser {
 
     pub unsafe fn check_strict_raw(ptr: *const u8, capacity: usize) -> Result<(), ParseError> {
         if ptr.is_null() {
+            tracing::error!("Null Pointer");
             return Err(ParseError::NullPointer);
         }
         if !(ptr as usize).is_multiple_of(Self::ALIGN) {
+            tracing::error!("Misaligned Pointer");
             return Err(ParseError::MisalignedPointer);
         }
 
         let len = unsafe { ptr::read(ptr.add(Self::OFFSET_LEN) as *const u32) };
         if len as usize > capacity {
+            tracing::error!("LengthExceedsCapacity");
             return Err(ParseError::LengthExceedsCapacity);
         }
 
         let wire = unsafe { ptr::read(ptr.add(Self::OFFSET_WIRE) as *const u8) };
         if wire != PROTOCOL_VERSION {
+            tracing::error!("UnsupportedWireFormat");
             return Err(ParseError::UnsupportedWireFormat);
         }
 
