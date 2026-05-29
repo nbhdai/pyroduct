@@ -2,6 +2,7 @@
 
 let
   prepare = pkgs.writeShellScriptBin "prepare-pyro" ''
+    pyroduct purge
     pyroduct clean ./capabilities
     pyroduct ship ./capabilities -d
     pyroduct expand ./capabilities

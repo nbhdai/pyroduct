@@ -132,11 +132,11 @@ fn get_pyroduct_bin() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
     use pyro_artifacts::cache::CacheManager;
-    use pyroduct::transport::socket::PyroSocket;
     use pyroduct::format::PyroVec;
     use pyroduct::format::header::{DataStatus, PyroHeader, PyroHeaderMut};
+    use pyroduct::transport::socket::PyroSocket;
+    use tempfile::tempdir;
 
     #[tokio::test]
     async fn test_capability_process_spawn_and_rpc() {
@@ -160,14 +160,10 @@ mod tests {
         });
 
         // Spawn capability process
-        let mut proc = CapabilityProcess::spawn(
-            "config",
-            &lib_path,
-            &socket_path,
-            Some(&cap_config),
-        )
-        .await
-        .expect("Failed to spawn capability process");
+        let mut proc =
+            CapabilityProcess::spawn("config", &lib_path, &socket_path, Some(&cap_config))
+                .await
+                .expect("Failed to spawn capability process");
 
         assert_eq!(proc.cap_name, "config");
         assert!(socket_path.exists());
@@ -195,13 +191,14 @@ mod tests {
             .request(None, None, Some(2), reg_req.view())
             .await
             .expect("Failed to register client");
-        
+
         let client_id = u32::from_le_bytes(reg_resp.as_slice()[0..4].try_into().unwrap());
         assert!(client_id > 0);
 
         // Kill the process
-        proc.kill().await.expect("Failed to kill capability process");
+        proc.kill()
+            .await
+            .expect("Failed to kill capability process");
         assert!(!socket_path.exists());
     }
 }
-

@@ -7,6 +7,6 @@ version = "0.1.0"
 path = "../../lib/pyroduct/"
 
 [capabilities]
-httpc = { package = "httpc", author = "nbhdai", version = "0.1.0" }
+httpc = { package = "httpc", author = "nbhdai", version = "0.1.0", configuration = { type = "capabilityconfig", classes = { httpserver = { timeout_ms = 5000, allowed_endpoints = [ { url = "https://api.github.com/*", methods = ["GET", "POST"] } ] } } } }
 
 [dependencies]

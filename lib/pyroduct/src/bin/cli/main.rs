@@ -51,6 +51,8 @@ enum Commands {
     },
     /// Initializes the Pyroduct cache
     Setup,
+    /// Purges the Pyroduct cache (capabilities, interfaces, modules, anon)
+    Purge,
     /// Generates the interface.json for a capability
     Spec {
         #[arg(value_name = "DIRECTORY", default_value = ".")]
@@ -170,6 +172,7 @@ async fn main() -> Result<()> {
         }
         Commands::Clean { path } => commands::clean::clean(&path),
         Commands::Setup => commands::cache::init().await,
+        Commands::Purge => commands::cache::purge().await,
         Commands::Spec { path, out } => commands::spec::spec(&path, out.as_deref()).await,
         Commands::Replay { input, socket } => commands::replay::replay(&input, &socket).await,
         Commands::Run {

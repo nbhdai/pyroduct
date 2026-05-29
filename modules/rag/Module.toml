@@ -7,7 +7,7 @@ version = "0.1.0"
 path = "../../lib/pyroduct/"
 
 [capabilities]
-rag = { package = "rag", author = "nbhdai", version = "0.1.0" }
+rag = { package = "rag", author = "nbhdai", version = "0.1.0", configuration = { type = "capabilityconfig", classes = { ragserver = { top_k = 3, documents = [ { id = "doc1", content = "Pyroduct is a high-performance Python-like WebAssembly runtime." }, { id = "doc2", content = "Capabilities in Pyroduct are compiled as native shared libraries." } ] } } } }
 
 [dependencies]
 text-splitter = "0.15"
