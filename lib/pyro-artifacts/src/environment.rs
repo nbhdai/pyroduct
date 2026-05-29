@@ -330,13 +330,13 @@ impl Environment {
 
         match &self.manifest {
             crate::cargo::ProjectManifest::Capability(cap_manifest) => {
-                tracing::info!("Packaging capability: {:?}", self.root);
+                tracing::info!(dir = ?self.root, "Packaging capability");
 
                 let cargo_toml =
                     toml::to_string_pretty(&cap_manifest.clone().to_capability_manifest())
                         .map_err(|e| EnvironmentError::ParseManifest(e.to_string()))?;
 
-                tracing::info!("Compiling capability binary...");
+                tracing::info!(dir = ?self.root, "Compiling capability binary...");
                 self.compile(&["--features", "capability", "-p", &name], capture)
                     .await?;
 
@@ -356,6 +356,7 @@ impl Environment {
                     String::new()
                 };
 
+                tracing::info!(dir = ?self.root, "Generating interface for capability...");
                 let (interface_rs, interface) =
                     pyro_macro::ffi::generate_interface(&src_lib_rs, &name, &version).map_err(
                         |r| EnvironmentError::InterfaceGeneration(format_syn_error(&src_lib_rs, r)),
