@@ -7,6 +7,7 @@ use std::{
 
 use async_trait::async_trait;
 use libloading::Library;
+use pyro_artifacts::cargo::CapabilityIdent;
 use tokio::sync::oneshot;
 
 use crate::{
@@ -22,7 +23,7 @@ use crate::{
 
 pub struct ForeignClass {
     name: String,
-    lib_name: String,
+    lib_ident: CapabilityIdent,
     _library: Option<Arc<Library>>,
     methods: Vec<ForeignMethod>,
     init: ClassInitFn,
@@ -79,15 +80,15 @@ impl ForeignClass {
     ///
     /// ClassExport needs to be correctly formed.
     pub unsafe fn from_export(
-        lib_name: String,
+        lib_ident: CapabilityIdent,
         library: Arc<Library>,
         export: ClassExport,
     ) -> Result<Self, Box<CapturedError>> {
-        unsafe { Self::from_export_inter(lib_name, Some(library), export) }
+        unsafe { Self::from_export_inter(lib_ident, Some(library), export) }
     }
 
     pub(crate) unsafe fn from_export_inter(
-        lib_name: String,
+        lib_ident: CapabilityIdent,
         library: Option<Arc<Library>>,
         export: ClassExport,
     ) -> Result<Self, Box<CapturedError>> {
@@ -114,7 +115,7 @@ impl ForeignClass {
 
         Ok(Self {
             name,
-            lib_name,
+            lib_ident,
             methods,
             _library: library,
             init: export.init,
@@ -209,8 +210,8 @@ impl ForeignObject {
         &self.class.name
     }
 
-    pub fn lib_name(&self) -> &str {
-        &self.class.lib_name
+    pub fn lib_ident(&self) -> &CapabilityIdent {
+        &self.class.lib_ident
     }
 
     pub fn method_names(&self) -> impl Iterator<Item = &str> {
@@ -327,7 +328,7 @@ impl Drop for LogTaskHandle {
 #[async_trait]
 pub trait ForeignCapability: Send + Sync + 'static {
     fn name(&self) -> &str;
-    fn lib_name(&self) -> &str;
+    fn lib_ident(&self) -> &CapabilityIdent;
     fn method_names(&self) -> Vec<String>;
     async fn call(
         &self,
@@ -352,8 +353,8 @@ impl ForeignCapability for ForeignObject {
         self.name()
     }
 
-    fn lib_name(&self) -> &str {
-        self.lib_name()
+    fn lib_ident(&self) -> &CapabilityIdent {
+        self.lib_ident()
     }
 
     fn method_names(&self) -> Vec<String> {

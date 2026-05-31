@@ -10,7 +10,7 @@ use crate::artifacts::{
 };
 use crate::build::Builder;
 use crate::cache::{CacheManager, PyroductConfig};
-use crate::cargo::{ConfiguredCapability, ResolvedCapability};
+use crate::cargo::{CapabilityIdent, ConfiguredCapability};
 use crate::environment::Environment;
 use cargo_toml::Dependency;
 use std::collections::{BTreeMap, HashMap};
@@ -85,7 +85,7 @@ pub fn test_config() -> PyroductConfig {
     }
 
     PyroductConfig {
-        author: None,
+        author: "anon".to_string(),
         target: Some(target_dir), // Set the target to the absolute path found via cargo
         pyroduct: config.pyroduct,
         build_slots: Some(4),
@@ -96,7 +96,11 @@ pub fn test_config() -> PyroductConfig {
 #[tokio::test]
 async fn ship_httpc_capability_to_cache() {
     let dir = TempDir::new().unwrap();
-    let cache = Arc::new(CacheManager::new(dir.path(), None, None).await.unwrap());
+    let cache = Arc::new(
+        CacheManager::new(dir.path(), None, "anon".to_string())
+            .await
+            .unwrap(),
+    );
 
     let httpc_path = repo_root().join("capabilities/httpc");
     assert!(
@@ -107,7 +111,7 @@ async fn ship_httpc_capability_to_cache() {
     let env = Environment::new(httpc_path, cache.clone()).await.unwrap();
 
     // 2. Build and ship the capability binary
-    let cap_artifacts = env.package(true).await.unwrap();
+    let cap_artifacts = env.pack(true).await.unwrap();
     for artifact in &cap_artifacts {
         cache.write_artifacts(artifact).await.unwrap();
     }
@@ -138,7 +142,7 @@ async fn test_anon_compile_with_interface() {
     let config = test_config();
 
     let cache = Arc::new(
-        CacheManager::new(dir.path(), config.pyroduct.clone(), None)
+        CacheManager::new(dir.path(), config.pyroduct.clone(), "anon".to_string())
             .await
             .unwrap(),
     );
@@ -149,7 +153,7 @@ async fn test_anon_compile_with_interface() {
     // 1. Generate the interface for httpc to compile against
     let httpc_path = repo_root().join("capabilities/httpc");
     let env = Environment::new(httpc_path, cache.clone()).await.unwrap();
-    let capability = env.package(true).await.unwrap();
+    let capability = env.pack(true).await.unwrap();
     for artifact in &capability {
         cache.write_artifacts(artifact).await.unwrap();
     }
@@ -164,7 +168,7 @@ async fn test_anon_compile_with_interface() {
     };
 
     let anon_playbook = crate::build::AnonPlaybook {
-        name: "test_anon".to_string(),
+        package: "test_anon".to_string(),
         dependencies: BTreeMap::new(),
         configurations: vec![cap],
         source: HTTPC_MODULE.to_string(),
@@ -186,7 +190,11 @@ async fn test_anon_compile_with_interface() {
 #[tokio::test]
 async fn test_module_wasm_exact_match() {
     let dir = TempDir::new().unwrap();
-    let cache = Arc::new(CacheManager::new(dir.path(), None, None).await.unwrap());
+    let cache = Arc::new(
+        CacheManager::new(dir.path(), None, "anon".to_string())
+            .await
+            .unwrap(),
+    );
     let builder = Builder::new(&dir.path().join("build"), test_config(), Arc::clone(&cache))
         .await
         .unwrap();
@@ -194,7 +202,7 @@ async fn test_module_wasm_exact_match() {
     let source = PlaybookSource::new(
         crate::artifacts::PlaybookIdent {
             author: "anon".to_string(),
-            name: "test_wasm_match".to_string(),
+            package: "test_wasm_match".to_string(),
             version: "0.1.0".to_string(),
         },
         ModuleDependencies {
@@ -209,7 +217,10 @@ async fn test_module_wasm_exact_match() {
     let original_wasm = binary.wasm.clone();
     cache.write_artifacts(&binary.clone().into()).await.unwrap();
 
-    let loaded_artifact = cache.get_named_binary("anon", "test_wasm_match", "0.1.0").await.unwrap();
+    let loaded_artifact = cache
+        .get_named_binary("anon", "test_wasm_match", "0.1.0")
+        .await
+        .unwrap();
 
     assert_eq!(
         original_wasm, loaded_artifact.wasm,
@@ -221,12 +232,16 @@ async fn test_module_wasm_exact_match() {
 #[tokio::test]
 async fn test_capability_lib_exact_match() {
     let dir = TempDir::new().unwrap();
-    let cache = Arc::new(CacheManager::new(dir.path(), None, None).await.unwrap());
+    let cache = Arc::new(
+        CacheManager::new(dir.path(), None, "anon".to_string())
+            .await
+            .unwrap(),
+    );
 
     let httpc_path = repo_root().join("capabilities/httpc");
     let env = Environment::new(httpc_path, cache.clone()).await.unwrap();
 
-    let cap_artifacts = env.package(true).await.unwrap();
+    let cap_artifacts = env.pack(true).await.unwrap();
 
     // Extract original shared library bytes
     let original_lib_bytes = cap_artifacts
@@ -260,7 +275,7 @@ async fn test_load_playbook() {
     let config = test_config();
 
     let cache = Arc::new(
-        CacheManager::new(dir.path(), config.pyroduct.clone(), None)
+        CacheManager::new(dir.path(), config.pyroduct.clone(), "anon".to_string())
             .await
             .unwrap(),
     );
@@ -271,12 +286,12 @@ async fn test_load_playbook() {
     // 1. Setup a module with a capability
     let httpc_path = repo_root().join("capabilities/httpc");
     let env = Environment::new(httpc_path, cache.clone()).await.unwrap();
-    let capability = env.package(true).await.unwrap();
+    let capability = env.pack(true).await.unwrap();
     for artifact in &capability {
         cache.write_artifacts(artifact).await.unwrap();
     }
 
-    let cap = ResolvedCapability {
+    let cap = CapabilityIdent {
         author: "nbhdai".to_string(),
         package: "httpc".to_string(),
         version: "0.1.0".to_string(),
@@ -285,7 +300,7 @@ async fn test_load_playbook() {
     let mod_source = PlaybookSource::new(
         crate::artifacts::PlaybookIdent {
             author: "anon".to_string(),
-            name: "test_load".to_string(),
+            package: "test_load".to_string(),
             version: "0.1.0".to_string(),
         },
         ModuleDependencies {
@@ -319,7 +334,17 @@ async fn test_load_playbook() {
 
     // 2. Load the Playbook by name/version
     let loaded = cache
-        .load_playbook("anon".to_string(), "test_load".to_string(), "0.1.0".to_string(), HashMap::new(), "", "", "")
+        .load_playbook(
+            crate::artifacts::PlaybookIdent {
+                author: "anon".to_string(),
+                package: "test_load".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            HashMap::new(),
+            "",
+            "",
+            "",
+        )
         .await
         .unwrap();
 
@@ -333,8 +358,8 @@ async fn test_load_playbook() {
         .map(|c| &c.configuration)
         .unwrap();
     assert!(cap_config.classes.contains_key("counter"));
-    assert!(loaded.paths.contains_key("httpc"));
-    let cap_path = loaded.paths.get("httpc").unwrap();
+    assert!(loaded.paths.contains_key(&cap));
+    let cap_path = loaded.paths.get(&cap).unwrap();
     assert!(cap_path.exists());
     assert!(cap_path.to_string_lossy().contains("httpc"));
 }

@@ -17,6 +17,7 @@ use std::{collections::HashMap, sync::Arc};
 use pyro_artifacts::artifacts::{CapabilityConfig, PlaybookSpec};
 use pyro_artifacts::build::BuildError;
 use pyro_artifacts::cache::{CacheError, LoadedPlaybook, RemoteAddress};
+use pyro_artifacts::cargo::CapabilityIdent;
 use pyro_artifacts::environment::EnvironmentError;
 use wasmtime::{
     Caller, Engine, FuncType, Instance, Linker, Memory, Store, TypedFunc, Val, ValType,
@@ -113,10 +114,10 @@ pub(crate) struct SessionState {
 /// a clean `(&T, PyroView)` signature — all wasm memory plumbing is hidden.
 pub struct PyroFactory {
     spec: Arc<PlaybookSpec>,
-    configurations: HashMap<String, CapabilityConfig>,
+    configurations: HashMap<CapabilityIdent, CapabilityConfig>,
     libraries: Vec<Arc<CapabilityLibrary>>,
     module: PyroModule,
-    remote: HashMap<String, RemoteAddress>,
+    remote: HashMap<CapabilityIdent, RemoteAddress>,
 }
 
 impl PyroFactory {
@@ -134,9 +135,9 @@ impl PyroFactory {
 
         let mut libs = Vec::new();
 
-        for (name, path) in playbook.paths.iter() {
-            tracing::debug!(name = %name, path = %path.display(), "Loading capability library");
-            let library = CapabilityLibrary::load(name.clone(), path).map_err(|e| {
+        for (cap, path) in playbook.paths.iter() {
+            tracing::debug!(name = %cap.package, path = %path.display(), "Loading capability library");
+            let library = CapabilityLibrary::load(cap.clone(), path).map_err(|e| {
                 WasmError::InstantiationFailed(format!(
                     "Failed to load capability library at {}: {}",
                     path.display(),
@@ -149,7 +150,7 @@ impl PyroFactory {
         let spec = Arc::new(playbook.binary.spec.clone());
         let mut configurations = HashMap::new();
         for cap in &playbook.binary.configurations {
-            configurations.insert(cap.package.clone(), cap.configuration.clone());
+            configurations.insert(cap.ident(), cap.configuration.clone());
         }
 
         Ok(PyroFactory {
@@ -165,29 +166,30 @@ impl PyroFactory {
     async fn create_capabilities(
         &self,
     ) -> Result<HashMap<String, Box<dyn ForeignCapability>>, WasmError> {
+        tracing::debug!("Creating capabilities");
         let mut objects = HashMap::new();
 
         // 1. Validate that all configured libraries are loaded (unless remote)
-        for lib_name in self.configurations.keys() {
-            if !self.remote.contains_key(lib_name)
-                && !self.libraries.iter().any(|l| l.name == *lib_name)
+        for lib_ident in self.configurations.keys() {
+            if !self.remote.contains_key(lib_ident)
+                && !self.libraries.iter().any(|l| l.ident == *lib_ident)
             {
                 return Err(WasmError::InstantiationFailed(format!(
                     "Capability library '{}' not found",
-                    lib_name
+                    lib_ident
                 )));
             }
         }
 
         // 2. Validate that all configured classes exist in their respective loaded libraries
         for library in &self.libraries {
-            let lib_name = &library.name;
-            if let Some(cap_config) = self.configurations.get(lib_name) {
+            let lib_ident = &library.ident;
+            if let Some(cap_config) = self.configurations.get(lib_ident) {
                 for class_name in cap_config.classes.keys() {
                     if !library.capabilities.contains_key(class_name) {
                         return Err(WasmError::InstantiationFailed(format!(
                             "Capability library '{}' does not contain class '{}'",
-                            lib_name, class_name
+                            lib_ident, class_name
                         )));
                     }
                 }
@@ -195,31 +197,31 @@ impl PyroFactory {
         }
 
         // 3. Handle remote capabilities
-        for (lib_name, remote_addr) in self.remote.iter() {
+        for (lib_ident, remote_addr) in self.remote.iter() {
             tracing::info!(
-                lib = %lib_name,
+                lib = ?lib_ident,
                 addr = ?remote_addr,
                 "Connecting to remote capability library"
             );
             let remote_lib = match remote_addr {
                 RemoteAddress::Unix(path) => {
-                    RemoteLibrary::connect_unix(lib_name.clone(), path).await
+                    RemoteLibrary::connect_unix(lib_ident.clone(), path).await
                 }
                 RemoteAddress::Tcp(addr) => {
-                    RemoteLibrary::connect_tcp(lib_name.clone(), addr).await
+                    RemoteLibrary::connect_tcp(lib_ident.clone(), addr).await
                 }
             }
             .map_err(|e| {
                 WasmError::InstantiationFailed(format!(
                     "Failed to connect to remote capability library '{}': {}",
-                    lib_name, e
+                    lib_ident, e
                 ))
             })?;
 
             for remote_class in remote_lib.classes() {
                 tracing::info!(
                     class = remote_class.name(),
-                    lib = %lib_name,
+                    lib = %lib_ident,
                     "Fetching remote class"
                 );
 
@@ -232,15 +234,21 @@ impl PyroFactory {
 
         // 4. Handle local capability libraries
         for library in &self.libraries {
-            let lib_name = &library.name;
-            if let Some(cap_config) = self.configurations.get(lib_name) {
+            let lib_ident = &library.ident;
+            if let Some(cap_config) = self.configurations.get(lib_ident) {
+                tracing::debug!(
+                    lib = %library.ident,
+                    classes = ?library.capabilities.keys(),
+                    configs = ?cap_config.classes.keys(),
+                    "Linking local capability library"
+                );
                 // If it maps to a remote address, it was already handled above.
-                if self.remote.contains_key(lib_name) {
+                if self.remote.contains_key(lib_ident) {
                     continue;
                 }
 
                 for (class_name, config) in &cap_config.classes {
-                    tracing::debug!(class = %class_name, lib = %lib_name, "Instantiating capability class");
+                    tracing::debug!(class = %class_name, lib = %lib_ident, "Instantiating capability class");
 
                     let object = library
                         .instantiate_class(class_name, config.as_ref())
@@ -248,15 +256,17 @@ impl PyroFactory {
                         .map_err(|e| {
                             WasmError::InstantiationFailed(format!(
                                 "Failed to instantiate class '{}' from capability library '{}': {}",
-                                class_name, lib_name, e
+                                class_name, lib_ident, e
                             ))
                         })?;
-
+                    tracing::debug!(class = %class_name, lib = %lib_ident, "Finished Instantiating capability class");
                     objects.insert(
                         class_name.clone(),
                         Box::new(object) as Box<dyn ForeignCapability>,
                     );
                 }
+            } else {
+                tracing::debug!(lib = %lib_ident, "No configuration found for local capability library");
             }
         }
 
@@ -634,7 +644,7 @@ impl PyroInstance {
         for object in self.objects.values() {
             let object_logs = object.take_logs();
             logs.insert(
-                (object.lib_name().to_string(), object.name().to_string()),
+                (object.lib_ident().to_string(), object.name().to_string()),
                 object_logs,
             );
         }

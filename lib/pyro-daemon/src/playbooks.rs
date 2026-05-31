@@ -1,18 +1,19 @@
+use crate::playbook_worker::PlaybookWorker;
+use anyhow::{Context, Result};
+use pyro_artifacts::cargo::CapabilityIdent;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-use anyhow::Result;
 use uuid::Uuid;
-use crate::playbook_worker::PlaybookWorker;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PlaybookStatus {
     pub id: Uuid,
     pub config_path: PathBuf,
     pub socket_path: String,
-    pub active_capabilities: Vec<String>,
+    pub active_capabilities: Vec<CapabilityIdent>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -21,8 +22,6 @@ pub enum PlaybookRequest {
     Start {
         playbook_config_path: PathBuf,
         playbook_socket: String,
-        cap_libraries: HashMap<String, PathBuf>,
-        cap_configs: HashMap<String, serde_json::Value>,
     },
     Stop {
         playbook_id: Uuid,
@@ -62,21 +61,15 @@ impl PlaybooksManager {
             PlaybookRequest::Start {
                 playbook_config_path,
                 playbook_socket,
-                cap_libraries,
-                cap_configs,
             } => {
                 let id = Uuid::new_v4();
-                match self.start_playbook(
-                    id,
-                    playbook_config_path,
-                    playbook_socket,
-                    cap_libraries,
-                    cap_configs,
-                )
-                .await
+                match self
+                    .start_playbook(id, playbook_config_path, playbook_socket)
+                    .await
                 {
                     Ok(()) => PlaybookResponse::Success {
-                        message: "Playbook worker and capability servers started successfully".to_string(),
+                        message: "Playbook worker and capability servers started successfully"
+                            .to_string(),
                         playbook_id: Some(id),
                     },
                     Err(e) => PlaybookResponse::Error {
@@ -84,30 +77,30 @@ impl PlaybooksManager {
                     },
                 }
             }
-            PlaybookRequest::Stop { playbook_id } => {
-                match self.stop_playbook(&playbook_id).await {
-                    Ok(true) => PlaybookResponse::Success {
-                        message: "Playbook worker shut down successfully".to_string(),
-                        playbook_id: Some(playbook_id),
-                    },
-                    Ok(false) => PlaybookResponse::Error {
-                        message: format!("No active playbook worker found with ID: {}", playbook_id),
-                    },
-                    Err(e) => PlaybookResponse::Error {
-                        message: format!("Error during playbook shutdown: {:?}", e),
-                    },
-                }
-            }
+            PlaybookRequest::Stop { playbook_id } => match self.stop_playbook(&playbook_id).await {
+                Ok(true) => PlaybookResponse::Success {
+                    message: "Playbook worker shut down successfully".to_string(),
+                    playbook_id: Some(playbook_id),
+                },
+                Ok(false) => PlaybookResponse::Error {
+                    message: format!("No active playbook worker found with ID: {}", playbook_id),
+                },
+                Err(e) => PlaybookResponse::Error {
+                    message: format!("Error during playbook shutdown: {:?}", e),
+                },
+            },
             PlaybookRequest::List => {
                 let active = self.list_playbooks().await;
                 let playbooks = active
                     .into_iter()
-                    .map(|(id, config_path, socket_path, active_capabilities)| PlaybookStatus {
-                        id,
-                        config_path,
-                        socket_path,
-                        active_capabilities,
-                    })
+                    .map(
+                        |(id, config_path, socket_path, active_capabilities)| PlaybookStatus {
+                            id,
+                            config_path,
+                            socket_path,
+                            active_capabilities,
+                        },
+                    )
                     .collect();
                 PlaybookResponse::Playbooks { playbooks }
             }
@@ -119,17 +112,28 @@ impl PlaybooksManager {
         id: Uuid,
         playbook_config_path: PathBuf,
         playbook_socket: String,
-        cap_libraries: HashMap<String, PathBuf>,
-        cap_configs: HashMap<String, serde_json::Value>,
     ) -> Result<()> {
-        let worker = PlaybookWorker::start(
-            id,
-            playbook_config_path,
-            playbook_socket,
-            cap_libraries,
-            cap_configs,
-        )
-        .await?;
+        let config_str = tokio::fs::read_to_string(&playbook_config_path)
+            .await
+            .context("Failed to read playbook config file")?;
+
+        let pipeline_config: pyroduct::pipeline::factory::PipelineConfig =
+            match playbook_config_path.extension().and_then(|s| s.to_str()) {
+                Some("toml") => {
+                    toml::from_str(&config_str).context("Failed to parse pipeline TOML")?
+                }
+                Some("yaml") | Some("yml") => {
+                    serde_yaml::from_str(&config_str).context("Failed to parse pipeline YAML")?
+                }
+                Some("json") => {
+                    serde_json::from_str(&config_str).context("Failed to parse pipeline JSON")?
+                }
+                _ => {
+                    anyhow::bail!("Unknown playbook config extension; supports toml, yaml and json")
+                }
+            };
+
+        let worker = PlaybookWorker::start(id, pipeline_config, playbook_socket).await?;
         let mut guard = self.workers.lock().await;
         guard.insert(id, worker);
         Ok(())
@@ -145,16 +149,22 @@ impl PlaybooksManager {
         }
     }
 
-    pub async fn list_playbooks(&self) -> Vec<(Uuid, PathBuf, String, Vec<String>)> {
+    pub async fn list_playbooks(&self) -> Vec<(Uuid, PathBuf, String, Vec<CapabilityIdent>)> {
         let guard = self.workers.lock().await;
-        guard.values().map(|w| {
-            (
-                w.id,
-                w.config_path.clone(),
-                w.socket_path.clone(),
-                w.capability_processes.iter().map(|c| c.cap_name.clone()).collect(),
-            )
-        }).collect()
+        guard
+            .values()
+            .map(|w| {
+                (
+                    w.id,
+                    PathBuf::new(),
+                    w.socket_path.clone(),
+                    w.capability_processes
+                        .iter()
+                        .map(|c| c.cap.clone())
+                        .collect(),
+                )
+            })
+            .collect()
     }
 
     pub async fn active_workers_count(&self) -> usize {

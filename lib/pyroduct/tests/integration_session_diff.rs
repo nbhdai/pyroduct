@@ -44,7 +44,7 @@ async fn test_session_lifecycle() {
     let builder = Builder::from_env(cache.clone()).await.unwrap();
 
     let source = AnonPlaybook {
-        name: "test_session_diff".to_string(),
+        package: "test_session_diff".to_string(),
         dependencies: std::collections::BTreeMap::new(),
         configurations: Vec::new(),
         source: SIMPLE_SESSION_MODULE.to_string(),
@@ -65,9 +65,7 @@ async fn test_session_lifecycle() {
     let ident = &binary.spec.ident;
 
     let config = PipelineConfig {
-        playbook_author: ident.author.clone(),
-        playbook_name: ident.name.clone(),
-        playbook_version: ident.version.clone(),
+        playbook: ident.clone(),
         remote: HashMap::new(),
         wal_capacity: 2,
         success_log_retention_secs: 3600,

@@ -39,12 +39,15 @@ async fn test_module_errors_and_panics() {
     let builder = Builder::from_env(cache.clone()).await.unwrap();
 
     let source = AnonPlaybook {
-        name: "test_integration_error".to_string(),
+        package: "test_integration_error".to_string(),
         dependencies: BTreeMap::new(),
         configurations: Vec::new(),
         source: ERROR_MODULE.to_string(),
     };
-    cache.remove_module("anon", "test_integration_error", "0.1.0").await.unwrap();
+    cache
+        .remove_module("anon", "test_integration_error", "0.1.0")
+        .await
+        .unwrap();
 
     let binary = builder
         .compile_anon(&source)
@@ -57,9 +60,7 @@ async fn test_module_errors_and_panics() {
     let ident = &binary.spec.ident;
 
     let config = PipelineConfig {
-        playbook_author: ident.author.clone(),
-        playbook_name: ident.name.clone(),
-        playbook_version: ident.version.clone(),
+        playbook: ident.clone(),
         remote: HashMap::new(),
         wal_capacity: 5,
         success_log_retention_secs: 3600,

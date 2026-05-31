@@ -1,13 +1,13 @@
 use crate::artifacts::{PlaybookBinary, PlaybookSource, PlaybookSpec};
 use crate::cache::{CacheError, CacheManager, PyroductConfig};
-use crate::cargo::{ensure_cdylib, ConfiguredCapability};
+use crate::cargo::{ConfiguredCapability, ensure_cdylib};
 use crate::command::{CommandError, format_syn_error, run_command};
 use cargo_toml::Dependency;
 use pyro_macro::module::generate_module_spec;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnonPlaybook {
-    pub name: String,
+    pub package: String,
     pub dependencies: std::collections::BTreeMap<String, Dependency>,
     pub configurations: Vec<ConfiguredCapability>,
     pub source: String,
@@ -196,7 +196,10 @@ impl Builder {
 
     #[cfg(feature = "compiler")]
     #[tracing::instrument(skip(self, playbook))]
-    pub async fn compile_anon(&self, playbook: &AnonPlaybook) -> Result<PlaybookBinary, BuildError> {
+    pub async fn compile_anon(
+        &self,
+        playbook: &AnonPlaybook,
+    ) -> Result<PlaybookBinary, BuildError> {
         let source = self.cache_manager.convert_anon_playbook(playbook.clone());
         self.compile(&source).await
     }
@@ -206,8 +209,10 @@ impl Builder {
     pub async fn compile(&self, source: &PlaybookSource) -> Result<PlaybookBinary, BuildError> {
         let hash = source.hash();
         let source_ident = source.ident();
-        if source_ident.name == "anon" {
-            return Err(BuildError::Manifest("Playbook name cannot be 'anon'".to_string()));
+        if source_ident.package == "anon" {
+            return Err(BuildError::Manifest(
+                "Playbook name cannot be 'anon'".to_string(),
+            ));
         }
 
         let mut resolved_version = source_ident.version.clone();
@@ -217,7 +222,11 @@ impl Builder {
             let mut version_num = 1;
             loop {
                 let version_str = format!("0.{}.0", version_num);
-                match self.cache_manager.get_named_source("anon", &source_ident.name, &version_str).await {
+                match self
+                    .cache_manager
+                    .get_named_source("anon", &source_ident.package, &version_str)
+                    .await
+                {
                     Ok(existing_source) => {
                         if existing_source.hash() == hash {
                             resolved_version = version_str;
@@ -234,7 +243,15 @@ impl Builder {
                 }
             }
         } else {
-            if let Ok(binary) = self.cache_manager.get_named_binary(&source_ident.author, &source_ident.name, &source_ident.version).await {
+            if let Ok(binary) = self
+                .cache_manager
+                .get_named_binary(
+                    &source_ident.author,
+                    &source_ident.package,
+                    &source_ident.version,
+                )
+                .await
+            {
                 if binary.spec.hash == hash {
                     tracing::debug!("Named playbook binary found in cache, skipping compilation");
                     return Ok(binary);
@@ -243,8 +260,14 @@ impl Builder {
         }
 
         if found_existing {
-            if let Ok(binary) = self.cache_manager.get_named_binary("anon", &source_ident.name, &resolved_version).await {
-                tracing::debug!("Playbook binary found in cache (conflict resolved), skipping compilation");
+            if let Ok(binary) = self
+                .cache_manager
+                .get_named_binary("anon", &source_ident.package, &resolved_version)
+                .await
+            {
+                tracing::debug!(
+                    "Playbook binary found in cache (conflict resolved), skipping compilation"
+                );
                 return Ok(binary);
             }
         }
@@ -369,7 +392,7 @@ name = "mod_slot"
         let spec = PlaybookSpec {
             ident: crate::artifacts::PlaybookIdent {
                 author: source_ident.author.clone(),
-                name: source_ident.name.clone(),
+                package: source_ident.package.clone(),
                 version: resolved_version.clone(),
             },
             hash,
@@ -386,7 +409,7 @@ name = "mod_slot"
         let mut updated_source = source.clone();
         updated_source.manifest.module = crate::cargo::CapabilityIdent {
             author: source_ident.author.clone(),
-            name: source_ident.name.clone(),
+            package: source_ident.package.clone(),
             version: resolved_version.clone(),
         };
 

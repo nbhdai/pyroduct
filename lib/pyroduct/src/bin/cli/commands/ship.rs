@@ -11,7 +11,7 @@ pub async fn ship_single(
 ) -> Result<()> {
     let env = Environment::new(path.to_path_buf(), cache.clone()).await?;
 
-    let artifacts = env.package(false).await?;
+    let artifacts = env.pack(false).await?;
     for artifact in &artifacts {
         if let Some(out) = out {
             artifact.write_to_directory(out).await?;

@@ -5,6 +5,7 @@ use std::sync::atomic::AtomicU32;
 
 use dashmap::DashMap;
 use pyro_artifacts::artifacts::CapabilityConfig;
+use pyro_artifacts::cargo::CapabilityIdent;
 
 use crate::PyroError;
 use crate::ffi::host::ForeignObject;
@@ -30,8 +31,11 @@ pub struct PyroRouter {
 
 impl PyroRouter {
     /// Load a library and create a new [`PyroRouter`].
-    pub fn load(name: String, path: impl AsRef<Path> + fmt::Debug) -> Result<Self, PyroError> {
-        tracing::info!(%name, ?path, "Loading capability library");
+    pub fn load(
+        name: CapabilityIdent,
+        path: impl AsRef<Path> + fmt::Debug,
+    ) -> Result<Self, PyroError> {
+        tracing::info!(?name, ?path, "Loading capability library");
         let library = CapabilityLibrary::load(name, path.as_ref())
             .map_err(|e| PyroError::NotFound(e.to_string()))?;
         let len = library.capabilities.len();

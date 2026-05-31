@@ -1,6 +1,6 @@
 [module]
 author = "nbhdai"
-name = "struct_io"
+package = "struct_io"
 version = "0.1.0"
 
 [pyroduct]

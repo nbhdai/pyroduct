@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use pyro_artifacts::cargo::CapabilityIdent;
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
@@ -10,7 +11,7 @@ use crate::format::PyroView;
 use crate::transport::socket::capability::client::PyroClient;
 
 pub struct RemoteLibrary {
-    lib_name: String,
+    lib_ident: CapabilityIdent,
     interface: pyro_spec::InterfaceSpec<'static>,
     client: Arc<Mutex<PyroClient>>,
 }
@@ -18,14 +19,14 @@ pub struct RemoteLibrary {
 impl RemoteLibrary {
     /// Connect to a TCP address (e.g. `"127.0.0.1:9000"`).
     pub async fn connect_tcp(
-        lib_name: String,
+        lib_ident: CapabilityIdent,
         addr: impl tokio::net::ToSocketAddrs + fmt::Debug,
     ) -> Result<Self, PyroError> {
-        tracing::info!(lib = %lib_name, ?addr, "Connecting to remote capability library via TCP");
+        tracing::info!(lib = ?lib_ident, ?addr, "Connecting to remote capability library via TCP");
         let client = PyroClient::connect_tcp(addr).await?;
         let interface = client.interface().clone();
         Ok(Self {
-            lib_name,
+            lib_ident,
             interface,
             client: Arc::new(Mutex::new(client)),
         })
@@ -33,14 +34,14 @@ impl RemoteLibrary {
 
     /// Connect to a Unix domain socket path.
     pub async fn connect_unix(
-        lib_name: String,
+        lib_ident: CapabilityIdent,
         path: impl AsRef<Path> + fmt::Debug,
     ) -> Result<Self, PyroError> {
-        tracing::info!(lib = %lib_name, ?path, "Connecting to remote capability library via Unix Socket");
+        tracing::info!(lib = ?lib_ident, ?path, "Connecting to remote capability library via Unix Socket");
         let client = PyroClient::connect_unix(path).await?;
         let interface = client.interface().clone();
         Ok(Self {
-            lib_name,
+            lib_ident,
             interface,
             client: Arc::new(Mutex::new(client)),
         })
@@ -48,26 +49,30 @@ impl RemoteLibrary {
 
     /// Get an iterator over all classes in the remote library.
     pub fn classes(&self) -> impl Iterator<Item = RemoteClass> {
-        let lib_name = self.lib_name.clone();
+        let lib_ident = self.lib_ident.clone();
         let client = self.client.clone();
-        self.interface.classes.clone().into_iter().map(move |class_spec| {
-            let methods = class_spec
-                .methods
-                .iter()
-                .map(|m| m.name.to_string())
-                .collect();
-            RemoteClass {
-                class_name: class_spec.name.to_string(),
-                lib_name: lib_name.clone(),
-                methods,
-                client: client.clone(),
-            }
-        })
+        self.interface
+            .classes
+            .clone()
+            .into_iter()
+            .map(move |class_spec| {
+                let methods = class_spec
+                    .methods
+                    .iter()
+                    .map(|m| m.name.to_string())
+                    .collect();
+                RemoteClass {
+                    class_name: class_spec.name.to_string(),
+                    lib_ident: lib_ident.clone(),
+                    methods,
+                    client: client.clone(),
+                }
+            })
     }
 
     /// Retrieve a class from the remote library by name.
     pub async fn get_class(&self, class_name: &str) -> Result<RemoteClass, PyroError> {
-        tracing::debug!(lib = %self.lib_name, class = %class_name, "Retrieving remote class");
+        tracing::debug!(lib = ?self.lib_ident, class = %class_name, "Retrieving remote class");
         let class_spec = self
             .interface
             .classes
@@ -88,7 +93,7 @@ impl RemoteLibrary {
 
         Ok(RemoteClass {
             class_name: class_name.to_string(),
-            lib_name: self.lib_name.clone(),
+            lib_ident: self.lib_ident.clone(),
             methods,
             client: self.client.clone(),
         })
@@ -97,7 +102,7 @@ impl RemoteLibrary {
 
 pub struct RemoteClass {
     class_name: String,
-    lib_name: String,
+    lib_ident: CapabilityIdent,
     methods: Vec<String>,
     client: Arc<Mutex<PyroClient>>,
 }
@@ -108,8 +113,8 @@ impl ForeignCapability for RemoteClass {
         &self.class_name
     }
 
-    fn lib_name(&self) -> &str {
-        &self.lib_name
+    fn lib_ident(&self) -> &CapabilityIdent {
+        &self.lib_ident
     }
 
     fn method_names(&self) -> Vec<String> {
@@ -155,7 +160,7 @@ impl ForeignCapability for RemoteClass {
     fn clone_box(&self) -> Box<dyn ForeignCapability> {
         Box::new(Self {
             class_name: self.class_name.clone(),
-            lib_name: self.lib_name.clone(),
+            lib_ident: self.lib_ident.clone(),
             methods: self.methods.clone(),
             client: self.client.clone(),
         })

@@ -82,7 +82,7 @@ pub async fn expand_single(path: &Path, no_compile: bool) -> Result<bool> {
         let target_dir = Environment::get_target_dir(path).await?;
         env.load_artifacts_from_target(&target_dir).await?
     } else {
-        env.package(false).await?
+        env.pack(false).await?
     };
     for artifact in &artifacts {
         artifact.write_to_directory(&output_dir).await?;
@@ -122,7 +122,7 @@ pub async fn expand_single(path: &Path, no_compile: bool) -> Result<bool> {
 
                 let code = generate_capability(
                     &source.src_lib_rs,
-                    &source.manifest.capability.name,
+                    &source.manifest.capability.package,
                     &source.manifest.capability.version,
                 )
                 .context("Capability code")?;

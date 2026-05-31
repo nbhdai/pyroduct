@@ -1,6 +1,6 @@
 [module]
 author = "nbhdai"
-name = "rag_capability"
+package = "rag_capability"
 version = "0.1.0"
 
 [pyroduct]

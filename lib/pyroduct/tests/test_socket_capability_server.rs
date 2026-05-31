@@ -34,8 +34,15 @@ async fn test_pyro_server_capability_call() {
     let lib_path = lib_path
         .canonicalize()
         .expect("Failed to canonicalize lib_path");
-    let mut router =
-        PyroRouter::load("state".into(), &lib_path).expect("Failed to load capability library");
+    let mut router = PyroRouter::load(
+        pyro_artifacts::cargo::CapabilityIdent {
+            author: "nbhdai".to_string(),
+            package: "state".to_string(),
+            version: "0.1.0".to_string(),
+        },
+        &lib_path,
+    )
+    .expect("Failed to load capability library");
 
     let cap_config = pyro_artifacts::artifacts::CapabilityConfig {
         classes: std::collections::HashMap::from([(

@@ -130,13 +130,41 @@ enum Commands {
         #[arg(long)]
         playbook_config: Option<PathBuf>,
 
-        /// Name of the capability library (capability only)
-        #[arg(long)]
-        cap_name: Option<String>,
+        /// Playbook identifier (author:package:version) (playbook only)
+        #[arg(long, value_parser = parse_playbook_ident)]
+        playbook: Option<pyro_artifacts::artifacts::PlaybookIdent>,
 
-        /// Path to the capability library file (capability only)
+        /// Remote capability mappings in format "author:package:version=addr"
+        #[arg(long, value_parser = parse_remote_mapping)]
+        remote: Vec<(pyro_artifacts::cargo::CapabilityIdent, pyro_artifacts::cache::RemoteAddress)>,
+
+        /// WAL capacity
         #[arg(long)]
-        cap_path: Option<PathBuf>,
+        wal_capacity: Option<usize>,
+
+        /// Success log retention in seconds
+        #[arg(long)]
+        success_log_retention_secs: Option<u64>,
+
+        /// Error log retention in seconds
+        #[arg(long)]
+        error_log_retention_secs: Option<u64>,
+
+        /// Directory for logs
+        #[arg(long)]
+        log_dir: Option<PathBuf>,
+
+        /// Directory for inputs
+        #[arg(long)]
+        input_dir: Option<PathBuf>,
+
+        /// Directory for outputs
+        #[arg(long)]
+        output_dir: Option<PathBuf>,
+
+        /// Name of the capability library (capability only) in format author:package:version
+        #[arg(long, value_parser = parse_capability_ident)]
+        cap: Option<pyro_artifacts::cargo::CapabilityIdent>,
 
         /// Capability's class configuration as a JSON string (capability only)
         #[arg(long)]
@@ -202,10 +230,18 @@ async fn main() -> Result<()> {
             socket,
             http,
             playbook_config,
-            cap_name,
-            cap_path,
+            playbook,
+            remote,
+            wal_capacity,
+            success_log_retention_secs,
+            error_log_retention_secs,
+            log_dir,
+            input_dir,
+            output_dir,
+            cap,
             cap_config,
         } => {
+            let remote_map = remote.into_iter().collect();
             commands::serve::serve(
                 config.as_deref(),
                 config_json.as_deref(),
@@ -213,10 +249,90 @@ async fn main() -> Result<()> {
                 socket,
                 http,
                 playbook_config.as_deref(),
-                cap_name.as_deref(),
-                cap_path.as_deref(),
+                playbook,
+                remote_map,
+                wal_capacity,
+                success_log_retention_secs,
+                error_log_retention_secs,
+                log_dir,
+                input_dir,
+                output_dir,
+                cap,
                 cap_config.as_deref(),
-            ).await
+            )
+            .await
         }
     }
+}
+
+fn parse_capability_ident(s: &str) -> Result<pyro_artifacts::cargo::CapabilityIdent, String> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 3 {
+        return Err(format!(
+            "Invalid capability identifier '{}'. Must be in format '{{author}}:{{name}}:{{version}}', e.g. 'my_author:my_cap:0.1.0'",
+            s
+        ));
+    }
+    if parts[0].is_empty() || parts[1].is_empty() || parts[2].is_empty() {
+        return Err(format!(
+            "Capability identifier parts cannot be empty. Got '{}'",
+            s
+        ));
+    }
+    Ok(pyro_artifacts::cargo::CapabilityIdent {
+        author: parts[0].to_string(),
+        package: parts[1].to_string(),
+        version: parts[2].to_string(),
+    })
+}
+
+fn parse_playbook_ident(s: &str) -> Result<pyro_artifacts::artifacts::PlaybookIdent, String> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 3 {
+        return Err(format!(
+            "Invalid playbook identifier '{}'. Must be in format '{{author}}:{{package}}:{{version}}', e.g. 'my_author:my_playbook:0.1.0'",
+            s
+        ));
+    }
+    if parts[0].is_empty() || parts[1].is_empty() || parts[2].is_empty() {
+        return Err(format!(
+            "Playbook identifier parts cannot be empty. Got '{}'",
+            s
+        ));
+    }
+    Ok(pyro_artifacts::artifacts::PlaybookIdent {
+        author: parts[0].to_string(),
+        package: parts[1].to_string(),
+        version: parts[2].to_string(),
+    })
+}
+
+fn parse_remote_mapping(
+    s: &str,
+) -> Result<
+    (
+        pyro_artifacts::cargo::CapabilityIdent,
+        pyro_artifacts::cache::RemoteAddress,
+    ),
+    String,
+> {
+    let parts: Vec<&str> = s.split('=').collect();
+    if parts.len() != 2 {
+        return Err(format!(
+            "Invalid remote mapping '{}'. Must be in format '{{author}}:{{package}}:{{version}}={{addr}}'",
+            s
+        ));
+    }
+    let cap_ident = parse_capability_ident(parts[0])?;
+    let addr_str = parts[1];
+    let remote_addr = if let Some(stripped) = addr_str.strip_prefix("tcp://") {
+        pyro_artifacts::cache::RemoteAddress::Tcp(stripped.to_string())
+    } else if let Some(stripped) = addr_str.strip_prefix("unix://") {
+        pyro_artifacts::cache::RemoteAddress::Unix(PathBuf::from(stripped))
+    } else if addr_str.contains(':') {
+        pyro_artifacts::cache::RemoteAddress::Tcp(addr_str.to_string())
+    } else {
+        pyro_artifacts::cache::RemoteAddress::Unix(PathBuf::from(addr_str))
+    };
+    Ok((cap_ident, remote_addr))
 }

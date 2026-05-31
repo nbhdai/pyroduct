@@ -196,7 +196,18 @@ mod tests {
         };
 
         let class = Arc::new(
-            unsafe { ForeignClass::from_export_inter("test".to_string(), None, export) }.unwrap(),
+            unsafe {
+                ForeignClass::from_export_inter(
+                    pyro_artifacts::cargo::CapabilityIdent {
+                        author: "test".to_string(),
+                        package: "test".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    None,
+                    export,
+                )
+            }
+            .unwrap(),
         );
         let log_channel = create_log(0, 0, 100);
 
@@ -232,7 +243,18 @@ mod tests {
         };
 
         let class = Arc::new(
-            unsafe { ForeignClass::from_export_inter("test".to_string(), None, export) }.unwrap(),
+            unsafe {
+                ForeignClass::from_export_inter(
+                    pyro_artifacts::cargo::CapabilityIdent {
+                        author: "test".to_string(),
+                        package: "test".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    None,
+                    export,
+                )
+            }
+            .unwrap(),
         );
         let log_channel = create_log(0, 0, 100);
 
@@ -265,7 +287,18 @@ mod tests {
         let log_channel = create_log(0, 0, 100);
 
         let class = Arc::new(
-            unsafe { ForeignClass::from_export_inter("test".to_string(), None, export) }.unwrap(),
+            unsafe {
+                ForeignClass::from_export_inter(
+                    pyro_artifacts::cargo::CapabilityIdent {
+                        author: "test".to_string(),
+                        package: "test".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    None,
+                    export,
+                )
+            }
+            .unwrap(),
         );
         let config = PyroVec::ok();
         let handle = class

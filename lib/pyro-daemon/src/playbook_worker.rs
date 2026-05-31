@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tokio::fs;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -14,7 +13,7 @@ use crate::CapabilityProcess;
 
 pub struct PlaybookWorker {
     pub id: Uuid,
-    pub config_path: PathBuf,
+    pub config: PipelineConfig,
     pub socket_path: String,
     pub capability_processes: Vec<CapabilityProcess>,
     pub kill_tx: mpsc::Sender<()>,
@@ -23,62 +22,24 @@ pub struct PlaybookWorker {
 impl PlaybookWorker {
     pub async fn start(
         id: Uuid,
-        playbook_config_path: PathBuf,
+        pipeline_config: PipelineConfig,
         playbook_socket: String,
-        cap_libraries: HashMap<String, PathBuf>,
-        _cap_configs: HashMap<String, serde_json::Value>,
     ) -> Result<Self> {
-        // 1. Read and parse pipeline configuration
-        let config_str = fs::read_to_string(&playbook_config_path)
-            .await
-            .context("Failed to read playbook config file")?;
-
-        let pipeline_config: PipelineConfig = match playbook_config_path
-            .extension()
-            .and_then(|s| s.to_str())
-        {
-            Some("toml") => toml::from_str(&config_str).context("Failed to parse pipeline TOML")?,
-            Some("yaml") | Some("yml") => {
-                serde_yaml::from_str(&config_str).context("Failed to parse pipeline YAML")?
-            }
-            Some("json") => {
-                serde_json::from_str(&config_str).context("Failed to parse pipeline JSON")?
-            }
-            _ => anyhow::bail!("Unknown playbook config extension; supports toml, yaml and json"),
-        };
-
-        // 2. Load the playbook binary via CacheManager
+        // 1. Load the playbook binary via CacheManager
         let cache = CacheManager::from_env()
             .await
             .context("Failed to initialize CacheManager")?;
-        let mut loaded_playbook = cache
-            .load_playbook(
-                pipeline_config.playbook_author,
-                pipeline_config.playbook_name,
-                pipeline_config.playbook_version,
-                HashMap::new(),
-                pipeline_config.log_dir,
-                pipeline_config.input_dir,
-                pipeline_config.output_dir,
-            )
+        let loaded_pipeline = pipeline_config
+            .clone()
+            .load(&cache)
             .await
             .context("Failed to load playbook binary")?;
 
-        // 3. Map all capabilities locally directly to their libraries
-        let mut local_paths = HashMap::new();
-        for (cap_name, cap_lib_path) in cap_libraries {
-            local_paths.insert(cap_name, cap_lib_path);
-        }
-
-        // 4. Inject local paths into LoadedPlaybook and ensure remote maps are empty
-        loaded_playbook.paths = local_paths;
-        loaded_playbook.remote.clear();
-
         let capability_processes = Vec::new();
 
-        // 5. Instantiate and run Playbook Server in-process
+        // 2. Instantiate and run Playbook Server in-process
         tracing::info!(id = %id, "Instantiating playbook server");
-        let server = PlaybookServer::new(&loaded_playbook)
+        let server = PlaybookServer::new(&loaded_pipeline.playbook)
             .await
             .context("Failed to construct PlaybookServer")?;
 
@@ -123,7 +84,7 @@ impl PlaybookWorker {
 
         Ok(Self {
             id,
-            config_path: playbook_config_path,
+            config: pipeline_config,
             socket_path: playbook_socket,
             capability_processes,
             kill_tx,
@@ -145,7 +106,7 @@ mod tests {
     use pyro_artifacts::build::Builder;
     use pyroduct::PyroRow;
     use pyroduct::transport::socket::playbook::PlaybookClient;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashMap};
     use tempfile::tempdir;
 
     const TEST_CODE: &str = r#"
@@ -157,13 +118,14 @@ pub fn call(input: String) -> Result<String> {
 }
 "#;
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_playbook_worker_without_capabilities() {
         let cache = std::sync::Arc::new(CacheManager::from_env().await.unwrap());
         let builder = Builder::from_env(cache.clone()).await.unwrap();
 
         let playbook = pyro_artifacts::build::AnonPlaybook {
-            name: "test_playbook".to_string(),
+            package: "test_playbook".to_string(),
             dependencies: BTreeMap::new(),
             configurations: std::vec::Vec::new(),
             source: TEST_CODE.to_string(),
@@ -175,36 +137,26 @@ pub fn call(input: String) -> Result<String> {
             .expect("Valid module should compile");
 
         let tmp_dir = tempdir().unwrap();
-        let config_path = tmp_dir.path().join("pipeline.json");
         let socket_path = tmp_dir.path().join("playbook.sock");
 
         let ident = &binary.spec.ident;
 
-        // Write the pipeline config json
-        let config_json = serde_json::json!({
-            "playbook_author": ident.author,
-            "playbook_name": ident.name,
-            "playbook_version": ident.version,
-            "remote": {},
-            "wal_capacity": 10,
-            "success_log_retention_secs": 3600,
-            "error_log_retention_secs": 86400 * 7,
-            "input_dir": tmp_dir.path(),
-            "output_dir": tmp_dir.path(),
-            "log_dir": tmp_dir.path(),
-        });
-
-        tokio::fs::write(&config_path, serde_json::to_string(&config_json).unwrap())
-            .await
-            .unwrap();
+        let pipeline_config = PipelineConfig {
+            playbook: ident.clone(),
+            remote: HashMap::new(),
+            wal_capacity: 10,
+            success_log_retention_secs: 3600,
+            error_log_retention_secs: 86400 * 7,
+            input_dir: tmp_dir.path().to_path_buf(),
+            output_dir: tmp_dir.path().to_path_buf(),
+            log_dir: tmp_dir.path().to_path_buf(),
+        };
 
         let id = Uuid::new_v4();
         let worker = PlaybookWorker::start(
             id,
-            config_path,
+            pipeline_config,
             socket_path.to_string_lossy().to_string(),
-            HashMap::new(),
-            HashMap::new(),
         )
         .await
         .expect("Failed to start playbook worker");

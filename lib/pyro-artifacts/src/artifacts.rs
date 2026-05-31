@@ -12,9 +12,7 @@ use std::path::Path;
 use tar::{Builder, Header};
 use tokio::fs;
 
-use crate::cargo::{
-    CapabilityIdent, CapabilityManifest, ConfiguredCapability, ModuleManifest, ResolvedCapability,
-};
+use crate::cargo::{CapabilityIdent, CapabilityManifest, ConfiguredCapability, ModuleManifest};
 
 pub enum CapBinary {
     Pe(Vec<u8>),
@@ -56,14 +54,14 @@ pub struct Interface {
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct ModuleDependencies {
     pub dependencies: BTreeMap<String, Dependency>,
-    pub capabilities: Vec<ResolvedCapability>,
+    pub capabilities: Vec<CapabilityIdent>,
 }
 
 /// Identity for a named module (from Module.toml [module] section).
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct PlaybookIdent {
     pub author: String,
-    pub name: String,
+    pub package: String,
     pub version: String,
 }
 
@@ -78,7 +76,7 @@ pub struct PlaybookSpec {
     pub ident: PlaybookIdent,
     pub hash: String,
     pub func: ModuleFunc<'static>,
-    pub capabilities: Vec<ResolvedCapability>,
+    pub capabilities: Vec<CapabilityIdent>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
@@ -124,7 +122,7 @@ impl PlaybookSource {
     pub fn ident(&self) -> PlaybookIdent {
         PlaybookIdent {
             author: self.manifest.module.author.clone(),
-            name: self.manifest.module.name.clone(),
+            package: self.manifest.module.package.clone(),
             version: self.manifest.module.version.clone(),
         }
     }
@@ -132,7 +130,7 @@ impl PlaybookSource {
     pub fn dependencies(&self) -> ModuleDependencies {
         let mut resolved_capabilities = Vec::new();
         for cap in self.manifest.capabilities.values() {
-            resolved_capabilities.push(ResolvedCapability {
+            resolved_capabilities.push(CapabilityIdent {
                 author: cap.author.clone(),
                 package: cap.package.clone(),
                 version: cap.version.clone(),
@@ -152,7 +150,7 @@ impl PlaybookSource {
     pub fn hash(&self) -> String {
         let mut resolved_capabilities = Vec::new();
         for cap in self.manifest.capabilities.values() {
-            resolved_capabilities.push(ResolvedCapability {
+            resolved_capabilities.push(CapabilityIdent {
                 author: cap.author.clone(),
                 package: cap.package.clone(),
                 version: cap.version.clone(),
@@ -168,7 +166,7 @@ impl PlaybookSource {
     pub fn compute_hash(
         code: &str,
         dependencies: &std::collections::BTreeMap<String, cargo_toml::Dependency>,
-        capabilities: &[crate::cargo::ResolvedCapability],
+        capabilities: &[crate::cargo::CapabilityIdent],
     ) -> String {
         let mut hasher = Sha256::new();
 
@@ -225,7 +223,7 @@ impl PlaybookSource {
             });
         let manifest = ModuleManifest::<toml::Value> {
             module: CapabilityIdent {
-                name: ident.name,
+                package: ident.package,
                 version: ident.version,
                 author: ident.author,
             },
@@ -862,7 +860,7 @@ impl Artifact for PlaybookSource {
 
             let manifest = ModuleManifest::<toml::Value> {
                 module: CapabilityIdent {
-                    name: legacy_id.name,
+                    package: legacy_id.package,
                     version: legacy_id.version,
                     author: legacy_id.author,
                 },
@@ -960,7 +958,7 @@ impl Artifact for PlaybookSource {
 
             let manifest = ModuleManifest::<toml::Value> {
                 module: CapabilityIdent {
-                    name: ident.name,
+                    package: ident.package,
                     version: ident.version,
                     author: ident.author,
                 },
@@ -1019,7 +1017,7 @@ impl Artifact for PlaybookBinary {
             });
         let manifest = ModuleManifest::<toml::Value> {
             module: CapabilityIdent {
-                name: self.spec.ident.name.clone(),
+                package: self.spec.ident.package.clone(),
                 version: self.spec.ident.version.clone(),
                 author: self.spec.ident.author.clone(),
             },
@@ -1076,7 +1074,7 @@ impl Artifact for PlaybookBinary {
             });
         let manifest = ModuleManifest::<toml::Value> {
             module: CapabilityIdent {
-                name: self.spec.ident.name.clone(),
+                package: self.spec.ident.package.clone(),
                 version: self.spec.ident.version.clone(),
                 author: self.spec.ident.author.clone(),
             },

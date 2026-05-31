@@ -1,5 +1,5 @@
 [module]
-name = "cap_config"
+package = "cap_config"
 version = "0.1.0"
 author = "nbhdai"
 

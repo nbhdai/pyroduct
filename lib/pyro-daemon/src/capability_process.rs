@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use pyro_artifacts::cargo::CapabilityIdent;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -6,21 +7,20 @@ use tokio::process::{Child, Command};
 
 #[derive(Debug)]
 pub struct CapabilityProcess {
-    pub cap_name: String,
+    pub cap: CapabilityIdent,
     pub socket_path: PathBuf,
     pub child: Child,
 }
 
 impl CapabilityProcess {
     pub async fn spawn(
-        cap_name: &str,
-        cap_lib_path: &Path,
+        cap: &CapabilityIdent,
         socket_path: &Path,
         cap_config: Option<&serde_json::Value>,
     ) -> Result<Self> {
         let pyroduct_bin = get_pyroduct_bin();
         tracing::info!(
-            cap = %cap_name,
+            cap = %cap,
             bin = %pyroduct_bin.display(),
             socket = %socket_path.display(),
             "Spawning capability runner process"
@@ -32,10 +32,8 @@ impl CapabilityProcess {
             .arg("capability")
             .arg("--socket")
             .arg(socket_path)
-            .arg("--cap-name")
-            .arg(cap_name)
-            .arg("--cap-path")
-            .arg(cap_lib_path);
+            .arg("--cap")
+            .arg(cap.to_string());
 
         if let Some(config) = cap_config {
             let config_json = serde_json::to_string(config)?;
@@ -53,22 +51,22 @@ impl CapabilityProcess {
         // Start tasks to read stdout/stderr and trace them
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
-        let cap_name_clone = cap_name.to_string();
+        let cap_clone = cap.to_string();
 
         tokio::spawn(async move {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                tracing::info!(cap = %cap_name_clone, "[STDOUT] {}", line);
+                tracing::info!(cap = %cap_clone, "[STDOUT] {}", line);
             }
         });
 
-        let cap_name_clone = cap_name.to_string();
+        let cap_clone = cap.to_string();
         tokio::spawn(async move {
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                tracing::warn!(cap = %cap_name_clone, "[STDERR] {}", line);
+                tracing::warn!(cap = %cap_clone, "[STDERR] {}", line);
             }
         });
 
@@ -87,7 +85,7 @@ impl CapabilityProcess {
         }
 
         Ok(Self {
-            cap_name: cap_name.to_string(),
+            cap: cap.clone(),
             socket_path: socket_path.to_path_buf(),
             child,
         })
@@ -132,21 +130,15 @@ fn get_pyroduct_bin() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyro_artifacts::cache::CacheManager;
     use pyroduct::format::PyroVec;
     use pyroduct::format::header::{DataStatus, PyroHeader, PyroHeaderMut};
     use pyroduct::transport::socket::PyroSocket;
     use tempfile::tempdir;
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_capability_process_spawn_and_rpc() {
-        let cache = CacheManager::from_env().await.expect("Failed to get cache");
         // Get path using cache like in socket_capability.rs
-        let lib_path = cache
-            .capability_binary_path("nbhdai", "config", "0.1.0")
-            .await
-            .expect("Failed to get capability path");
-
         let tmp_dir = tempdir().unwrap();
         let socket_path = tmp_dir.path().join("test_cap_rpc.sock");
 
@@ -159,13 +151,18 @@ mod tests {
             }
         });
 
-        // Spawn capability process
-        let mut proc =
-            CapabilityProcess::spawn("config", &lib_path, &socket_path, Some(&cap_config))
-                .await
-                .expect("Failed to spawn capability process");
+        let cap_ident = pyro_artifacts::cargo::CapabilityIdent {
+            author: "nbhdai".to_string(),
+            package: "config".to_string(),
+            version: "0.1.0".to_string(),
+        };
 
-        assert_eq!(proc.cap_name, "config");
+        // Spawn capability process
+        let mut proc = CapabilityProcess::spawn(&cap_ident, &socket_path, Some(&cap_config))
+            .await
+            .expect("Failed to spawn capability process");
+
+        assert_eq!(proc.cap, cap_ident);
         assert!(socket_path.exists());
 
         // Connect to capability process via Unix domain socket

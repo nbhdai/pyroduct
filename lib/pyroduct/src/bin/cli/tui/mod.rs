@@ -17,7 +17,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use pyro_artifacts::{build::Builder, cache::CacheManager, cargo::ResolvedCapability};
+use pyro_artifacts::{build::Builder, cache::CacheManager, cargo::CapabilityIdent};
 use pyroduct::pipeline::{PipelinePool, normal::PipelineExecution};
 use ratatui::{
     Frame, Terminal,
@@ -56,7 +56,7 @@ pub struct SourcePipeline {
     pub source: String,
     pub compile_error: Option<String>,
     #[serde(default)]
-    pub capabilities: HashMap<ResolvedCapability, Option<serde_json::Value>>,
+    pub capabilities: HashMap<CapabilityIdent, Option<serde_json::Value>>,
     #[serde(default = "default_wal_capacity")]
     pub wal_capacity: usize,
     #[serde(default = "default_success_retention")]
@@ -117,9 +117,9 @@ impl App {
 
             let mut pipelines = Vec::new();
             for (name, pipeline_config) in configs {
-                if let Ok(source_module) = cache.get_named_source(&pipeline_config.playbook_author, &pipeline_config.playbook_name, &pipeline_config.playbook_version).await {
+                if let Ok(source_module) = cache.get_named_source(&pipeline_config.playbook.author, &pipeline_config.playbook.package, &pipeline_config.playbook.version).await {
                     let mut capabilities = HashMap::new();
-                    let binary = cache.get_named_binary(&pipeline_config.playbook_author, &pipeline_config.playbook_name, &pipeline_config.playbook_version).await.ok();
+                    let binary = cache.get_named_binary(&pipeline_config.playbook.author, &pipeline_config.playbook.package, &pipeline_config.playbook.version).await.ok();
                     for cap in source_module.dependencies().capabilities {
                         let config = binary
                             .as_ref()
@@ -271,7 +271,7 @@ impl App {
             }
 
             let playbook = pyro_artifacts::build::AnonPlaybook {
-                name: source_pipeline.name.clone(),
+                package: source_pipeline.name.clone(),
                 dependencies: std::collections::BTreeMap::new(),
                 configurations,
                 source: source_pipeline.source.clone(),
@@ -286,9 +286,7 @@ impl App {
             let ident = &binary.spec.ident;
 
             let pipeline_config = pyroduct::pipeline::PipelineConfig {
-                playbook_author: ident.author.clone(),
-                playbook_name: ident.name.clone(),
-                playbook_version: ident.version.clone(),
+                playbook: ident.clone(),
                 remote: HashMap::new(),
                 wal_capacity: source_pipeline.wal_capacity,
                 success_log_retention_secs: source_pipeline.success_log_retention_secs,

@@ -11,16 +11,16 @@ use toml::Value;
 
 use crate::artifacts::CapabilityConfig;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Eq, PartialOrd, Ord, Hash)]
 pub struct CapabilityIdent {
-    pub name: String,
-    pub version: String,
     pub author: String,
+    pub package: String,
+    pub version: String,
 }
 
 impl CapabilityIdent {
     pub fn to_package(self) -> Package<Value> {
-        let mut package = Package::new(self.name, self.version);
+        let mut package = Package::new(self.package, self.version);
         package.authors = Inheritable::Set(vec![self.author]);
         package.edition = Inheritable::Set(Edition::E2024);
         package
@@ -104,11 +104,10 @@ pub enum ManifestError {
     CapabilitySectionMissing,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ResolvedCapability {
-    pub author: String,
-    pub package: String,
-    pub version: String,
+impl std::fmt::Display for CapabilityIdent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}:{}", self.author, self.package, self.version)
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
@@ -117,6 +116,16 @@ pub struct ConfiguredCapability {
     pub package: String,
     pub version: String,
     pub configuration: CapabilityConfig,
+}
+
+impl ConfiguredCapability {
+    pub fn ident(&self) -> CapabilityIdent {
+        CapabilityIdent {
+            author: self.author.clone(),
+            package: self.package.clone(),
+            version: self.version.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -398,7 +407,7 @@ mod tests {
     fn test_full_transformation() {
         let input_toml = r#"
 [capability]
-name = "my-capability"
+package = "my-capability"
 version = "0.1.0"
 author = "Me"
 

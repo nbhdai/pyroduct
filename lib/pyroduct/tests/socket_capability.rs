@@ -41,7 +41,7 @@ async fn test_socket_capability_remote() {
     let builder = Builder::from_env(cache.clone()).await.unwrap();
 
     let source = AnonPlaybook {
-        name: "test_socket_capability".to_string(),
+        package: "test_socket_capability".to_string(),
         dependencies: BTreeMap::new(),
         configurations: vec![pyro_artifacts::cargo::ConfiguredCapability {
             package: "config".to_string(),
@@ -53,7 +53,10 @@ async fn test_socket_capability_remote() {
         }],
         source: CODE.to_string(),
     };
-    cache.remove_module("anon", "test_socket_capability", "0.1.0").await.unwrap();
+    cache
+        .remove_module("anon", "test_socket_capability", "0.1.0")
+        .await
+        .unwrap();
 
     let binary = builder
         .compile_anon(&source)
@@ -66,8 +69,15 @@ async fn test_socket_capability_remote() {
         .await
         .unwrap();
 
-    let mut router =
-        PyroRouter::load("config".into(), &lib_path).expect("Failed to load capability library");
+    let mut router = PyroRouter::load(
+        pyro_artifacts::cargo::CapabilityIdent {
+            author: "nbhdai".to_string(),
+            package: "config".to_string(),
+            version: "0.1.0".to_string(),
+        },
+        &lib_path,
+    )
+    .expect("Failed to load capability library");
 
     let cap_config = CapabilityConfig {
         classes: HashMap::from([(
@@ -103,10 +113,15 @@ async fn test_socket_capability_remote() {
     let ident = &binary.spec.ident;
 
     let config = PipelineConfig {
-        playbook_author: ident.author.clone(),
-        playbook_name: ident.name.clone(),
-        playbook_version: ident.version.clone(),
-        remote: HashMap::from([("config".to_string(), RemoteAddress::Tcp(addr.to_string()))]),
+        playbook: ident.clone(),
+        remote: HashMap::from([(
+            pyro_artifacts::cargo::CapabilityIdent {
+                author: "nbhdai".to_string(),
+                package: "config".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            RemoteAddress::Tcp(addr.to_string()),
+        )]),
         wal_capacity: 10,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,

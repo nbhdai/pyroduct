@@ -1,6 +1,6 @@
 [capability]
 author = "nbhdai"
-name = "llm"
+package = "llm"
 version = "0.1.0"
 
 [pyroduct]

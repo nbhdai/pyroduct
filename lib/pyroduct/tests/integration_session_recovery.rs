@@ -81,13 +81,16 @@ async fn test_session_recovery_lifecycle() {
     let builder = Builder::from_env(cache.clone()).await.unwrap();
 
     let source = AnonPlaybook {
-        name: "test_session_rec".to_string(),
+        package: "test_session_rec".to_string(),
         dependencies: std::collections::BTreeMap::new(),
         configurations: Vec::new(),
         source: RECOVERY_SESSION_MODULE.to_string(),
     };
-    cache.remove_module("anon", "test_session_rec", "0.1.0").await.unwrap();
- 
+    cache
+        .remove_module("anon", "test_session_rec", "0.1.0")
+        .await
+        .unwrap();
+
     let binary = builder
         .compile_anon(&source)
         .await
@@ -99,9 +102,7 @@ async fn test_session_recovery_lifecycle() {
     let ident = &binary.spec.ident;
 
     let config = PipelineConfig {
-        playbook_author: ident.author.clone(),
-        playbook_name: ident.name.clone(),
-        playbook_version: ident.version.clone(),
+        playbook: ident.clone(),
         remote: HashMap::new(),
         wal_capacity: 2,
         success_log_retention_secs: 3600,
@@ -296,13 +297,16 @@ async fn test_session_diff_recovery_lifecycle() {
     let builder = Builder::from_env(cache.clone()).await.unwrap();
 
     let source = AnonPlaybook {
-        name: "test_session_diff_rec".to_string(),
+        package: "test_session_diff_rec".to_string(),
         dependencies: std::collections::BTreeMap::new(),
         configurations: Vec::new(),
         source: RECOVERY_SESSION_DIFF_MODULE.to_string(),
     };
-    cache.remove_module("anon", "test_session_diff_rec", "0.1.0").await.unwrap();
- 
+    cache
+        .remove_module("anon", "test_session_diff_rec", "0.1.0")
+        .await
+        .unwrap();
+
     let binary = builder
         .compile_anon(&source)
         .await
@@ -314,9 +318,7 @@ async fn test_session_diff_recovery_lifecycle() {
     let ident = &binary.spec.ident;
 
     let config = PipelineConfig {
-        playbook_author: ident.author.clone(),
-        playbook_name: ident.name.clone(),
-        playbook_version: ident.version.clone(),
+        playbook: ident.clone(),
         remote: HashMap::new(),
         wal_capacity: 2,
         success_log_retention_secs: 3600,

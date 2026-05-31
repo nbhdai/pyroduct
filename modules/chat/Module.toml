@@ -1,5 +1,5 @@
 [module]
-name = "chat"
+package = "chat"
 version = "0.1.0"
 author = "nbhdai"
 

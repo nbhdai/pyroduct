@@ -1,7 +1,7 @@
 [capability]
 author = "nbhdai"
 version = "0.1.0"
-name = "rag"
+package = "rag"
 
 [pyroduct]
 path = "../../lib/pyroduct/"

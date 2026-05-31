@@ -1,5 +1,6 @@
 use dashmap::DashMap;
 use indexmap::IndexMap;
+use pyro_artifacts::cargo::CapabilityIdent;
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::Weak;
@@ -206,34 +207,34 @@ pub fn scan_pyro_symbols(path: &Path) -> Result<Vec<ScannedSymbol>, CapabilityEr
 // Library loader
 // =============================================================================
 
-static LOADED_LIBRARIES: LazyLock<Mutex<HashMap<String, Weak<CapabilityLibrary>>>> =
+static LOADED_LIBRARIES: LazyLock<Mutex<HashMap<CapabilityIdent, Weak<CapabilityLibrary>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub struct CapabilityLibrary {
     pub id: i64,
-    pub name: String,
+    pub ident: CapabilityIdent,
     pub capabilities: IndexMap<String, Arc<ForeignClass>>,
     pub interface: InterfaceSpec<'static>,
 }
 
 impl CapabilityLibrary {
-    pub fn load(name: String, path: &Path) -> Result<Arc<Self>, CapabilityError> {
+    pub fn load(ident: CapabilityIdent, path: &Path) -> Result<Arc<Self>, CapabilityError> {
         let mut libraries = LOADED_LIBRARIES.lock().unwrap_or_else(|e| {
             tracing::error!(
                 "LOADED_LIBRARIES mutex was poisoned (likely a panic in another thread)"
             );
             e.into_inner()
         });
-        if let Some(lib) = libraries.get(&name).and_then(|w| w.upgrade()) {
+        if let Some(lib) = libraries.get(&ident).and_then(|w| w.upgrade()) {
             Ok(lib)
         } else {
-            let lib = Arc::new(Self::load_inter(&name, path)?);
-            libraries.insert(name, Arc::downgrade(&lib));
+            let lib = Arc::new(Self::load_inter(&ident, path)?);
+            libraries.insert(ident, Arc::downgrade(&lib));
             Ok(lib)
         }
     }
 
-    fn load_inter(name: &str, path: &Path) -> Result<Self, CapabilityError> {
+    fn load_inter(ident: &CapabilityIdent, path: &Path) -> Result<Self, CapabilityError> {
         let path_str = path.display().to_string();
 
         // 1. Scan
@@ -290,7 +291,7 @@ impl CapabilityLibrary {
             let export: ClassExport = unsafe { register_fn(id, log_callback) };
 
             let class =
-                unsafe { ForeignClass::from_export(name.to_string(), library.clone(), export) }
+                unsafe { ForeignClass::from_export(ident.clone(), library.clone(), export) }
                     .map_err(|e| CapabilityError::Registration {
                         path: path_str.clone(),
                         symbol: sym.name.clone(),
@@ -306,7 +307,7 @@ impl CapabilityLibrary {
 
         Ok(Self {
             id,
-            name: name.to_string(),
+            ident: ident.clone(),
             capabilities,
             interface,
         })
@@ -316,7 +317,7 @@ impl CapabilityLibrary {
     /// and instantiates the requested capabilities.
     pub async fn instantiate_from_config(
         &self,
-        config: &HashMap<String, serde_json::Value>,
+        config: &HashMap<String, Option<serde_json::Value>>,
     ) -> Result<Capability, CapabilityError> {
         let mut objects = HashMap::new();
         for class_name in config.keys() {
@@ -329,13 +330,13 @@ impl CapabilityLibrary {
 
         for (cap_name, cap_class) in &self.capabilities {
             // 2. Serialize the config value to a PyroVec using JSON format
-            let vec = if let Some(config_val) = config.get(cap_name) {
+            let vec = if let Some(Some(config_val)) = config.get(cap_name) {
                 let writer = Json::<serde_json::Value>::new_writer(PyroVec::with_capacity(300));
 
                 writer
                     .write(config_val)
                     .map_err(|e| CapabilityError::ConfigSerialization {
-                        class: cap_name.clone(),
+                        class: cap_name.to_string(),
                         reason: e.to_string(),
                     })?
             } else {
@@ -356,7 +357,7 @@ impl CapabilityLibrary {
         }
 
         Ok(Capability {
-            lib_name: self.name.clone(),
+            ident: self.ident.clone(),
             objects,
         })
     }
@@ -419,13 +420,13 @@ impl CapabilityLibrary {
 
 #[derive(Debug)]
 pub struct Capability {
-    lib_name: String,
+    ident: CapabilityIdent,
     objects: HashMap<String, ForeignObject>,
 }
 
 impl Capability {
-    pub fn name(&self) -> &str {
-        &self.lib_name
+    pub fn ident(&self) -> &CapabilityIdent {
+        &self.ident
     }
 }
 

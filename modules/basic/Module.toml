@@ -1,6 +1,6 @@
 [module]
 author = "nbhdai"
-name = "basic"
+package = "basic"
 version = "0.1.0"
 
 [pyroduct]

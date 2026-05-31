@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use clap::ValueEnum;
 use fs_err as fs;
+use pyro_artifacts::cargo::CapabilityIdent;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -19,6 +20,24 @@ pub enum ServerType {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum PlaybookServerConfig {
+    Path(PathBuf),
+    Ident(pyro_artifacts::artifacts::PlaybookIdent),
+    Inline(PipelineConfig),
+}
+
+fn default_wal_capacity() -> usize {
+    1000
+}
+fn default_success_retention() -> u64 {
+    3600
+}
+fn default_error_retention() -> u64 {
+    86400 * 7
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServeConfig {
     #[serde(rename = "type")]
     pub server_type: ServerType,
@@ -27,12 +46,23 @@ pub struct ServeConfig {
     pub http: bool,
 
     // Playbook server configuration:
-    pub playbook_config: Option<PathBuf>,
-    pub pipeline_config: Option<PipelineConfig>,
+    pub playbook: Option<PlaybookServerConfig>,
+
+    // Extra settings for playbook/pipeline config:
+    #[serde(default)]
+    pub remote: std::collections::HashMap<CapabilityIdent, pyro_artifacts::cache::RemoteAddress>,
+    #[serde(default = "default_wal_capacity")]
+    pub wal_capacity: usize,
+    #[serde(default = "default_success_retention")]
+    pub success_log_retention_secs: u64,
+    #[serde(default = "default_error_retention")]
+    pub error_log_retention_secs: u64,
+    pub log_dir: Option<PathBuf>,
+    pub input_dir: Option<PathBuf>,
+    pub output_dir: Option<PathBuf>,
 
     // Capability server configuration:
-    pub cap_name: Option<String>,
-    pub cap_path: Option<PathBuf>,
+    pub cap: Option<CapabilityIdent>,
     pub cap_config: Option<serde_json::Value>,
 }
 
@@ -45,8 +75,15 @@ pub fn resolve_config(
     socket: Option<String>,
     http: bool,
     playbook_config: Option<&Path>,
-    cap_name: Option<&str>,
-    cap_path: Option<&Path>,
+    playbook_ident: Option<pyro_artifacts::artifacts::PlaybookIdent>,
+    remote: std::collections::HashMap<CapabilityIdent, pyro_artifacts::cache::RemoteAddress>,
+    wal_capacity: Option<usize>,
+    success_log_retention_secs: Option<u64>,
+    error_log_retention_secs: Option<u64>,
+    log_dir: Option<PathBuf>,
+    input_dir: Option<PathBuf>,
+    output_dir: Option<PathBuf>,
+    cap: Option<CapabilityIdent>,
     cap_config: Option<&str>,
 ) -> Result<ServeConfig> {
     if let Some(path) = config_path {
@@ -72,14 +109,29 @@ pub fn resolve_config(
             None
         };
 
+        let playbook = if let Some(p) = playbook_config {
+            Some(PlaybookServerConfig::Path(p.to_path_buf()))
+        } else if let Some(ident) = playbook_ident {
+            Some(PlaybookServerConfig::Ident(ident))
+        } else {
+            None
+        };
+
         Ok(ServeConfig {
             server_type,
             socket,
             http,
-            playbook_config: playbook_config.map(Path::to_path_buf),
-            pipeline_config: None,
-            cap_name: cap_name.map(String::from),
-            cap_path: cap_path.map(Path::to_path_buf),
+            playbook,
+            remote,
+            wal_capacity: wal_capacity.unwrap_or_else(default_wal_capacity),
+            success_log_retention_secs: success_log_retention_secs
+                .unwrap_or_else(default_success_retention),
+            error_log_retention_secs: error_log_retention_secs
+                .unwrap_or_else(default_error_retention),
+            log_dir,
+            input_dir,
+            output_dir,
+            cap,
             cap_config: parsed_cap_config,
         })
     }
@@ -89,35 +141,64 @@ pub fn resolve_config(
 pub async fn serve_playbook(serve_config: &ServeConfig) -> Result<()> {
     // Load playbook configuration
     let cache = CacheManager::from_env().await?;
-    let loaded_pipeline_config = if let Some(ref pc) = serve_config.pipeline_config {
-        pc.clone()
+    let loaded_pipeline_config = match &serve_config.playbook {
+        Some(PlaybookServerConfig::Inline(pc)) => pc
+            .clone()
             .load(&cache)
             .await
-            .context("Failed to load inline playbook config")?
-    } else if let Some(ref path) = serve_config.playbook_config {
-        let config_str = fs::read_to_string(path)?;
-        let pipeline: PipelineConfig = match path.extension().map(|s| s.as_encoded_bytes()) {
-            Some(b"toml") => {
-                toml::from_str(&config_str).context("Failed to parse pipeline TOML")?
-            }
-            Some(b"yaml") => {
-                serde_yaml::from_str(&config_str).context("Failed to parse pipeline yaml")?
-            }
-            Some(b"json") => {
-                serde_json::from_str(&config_str).context("Failed to parse pipeline JSON")?
-            }
-            _ => {
-                anyhow::bail!("Unknown extension for playbook config, supports toml, yaml and json")
-            }
-        };
-        pipeline
-            .load(&cache)
-            .await
-            .context("Failed to load playbook config file")?
-    } else {
-        anyhow::bail!(
-            "No playbook configuration provided. Must provide either --playbook-config or pipeline_config in the JSON configuration."
-        );
+            .context("Failed to load inline playbook config")?,
+        Some(PlaybookServerConfig::Ident(playbook_ident)) => {
+            let log_dir = serve_config.log_dir.clone().ok_or_else(|| {
+                anyhow!("log_dir is required when configuring with a playbook identity")
+            })?;
+            let input_dir = serve_config.input_dir.clone().ok_or_else(|| {
+                anyhow!("input_dir is required when configuring with a playbook identity")
+            })?;
+            let output_dir = serve_config.output_dir.clone().ok_or_else(|| {
+                anyhow!("output_dir is required when configuring with a playbook identity")
+            })?;
+            let pipeline_config = PipelineConfig {
+                playbook: playbook_ident.clone(),
+                remote: serve_config.remote.clone(),
+                wal_capacity: serve_config.wal_capacity,
+                success_log_retention_secs: serve_config.success_log_retention_secs,
+                error_log_retention_secs: serve_config.error_log_retention_secs,
+                log_dir,
+                input_dir,
+                output_dir,
+            };
+            pipeline_config
+                .load(&cache)
+                .await
+                .context("Failed to load pipeline config built from playbook identity")?
+        }
+        Some(PlaybookServerConfig::Path(path)) => {
+            let config_str = fs::read_to_string(path)?;
+            let pipeline: PipelineConfig =
+                match path.extension().map(|s| s.as_encoded_bytes()) {
+                    Some(b"toml") => {
+                        toml::from_str(&config_str).context("Failed to parse pipeline TOML")?
+                    }
+                    Some(b"yaml") => serde_yaml::from_str(&config_str)
+                        .context("Failed to parse pipeline yaml")?,
+                    Some(b"json") => serde_json::from_str(&config_str)
+                        .context("Failed to parse pipeline JSON")?,
+                    _ => {
+                        anyhow::bail!(
+                            "Unknown extension for playbook config, supports toml, yaml and json"
+                        )
+                    }
+                };
+            pipeline
+                .load(&cache)
+                .await
+                .context("Failed to load playbook config file")?
+        }
+        None => {
+            anyhow::bail!(
+                "No playbook configuration provided. Must provide either --playbook-config, --playbook (with extra settings), or inline playbook in the configuration."
+            );
+        }
     };
 
     if serve_config.http {
@@ -170,18 +251,20 @@ pub async fn serve_playbook(serve_config: &ServeConfig) -> Result<()> {
 
 /// Starts and runs a Capability server (TCP or Unix socket) using the provided configuration.
 pub async fn serve_capability(serve_config: &ServeConfig) -> Result<()> {
-    let cap_name = serve_config
-        .cap_name
+    let cap = serve_config
+        .cap
         .as_ref()
-        .ok_or_else(|| anyhow!("Capability name is required to run a capability server"))?;
-    let cap_path = serve_config
-        .cap_path
-        .as_ref()
-        .ok_or_else(|| anyhow!("Capability library path is required to run a capability server"))?;
+        .ok_or_else(|| anyhow!("Capability identity is required to run a capability server"))?;
 
-    tracing::info!("Loading capability '{}' from {:?}", cap_name, cap_path);
-    let mut router = PyroRouter::load(cap_name.clone(), cap_path)
-        .context("Failed to load capability library")?;
+    tracing::info!("Loading capability '{}'", cap);
+    let cache = CacheManager::from_env().await?;
+    let cap_path = cache
+        .capability_binary_path(&cap.author, &cap.package, &cap.version)
+        .await
+        .context("Failed to find capability binary path in CacheManager")?;
+
+    let mut router =
+        PyroRouter::load(cap.clone(), cap_path).context("Failed to load capability library")?;
 
     // Pre-configure capability classes if config provided
     if let Some(ref cap_config) = serve_config.cap_config {
@@ -244,8 +327,15 @@ pub async fn serve(
     socket: Option<String>,
     http: bool,
     playbook_config: Option<&Path>,
-    cap_name: Option<&str>,
-    cap_path: Option<&Path>,
+    playbook_ident: Option<pyro_artifacts::artifacts::PlaybookIdent>,
+    remote: std::collections::HashMap<CapabilityIdent, pyro_artifacts::cache::RemoteAddress>,
+    wal_capacity: Option<usize>,
+    success_log_retention_secs: Option<u64>,
+    error_log_retention_secs: Option<u64>,
+    log_dir: Option<PathBuf>,
+    input_dir: Option<PathBuf>,
+    output_dir: Option<PathBuf>,
+    cap_name: Option<pyro_artifacts::cargo::CapabilityIdent>,
     cap_config: Option<&str>,
 ) -> Result<()> {
     let serve_config = resolve_config(
@@ -255,8 +345,15 @@ pub async fn serve(
         socket,
         http,
         playbook_config,
+        playbook_ident,
+        remote,
+        wal_capacity,
+        success_log_retention_secs,
+        error_log_retention_secs,
+        log_dir,
+        input_dir,
+        output_dir,
         cap_name,
-        cap_path,
         cap_config,
     )?;
 

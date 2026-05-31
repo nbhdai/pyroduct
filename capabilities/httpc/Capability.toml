@@ -1,6 +1,6 @@
 [capability]
 author = "nbhdai"
-name = "httpc"
+package = "httpc"
 version = "0.1.0"
 
 [pyroduct]
