@@ -1,4 +1,4 @@
-use axum::async_trait;
+use async_trait::async_trait;
 use dashmap::DashMap;
 use indexmap::IndexMap;
 use pyro_artifacts::artifacts::CapabilityConfig;

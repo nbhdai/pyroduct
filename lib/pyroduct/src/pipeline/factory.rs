@@ -129,6 +129,7 @@ impl PipelineFactory {
                 })?,
             input_manager: super::data::DataManager::new(self.input_dir.clone(), input_schema),
             output_manager: super::data::DataManager::new(self.output_dir.clone(), output_schema),
+            callbacks: Vec::new(),
         })
     }
 
@@ -198,6 +199,7 @@ impl PipelineFactory {
             output_dir: self.output_dir.clone(),
             wal_capacity: self.wal_capacity,
             active_sessions: std::collections::HashMap::new(),
+            callbacks: Vec::new(),
         })
     }
 
@@ -269,6 +271,7 @@ impl PipelineFactory {
             output_dir: self.output_dir.clone(),
             wal_capacity: self.wal_capacity,
             active_sessions: std::collections::HashMap::new(),
+            callbacks: Vec::new(),
         })
     }
 }

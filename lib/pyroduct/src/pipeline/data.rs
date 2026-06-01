@@ -387,7 +387,9 @@ impl DataManager {
             })?;
 
         Ok(crate::pipeline::sql::DataManagerTableProvider::new(
-            mem_table, guards,
+            mem_table,
+            guards,
+            self.metadata_prefix.clone(),
         ))
     }
 

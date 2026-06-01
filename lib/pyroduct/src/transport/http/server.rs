@@ -57,6 +57,7 @@ impl PlaybookHttpServer {
                         playbook.output_dir.clone(),
                         output_schema,
                     ),
+                    callbacks: Vec::new(),
                 };
                 ServerPipeline::Normal(pipeline)
             }
@@ -80,6 +81,7 @@ impl PlaybookHttpServer {
                     output_dir: playbook.output_dir.clone(),
                     wal_capacity: 1000,
                     active_sessions: std::collections::HashMap::new(),
+                    callbacks: Vec::new(),
                 };
                 ServerPipeline::Session(pipeline)
             }
@@ -103,6 +105,7 @@ impl PlaybookHttpServer {
                     output_dir: playbook.output_dir.clone(),
                     wal_capacity: 1000,
                     active_sessions: std::collections::HashMap::new(),
+                    callbacks: Vec::new(),
                 };
                 ServerPipeline::SessionDiff(pipeline)
             }

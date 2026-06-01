@@ -69,6 +69,7 @@ pub struct SessionDiffPipeline {
     pub output_dir: std::path::PathBuf,
     pub wal_capacity: usize,
     pub active_sessions: std::collections::HashMap<u32, ActiveSession>,
+    pub callbacks: Vec<crate::pipeline::Callback>,
 }
 
 impl SessionDiffPipeline {
@@ -178,6 +179,10 @@ impl SessionDiffPipeline {
 
         if log_dir.exists() {
             let _ = tokio::fs::remove_dir_all(log_dir).await;
+        }
+
+        for cb in &mut self.callbacks {
+            cb.execute(session_id as usize, &rolled_up_row).await;
         }
 
         Ok(())

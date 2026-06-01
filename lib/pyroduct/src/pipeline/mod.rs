@@ -1,3 +1,4 @@
+pub mod callback;
 pub mod data;
 pub mod factory;
 pub mod normal;
@@ -8,6 +9,7 @@ pub mod session_diff;
 #[cfg(feature = "sql")]
 pub mod sql;
 
+pub use callback::Callback;
 pub use factory::{PipelineConfig, PipelineFactory};
 pub use normal::{ExecutionRecord, Failure, Pipeline, PipelinePool};
 pub use repository::PlaybookRepository;
