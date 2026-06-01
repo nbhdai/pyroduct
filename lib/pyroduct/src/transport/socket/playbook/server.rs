@@ -16,6 +16,11 @@ use crate::pipeline::{
 use crate::transport::socket::{PyroListener, PyroSocket};
 use crate::{CapturedError, PyroError};
 
+pub enum PlaybookServerCommand {
+    AddCallback(uuid::Uuid, crate::pipeline::Callback),
+    DeleteCallback(uuid::Uuid),
+}
+
 enum ServerPipeline {
     Normal(Pipeline),
     Session(SessionPipeline),
@@ -120,6 +125,26 @@ impl PlaybookServer {
         })
     }
 
+    /// Add a callback dynamically to the running pipeline.
+    pub async fn add_callback(&self, uuid: uuid::Uuid, callback: crate::pipeline::Callback) {
+        let mut pipeline = self.pipeline.lock().await;
+        match &mut *pipeline {
+            ServerPipeline::Normal(p) => p.callbacks.push((uuid, callback)),
+            ServerPipeline::Session(p) => p.callbacks.push((uuid, callback)),
+            ServerPipeline::SessionDiff(p) => p.callbacks.push((uuid, callback)),
+        }
+    }
+
+    /// Delete a callback dynamically from the running pipeline by UUID.
+    pub async fn delete_callback(&self, uuid: uuid::Uuid) {
+        let mut pipeline = self.pipeline.lock().await;
+        match &mut *pipeline {
+            ServerPipeline::Normal(p) => p.callbacks.retain(|(u, _)| *u != uuid),
+            ServerPipeline::Session(p) => p.callbacks.retain(|(u, _)| *u != uuid),
+            ServerPipeline::SessionDiff(p) => p.callbacks.retain(|(u, _)| *u != uuid),
+        }
+    }
+
     /// Get the `ModuleSpec` for the playbook.
     pub fn spec(&self) -> Arc<PlaybookSpec> {
         self.spec.clone()
@@ -139,6 +164,41 @@ impl PlaybookServer {
                     tracing::error!("Connection closed with error: {:?}", e);
                 }
             });
+        }
+    }
+
+    /// Run the server, accepting connections on the provided listener, and listening for new commands.
+    pub async fn run_with_callbacks(
+        self,
+        listener: PyroListener,
+        mut command_rx: tokio::sync::mpsc::Receiver<PlaybookServerCommand>,
+    ) -> std::io::Result<()> {
+        let server = Arc::new(self);
+
+        loop {
+            tokio::select! {
+                accept_res = listener.accept() => {
+                    let socket = accept_res?;
+                    tracing::info!("Accepted new connection");
+                    let server_clone = server.clone();
+
+                    tokio::spawn(async move {
+                        if let Err(e) = server_clone.handle_connection(socket).await {
+                            tracing::error!("Connection closed with error: {:?}", e);
+                        }
+                    });
+                }
+                Some(cmd) = command_rx.recv() => {
+                    match cmd {
+                        PlaybookServerCommand::AddCallback(uuid, cb) => {
+                            server.add_callback(uuid, cb).await;
+                        }
+                        PlaybookServerCommand::DeleteCallback(uuid) => {
+                            server.delete_callback(uuid).await;
+                        }
+                    }
+                }
+            }
         }
     }
 

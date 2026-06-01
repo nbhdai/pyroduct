@@ -1,9 +1,5 @@
-use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tokio::fs;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
 
 // =============================================================================
 // RPC Message Types
@@ -34,13 +30,33 @@ pub enum DaemonResponse {
 }
 
 pub mod capability;
+pub mod client;
 pub mod data;
 pub mod playbook;
+pub mod server;
+pub mod state;
 
 pub use capability::CapabilityManager;
 pub use data::DaemonDataManager;
+pub use state::DbStateStore;
 
 use crate::playbook::PlaybooksManager;
+
+impl pyroduct::format::format::UserHeaderValues for DaemonRequest {
+    const VERSION: u8 = 0;
+}
+
+impl pyroduct::format::Bridgeable for DaemonRequest {
+    type Format = pyroduct::format::json::Json<DaemonRequest>;
+}
+
+impl pyroduct::format::format::UserHeaderValues for DaemonResponse {
+    const VERSION: u8 = 0;
+}
+
+impl pyroduct::format::Bridgeable for DaemonResponse {
+    type Format = pyroduct::format::json::Json<DaemonResponse>;
+}
 
 // =============================================================================
 // PyroDaemon Central Controller
@@ -81,94 +97,4 @@ impl PyroDaemon {
             data_manager,
         }
     }
-
-    pub async fn run(&self) -> Result<()> {
-        fs::create_dir_all(&self.working_dir)
-            .await
-            .context("Failed to create working directory")?;
-        fs::create_dir_all(self.working_dir.join("data"))
-            .await
-            .context("Failed to create data directory")?;
-
-        if self.control_socket_path.exists() {
-            fs::remove_file(&self.control_socket_path)
-                .await
-                .context("Failed to clean up existing control socket file")?;
-        }
-
-        let listener = UnixListener::bind(&self.control_socket_path)
-            .context("Failed to bind Unix control listener")?;
-
-        tracing::info!(socket = %self.control_socket_path.display(), "PyroDaemon listing for control commands");
-
-        loop {
-            let (socket, _) = match listener.accept().await {
-                Ok(conn) => conn,
-                Err(e) => {
-                    tracing::error!("Failed to accept incoming control connection: {:?}", e);
-                    continue;
-                }
-            };
-
-            let playbooks_clone = self.playbooks_manager.clone();
-            let capability_clone = self.capability_manager.clone();
-            let data_clone = self.data_manager.clone();
-            tokio::spawn(async move {
-                if let Err(e) =
-                    handle_client(socket, playbooks_clone, capability_clone, data_clone).await
-                {
-                    tracing::error!("Error handling control client: {:?}", e);
-                }
-            });
-        }
-    }
-}
-
-async fn handle_client(
-    mut socket: UnixStream,
-    playbooks_manager: PlaybooksManager,
-    capability_manager: CapabilityManager,
-    data_manager: DaemonDataManager,
-) -> Result<()> {
-    let (reader, mut writer) = socket.split();
-    let reader = BufReader::new(reader);
-    let mut lines = reader.lines();
-
-    while let Some(line) = lines.next_line().await? {
-        let req: DaemonRequest = match serde_json::from_str(&line) {
-            Ok(r) => r,
-            Err(e) => {
-                let err_resp = DaemonResponse::Error {
-                    message: format!("Invalid JSON request: {}", e),
-                };
-                let resp_str = serde_json::to_string(&err_resp)? + "\n";
-                writer.write_all(resp_str.as_bytes()).await?;
-                continue;
-            }
-        };
-
-        let response = match req {
-            DaemonRequest::Playbook(playbook_req) => {
-                DaemonResponse::Playbook(playbooks_manager.handle_request(playbook_req).await)
-            }
-            DaemonRequest::Capability(capability_req) => {
-                DaemonResponse::Capability(capability_manager.handle_request(capability_req).await)
-            }
-            DaemonRequest::Data(data_req) => {
-                DaemonResponse::Data(data_manager.handle_request(data_req).await)
-            }
-            DaemonRequest::Status => {
-                let count = playbooks_manager.active_workers_count().await;
-                DaemonResponse::StatusInfo {
-                    active_workers: count,
-                    version: env!("CARGO_PKG_VERSION").to_string(),
-                }
-            }
-        };
-
-        let resp_str = serde_json::to_string(&response)? + "\n";
-        writer.write_all(resp_str.as_bytes()).await?;
-    }
-
-    Ok(())
 }

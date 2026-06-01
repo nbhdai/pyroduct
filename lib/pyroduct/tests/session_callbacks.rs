@@ -54,7 +54,9 @@ async fn test_session_callbacks() {
         configurations: Vec::new(),
         source: SIMPLE_SESSION_MODULE.to_string(),
     };
-    let _ = cache.remove_module("anon", "test_session_cb", "0.1.0").await;
+    let _ = cache
+        .remove_module("anon", "test_session_cb", "0.1.0")
+        .await;
 
     let binary = builder
         .compile_anon(&source)
@@ -83,7 +85,10 @@ async fn test_session_callbacks() {
     // 1. Test SessionPipeline Callbacks
     {
         let mut pipeline = pipeline_factory.build_session().await.unwrap();
-        pipeline.callbacks.push(pyroduct::pipeline::Callback::function(my_session_callback));
+        pipeline.callbacks.push((
+            uuid::Uuid::new_v4(),
+            pyroduct::pipeline::Callback::function(my_session_callback),
+        ));
 
         CALLBACK_COUNTER.store(0, Ordering::SeqCst);
 
@@ -117,7 +122,10 @@ async fn test_session_callbacks() {
     // 2. Test SessionDiffPipeline Callbacks
     {
         let mut pipeline = pipeline_factory.build_session_diff().await.unwrap();
-        pipeline.callbacks.push(pyroduct::pipeline::Callback::function(my_session_diff_callback));
+        pipeline.callbacks.push((
+            uuid::Uuid::new_v4(),
+            pyroduct::pipeline::Callback::function(my_session_diff_callback),
+        ));
 
         DIFF_CALLBACK_COUNTER.store(0, Ordering::SeqCst);
 

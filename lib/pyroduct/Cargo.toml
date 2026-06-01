@@ -33,6 +33,7 @@ host = [
     "dep:rusqlite",
     "pyro-spec/arrow",
     "dep:reqwest",
+    "dep:uuid",
 ]
 sql = ["dep:datafusion", "dep:sqlparser"]
 transport = ["host", "dep:axum"]
@@ -66,6 +67,7 @@ anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+uuid = { version = "1.6", features = ["v4", "serde"], optional = true }
 axum = { workspace = true, optional = true }
 reqwest = { version = "0.12", features = ["json"], optional = true }
 
@@ -123,7 +125,6 @@ trybuild.workspace = true
 macrotest = "1.0"
 tracing-test.workspace = true
 tempfile.workspace = true
-reqwest = { version = "0.12", features = ["json"] }
 
 [[test]]
 name = "derive_tests"
@@ -173,5 +174,8 @@ required-features = ["transport", "host"]
 name = "callbacks"
 required-features = ["transport", "host"]
 
+[[test]]
+name = "session_callbacks"
+required-features = ["transport", "host"]
 
 

@@ -3672,6 +3672,7 @@ dependencies = [
  "pyro-artifacts",
  "pyro-spec",
  "pyroduct",
+ "rusqlite",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -3785,6 +3786,7 @@ dependencies = [
  "tracing-subscriber",
  "tracing-test",
  "trybuild",
+ "uuid",
  "wasmtime",
 ]
 

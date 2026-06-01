@@ -82,16 +82,16 @@ async fn test_pipeline_success_callbacks() {
     let mut pipeline = factory.build().await.unwrap();
 
     // Register our function pointer callback wrapped via Callback::function
-    pipeline.callbacks.push(pyroduct::pipeline::Callback::function(my_callback));
+    pipeline.callbacks.push((uuid::Uuid::new_v4(), pyroduct::pipeline::Callback::function(my_callback)));
 
     // Register our enum callback
-    pipeline.callbacks.push(pyroduct::pipeline::Callback::function(my_enum_callback));
+    pipeline.callbacks.push((uuid::Uuid::new_v4(), pyroduct::pipeline::Callback::function(my_enum_callback)));
 
     // Also register a socket and HTTP callback to verify the connection and HTTP constructors
     if let Ok(cb) = pyroduct::pipeline::Callback::connect_socket_tcp("127.0.0.1:9876").await {
-        pipeline.callbacks.push(cb);
+        pipeline.callbacks.push((uuid::Uuid::new_v4(), cb));
     }
-    pipeline.callbacks.push(pyroduct::pipeline::Callback::http("http://127.0.0.1:9876/callback"));
+    pipeline.callbacks.push((uuid::Uuid::new_v4(), pyroduct::pipeline::Callback::http("http://127.0.0.1:9876/callback")));
 
     // Test Success
     let input_success = PyroRow::from([("input", "hello".into())]);

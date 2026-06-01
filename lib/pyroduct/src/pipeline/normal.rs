@@ -66,7 +66,7 @@ pub struct Pipeline {
     pub log_manager: LogWal,
     pub input_manager: DataManager,
     pub output_manager: DataManager,
-    pub callbacks: Vec<crate::pipeline::Callback>,
+    pub callbacks: Vec<(uuid::Uuid, crate::pipeline::Callback)>,
 }
 
 impl Pipeline {
@@ -102,7 +102,7 @@ impl Pipeline {
                 debug!(row_index, "Step succeeded");
 
                 // Execute callbacks
-                for cb in &mut self.callbacks {
+                for (_, cb) in &mut self.callbacks {
                     cb.execute(row_index, input).await;
                 }
 
