@@ -9,7 +9,7 @@ use pyroduct::pipeline::factory::PipelineConfig;
 use pyroduct::transport::socket::PyroListener;
 use pyroduct::transport::socket::playbook::PlaybookServer;
 
-use crate::CapabilityProcess;
+use crate::capability::CapabilityProcess;
 
 pub struct PlaybookWorker {
     pub id: Uuid,

@@ -12,7 +12,7 @@ use tokio::net::{UnixListener, UnixStream};
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DaemonRequest {
-    Playbook(playbooks::PlaybookRequest),
+    Playbook(playbook::PlaybookRequest),
     Capability(capability::CapabilityRequest),
     Data(data::DataRequest),
     Status,
@@ -21,7 +21,7 @@ pub enum DaemonRequest {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DaemonResponse {
-    Playbook(playbooks::PlaybookResponse),
+    Playbook(playbook::PlaybookResponse),
     Capability(capability::CapabilityResponse),
     Data(data::DataResponse),
     StatusInfo {
@@ -33,23 +33,21 @@ pub enum DaemonResponse {
     },
 }
 
-pub mod capability_process;
-pub mod playbook_worker;
-pub mod playbooks;
 pub mod capability;
 pub mod data;
+pub mod playbook;
 
-pub use capability_process::CapabilityProcess;
-pub use playbook_worker::PlaybookWorker;
-pub use playbooks::PlaybooksManager;
 pub use capability::CapabilityManager;
 pub use data::DaemonDataManager;
+
+use crate::playbook::PlaybooksManager;
 
 // =============================================================================
 // PyroDaemon Central Controller
 // =============================================================================
 
 pub struct PyroDaemon {
+    pub working_dir: PathBuf,
     pub control_socket_path: PathBuf,
     pub playbooks_manager: PlaybooksManager,
     pub capability_manager: CapabilityManager,
@@ -57,11 +55,26 @@ pub struct PyroDaemon {
 }
 
 impl PyroDaemon {
-    pub fn new(control_socket_path: PathBuf) -> Self {
-        let playbooks_manager = PlaybooksManager::new();
+    pub fn default_working_dir() -> PathBuf {
+        std::env::var("PYRO_DAEMON_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                let home = std::env::var("HOME")
+                    .or_else(|_| std::env::var("USERPROFILE"))
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|_| PathBuf::from("."));
+                home.join(".pyro-daemon")
+            })
+    }
+
+    pub fn new(working_dir: PathBuf) -> Self {
+        let control_socket_path = working_dir.join("control");
+        let playbooks_manager = PlaybooksManager::new(working_dir.clone());
         let capability_manager = CapabilityManager::new();
-        let data_manager = DaemonDataManager::new(PathBuf::from("/tmp/pyro-daemon-data"), playbooks_manager.clone());
+        let data_manager =
+            DaemonDataManager::new(working_dir.join("data"), playbooks_manager.clone());
         Self {
+            working_dir,
             control_socket_path,
             playbooks_manager,
             capability_manager,
@@ -70,6 +83,13 @@ impl PyroDaemon {
     }
 
     pub async fn run(&self) -> Result<()> {
+        fs::create_dir_all(&self.working_dir)
+            .await
+            .context("Failed to create working directory")?;
+        fs::create_dir_all(self.working_dir.join("data"))
+            .await
+            .context("Failed to create data directory")?;
+
         if self.control_socket_path.exists() {
             fs::remove_file(&self.control_socket_path)
                 .await
@@ -94,7 +114,9 @@ impl PyroDaemon {
             let capability_clone = self.capability_manager.clone();
             let data_clone = self.data_manager.clone();
             tokio::spawn(async move {
-                if let Err(e) = handle_client(socket, playbooks_clone, capability_clone, data_clone).await {
+                if let Err(e) =
+                    handle_client(socket, playbooks_clone, capability_clone, data_clone).await
+                {
                     tracing::error!("Error handling control client: {:?}", e);
                 }
             });
@@ -150,4 +172,3 @@ async fn handle_client(
 
     Ok(())
 }
-

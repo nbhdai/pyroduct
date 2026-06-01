@@ -8,10 +8,11 @@ use pyro_daemon::{DaemonRequest, DaemonResponse, PyroDaemon};
 #[tokio::test]
 async fn test_daemon_control_protocol() {
     let test_dir = tempfile::tempdir().unwrap();
-    let control_socket = test_dir.path().join("pyro-daemon-test.sock");
+    let working_dir = test_dir.path().to_path_buf();
+    let control_socket = working_dir.join("control");
 
     // 1. Spawn PyroDaemon in the background
-    let daemon = PyroDaemon::new(control_socket.clone());
+    let daemon = PyroDaemon::new(working_dir.clone());
 
     let daemon_handle = tokio::spawn(async move {
         daemon.run().await.unwrap();
@@ -53,7 +54,7 @@ async fn test_daemon_control_protocol() {
     }
 
     // 6. Send "ListPlaybooks" request
-    let req = DaemonRequest::Playbook(pyro_daemon::playbooks::PlaybookRequest::List);
+    let req = DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::List);
     let req_str = serde_json::to_string(&req).unwrap() + "\n";
     writer.write_all(req_str.as_bytes()).await.unwrap();
 
@@ -61,7 +62,7 @@ async fn test_daemon_control_protocol() {
     let line = lines.next_line().await.unwrap().unwrap();
     let resp: DaemonResponse = serde_json::from_str(&line).unwrap();
     match resp {
-        DaemonResponse::Playbook(pyro_daemon::playbooks::PlaybookResponse::Playbooks {
+        DaemonResponse::Playbook(pyro_daemon::playbook::PlaybookResponse::Playbooks {
             playbooks,
         }) => {
             assert!(playbooks.is_empty());
@@ -70,7 +71,7 @@ async fn test_daemon_control_protocol() {
     }
 
     // 8. Try to stop a non-existent playbook
-    let req = DaemonRequest::Playbook(pyro_daemon::playbooks::PlaybookRequest::Stop {
+    let req = DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Stop {
         playbook_id: Uuid::new_v4(),
     });
     let req_str = serde_json::to_string(&req).unwrap() + "\n";
@@ -80,7 +81,7 @@ async fn test_daemon_control_protocol() {
     let line = lines.next_line().await.unwrap().unwrap();
     let resp: DaemonResponse = serde_json::from_str(&line).unwrap();
     match resp {
-        DaemonResponse::Playbook(pyro_daemon::playbooks::PlaybookResponse::Error { message }) => {
+        DaemonResponse::Playbook(pyro_daemon::playbook::PlaybookResponse::Error { message }) => {
             assert!(message.contains("No active playbook worker found"));
         }
         other => panic!("Unexpected response for invalid Stop request: {:?}", other),

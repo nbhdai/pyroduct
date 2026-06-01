@@ -1,4 +1,4 @@
-use crate::capability_process::CapabilityProcess;
+use crate::capability::CapabilityProcess;
 use anyhow::Result;
 use pyro_artifacts::cache::CacheManager;
 use pyro_artifacts::cargo::CapabilityIdent;

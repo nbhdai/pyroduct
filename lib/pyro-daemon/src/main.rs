@@ -1,8 +1,21 @@
 use std::path::PathBuf;
 use anyhow::{Context, Result};
 use tracing_subscriber::EnvFilter;
+use clap::Parser;
 
 use pyro_daemon::PyroDaemon;
+
+#[derive(Parser, Debug)]
+#[command(
+    name = "pyro-daemond",
+    about = "PyroDaemon - Background Playbook and Process Supervisor",
+    version
+)]
+struct Args {
+    /// Path to daemon's working directory
+    #[arg(short = 'd', long = "working-dir")]
+    working_dir: Option<PathBuf>,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -16,39 +29,13 @@ async fn main() -> Result<()> {
 
     tracing::info!("Initializing PyroDaemon...");
 
-    // 2. Parse command-line arguments manually to keep it simple and lightweight
-    let mut control_socket = PathBuf::from("/tmp/pyro-daemon.sock");
-    let mut args = std::env::args().skip(1);
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--control-socket" | "-s" => {
-                if let Some(socket_val) = args.next() {
-                    control_socket = PathBuf::from(socket_val);
-                } else {
-                    anyhow::bail!("Missing value for --control-socket argument");
-                }
-            }
-            "--help" | "-h" => {
-                println!("PyroDaemon - Background Playbook and Process Supervisor");
-                println!();
-                println!("Usage:");
-                println!("  pyro-daemond [OPTIONS]");
-                println!();
-                println!("Options:");
-                println!("  -s, --control-socket <PATH>   Path to daemon's control Unix socket (default: /tmp/pyro-daemon.sock)");
-                println!("  -h, --help                    Print help info");
-                return Ok(());
-            }
-            other => {
-                anyhow::bail!("Unknown argument: {}. Run with --help for options.", other);
-            }
-        }
-    }
+    // 2. Parse command-line arguments using clap
+    let args = Args::parse();
+    let working_dir = args.working_dir.unwrap_or_else(PyroDaemon::default_working_dir);
 
     // 3. Handle termination signals for clean shutdown
-    let daemon = PyroDaemon::new(control_socket.clone());
-    let control_socket_clone = control_socket.clone();
+    let daemon = PyroDaemon::new(working_dir);
+    let control_socket_clone = daemon.control_socket_path.clone();
 
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.expect("Failed to listen for ctrl-c signal");
