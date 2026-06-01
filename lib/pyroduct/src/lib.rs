@@ -95,7 +95,7 @@ pub use pyro_derive::config;
 ///
 /// The impl block must define the following associated types:
 ///
-/// - **`type Client = ...`** (required): The client state struct marked with `#[pyroduct::client]`.
+/// - **`type Client = ...`** (required): The client state struct marked with `#[pyroduct::magma]`.
 ///   All capability methods must accept `&Self::Client` as their second parameter.
 ///
 /// - **`type Config = ...`** (optional): The configuration struct marked with `#[pyroduct::config]`.

@@ -13,7 +13,7 @@
 //! combining **`rkyv`** (for zero-copy serialization) with a **custom memory layout** that
 //! carries protocol metadata (length, capacity, status codes) in a 16-byte aligned header.
 //!
-//! 1.  **Define**: Annotate your Rust types with `#[bridgeable]`. This derives the necessary
+//! 1.  **Define**: Annotate your Rust types with `#[magma]`. This derives the necessary
 //!     `rkyv` traits, implements `UserHeaderValues` (version = 0) and `Bridgeable` (format = Rkyv).
 //! 2.  **Ship**: Call `.ship()` on your type to produce a `PyroVec`. This serializes the data
 //!     directly into an FFI-safe, aligned memory buffer.
@@ -22,7 +22,7 @@
 //!     data can then be accessed immediately (zero-copy) via `expose()`, or fully deserialized
 //!     back into a Rust type via a `Receiver`.
 //!
-//! ## The `#[bridgeable]` macro
+//! ## The `#[magma]` macro
 //!
 //! The attribute macro is the primary entry point for users. It accepts the following syntax:
 //!

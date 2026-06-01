@@ -99,7 +99,7 @@ pub struct {0}Config {{
     pub timeout_ms: u64,
 }}
 
-#[pyroduct::client]
+#[pyroduct::magma]
 pub struct {0}Client;
 
 pub struct {0}Server;

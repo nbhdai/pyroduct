@@ -14,7 +14,7 @@ use crate::format::{ParseError, PyroRef, PyroVec, PyroView};
 
 /// A type that has a **default pyro format**.
 ///
-/// This is the main entry point for most users. The `#[bridgeable]` macro
+/// This is the main entry point for most users. The `#[magma]` macro
 /// generates this impl with `type Format = Rkyv<Self>`.
 ///
 /// For explicit format control, use [`Pyro<T, F>`](crate::pyro::Pyro)
