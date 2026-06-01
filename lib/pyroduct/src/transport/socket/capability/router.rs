@@ -8,10 +8,9 @@ use pyro_artifacts::artifacts::CapabilityConfig;
 use pyro_artifacts::cargo::CapabilityIdent;
 
 use crate::PyroError;
-use crate::ffi::host::ForeignObject;
 use crate::format::header::{PyroData, PyroHeader};
 use crate::format::{Bridgeable, PyroVec, PyroView, SpecWire};
-use crate::module::capability::CapabilityLibrary;
+use crate::module::capability::{Capability, CapabilityLibrary};
 
 /// A router that dispatches requests to foreign objects loaded from a library.
 ///
@@ -24,60 +23,31 @@ use crate::module::capability::CapabilityLibrary;
 ///   with `class_id`.
 pub struct PyroRouter {
     library: Arc<CapabilityLibrary>,
-    objects: Vec<Option<ForeignObject>>,
+    capability: Capability,
     client_id: AtomicU32,
     clients: DashMap<u32, PyroView>,
 }
 
 impl PyroRouter {
     /// Load a library and create a new [`PyroRouter`].
-    pub fn load(
+    pub async fn load(
         name: CapabilityIdent,
+        configuration: &CapabilityConfig,
         path: impl AsRef<Path> + fmt::Debug,
     ) -> Result<Self, PyroError> {
         tracing::info!(?name, ?path, "Loading capability library");
         let library = CapabilityLibrary::load(name, path.as_ref())
             .map_err(|e| PyroError::NotFound(e.to_string()))?;
-        let len = library.capabilities.len();
+        let capability = library
+            .instantiate_from_config(configuration)
+            .await
+            .map_err(|e| PyroError::NotFound(e.to_string()))?;
         Ok(Self {
             library,
-            objects: vec![None; len],
+            capability,
             client_id: AtomicU32::new(1),
             clients: DashMap::new(),
         })
-    }
-
-    /// Configure a capability class by instantiating it and storing it in the objects vector.
-    pub async fn configure(&mut self, configuration: &CapabilityConfig) -> Result<(), PyroError> {
-        for (class_name, config) in &configuration.classes {
-            tracing::info!(%class_name, "Instantiating class");
-            let class_id = self
-                .library
-                .capabilities
-                .get_index_of(class_name)
-                .ok_or_else(|| {
-                    PyroError::NotFound(format!("Class '{}' not found in library", class_name))
-                })? as u8;
-
-            let object = self
-                .library
-                .instantiate_class(class_name, config.as_ref())
-                .await
-                .map_err(|e| PyroError::NotFound(e.to_string()))?;
-
-            if (class_id as usize) >= self.objects.len() {
-                let err_msg = format!(
-                    "Class ID {} (name {}) is out of range for library capabilities (length {})",
-                    class_id,
-                    class_name,
-                    self.objects.len()
-                );
-                tracing::error!("{}", err_msg);
-                return Err(PyroError::NotFound(err_msg));
-            }
-            self.objects[class_id as usize] = Some(object);
-        }
-        Ok(())
     }
 
     /// Handle an incoming request.
@@ -106,9 +76,8 @@ impl PyroRouter {
             3 => {
                 tracing::info!(%class_id, "Resetting object");
                 let object = self
-                    .objects
-                    .get(class_id as usize)
-                    .and_then(|o| o.as_ref())
+                    .capability
+                    .get_index(class_id as usize)
                     .ok_or_else(|| {
                         let err = format!("Object for class ID {} not configured", class_id);
                         tracing::warn!(%err);
@@ -121,9 +90,8 @@ impl PyroRouter {
             other => {
                 // Routing: Dispatch to the already-instantiated object.
                 let object = self
-                    .objects
-                    .get(class_id as usize)
-                    .and_then(|o| o.as_ref())
+                    .capability
+                    .get_index(class_id as usize)
                     .ok_or_else(|| {
                         let err = format!("Object for class ID {} not configured", class_id);
                         tracing::warn!(%err);

@@ -20,29 +20,11 @@ async fn test_pyro_server_capability_call() {
         .init();
 
     // 1. Setup Router and Server
-    // Using one of the existing test dylibs for capability
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
-    let lib_path = std::path::PathBuf::from(manifest_dir)
-        .join("..")
-        .join("..")
-        .join("test")
-        .join("capabilities")
-        .join("nbhdai")
-        .join("state")
-        .join("0.1.0")
-        .join("lib.dylib");
-    let lib_path = lib_path
-        .canonicalize()
-        .expect("Failed to canonicalize lib_path");
-    let mut router = PyroRouter::load(
-        pyro_artifacts::cargo::CapabilityIdent {
-            author: "nbhdai".to_string(),
-            package: "state".to_string(),
-            version: "0.1.0".to_string(),
-        },
-        &lib_path,
-    )
-    .expect("Failed to load capability library");
+    let cache = pyro_artifacts::cache::CacheManager::from_env().await.unwrap();
+    let lib_path = cache
+        .capability_binary_path("nbhdai", "state", "0.1.0")
+        .await
+        .unwrap();
 
     let cap_config = pyro_artifacts::artifacts::CapabilityConfig {
         classes: std::collections::HashMap::from([(
@@ -50,10 +32,18 @@ async fn test_pyro_server_capability_call() {
             Some(serde_json::json!({"max_value": 100u64})),
         )]),
     };
-    router
-        .configure(&cap_config)
-        .await
-        .expect("Failed to configure capability");
+
+    let router = PyroRouter::load(
+        pyro_artifacts::cargo::CapabilityIdent {
+            author: "nbhdai".to_string(),
+            package: "state".to_string(),
+            version: "0.1.0".to_string(),
+        },
+        &cap_config,
+        &lib_path,
+    )
+    .await
+    .expect("Failed to load capability library");
 
     let server = PyroServer::new(router);
     let listener = PyroListener::bind_tcp("127.0.0.1:0")

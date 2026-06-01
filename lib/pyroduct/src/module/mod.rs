@@ -20,27 +20,27 @@ use pyro_artifacts::cache::{CacheError, LoadedPlaybook, RemoteAddress};
 use pyro_artifacts::cargo::CapabilityIdent;
 use pyro_artifacts::environment::EnvironmentError;
 use wasmtime::{
-    Caller, Engine, FuncType, Instance, Linker, Memory, Store, TypedFunc, Val, ValType,
+    Caller, Engine, Instance, Linker, Memory, Store, TypedFunc,
 };
 
-use crate::ffi::host::ForeignCapability;
 use crate::format::Bridgeable;
 use crate::format::{
-    ParseError, PyroFailure, PyroLogs, PyroRow, PyroSuccess, PyroVec, PyroView,
+    ParseError, PyroFailure, PyroLogs, PyroRow, PyroSuccess, PyroView,
     header::{DataStatus, PyroData, PyroHeader},
 };
 use crate::module::call::PyroCallIo;
-use crate::transport::socket::capability::RemoteLibrary;
+use crate::module::capability::ForeignCapability;
+use crate::transport::socket::capability::RemoteCapability;
 use crate::{CapturedError, PyroError};
 
-mod call;
+pub(crate) mod call;
 pub mod capability;
 pub mod sessions;
 mod state;
 // #[cfg(all(test, feature = "module"))]
 // mod tests;
 
-use capability::CapabilityLibrary;
+use capability::{CapabilityLibrary, CapabilityError};
 pub use sessions::SessionResult;
 pub use state::{PyroModule, PyroState};
 
@@ -69,6 +69,9 @@ pub enum WasmError {
 
     #[error("Build Error: {0}")]
     Environment(#[from] EnvironmentError),
+
+    #[error("Capability Error: {0}")]
+    Capability(#[from] CapabilityError),
 
     #[error("Wasm module is missing required export: '{0}'")]
     MissingExport(String),
@@ -165,9 +168,9 @@ impl PyroFactory {
     // Todo: make this more robust.
     async fn create_capabilities(
         &self,
-    ) -> Result<HashMap<String, Box<dyn ForeignCapability>>, WasmError> {
+    ) -> Result<HashMap<CapabilityIdent, Box<dyn ForeignCapability>>, WasmError> {
         tracing::debug!("Creating capabilities");
-        let mut objects = HashMap::new();
+        let mut caps: HashMap<CapabilityIdent, Box<dyn ForeignCapability>> = HashMap::new();
 
         // 1. Validate that all configured libraries are loaded (unless remote)
         for lib_ident in self.configurations.keys() {
@@ -203,12 +206,12 @@ impl PyroFactory {
                 addr = ?remote_addr,
                 "Connecting to remote capability library"
             );
-            let remote_lib = match remote_addr {
+            let remote_cap = match remote_addr {
                 RemoteAddress::Unix(path) => {
-                    RemoteLibrary::connect_unix(lib_ident.clone(), path).await
+                    RemoteCapability::connect_unix(lib_ident.clone(), path).await
                 }
                 RemoteAddress::Tcp(addr) => {
-                    RemoteLibrary::connect_tcp(lib_ident.clone(), addr).await
+                    RemoteCapability::connect_tcp(lib_ident.clone(), addr).await
                 }
             }
             .map_err(|e| {
@@ -218,18 +221,12 @@ impl PyroFactory {
                 ))
             })?;
 
-            for remote_class in remote_lib.classes() {
-                tracing::info!(
-                    class = remote_class.name(),
-                    lib = %lib_ident,
-                    "Fetching remote class"
-                );
+            tracing::info!(
+                lib = %lib_ident,
+                "Successfully connected to remote capability library"
+            );
 
-                objects.insert(
-                    remote_class.name().to_string(),
-                    Box::new(remote_class) as Box<dyn ForeignCapability>,
-                );
-            }
+            caps.insert(lib_ident.clone(), Box::new(remote_cap));
         }
 
         // 4. Handle local capability libraries
@@ -244,33 +241,18 @@ impl PyroFactory {
                 );
                 // If it maps to a remote address, it was already handled above.
                 if self.remote.contains_key(lib_ident) {
+                    tracing::debug!("Capability library is remote, skipping instantiation");
                     continue;
                 }
 
-                for (class_name, config) in &cap_config.classes {
-                    tracing::debug!(class = %class_name, lib = %lib_ident, "Instantiating capability class");
-
-                    let object = library
-                        .instantiate_class(class_name, config.as_ref())
-                        .await
-                        .map_err(|e| {
-                            WasmError::InstantiationFailed(format!(
-                                "Failed to instantiate class '{}' from capability library '{}': {}",
-                                class_name, lib_ident, e
-                            ))
-                        })?;
-                    tracing::debug!(class = %class_name, lib = %lib_ident, "Finished Instantiating capability class");
-                    objects.insert(
-                        class_name.clone(),
-                        Box::new(object) as Box<dyn ForeignCapability>,
-                    );
-                }
+                let cap = library.instantiate_from_config(&cap_config).await?;
+                caps.insert(lib_ident.clone(), Box::new(cap));
             } else {
                 tracing::debug!(lib = %lib_ident, "No configuration found for local capability library");
             }
         }
 
-        Ok(objects)
+        Ok(caps)
     }
 
     pub async fn instantiate(&self) -> Result<PyroInstance, WasmError> {
@@ -282,57 +264,6 @@ impl PyroFactory {
 
         Self::link_logger(&mut linker)?;
         Self::link_capabilities(&mut linker, &objects)?;
-
-        for (_, object) in objects.iter() {
-            let class_name = object.name();
-            for method_name in object.method_names() {
-                // Check what the linker actually holds for this class & method
-                if let Some(ext) = linker.get(&mut store, class_name, &method_name) {
-                    if let Some(func) = ext.into_func() {
-                        let ty = func.ty(&store);
-
-                        // Print the actual signature Wasmtime is about to use
-                        tracing::debug!(
-                            "LINKER CHECK: {}::{} -> {:?}",
-                            class_name,
-                            method_name,
-                            ty
-                        );
-
-                        // Catch the ghost 4-parameter signature
-                        if ty.params().len() != 2 {
-                            tracing::error!(
-                                class_name,
-                                method_name,
-                                ?ty,
-                                "Incorrectly registered in the linker. Need 2 parameters right before instantiation! ",
-                            );
-                        }
-                        if ty.results().len() != 1 {
-                            tracing::error!(
-                                class_name,
-                                method_name,
-                                ?ty,
-                                "Incorrectly registered in the linker. Need 1 result right before instantiation! ",
-                            );
-                        }
-                    } else {
-                        tracing::error!(
-                            "LINKER CHECK: {}::{} is registered, but it's NOT a function!",
-                            class_name,
-                            method_name
-                        );
-                    }
-                } else {
-                    tracing::error!(
-                        "LINKER CHECK: {}::{} is completely MISSING from the linker!",
-                        class_name,
-                        method_name
-                    );
-                }
-                tracing::debug!("LINKER CHECK: {}::{} PASSED", class_name, method_name);
-            }
-        }
 
         let instance = linker
             .instantiate_async(&mut store, self.module.module())
@@ -379,104 +310,11 @@ impl PyroFactory {
     /// Links all capabilities from the provided libraries into the linker.
     fn link_capabilities(
         linker: &mut Linker<PyroState>,
-        objects: &HashMap<String, Box<dyn ForeignCapability>>,
+        capabilities: &HashMap<CapabilityIdent, Box<dyn ForeignCapability>>,
     ) -> Result<(), WasmError> {
-        for (_, object) in objects.iter() {
-            // Capture lib for the closures (Arc clone is cheap)
-            let class_name = object.name();
-
-            for method_name in object.method_names() {
-                let method_name = method_name.to_string();
-                let class_name = class_name.to_string();
-                let fn_name = method_name.clone();
-                let object = object.clone();
-
-                let ty = FuncType::new(
-                    linker.engine(),
-                    [ValType::I32, ValType::I32],
-                    [ValType::I32],
-                );
-
-                tracing::debug!(class_name, method_name, "Linking");
-                linker
-                    .func_new_async(
-                        &class_name,
-                        &method_name,
-                        ty,
-                        move |caller, params, results| {
-                            let client_ptr = params[0].unwrap_i32();
-                            let input_ptr = params[1].unwrap_i32();
-
-                            let object = object.clone();
-                            let fn_name = fn_name.clone();
-                            Box::new(async move {
-                                tracing::debug!(
-                                    class_name = object.name(),
-                                    fn_name,
-                                    "Calling function"
-                                );
-
-                                let mut io = PyroCallIo::from_caller(caller)?;
-                                let client_view_ref = io.borrow_argument(client_ptr).await?;
-                                let input_view_ref = io.borrow_argument(input_ptr).await?;
-
-                                // Clone references into owned PyroViews to pass to Box<dyn ForeignCapability>
-                                let client_view = PyroVec::clone_from_pyro(&client_view_ref).view();
-                                let input_view = PyroVec::clone_from_pyro(&input_view_ref).view();
-
-                                let output_view =
-                                    object.call(&fn_name, client_view, input_view).await?;
-                                output_view.parse_as_error()?;
-
-                                let ptr = io.new_input(&output_view).await?;
-
-                                results[0] = Val::I32(ptr);
-
-                                Ok(())
-                            })
-                        },
-                    )
-                    .map_err(|e| {
-                        WasmError::LinkFunctionFailed(
-                            class_name,
-                            method_name,
-                            format!("Error: {:#}\nBacktrace: {}", e, e.backtrace()),
-                        )
-                    })?;
-            }
-
-            let class_name = class_name.to_string();
-            let object = object.clone();
-            let ty = FuncType::new(linker.engine(), [ValType::I32], [ValType::I32]);
-            linker
-                .func_new_async(
-                    &class_name,
-                    "register",
-                    ty,
-                    move |caller, params, results| {
-                        let object = object.clone();
-                        Box::new(async move {
-                            let mut io = PyroCallIo::from_caller(caller)?;
-                            let client_ptr = params[0].unwrap_i32();
-
-                            // Read input and get state — both are &self borrows.
-                            let client_view_ref = io.borrow_argument(client_ptr).await?;
-                            let client_view = PyroVec::clone_from_pyro(&client_view_ref).view();
-
-                            // Call user function — consumes both borrows on return.
-                            let output_view = object.register(client_view).await?;
-                            output_view.parse_as_error()?;
-
-                            // Write output back into wasm memory.
-                            let ptr = io.new_input(&output_view).await?;
-                            results[0] = Val::I32(ptr);
-                            Ok(())
-                        })
-                    },
-                )
-                .map_err(|e| {
-                    WasmError::LinkFunctionFailed(class_name, "register".to_string(), e.to_string())
-                })?;
+        for (ident, cap) in capabilities.iter() {
+            tracing::debug!(lib = %ident, "Linking capability");
+            cap.link(linker)?;
         }
         Ok(())
     }
@@ -487,7 +325,7 @@ pub struct PyroInstance {
     pub(crate) store: Store<PyroState>,
     pub(crate) instance: Instance,
     pub(crate) memory: Memory,
-    pub(crate) objects: HashMap<String, Box<dyn ForeignCapability>>,
+    pub(crate) objects: HashMap<CapabilityIdent, Box<dyn ForeignCapability>>,
     pub(crate) session_states: HashMap<u32, SessionState>,
 }
 
@@ -643,10 +481,10 @@ impl PyroInstance {
         let mut logs = HashMap::new();
         for object in self.objects.values() {
             let object_logs = object.take_logs();
-            logs.insert(
-                (object.lib_ident().to_string(), object.name().to_string()),
-                object_logs,
-            );
+            let lib_ident_str = object.lib_ident().to_string();
+            for (class_name, class_logs) in object_logs {
+                logs.insert((lib_ident_str.clone(), class_name), class_logs);
+            }
         }
 
         logs

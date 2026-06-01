@@ -1,22 +1,28 @@
 use async_trait::async_trait;
 use pyro_artifacts::cargo::CapabilityIdent;
+use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use wasmtime::{FuncType, Linker, Val, ValType};
 
-use crate::PyroError;
-use crate::ffi::host::ForeignCapability;
-use crate::format::PyroView;
+use crate::format::header::PyroData;
+use crate::format::{Bridgeable, PyroVec};
+use crate::module::PyroState;
+use crate::module::WasmError;
+use crate::module::call::PyroCallIo;
+use crate::module::capability::ForeignCapability;
 use crate::transport::socket::capability::client::PyroClient;
+use crate::{CapturedError, PyroError};
 
-pub struct RemoteLibrary {
+pub struct RemoteCapability {
     lib_ident: CapabilityIdent,
     interface: pyro_spec::InterfaceSpec<'static>,
     client: Arc<Mutex<PyroClient>>,
 }
 
-impl RemoteLibrary {
+impl RemoteCapability {
     /// Connect to a TCP address (e.g. `"127.0.0.1:9000"`).
     pub async fn connect_tcp(
         lib_ident: CapabilityIdent,
@@ -46,123 +52,144 @@ impl RemoteLibrary {
             client: Arc::new(Mutex::new(client)),
         })
     }
-
-    /// Get an iterator over all classes in the remote library.
-    pub fn classes(&self) -> impl Iterator<Item = RemoteClass> {
-        let lib_ident = self.lib_ident.clone();
-        let client = self.client.clone();
-        self.interface
-            .classes
-            .clone()
-            .into_iter()
-            .map(move |class_spec| {
-                let methods = class_spec
-                    .methods
-                    .iter()
-                    .map(|m| m.name.to_string())
-                    .collect();
-                RemoteClass {
-                    class_name: class_spec.name.to_string(),
-                    lib_ident: lib_ident.clone(),
-                    methods,
-                    client: client.clone(),
-                }
-            })
-    }
-
-    /// Retrieve a class from the remote library by name.
-    pub async fn get_class(&self, class_name: &str) -> Result<RemoteClass, PyroError> {
-        tracing::debug!(lib = ?self.lib_ident, class = %class_name, "Retrieving remote class");
-        let class_spec = self
-            .interface
-            .classes
-            .iter()
-            .find(|c| c.name == class_name)
-            .ok_or_else(|| {
-                PyroError::NotFound(format!(
-                    "Class '{}' not found in remote interface spec",
-                    class_name
-                ))
-            })?;
-
-        let methods = class_spec
-            .methods
-            .iter()
-            .map(|m| m.name.to_string())
-            .collect();
-
-        Ok(RemoteClass {
-            class_name: class_name.to_string(),
-            lib_ident: self.lib_ident.clone(),
-            methods,
-            client: self.client.clone(),
-        })
-    }
-}
-
-pub struct RemoteClass {
-    class_name: String,
-    lib_ident: CapabilityIdent,
-    methods: Vec<String>,
-    client: Arc<Mutex<PyroClient>>,
 }
 
 #[async_trait]
-impl ForeignCapability for RemoteClass {
+impl ForeignCapability for RemoteCapability {
     fn name(&self) -> &str {
-        &self.class_name
+        self.lib_ident.package.as_str()
     }
 
     fn lib_ident(&self) -> &CapabilityIdent {
         &self.lib_ident
     }
 
-    fn method_names(&self) -> Vec<String> {
-        self.methods
-            .iter()
-            .map(|m| format!("p__{}__{}__wasm", self.class_name, m))
-            .collect()
+    fn take_logs(&self) -> HashMap<String, Vec<String>> {
+        HashMap::new()
     }
 
-    async fn call(
-        &self,
-        method_name: &str,
-        client_data: PyroView,
-        input_data: PyroView,
-    ) -> Result<PyroView, PyroError> {
-        let mut client = self.client.lock().await;
+    fn link(&self, linker: &mut Linker<PyroState>) -> Result<(), WasmError> {
+        for class_spec in &self.interface.classes {
+            let class_name = class_spec.name.to_string();
 
-        let prefix = format!("p__{}__", self.class_name);
-        let suffix = "__wasm";
-        let simple_name = if method_name.starts_with(&prefix) && method_name.ends_with(suffix) {
-            &method_name[prefix.len()..(method_name.len() - suffix.len())]
-        } else {
-            method_name
-        };
+            // Link all methods
+            for method_spec in &class_spec.methods {
+                let method_name = method_spec.name.to_string();
+                let client = self.client.clone();
 
-        client
-            .call(&self.class_name, simple_name, client_data, input_data)
-            .await
-    }
+                let class_name_for_closure = class_name.clone();
+                let method_name_for_closure = method_name.clone();
 
-    async fn register(&self, client_state: PyroView) -> Result<PyroView, PyroError> {
-        let mut client = self.client.lock().await;
-        let id = client.register_client_id(client_state).await?;
+                let class_name_for_err = class_name.clone();
+                let method_name_for_err = method_name.clone();
 
-        use crate::format::Bridgeable;
-        id.ship().map(|v| v.view())
-    }
+                let ty = FuncType::new(
+                    linker.engine(),
+                    [ValType::I32, ValType::I32],
+                    [ValType::I32],
+                );
 
-    fn take_logs(&self) -> Vec<String> {
-        Vec::new()
+                tracing::debug!(class_name, method_name, "Linking remote method");
+                let wasm_method_name = format!("p__{}__{}__wasm", class_name, method_name);
+                linker
+                    .func_new_async(
+                        &class_name,
+                        &wasm_method_name,
+                        ty,
+                        move |caller, params, results| {
+                            let client_ptr = params[0].unwrap_i32();
+                            let input_ptr = params[1].unwrap_i32();
+
+                            let client = client.clone();
+                            let class_name = class_name_for_closure.clone();
+                            let method_name = method_name_for_closure.clone();
+
+                            Box::new(async move {
+                                let mut io = PyroCallIo::from_caller(caller)?;
+                                let client_view_ref = io.borrow_argument(client_ptr).await?;
+                                let input_view_ref = io.borrow_argument(input_ptr).await?;
+
+                                // Clone references into owned PyroViews to pass to remote call
+                                let client_view = PyroVec::clone_from_pyro(&client_view_ref).view();
+                                let input_view = PyroVec::clone_from_pyro(&input_view_ref).view();
+
+                                let output_view = client
+                                    .lock()
+                                    .await
+                                    .call(&class_name, &method_name, client_view, input_view)
+                                    .await
+                                    .map_err(|e| {
+                                        PyroError::transport(CapturedError::new(e.to_string()))
+                                    })?;
+                                output_view.parse_as_error()?;
+
+                                let ptr = io.new_input(&output_view).await?;
+
+                                results[0] = Val::I32(ptr);
+
+                                Ok(())
+                            })
+                        },
+                    )
+                    .map_err(|e| {
+                        WasmError::LinkFunctionFailed(
+                            class_name_for_err,
+                            method_name_for_err,
+                            format!("Error: {:#}", e),
+                        )
+                    })?;
+            }
+
+            // Link the register method
+            let class_name = class_name.clone();
+            let client = self.client.clone();
+            let ty = FuncType::new(linker.engine(), [ValType::I32], [ValType::I32]);
+            linker
+                .func_new_async(
+                    &class_name,
+                    "register",
+                    ty,
+                    move |caller, params, results| {
+                        let client = client.clone();
+                        Box::new(async move {
+                            let mut io = PyroCallIo::from_caller(caller)?;
+                            let client_ptr = params[0].unwrap_i32();
+
+                            // Read input and get state
+                            let client_view_ref = io.borrow_argument(client_ptr).await?;
+                            let client_view = PyroVec::clone_from_pyro(&client_view_ref).view();
+
+                            // Call register on the remote client
+                            let client_id = client
+                                .lock()
+                                .await
+                                .register_client_id(client_view)
+                                .await
+                                .map_err(|e| {
+                                    PyroError::transport(CapturedError::new(e.to_string()))
+                                })?;
+                            let output_view = client_id.ship()?.view(); // Serialize client_id to PyroVec
+                            output_view.parse_as_error()?;
+
+                            // Write output back into wasm memory.
+                            let ptr = io.new_input(&output_view).await?;
+                            results[0] = Val::I32(ptr);
+                            Ok(())
+                        })
+                    },
+                )
+                .map_err(|e| {
+                    WasmError::LinkFunctionFailed(class_name, "register".to_string(), e.to_string())
+                })?;
+        }
+        Ok(())
     }
 
     fn clone_box(&self) -> Box<dyn ForeignCapability> {
         Box::new(Self {
-            class_name: self.class_name.clone(),
             lib_ident: self.lib_ident.clone(),
-            methods: self.methods.clone(),
             client: self.client.clone(),
+            interface: self.interface.clone(),
         })
     }
 }

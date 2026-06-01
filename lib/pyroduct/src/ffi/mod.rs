@@ -14,7 +14,7 @@ impl UserHeaderValues for serde_json::Value {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ffi::host::ForeignClass;
+    use crate::ffi::host::CapabilityClass;
     use crate::format::header::{PyroData, PyroHeader};
     use crate::format::vec_buf::PyroRefPtr;
     use crate::format::{PyroVec, PyroViewPtr};
@@ -97,7 +97,7 @@ mod tests {
 
         /// The raw pointer to the TestContext.
         /// For PyroObject::new() tests, pass this directly.
-        /// For ForeignClass tests, this is auto-injected via TLS when init is called.
+        /// For CapabilityClass tests, this is auto-injected via TLS when init is called.
         pub state_ptr: *mut c_void,
 
         // The function pointers to use in ClassExport
@@ -197,7 +197,7 @@ mod tests {
 
         let class = Arc::new(
             unsafe {
-                ForeignClass::from_export_inter(
+                CapabilityClass::from_export_inter(
                     pyro_artifacts::cargo::CapabilityIdent {
                         author: "test".to_string(),
                         package: "test".to_string(),
@@ -244,7 +244,7 @@ mod tests {
 
         let class = Arc::new(
             unsafe {
-                ForeignClass::from_export_inter(
+                CapabilityClass::from_export_inter(
                     pyro_artifacts::cargo::CapabilityIdent {
                         author: "test".to_string(),
                         package: "test".to_string(),
@@ -288,7 +288,7 @@ mod tests {
 
         let class = Arc::new(
             unsafe {
-                ForeignClass::from_export_inter(
+                CapabilityClass::from_export_inter(
                     pyro_artifacts::cargo::CapabilityIdent {
                         author: "test".to_string(),
                         package: "test".to_string(),

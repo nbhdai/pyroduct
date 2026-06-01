@@ -1,7 +1,8 @@
+use axum::async_trait;
 use dashmap::DashMap;
 use indexmap::IndexMap;
+use pyro_artifacts::artifacts::CapabilityConfig;
 use pyro_artifacts::cargo::CapabilityIdent;
-use std::ops::Deref;
 use std::path::Path;
 use std::sync::Weak;
 use std::sync::{
@@ -10,21 +11,22 @@ use std::sync::{
 };
 use std::{collections::HashMap, sync::Mutex};
 use tokio::sync::mpsc;
+use wasmtime::{FuncType, Linker, Val, ValType};
 
 use libloading::{Library, Symbol};
 use object::{Object, ObjectSymbol, SymbolKind};
 use thiserror::Error;
 
-use crate::ffi::{
-    CapabilityRegisterFn, ClassExport,
-    host::{ForeignClass, ForeignObject},
-};
+use crate::ffi::host::{CapabilityClass, CapabilityObject};
+use crate::ffi::{CapabilityRegisterFn, ClassExport};
 use crate::format::header::PyroData;
 use crate::format::{
-    PyroVec, PyroView,
+    PyroVec,
     format::{PyroFormat, Writer},
     json::Json,
 };
+use crate::module::call::PyroCallIo;
+use crate::module::{PyroState, WasmError};
 use pyro_spec::InterfaceSpec;
 
 // =============================================================================
@@ -168,6 +170,7 @@ pub struct ScannedSymbol {
 
 pub fn scan_pyro_symbols(path: &Path) -> Result<Vec<ScannedSymbol>, CapabilityError> {
     let path_str = path.display().to_string();
+    tracing::debug!(path = %path_str, "Scanning library for pyro symbols");
 
     let bin_data = std::fs::read(path).map_err(|e| CapabilityError::FileRead {
         path: path_str.clone(),
@@ -200,6 +203,13 @@ pub fn scan_pyro_symbols(path: &Path) -> Result<Vec<ScannedSymbol>, CapabilityEr
         }
     }
 
+    tracing::debug!(
+        path = %path_str,
+        count = symbols.len(),
+        "Found {} pyro symbols",
+        symbols.len()
+    );
+
     Ok(symbols)
 }
 
@@ -213,12 +223,13 @@ static LOADED_LIBRARIES: LazyLock<Mutex<HashMap<CapabilityIdent, Weak<Capability
 pub struct CapabilityLibrary {
     pub id: i64,
     pub ident: CapabilityIdent,
-    pub capabilities: IndexMap<String, Arc<ForeignClass>>,
+    pub capabilities: IndexMap<String, Arc<CapabilityClass>>,
     pub interface: InterfaceSpec<'static>,
 }
 
 impl CapabilityLibrary {
     pub fn load(ident: CapabilityIdent, path: &Path) -> Result<Arc<Self>, CapabilityError> {
+        tracing::info!(ident = ?ident, path = %path.display(), "Loading capability library");
         let mut libraries = LOADED_LIBRARIES.lock().unwrap_or_else(|e| {
             tracing::error!(
                 "LOADED_LIBRARIES mutex was poisoned (likely a panic in another thread)"
@@ -226,21 +237,25 @@ impl CapabilityLibrary {
             e.into_inner()
         });
         if let Some(lib) = libraries.get(&ident).and_then(|w| w.upgrade()) {
+            tracing::debug!(ident = ?ident, "Capability library found in cache");
             Ok(lib)
         } else {
             let lib = Arc::new(Self::load_inter(&ident, path)?);
             libraries.insert(ident, Arc::downgrade(&lib));
+            tracing::info!(ident = ?lib.ident, id = lib.id, "Successfully loaded and cached capability library");
             Ok(lib)
         }
     }
 
     fn load_inter(ident: &CapabilityIdent, path: &Path) -> Result<Self, CapabilityError> {
         let path_str = path.display().to_string();
+        tracing::debug!(ident = ?ident, path = %path_str, "Loading library from disk");
 
         // 1. Scan
         let pyro_symbols = scan_pyro_symbols(path)?;
 
         if pyro_symbols.is_empty() {
+            tracing::warn!(path = %path_str, "No capabilities found in scanned library");
             return Err(CapabilityError::NoCapabilitiesFound { path: path_str });
         }
 
@@ -249,6 +264,7 @@ impl CapabilityLibrary {
             .parent()
             .unwrap_or(Path::new("."))
             .join("interface.json");
+        tracing::debug!(interface_path = %interface_path.display(), "Reading interface specification");
         let interface_data =
             std::fs::read(&interface_path).map_err(|e| CapabilityError::FileRead {
                 path: interface_path.display().to_string(),
@@ -261,6 +277,7 @@ impl CapabilityLibrary {
             })?;
 
         // 3. Load Library
+        tracing::debug!(path = %path_str, "Loading native shared library");
         let library =
             Arc::new(
                 unsafe { Library::new(path) }.map_err(|e| CapabilityError::LibraryOpen {
@@ -269,6 +286,7 @@ impl CapabilityLibrary {
                 })?,
             );
         let id = NEXT_LIB_ID.fetch_add(1, Ordering::SeqCst);
+        tracing::debug!(path = %path_str, id, "Assigned library ID");
 
         // 4. Register
         let mut capabilities = IndexMap::with_capacity(pyro_symbols.len());
@@ -291,7 +309,7 @@ impl CapabilityLibrary {
             let export: ClassExport = unsafe { register_fn(id, log_callback) };
 
             let class =
-                unsafe { ForeignClass::from_export(ident.clone(), library.clone(), export) }
+                unsafe { CapabilityClass::from_export(ident.clone(), library.clone(), export) }
                     .map_err(|e| CapabilityError::Registration {
                         path: path_str.clone(),
                         symbol: sym.name.clone(),
@@ -302,6 +320,7 @@ impl CapabilityLibrary {
         }
 
         if capabilities.is_empty() {
+            tracing::warn!(path = %path_str, "Zero capability classes successfully registered");
             return Err(CapabilityError::NoCapabilitiesFound { path: path_str });
         }
 
@@ -317,11 +336,13 @@ impl CapabilityLibrary {
     /// and instantiates the requested capabilities.
     pub async fn instantiate_from_config(
         &self,
-        config: &HashMap<String, Option<serde_json::Value>>,
+        config: &CapabilityConfig,
     ) -> Result<Capability, CapabilityError> {
-        let mut objects = HashMap::new();
-        for class_name in config.keys() {
+        tracing::debug!(ident = ?self.ident, library_id = self.id, "Instantiating capabilities from config");
+        let mut objects = Vec::new();
+        for class_name in config.classes.keys() {
             self.capabilities.get(class_name).ok_or_else(|| {
+                tracing::warn!(class_name = %class_name, "Requested configuration for unknown capability");
                 CapabilityError::CapabilityNotFound {
                     name: class_name.clone(),
                 }
@@ -330,110 +351,220 @@ impl CapabilityLibrary {
 
         for (cap_name, cap_class) in &self.capabilities {
             // 2. Serialize the config value to a PyroVec using JSON format
-            let vec = if let Some(Some(config_val)) = config.get(cap_name) {
+            let vec = if let Some(Some(config_val)) = config.classes.get(cap_name) {
                 let writer = Json::<serde_json::Value>::new_writer(PyroVec::with_capacity(300));
 
-                writer
-                    .write(config_val)
-                    .map_err(|e| CapabilityError::ConfigSerialization {
+                writer.write(config_val).map_err(|e| {
+                    tracing::error!(
+                        class = %cap_name,
+                        error = %e,
+                        "Failed to serialize configuration"
+                    );
+                    CapabilityError::ConfigSerialization {
                         class: cap_name.to_string(),
                         reason: e.to_string(),
-                    })?
+                    }
+                })?
             } else {
                 PyroVec::ok()
             };
             let object_id = NEXT_OBJECT_ID.fetch_add(1, Ordering::SeqCst);
             let log_channel = create_log(self.id, object_id, 100);
+            tracing::debug!(
+                library_id = self.id,
+                object_id,
+                class = %cap_name,
+                "Instantiating capability class"
+            );
             // 3. Call create_instance on the ForeignClass
             let handle = cap_class
                 .create_instance(vec.py_ref(), object_id, log_channel)
                 .await
-                .map_err(|e| CapabilityError::Instantiation {
-                    class: cap_name.clone(),
-                    reason: e.to_string(),
+                .map_err(|e| {
+                    tracing::error!(
+                        class = %cap_name,
+                        object_id,
+                        error = %e,
+                        "Failed to instantiate capability"
+                    );
+                    CapabilityError::Instantiation {
+                        class: cap_name.clone(),
+                        reason: e.to_string(),
+                    }
                 })?;
 
-            objects.insert(cap_name.clone(), handle);
+            objects.push((cap_name.clone(), handle));
         }
+
+        tracing::info!(
+            ident = ?self.ident,
+            library_id = self.id,
+            count = objects.len(),
+            "Successfully instantiated all capabilities from config"
+        );
 
         Ok(Capability {
             ident: self.ident.clone(),
             objects,
         })
     }
-
-    /// Iterates through the provided configuration map, serializes the config data,
-    /// and instantiates the requested capabilities.
-    pub async fn instantiate_class(
-        &self,
-        class: &str,
-        config: Option<&serde_json::Value>,
-    ) -> Result<ForeignObject, CapabilityError> {
-        let cap_class = self.capabilities.get_index_of(class).ok_or_else(|| {
-            CapabilityError::CapabilityNotFound {
-                name: class.to_string(),
-            }
-        })?;
-
-        let vec = if let Some(config_val) = config {
-            let writer = Json::<serde_json::Value>::new_writer(PyroVec::with_capacity(300));
-
-            writer
-                .write(config_val)
-                .map_err(|e| CapabilityError::ConfigSerialization {
-                    class: class.to_string(),
-                    reason: e.to_string(),
-                })?
-        } else {
-            PyroVec::ok()
-        };
-
-        self.instantiate_class_raw(cap_class as u8, vec.view())
-            .await
-    }
-
-    pub async fn instantiate_class_raw(
-        &self,
-        class: u8,
-        config: PyroView,
-    ) -> Result<ForeignObject, CapabilityError> {
-        let (_, cap_class) = self.capabilities.get_index(class as usize).ok_or_else(|| {
-            CapabilityError::CapabilityNotFound {
-                name: class.to_string(),
-            }
-        })?;
-
-        let object_id = NEXT_OBJECT_ID.fetch_add(1, Ordering::SeqCst);
-        let log_channel = create_log(self.id, object_id, 100);
-
-        let handle = cap_class
-            .create_instance(config.py_ref(), object_id, log_channel)
-            .await
-            .map_err(|e| CapabilityError::Instantiation {
-                class: class.to_string(),
-                reason: e.to_string(),
-            })?;
-
-        Ok(handle)
-    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Capability {
-    ident: CapabilityIdent,
-    objects: HashMap<String, ForeignObject>,
+    pub ident: CapabilityIdent,
+    pub objects: Vec<(String, CapabilityObject)>,
 }
 
 impl Capability {
     pub fn ident(&self) -> &CapabilityIdent {
         &self.ident
     }
+
+    pub fn get_index(&self, index: usize) -> Option<&CapabilityObject> {
+        self.objects.get(index).map(|(_, obj)| obj)
+    }
+
+    pub fn get(&self, name: &str) -> Option<&CapabilityObject> {
+        self.objects
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, obj)| obj)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &CapabilityObject> {
+        self.objects.iter().map(|(_, obj)| obj)
+    }
+
+    pub fn iter_with_name(&self) -> impl Iterator<Item = (&str, &CapabilityObject)> {
+        self.objects.iter().map(|(n, obj)| (n.as_str(), obj))
+    }
 }
 
-impl Deref for Capability {
-    type Target = HashMap<String, ForeignObject>;
+#[async_trait]
+pub trait ForeignCapability: Send + Sync + 'static {
+    fn name(&self) -> &str;
+    fn lib_ident(&self) -> &CapabilityIdent;
+    fn link(&self, linker: &mut Linker<PyroState>) -> Result<(), WasmError>;
+    fn take_logs(&self) -> HashMap<String, Vec<String>>;
+    fn clone_box(&self) -> Box<dyn ForeignCapability>;
+}
 
-    fn deref(&self) -> &Self::Target {
-        &self.objects
+impl ForeignCapability for Capability {
+    fn name(&self) -> &str {
+        self.ident.package.as_str()
+    }
+
+    fn lib_ident(&self) -> &CapabilityIdent {
+        &self.ident
+    }
+
+    fn link(&self, linker: &mut Linker<PyroState>) -> Result<(), WasmError> {
+        for (class_name, object) in self.objects.iter() {
+            // Capture lib for the closures (Arc clone is cheap)
+
+            for method_name in object.method_names() {
+                let method_name = method_name.to_string();
+                let class_name = class_name.to_string();
+                let fn_name = method_name.clone();
+                let object = object.clone();
+
+                let ty = FuncType::new(
+                    linker.engine(),
+                    [ValType::I32, ValType::I32],
+                    [ValType::I32],
+                );
+
+                tracing::debug!(class_name, method_name, "Linking");
+                linker
+                    .func_new_async(
+                        &class_name,
+                        &method_name,
+                        ty,
+                        move |caller, params, results| {
+                            let client_ptr = params[0].unwrap_i32();
+                            let input_ptr = params[1].unwrap_i32();
+
+                            let object = object.clone();
+                            let fn_name = fn_name.clone();
+                            Box::new(async move {
+                                tracing::debug!(
+                                    class_name = object.name(),
+                                    fn_name,
+                                    "Calling function"
+                                );
+
+                                let mut io = PyroCallIo::from_caller(caller)?;
+                                let client_view_ref = io.borrow_argument(client_ptr).await?;
+                                let input_view_ref = io.borrow_argument(input_ptr).await?;
+
+                                let output_view = object
+                                    .call(&fn_name, client_view_ref, input_view_ref)
+                                    .await?;
+                                output_view.parse_as_error()?;
+
+                                let ptr = io.new_input(&output_view).await?;
+
+                                results[0] = Val::I32(ptr);
+
+                                Ok(())
+                            })
+                        },
+                    )
+                    .map_err(|e| {
+                        WasmError::LinkFunctionFailed(
+                            class_name,
+                            method_name,
+                            format!("Error: {:#}\nBacktrace: {}", e, e.backtrace()),
+                        )
+                    })?;
+            }
+
+            let class_name = class_name.to_string();
+            let object = object.clone();
+            let ty = FuncType::new(linker.engine(), [ValType::I32], [ValType::I32]);
+            linker
+                .func_new_async(
+                    &class_name,
+                    "register",
+                    ty,
+                    move |caller, params, results| {
+                        let object = object.clone();
+                        Box::new(async move {
+                            let mut io = PyroCallIo::from_caller(caller)?;
+                            let client_ptr = params[0].unwrap_i32();
+
+                            // Read input and get state — both are &self borrows.
+                            let client_view_ref = io.borrow_argument(client_ptr).await?;
+                            let client_view = PyroVec::clone_from_pyro(&client_view_ref).view();
+
+                            // Call user function — consumes both borrows on return.
+                            let output_view = object.register(client_view.py_ref()).await?;
+                            output_view.parse_as_error()?;
+
+                            // Write output back into wasm memory.
+                            let ptr = io.new_input(&output_view).await?;
+                            results[0] = Val::I32(ptr);
+                            Ok(())
+                        })
+                    },
+                )
+                .map_err(|e| {
+                    WasmError::LinkFunctionFailed(class_name, "register".to_string(), e.to_string())
+                })?;
+        }
+        Ok(())
+    }
+
+    fn take_logs(&self) -> HashMap<String, Vec<String>> {
+        let mut logs = HashMap::new();
+        for (name, obj) in &self.objects {
+            logs.insert(name.clone(), obj.take_logs());
+        }
+        logs
+    }
+
+    fn clone_box(&self) -> Box<dyn ForeignCapability> {
+        Box::new(self.clone())
     }
 }

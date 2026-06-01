@@ -69,16 +69,6 @@ async fn test_socket_capability_remote() {
         .await
         .unwrap();
 
-    let mut router = PyroRouter::load(
-        pyro_artifacts::cargo::CapabilityIdent {
-            author: "nbhdai".to_string(),
-            package: "config".to_string(),
-            version: "0.1.0".to_string(),
-        },
-        &lib_path,
-    )
-    .expect("Failed to load capability library");
-
     let cap_config = CapabilityConfig {
         classes: HashMap::from([(
             "transform".to_string(),
@@ -88,10 +78,18 @@ async fn test_socket_capability_remote() {
             })),
         )]),
     };
-    router
-        .configure(&cap_config)
-        .await
-        .expect("Failed to configure capability");
+
+    let router = PyroRouter::load(
+        pyro_artifacts::cargo::CapabilityIdent {
+            author: "nbhdai".to_string(),
+            package: "config".to_string(),
+            version: "0.1.0".to_string(),
+        },
+        &cap_config,
+        &lib_path,
+    )
+    .await
+    .expect("Failed to load capability library");
 
     let server = PyroServer::new(router);
     let listener = PyroListener::bind_tcp("127.0.0.1:0")

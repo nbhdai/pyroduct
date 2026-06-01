@@ -263,12 +263,8 @@ pub async fn serve_capability(serve_config: &ServeConfig) -> Result<()> {
         .await
         .context("Failed to find capability binary path in CacheManager")?;
 
-    let mut router =
-        PyroRouter::load(cap.clone(), cap_path).context("Failed to load capability library")?;
-
-    // Pre-configure capability classes if config provided
-    if let Some(ref cap_config) = serve_config.cap_config {
-        let capability_config = if let Ok(parsed) = serde_json::from_value::<
+    let capability_config = if let Some(ref cap_config) = serve_config.cap_config {
+        if let Ok(parsed) = serde_json::from_value::<
             pyro_artifacts::artifacts::CapabilityConfig,
         >(cap_config.clone())
         {
@@ -284,13 +280,16 @@ pub async fn serve_capability(serve_config: &ServeConfig) -> Result<()> {
             anyhow::bail!(
                 "Capability configuration must be a JSON object mapping class names to their configurations"
             );
-        };
+        }
+    } else {
+        pyro_artifacts::artifacts::CapabilityConfig {
+            classes: std::collections::HashMap::new(),
+        }
+    };
 
-        router
-            .configure(&capability_config)
-            .await
-            .context("Failed to configure capability classes")?;
-    }
+    let router = PyroRouter::load(cap.clone(), &capability_config, cap_path)
+        .await
+        .context("Failed to load capability library")?;
 
     tracing::info!("Starting capability TCP/Unix socket server...");
     let server = PyroServer::new(router);

@@ -662,7 +662,9 @@ impl CacheManager {
             );
 
             for cap in &binary.spec.capabilities {
-                if binary
+                if let Some(addr) = remotes.get(cap) {
+                    remote.insert(cap.clone(), addr.clone());
+                } else if binary
                     .configurations
                     .iter()
                     .any(|c| c.package == cap.package)
@@ -671,11 +673,6 @@ impl CacheManager {
                         .capability_binary_path(&cap.author, &cap.package, &cap.version)
                         .await?;
                     paths.insert(cap.clone(), path);
-                } else if remotes.contains_key(&cap) {
-                    remote.insert(
-                        cap.clone(),
-                        remotes.get(&cap).unwrap().clone(),
-                    );
                 } else {
                     return Err(CacheError::NotFound(format!("Capability {} not found", cap.package)));
                 }

@@ -5,7 +5,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use async_trait::async_trait;
 use libloading::Library;
 use pyro_artifacts::cargo::CapabilityIdent;
 use tokio::sync::oneshot;
@@ -21,7 +20,7 @@ use crate::{
     module::capability::LogEntry,
 };
 
-pub struct ForeignClass {
+pub struct CapabilityClass {
     name: String,
     lib_ident: CapabilityIdent,
     _library: Option<Arc<Library>>,
@@ -30,9 +29,9 @@ pub struct ForeignClass {
     reset: ClassResetFn,
     register: ClientRegisterFn,
 }
-impl fmt::Debug for ForeignClass {
+impl fmt::Debug for CapabilityClass {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ForeignClass")
+        f.debug_struct("CapabilityClass")
             .field("name", &self.name)
             .field("library", &self._library)
             .field("methods", &self.methods.len())
@@ -67,7 +66,7 @@ impl ForeignMethod {
     }
 }
 
-impl ForeignClass {
+impl CapabilityClass {
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -129,7 +128,7 @@ impl ForeignClass {
         config: PyroRef<'_>,
         object_id: u64,
         mut log_channel: tokio::sync::mpsc::Receiver<LogEntry>,
-    ) -> Result<ForeignObject, PyroError> {
+    ) -> Result<CapabilityObject, PyroError> {
         let obj = match self.init {
             ClassInitFn::Sync(f) => unsafe { (f)(config.as_ptr(), object_id) }.process(),
             ClassInitFn::Async(f) => {
@@ -171,7 +170,7 @@ impl ForeignClass {
             }
         });
 
-        Ok(ForeignObject {
+        Ok(CapabilityObject {
             obj: Arc::new(obj),
             class: self.clone(),
             log_buffer,
@@ -187,25 +186,25 @@ impl ForeignClass {
 }
 
 #[derive(Clone)]
-pub struct ForeignObject {
-    class: Arc<ForeignClass>,
+pub struct CapabilityObject {
+    class: Arc<CapabilityClass>,
     obj: Arc<PyroObject>,
     pub log_buffer: Arc<Mutex<Vec<String>>>,
     // Wrapped in Option so we can take() it to send the signal,
-    // and Arc<Mutex> so ForeignObject remains Cloneable.
+    // and Arc<Mutex> so CapabilityObject remains Cloneable.
     _log_task: Arc<LogTaskHandle>,
 }
 
-impl fmt::Debug for ForeignObject {
+impl fmt::Debug for CapabilityObject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ForeignClass")
+        f.debug_struct("CapabilityClass")
             .field("class", &self.class)
             .field("obj", &self.obj.object_id)
             .finish()
     }
 }
 
-impl ForeignObject {
+impl CapabilityObject {
     pub fn name(&self) -> &str {
         &self.class.name
     }
@@ -322,64 +321,5 @@ impl Drop for LogTaskHandle {
         if let Some(tx) = self.kill_tx.take() {
             let _ = tx.send(());
         }
-    }
-}
-
-#[async_trait]
-pub trait ForeignCapability: Send + Sync + 'static {
-    fn name(&self) -> &str;
-    fn lib_ident(&self) -> &CapabilityIdent;
-    fn method_names(&self) -> Vec<String>;
-    async fn call(
-        &self,
-        method_name: &str,
-        client_data: PyroView,
-        input_data: PyroView,
-    ) -> Result<PyroView, PyroError>;
-    async fn register(&self, client_state: PyroView) -> Result<PyroView, PyroError>;
-    fn take_logs(&self) -> Vec<String>;
-    fn clone_box(&self) -> Box<dyn ForeignCapability>;
-}
-
-impl Clone for Box<dyn ForeignCapability> {
-    fn clone(&self) -> Self {
-        self.clone_box()
-    }
-}
-
-#[async_trait]
-impl ForeignCapability for ForeignObject {
-    fn name(&self) -> &str {
-        self.name()
-    }
-
-    fn lib_ident(&self) -> &CapabilityIdent {
-        self.lib_ident()
-    }
-
-    fn method_names(&self) -> Vec<String> {
-        self.method_names().map(|s| s.to_string()).collect()
-    }
-
-    async fn call(
-        &self,
-        method_name: &str,
-        client_data: PyroView,
-        input_data: PyroView,
-    ) -> Result<PyroView, PyroError> {
-        self.call(method_name, client_data.py_ref(), input_data.py_ref())
-            .await
-    }
-
-    async fn register(&self, client_state: PyroView) -> Result<PyroView, PyroError> {
-        self.register(client_state.py_ref()).await
-    }
-
-    fn take_logs(&self) -> Vec<String> {
-        self.take_logs()
-    }
-
-    fn clone_box(&self) -> Box<dyn ForeignCapability> {
-        Box::new(self.clone())
     }
 }
