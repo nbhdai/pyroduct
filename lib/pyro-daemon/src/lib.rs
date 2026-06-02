@@ -65,7 +65,7 @@ impl pyroduct::format::Bridgeable for DaemonResponse {
 pub struct PyroDaemon {
     pub working_dir: PathBuf,
     pub control_socket_path: PathBuf,
-    pub playbooks_manager: PlaybooksManager,
+    pub playbooks_manager: std::sync::Arc<PlaybooksManager>,
     pub capability_manager: CapabilityManager,
     pub data_manager: DaemonDataManager,
 }
@@ -85,7 +85,7 @@ impl PyroDaemon {
 
     pub fn new(working_dir: PathBuf) -> Self {
         let control_socket_path = working_dir.join("control");
-        let playbooks_manager = PlaybooksManager::new(working_dir.clone());
+        let playbooks_manager = std::sync::Arc::new(PlaybooksManager::new(working_dir.clone()));
         let capability_manager = CapabilityManager::new();
         let data_manager =
             DaemonDataManager::new(working_dir.join("data"), playbooks_manager.clone());

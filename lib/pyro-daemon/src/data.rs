@@ -29,11 +29,11 @@ pub enum DataResponse {
 #[derive(Clone)]
 pub struct DaemonDataManager {
     base_dir: PathBuf,
-    playbooks_manager: PlaybooksManager,
+    playbooks_manager: std::sync::Arc<PlaybooksManager>,
 }
 
 impl DaemonDataManager {
-    pub fn new(base_dir: PathBuf, playbooks_manager: PlaybooksManager) -> Self {
+    pub fn new(base_dir: PathBuf, playbooks_manager: std::sync::Arc<PlaybooksManager>) -> Self {
         Self {
             base_dir,
             playbooks_manager,

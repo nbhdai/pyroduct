@@ -104,7 +104,7 @@ impl PlaybooksManager {
         }
     }
 
-    pub async fn handle_request(&self, req: PlaybookRequest) -> PlaybookResponse {
+    pub async fn handle_request(self: &Arc<Self>, req: PlaybookRequest) -> PlaybookResponse {
         match req {
             PlaybookRequest::Start {
                 name,
@@ -221,7 +221,7 @@ impl PlaybooksManager {
     }
 
     pub async fn start_playbook(
-        &self,
+        self: &Arc<Self>,
         name: String,
         playbook_config_path: PathBuf,
         playbook_socket: Option<String>,
@@ -237,13 +237,6 @@ impl PlaybooksManager {
                 name
             );
         }
-
-        let playbook_socket = playbook_socket.unwrap_or_else(|| {
-            playbook_dir
-                .join("input.sock")
-                .to_string_lossy()
-                .to_string()
-        });
 
         let config_str = tokio::fs::read_to_string(&playbook_config_path)
             .await
@@ -301,15 +294,25 @@ impl PlaybooksManager {
             .context("Failed to serialize modified PipelineConfig to TOML")?;
         tokio::fs::write(&new_config_path, toml_string).await?;
 
-        // Store playbook socket path persistently
-        tokio::fs::write(playbook_dir.join("socket_path"), playbook_socket.as_bytes()).await?;
+        // Store playbook socket path persistently if provided
+        if let Some(ref socket) = playbook_socket {
+            tokio::fs::write(playbook_dir.join("socket_path"), socket.as_bytes()).await?;
+        }
 
         // Save state and config in SQLite database
         self.db
-            .save_playbook(&name, "running", &pipeline_config, Some(&playbook_socket))
+            .save_playbook(
+                &name,
+                "running",
+                &pipeline_config,
+                playbook_socket.as_deref(),
+            )
             .await?;
 
-        let worker = PlaybookWorker::start(name.clone(), pipeline_config, playbook_socket).await?;
+        let mut worker = PlaybookWorker::start(name.clone(), pipeline_config).await?;
+        if let Some(ref socket) = playbook_socket {
+            worker.listen_socket(socket).await?;
+        }
         let _ = self.register_callbacks_from_db(&name, &worker).await;
         let mut guard = self.workers.lock().await;
         guard.insert(name, worker);
@@ -327,7 +330,7 @@ impl PlaybooksManager {
         }
     }
 
-    pub async fn resume_playbook(&self, name: String) -> Result<()> {
+    pub async fn resume_playbook(self: &Arc<Self>, name: String) -> Result<()> {
         let mut guard = self.workers.lock().await;
         if guard.contains_key(&name) {
             anyhow::bail!("Playbook '{}' is already running", name);
@@ -339,16 +342,10 @@ impl PlaybooksManager {
             None => anyhow::bail!("Playbook '{}' does not exist in state store", name),
         };
 
-        let playbook_socket = socket_path.unwrap_or_else(|| {
-            self.working_dir
-                .join("playbooks")
-                .join(&name)
-                .join("input.sock")
-                .to_string_lossy()
-                .to_string()
-        });
-
-        let worker = PlaybookWorker::start(name.clone(), pipeline_config, playbook_socket).await?;
+        let mut worker = PlaybookWorker::start(name.clone(), pipeline_config).await?;
+        if let Some(ref socket) = socket_path {
+            worker.listen_socket(socket).await?;
+        }
         let _ = self.register_callbacks_from_db(&name, &worker).await;
         self.db.update_status(&name, "running").await?;
         guard.insert(name, worker);
@@ -392,7 +389,12 @@ impl PlaybooksManager {
             results.push(PlaybookStatus {
                 name: worker.name.clone(),
                 config_path,
-                socket_path: worker.socket_path.clone(),
+                socket_path: worker
+                    .socket_path
+                    .clone()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string(),
                 active_capabilities,
                 spec: worker.server.spec(),
             });
@@ -436,7 +438,7 @@ impl PlaybooksManager {
     }
 
     pub async fn add_playbook_callback(
-        &self,
+        self: &Arc<Self>,
         source: String,
         target_playbook: String,
     ) -> Result<uuid::Uuid> {
@@ -446,17 +448,16 @@ impl PlaybooksManager {
             .await?;
         let workers = self.workers.lock().await;
         if let Some(worker) = workers.get(&source) {
-            let target_socket = match workers.get(&target_playbook) {
-                Some(w) => w.socket_path.clone(),
-                None => match self.db.get_playbook(&target_playbook).await? {
-                    Some((_status, _config, Some(socket_path))) => socket_path,
-                    _ => anyhow::bail!(
-                        "Target playbook '{}' does not exist or has no socket path configured",
-                        target_playbook
-                    ),
-                },
-            };
-            let cb = Self::construct_socket_callback(&target_socket).await?;
+            let manager = self.clone();
+            let target = target_playbook.clone();
+            let cb = pyroduct::pipeline::Callback::function(move |row_index, row| {
+                let manager = manager.clone();
+                let target = target.clone();
+                let row_static = row.to_static();
+                Box::pin(async move {
+                    let _ = manager.call(&target, row_index, row_static).await;
+                })
+            });
             worker.add_callback(uuid, cb).await?;
         }
         Ok(uuid)
@@ -510,7 +511,7 @@ impl PlaybooksManager {
     }
 
     pub async fn register_callbacks_from_db(
-        &self,
+        self: &Arc<Self>,
         source: &str,
         worker: &PlaybookWorker,
     ) -> Result<()> {
@@ -527,22 +528,33 @@ impl PlaybooksManager {
                     }
                 }
                 "playbook" => {
-                    let workers = self.workers.lock().await;
-                    let target_socket = match workers.get(&target) {
-                        Some(w) => Some(w.socket_path.clone()),
-                        None => match self.db.get_playbook(&target).await {
-                            Ok(Some((_status, _config, Some(socket_path)))) => Some(socket_path),
-                            _ => None,
-                        },
-                    };
-                    if let Some(socket_path) = target_socket {
-                        if let Ok(cb) = Self::construct_socket_callback(&socket_path).await {
-                            let _ = worker.add_callback(uuid, cb).await;
-                        }
-                    }
+                    let manager = self.clone();
+                    let target_playbook = target.clone();
+                    let cb = pyroduct::pipeline::Callback::function(move |row_index, row| {
+                        let manager = manager.clone();
+                        let target = target_playbook.clone();
+                        let row_static = row.to_static();
+                        Box::pin(async move {
+                            let _ = manager.call(&target, row_index, row_static).await;
+                        })
+                    });
+                    let _ = worker.add_callback(uuid, cb).await;
                 }
                 _ => {}
             }
+        }
+        Ok(())
+    }
+
+    pub async fn call(
+        &self,
+        playbook: &str,
+        _row_index: usize,
+        row: pyroduct::PyroRow<'static>,
+    ) -> Result<()> {
+        let workers = self.workers.lock().await;
+        if let Some(worker) = workers.get(playbook) {
+            let (_session_id, _res) = worker.call(row).await?;
         }
         Ok(())
     }
@@ -552,12 +564,12 @@ impl PlaybooksManager {
         name: &str,
         payload: serde_json::Value,
     ) -> Result<serde_json::Value> {
-        let (socket_path, spec) = {
+        let (worker, spec) = {
             let workers = self.workers.lock().await;
             let worker = workers
                 .get(name)
                 .ok_or_else(|| anyhow::anyhow!("Playbook '{}' is not running", name))?;
-            (worker.socket_path.clone(), worker.server.spec())
+            (worker.server.clone(), worker.server.spec())
         };
 
         let input_row: PyroRow<'static> = serde_json::from_value(payload)
@@ -567,20 +579,13 @@ impl PlaybooksManager {
             .project_repair(spec.func.input.fields())
             .context("Failed to repair input JSON according to module spec")?;
 
-        let mut client = if let Ok(addr) = socket_path.parse::<std::net::SocketAddr>() {
-            pyroduct::transport::socket::playbook::PlaybookClient::connect_tcp(addr).await
-        } else {
-            pyroduct::transport::socket::playbook::PlaybookClient::connect_unix(socket_path).await
-        }
-        .context("Failed to connect to playbook socket")?;
-
-        let res = client
-            .call(&repaired_row)
+        let (_session_id, res) = worker
+            .call(repaired_row)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to call playbook: {:?}", e))?;
 
         let result_val =
-            serde_json::to_value(&res.row).context("Failed to serialize returned row to JSON")?;
+            serde_json::to_value(&res).context("Failed to serialize returned row to JSON")?;
         Ok(result_val)
     }
 }

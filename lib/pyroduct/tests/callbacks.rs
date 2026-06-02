@@ -26,7 +26,7 @@ pub fn call(input: String) -> Result<String> {
 
 static CALLBACK_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-fn my_callback(row_index: usize, row: &PyroRow<'_>) {
+async fn my_callback(row_index: usize, row: &PyroRow<'_>) {
     assert_eq!(row_index, 0);
     assert_eq!(row.get_str("input").unwrap(), "hello");
     CALLBACK_COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -34,7 +34,7 @@ fn my_callback(row_index: usize, row: &PyroRow<'_>) {
 
 static ENUM_CALLBACK_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-fn my_enum_callback(row_index: usize, row: &PyroRow<'_>) {
+async fn my_enum_callback(row_index: usize, row: &PyroRow<'_>) {
     assert_eq!(row_index, 0);
     assert_eq!(row.get_str("input").unwrap(), "hello");
     ENUM_CALLBACK_COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -82,10 +82,26 @@ async fn test_pipeline_success_callbacks() {
     let mut pipeline = factory.build().await.unwrap();
 
     // Register our function pointer callback wrapped via Callback::function
-    pipeline.callbacks.push((uuid::Uuid::new_v4(), pyroduct::pipeline::Callback::function(my_callback)));
+    pipeline.callbacks.push((
+        uuid::Uuid::new_v4(),
+        pyroduct::pipeline::Callback::function(|idx, row| {
+            let row_static = row.to_static();
+            Box::pin(async move {
+                my_callback(idx, &row_static).await;
+            })
+        }),
+    ));
 
     // Register our enum callback
-    pipeline.callbacks.push((uuid::Uuid::new_v4(), pyroduct::pipeline::Callback::function(my_enum_callback)));
+    pipeline.callbacks.push((
+        uuid::Uuid::new_v4(),
+        pyroduct::pipeline::Callback::function(|idx, row| {
+            let row_static = row.to_static();
+            Box::pin(async move {
+                my_enum_callback(idx, &row_static).await;
+            })
+        }),
+    ));
 
     // Also register a socket and HTTP callback to verify the connection and HTTP constructors
     if let Ok(cb) = pyroduct::pipeline::Callback::connect_socket_tcp("127.0.0.1:9876").await {

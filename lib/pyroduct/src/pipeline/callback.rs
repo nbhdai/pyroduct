@@ -8,7 +8,18 @@ use tracing::{debug, error};
 pub enum Callback {
     #[cfg(all(feature = "host", feature = "transport"))]
     Socket(PlaybookClient),
-    Function(fn(usize, &PyroRow<'_>)),
+    Function(
+        std::sync::Arc<
+            dyn Fn(
+                    usize,
+                    &PyroRow<'_>,
+                ) -> std::pin::Pin<
+                    std::boxed::Box<dyn std::future::Future<Output = ()> + Send + 'static>,
+                > + Send
+                + Sync
+                + 'static,
+        >,
+    ),
     #[cfg(all(feature = "host", feature = "transport"))]
     Http {
         client: reqwest::Client,
@@ -21,10 +32,7 @@ impl std::fmt::Debug for Callback {
         match self {
             #[cfg(all(feature = "host", feature = "transport"))]
             Callback::Socket(_) => f.debug_tuple("Socket").finish(),
-            Callback::Function(func) => f
-                .debug_tuple("Function")
-                .field(&(func as *const _))
-                .finish(),
+            Callback::Function(_) => f.debug_tuple("Function").finish(),
             #[cfg(all(feature = "host", feature = "transport"))]
             Callback::Http { url, .. } => f.debug_struct("Http").field("url", url).finish(),
         }
@@ -33,8 +41,17 @@ impl std::fmt::Debug for Callback {
 
 impl Callback {
     /// Create a function callback.
-    pub fn function(f: fn(usize, &PyroRow<'_>)) -> Self {
-        Callback::Function(f)
+    pub fn function(
+        f: impl Fn(
+                usize,
+                &PyroRow<'_>,
+            ) -> std::pin::Pin<
+                std::boxed::Box<dyn std::future::Future<Output = ()> + Send + 'static>,
+            > + Send
+            + Sync
+            + 'static,
+    ) -> Self {
+        Callback::Function(std::sync::Arc::new(f))
     }
 
     /// Create a socket callback with an existing PlaybookClient.
@@ -82,7 +99,7 @@ impl Callback {
     pub async fn execute(&mut self, row_index: usize, input: &PyroRow<'_>) {
         match self {
             Callback::Function(f) => {
-                f(row_index, input);
+                f(row_index, input).await;
             }
             #[cfg(all(feature = "host", feature = "transport"))]
             Callback::Socket(client) => {

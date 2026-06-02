@@ -26,7 +26,7 @@ fn counter(
 
 static CALLBACK_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-fn my_session_callback(session_id: usize, row: &PyroRow<'_>) {
+async fn my_session_callback(session_id: usize, row: &PyroRow<'_>) {
     assert_eq!(session_id, 42);
     // In SessionPipeline, rolled_up_row has a "session" field which is a List
     assert!(row.get("session").is_some());
@@ -35,7 +35,7 @@ fn my_session_callback(session_id: usize, row: &PyroRow<'_>) {
 
 static DIFF_CALLBACK_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-fn my_session_diff_callback(session_id: usize, row: &PyroRow<'_>) {
+async fn my_session_diff_callback(session_id: usize, row: &PyroRow<'_>) {
     assert_eq!(session_id, 42);
     // In SessionDiffPipeline, rolled_up_row has "inputs" and "outputs" fields
     assert!(row.get("inputs").is_some());
@@ -87,7 +87,12 @@ async fn test_session_callbacks() {
         let mut pipeline = pipeline_factory.build_session().await.unwrap();
         pipeline.callbacks.push((
             uuid::Uuid::new_v4(),
-            pyroduct::pipeline::Callback::function(my_session_callback),
+            pyroduct::pipeline::Callback::function(|idx, row| {
+                let row_static = row.to_static();
+                Box::pin(async move {
+                    my_session_callback(idx, &row_static).await;
+                })
+            }),
         ));
 
         CALLBACK_COUNTER.store(0, Ordering::SeqCst);
@@ -124,7 +129,12 @@ async fn test_session_callbacks() {
         let mut pipeline = pipeline_factory.build_session_diff().await.unwrap();
         pipeline.callbacks.push((
             uuid::Uuid::new_v4(),
-            pyroduct::pipeline::Callback::function(my_session_diff_callback),
+            pyroduct::pipeline::Callback::function(|idx, row| {
+                let row_static = row.to_static();
+                Box::pin(async move {
+                    my_session_diff_callback(idx, &row_static).await;
+                })
+            }),
         ));
 
         DIFF_CALLBACK_COUNTER.store(0, Ordering::SeqCst);

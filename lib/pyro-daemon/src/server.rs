@@ -56,7 +56,7 @@ impl PyroDaemon {
 
 async fn handle_client(
     socket: PyroSocket,
-    playbooks_manager: PlaybooksManager,
+    playbooks_manager: std::sync::Arc<PlaybooksManager>,
     capability_manager: CapabilityManager,
     data_manager: DaemonDataManager,
 ) -> Result<()> {
