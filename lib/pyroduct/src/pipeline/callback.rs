@@ -3,10 +3,6 @@ use crate::format::value::PyroRow;
 #[cfg(all(feature = "host", feature = "transport"))]
 use crate::transport::socket::playbook::PlaybookClient;
 
-#[cfg(all(feature = "host", feature = "transport"))]
-#[allow(unused_imports)]
-use crate::transport::http::PlaybookHttpServer;
-
 use tracing::{debug, error};
 
 pub enum Callback {

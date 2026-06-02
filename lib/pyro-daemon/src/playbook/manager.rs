@@ -1,11 +1,14 @@
 use crate::playbook::PlaybookWorker;
 use anyhow::{Context, Result};
 use pyro_artifacts::cargo::CapabilityIdent;
+use pyroduct::PyroRow;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+pub type ModuleSpec = std::sync::Arc<pyro_artifacts::artifacts::PlaybookSpec>;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PlaybookStatus {
@@ -13,6 +16,7 @@ pub struct PlaybookStatus {
     pub config_path: PathBuf,
     pub socket_path: String,
     pub active_capabilities: Vec<CapabilityIdent>,
+    pub spec: ModuleSpec,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -46,6 +50,10 @@ pub enum PlaybookRequest {
         name: String,
     },
     List,
+    Call {
+        name: String,
+        payload: serde_json::Value,
+    },
     AddHttpCallback {
         source: String,
         url: String,
@@ -72,6 +80,7 @@ pub enum PlaybookResponse {
     Success { message: String },
     Playbooks { playbooks: Vec<PlaybookStatus> },
     Callbacks { callbacks: Vec<CallbackMapping> },
+    CallResult { result: serde_json::Value },
     Error { message: String },
 }
 
@@ -151,19 +160,16 @@ impl PlaybooksManager {
                 },
             },
             PlaybookRequest::List => {
-                let active = self.list_playbooks().await;
-                let playbooks = active
-                    .into_iter()
-                    .map(
-                        |(name, config_path, socket_path, active_capabilities)| PlaybookStatus {
-                            name,
-                            config_path,
-                            socket_path,
-                            active_capabilities,
-                        },
-                    )
-                    .collect();
+                let playbooks = self.list_playbooks().await;
                 PlaybookResponse::Playbooks { playbooks }
+            }
+            PlaybookRequest::Call { name, payload } => {
+                match self.call_playbook(&name, payload).await {
+                    Ok(result) => PlaybookResponse::CallResult { result },
+                    Err(e) => PlaybookResponse::Error {
+                        message: format!("Failed to call playbook: {:?}", e),
+                    },
+                }
             }
             PlaybookRequest::AddHttpCallback { source, url } => {
                 match self.add_http_callback(source, url).await {
@@ -175,44 +181,42 @@ impl PlaybooksManager {
                     },
                 }
             }
-            PlaybookRequest::AddSocketCallback { source, socket_path } => {
-                match self.add_socket_callback(source, socket_path).await {
-                    Ok(uuid) => PlaybookResponse::Success {
-                        message: format!("Socket callback added successfully with UUID: {}", uuid),
-                    },
-                    Err(e) => PlaybookResponse::Error {
-                        message: format!("Failed to add Socket callback: {:?}", e),
-                    },
-                }
-            }
-            PlaybookRequest::AddPlaybookCallback { source, target_playbook } => {
-                match self.add_playbook_callback(source, target_playbook).await {
-                    Ok(uuid) => PlaybookResponse::Success {
-                        message: format!("Playbook callback added successfully with UUID: {}", uuid),
-                    },
-                    Err(e) => PlaybookResponse::Error {
-                        message: format!("Failed to add Playbook callback: {:?}", e),
-                    },
-                }
-            }
-            PlaybookRequest::ListCallbacks { source } => {
-                match self.list_callbacks(source).await {
-                    Ok(callbacks) => PlaybookResponse::Callbacks { callbacks },
-                    Err(e) => PlaybookResponse::Error {
-                        message: format!("Failed to list callbacks: {:?}", e),
-                    },
-                }
-            }
-            PlaybookRequest::DeleteCallback { uuid } => {
-                match self.delete_callback(uuid).await {
-                    Ok(()) => PlaybookResponse::Success {
-                        message: "Callback deleted successfully".to_string(),
-                    },
-                    Err(e) => PlaybookResponse::Error {
-                        message: format!("Failed to delete callback: {:?}", e),
-                    },
-                }
-            }
+            PlaybookRequest::AddSocketCallback {
+                source,
+                socket_path,
+            } => match self.add_socket_callback(source, socket_path).await {
+                Ok(uuid) => PlaybookResponse::Success {
+                    message: format!("Socket callback added successfully with UUID: {}", uuid),
+                },
+                Err(e) => PlaybookResponse::Error {
+                    message: format!("Failed to add Socket callback: {:?}", e),
+                },
+            },
+            PlaybookRequest::AddPlaybookCallback {
+                source,
+                target_playbook,
+            } => match self.add_playbook_callback(source, target_playbook).await {
+                Ok(uuid) => PlaybookResponse::Success {
+                    message: format!("Playbook callback added successfully with UUID: {}", uuid),
+                },
+                Err(e) => PlaybookResponse::Error {
+                    message: format!("Failed to add Playbook callback: {:?}", e),
+                },
+            },
+            PlaybookRequest::ListCallbacks { source } => match self.list_callbacks(source).await {
+                Ok(callbacks) => PlaybookResponse::Callbacks { callbacks },
+                Err(e) => PlaybookResponse::Error {
+                    message: format!("Failed to list callbacks: {:?}", e),
+                },
+            },
+            PlaybookRequest::DeleteCallback { uuid } => match self.delete_callback(uuid).await {
+                Ok(()) => PlaybookResponse::Success {
+                    message: "Callback deleted successfully".to_string(),
+                },
+                Err(e) => PlaybookResponse::Error {
+                    message: format!("Failed to delete callback: {:?}", e),
+                },
+            },
         }
     }
 
@@ -298,14 +302,12 @@ impl PlaybooksManager {
         tokio::fs::write(&new_config_path, toml_string).await?;
 
         // Store playbook socket path persistently
-        tokio::fs::write(
-            playbook_dir.join("socket_path"),
-            playbook_socket.as_bytes(),
-        )
-        .await?;
+        tokio::fs::write(playbook_dir.join("socket_path"), playbook_socket.as_bytes()).await?;
 
         // Save state and config in SQLite database
-        self.db.save_playbook(&name, "running", &pipeline_config, Some(&playbook_socket)).await?;
+        self.db
+            .save_playbook(&name, "running", &pipeline_config, Some(&playbook_socket))
+            .await?;
 
         let worker = PlaybookWorker::start(name.clone(), pipeline_config, playbook_socket).await?;
         let _ = self.register_callbacks_from_db(&name, &worker).await;
@@ -370,33 +372,32 @@ impl PlaybooksManager {
         Ok(())
     }
 
-    pub async fn list_playbooks(&self) -> Vec<(String, PathBuf, String, Vec<CapabilityIdent>)> {
+    pub async fn list_playbooks(&self) -> Vec<PlaybookStatus> {
         let guard = self.workers.lock().await;
-        let db_list = self.db.list_playbooks().await.unwrap_or_default();
-        
-        db_list
-            .into_iter()
-            .map(|(name, _status, config, socket_path)| {
-                let config_path = config
-                    .log_dir
-                    .parent()
-                    .map(|p| p.join("config.toml"))
-                    .unwrap_or_default();
-                let socket = socket_path.unwrap_or_default();
-                
-                // If currently running, get active capabilities
-                let active_caps = if let Some(w) = guard.get(&name) {
-                    w.capability_processes
-                        .iter()
-                        .map(|c| c.cap.clone())
-                        .collect()
-                } else {
-                    Vec::new()
-                };
+        let mut results = Vec::new();
+        for worker in guard.values() {
+            let config_path = worker
+                .config
+                .log_dir
+                .parent()
+                .map(|p| p.join("config.toml"))
+                .unwrap_or_default();
 
-                (name, config_path, socket, active_caps)
-            })
-            .collect()
+            let active_capabilities = worker
+                .capability_processes
+                .iter()
+                .map(|c| c.cap.clone())
+                .collect();
+
+            results.push(PlaybookStatus {
+                name: worker.name.clone(),
+                config_path,
+                socket_path: worker.socket_path.clone(),
+                active_capabilities,
+                spec: worker.server.spec(),
+            });
+        }
+        results
     }
 
     pub async fn active_workers_count(&self) -> usize {
@@ -406,7 +407,9 @@ impl PlaybooksManager {
 
     pub async fn add_http_callback(&self, source: String, url: String) -> Result<uuid::Uuid> {
         let uuid = uuid::Uuid::new_v4();
-        self.db.add_callback_mapping(uuid, &source, "http", &url).await?;
+        self.db
+            .add_callback_mapping(uuid, &source, "http", &url)
+            .await?;
         let workers = self.workers.lock().await;
         if let Some(worker) = workers.get(&source) {
             let cb = pyroduct::pipeline::Callback::http(url);
@@ -415,9 +418,15 @@ impl PlaybooksManager {
         Ok(uuid)
     }
 
-    pub async fn add_socket_callback(&self, source: String, socket_path: String) -> Result<uuid::Uuid> {
+    pub async fn add_socket_callback(
+        &self,
+        source: String,
+        socket_path: String,
+    ) -> Result<uuid::Uuid> {
         let uuid = uuid::Uuid::new_v4();
-        self.db.add_callback_mapping(uuid, &source, "socket", &socket_path).await?;
+        self.db
+            .add_callback_mapping(uuid, &source, "socket", &socket_path)
+            .await?;
         let workers = self.workers.lock().await;
         if let Some(worker) = workers.get(&source) {
             let cb = Self::construct_socket_callback(&socket_path).await?;
@@ -426,19 +435,26 @@ impl PlaybooksManager {
         Ok(uuid)
     }
 
-    pub async fn add_playbook_callback(&self, source: String, target_playbook: String) -> Result<uuid::Uuid> {
+    pub async fn add_playbook_callback(
+        &self,
+        source: String,
+        target_playbook: String,
+    ) -> Result<uuid::Uuid> {
         let uuid = uuid::Uuid::new_v4();
-        self.db.add_callback_mapping(uuid, &source, "playbook", &target_playbook).await?;
+        self.db
+            .add_callback_mapping(uuid, &source, "playbook", &target_playbook)
+            .await?;
         let workers = self.workers.lock().await;
         if let Some(worker) = workers.get(&source) {
             let target_socket = match workers.get(&target_playbook) {
                 Some(w) => w.socket_path.clone(),
-                None => {
-                    match self.db.get_playbook(&target_playbook).await? {
-                        Some((_status, _config, Some(socket_path))) => socket_path,
-                        _ => anyhow::bail!("Target playbook '{}' does not exist or has no socket path configured", target_playbook),
-                    }
-                }
+                None => match self.db.get_playbook(&target_playbook).await? {
+                    Some((_status, _config, Some(socket_path))) => socket_path,
+                    _ => anyhow::bail!(
+                        "Target playbook '{}' does not exist or has no socket path configured",
+                        target_playbook
+                    ),
+                },
             };
             let cb = Self::construct_socket_callback(&target_socket).await?;
             worker.add_callback(uuid, cb).await?;
@@ -472,16 +488,32 @@ impl PlaybooksManager {
         if let Ok(addr) = target.parse::<std::net::SocketAddr>() {
             pyroduct::pipeline::Callback::connect_socket_tcp(addr)
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to connect to TCP callback target {}: {:?}", target, e))
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to connect to TCP callback target {}: {:?}",
+                        target,
+                        e
+                    )
+                })
         } else {
             let path = std::path::Path::new(target);
             pyroduct::pipeline::Callback::connect_socket_unix(path)
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to connect to UDS callback target {}: {:?}", target, e))
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to connect to UDS callback target {}: {:?}",
+                        target,
+                        e
+                    )
+                })
         }
     }
 
-    pub async fn register_callbacks_from_db(&self, source: &str, worker: &PlaybookWorker) -> Result<()> {
+    pub async fn register_callbacks_from_db(
+        &self,
+        source: &str,
+        worker: &PlaybookWorker,
+    ) -> Result<()> {
         let db_list = self.db.get_callbacks_for_source(source).await?;
         for (uuid, _src, cb_type, target) in db_list {
             match cb_type.as_str() {
@@ -498,12 +530,10 @@ impl PlaybooksManager {
                     let workers = self.workers.lock().await;
                     let target_socket = match workers.get(&target) {
                         Some(w) => Some(w.socket_path.clone()),
-                        None => {
-                            match self.db.get_playbook(&target).await {
-                                Ok(Some((_status, _config, Some(socket_path)))) => Some(socket_path),
-                                _ => None,
-                            }
-                        }
+                        None => match self.db.get_playbook(&target).await {
+                            Ok(Some((_status, _config, Some(socket_path)))) => Some(socket_path),
+                            _ => None,
+                        },
                     };
                     if let Some(socket_path) = target_socket {
                         if let Ok(cb) = Self::construct_socket_callback(&socket_path).await {
@@ -515,5 +545,42 @@ impl PlaybooksManager {
             }
         }
         Ok(())
+    }
+
+    pub async fn call_playbook(
+        &self,
+        name: &str,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let (socket_path, spec) = {
+            let workers = self.workers.lock().await;
+            let worker = workers
+                .get(name)
+                .ok_or_else(|| anyhow::anyhow!("Playbook '{}' is not running", name))?;
+            (worker.socket_path.clone(), worker.server.spec())
+        };
+
+        let input_row: PyroRow<'static> = serde_json::from_value(payload)
+            .context("Invalid JSON payload: failed to deserialize into PyroRow")?;
+
+        let repaired_row = input_row
+            .project_repair(spec.func.input.fields())
+            .context("Failed to repair input JSON according to module spec")?;
+
+        let mut client = if let Ok(addr) = socket_path.parse::<std::net::SocketAddr>() {
+            pyroduct::transport::socket::playbook::PlaybookClient::connect_tcp(addr).await
+        } else {
+            pyroduct::transport::socket::playbook::PlaybookClient::connect_unix(socket_path).await
+        }
+        .context("Failed to connect to playbook socket")?;
+
+        let res = client
+            .call(&repaired_row)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to call playbook: {:?}", e))?;
+
+        let result_val =
+            serde_json::to_value(&res.row).context("Failed to serialize returned row to JSON")?;
+        Ok(result_val)
     }
 }

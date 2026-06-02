@@ -3,7 +3,7 @@ use pyro_artifacts::{
     build::{AnonPlaybook, Builder},
     cache::CacheManager,
 };
-use pyroduct::{pipeline::PipelineConfig, transport::http::PlaybookHttpServer};
+use pyroduct::{pipeline::{PipelineConfig, PipelineServer}, transport::http::run as run_http};
 use std::collections::{BTreeMap, HashMap};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -88,7 +88,7 @@ async fn test_http_playbook_server_and_repair() {
     let config = config.load(&cache).await.unwrap();
     let loaded_playbook = &config.playbook;
 
-    let server = PlaybookHttpServer::new(loaded_playbook)
+    let server = PipelineServer::new(loaded_playbook)
         .await
         .expect("Failed to create HTTP playbook server");
 
@@ -97,12 +97,7 @@ async fn test_http_playbook_server_and_repair() {
         .expect("Failed to bind listener");
     let addr = listener.local_addr().expect("Failed to get local addr");
 
-    // Run server in background
-    tokio::spawn(async move {
-        if let Err(e) = server.run(listener).await {
-            eprintln!("HTTP Server error: {:?}", e);
-        }
-    });
+    let shutdown_tx = run_http(server, listener);
 
     // Test Case 1: Standard, well-formed JSON object query
     let body_ok = r#"{"input": "0"}"#;
@@ -128,4 +123,6 @@ async fn test_http_playbook_server_and_repair() {
     let (status_invalid, resp_body_invalid) = post_json(addr, "/", body_invalid).await.unwrap();
     assert_eq!(status_invalid, 400);
     assert!(resp_body_invalid.contains("error"));
+
+    let _ = shutdown_tx.send(());
 }

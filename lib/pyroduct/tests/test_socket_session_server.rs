@@ -4,10 +4,10 @@ use pyro_artifacts::{
 };
 use pyroduct::{
     PyroRow,
-    pipeline::PipelineConfig,
+    pipeline::{PipelineConfig, PipelineServer},
     transport::socket::{
         PyroListener,
-        playbook::{PlaybookClient, PlaybookServer},
+        playbook::{PlaybookClient, run as run_socket},
     },
 };
 use std::collections::HashMap;
@@ -79,7 +79,7 @@ async fn test_socket_session_server_client() {
     let config = config.load(&cache).await.unwrap();
     let loaded_playbook = &config.playbook;
 
-    let server = PlaybookServer::new(loaded_playbook)
+    let server = PipelineServer::new(loaded_playbook)
         .await
         .expect("Failed to create server");
 
@@ -88,12 +88,7 @@ async fn test_socket_session_server_client() {
         .expect("Failed to bind listener");
     let addr = listener.local_addr_tcp().expect("Failed to get local addr");
 
-    // Run server in background
-    tokio::spawn(async move {
-        if let Err(e) = server.run(listener).await {
-            eprintln!("Server error: {:?}", e);
-        }
-    });
+    let shutdown_tx = run_socket(server, listener);
 
     // Client Connection
     let mut client = PlaybookClient::connect_tcp(addr)
@@ -168,4 +163,6 @@ async fn test_socket_session_server_client() {
         .await
         .expect("Session 2 call turn 3 should succeed");
     assert!(result2_t3.row.is_empty());
+
+    let _ = shutdown_tx.send(());
 }

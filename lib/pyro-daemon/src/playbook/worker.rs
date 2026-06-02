@@ -1,28 +1,20 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 use tokio::fs;
-use tokio::sync::mpsc;
 
 use pyro_artifacts::cache::CacheManager;
 use pyroduct::pipeline::factory::PipelineConfig;
 use pyroduct::transport::socket::PyroListener;
-use pyroduct::transport::socket::playbook::PlaybookServer;
 
 use crate::capability::CapabilityProcess;
-
-#[derive(Debug)]
-pub enum WorkerMessage {
-    Kill,
-    AddCallback(uuid::Uuid, pyroduct::pipeline::Callback),
-    DeleteCallback(uuid::Uuid),
-}
 
 pub struct PlaybookWorker {
     pub name: String,
     pub config: PipelineConfig,
     pub socket_path: String,
     pub capability_processes: Vec<CapabilityProcess>,
-    pub message_tx: mpsc::Sender<WorkerMessage>,
+    pub shutdown_tx: tokio::sync::oneshot::Sender<()>,
+    pub server: pyroduct::pipeline::PipelineServer,
 }
 
 impl PlaybookWorker {
@@ -67,10 +59,9 @@ impl PlaybookWorker {
 
         // 2. Instantiate and run Playbook Server in-process
         tracing::info!(name, "Instantiating playbook server");
-        let server = PlaybookServer::new(&loaded_pipeline.playbook)
+        let server = pyroduct::pipeline::PipelineServer::new(&loaded_pipeline.playbook)
             .await
-            .context("Failed to construct PlaybookServer")?;
-
+            .context("Failed to construct PipelineServer")?;
         let listener = if let Ok(addr) = playbook_socket.parse::<std::net::SocketAddr>() {
             PyroListener::bind_tcp(addr).await?
         } else {
@@ -81,58 +72,15 @@ impl PlaybookWorker {
             PyroListener::bind_unix(socket_path).await?
         };
 
-        let (message_tx, mut message_rx) = mpsc::channel::<WorkerMessage>(100);
-        let (command_tx, command_rx) =
-            mpsc::channel::<pyroduct::transport::socket::playbook::PlaybookServerCommand>(100);
-        let playbook_socket_clone = playbook_socket.clone();
-
-        tokio::spawn(async move {
-            tracing::info!(socket = %playbook_socket_clone, "PlaybookServer running worker loop");
-
-            // Spawn the PlaybookServer run loop in its own task
-            let run_handle = tokio::spawn(async move {
-                if let Err(e) = server.run_with_callbacks(listener, command_rx).await {
-                    tracing::error!("PlaybookServer run error: {:?}", e);
-                }
-            });
-
-            // Handle incoming messages
-            while let Some(msg) = message_rx.recv().await {
-                match msg {
-                    WorkerMessage::AddCallback(uuid, cb) => {
-                        let _ = command_tx.send(pyroduct::transport::socket::playbook::PlaybookServerCommand::AddCallback(uuid, cb)).await;
-                    }
-                    WorkerMessage::DeleteCallback(uuid) => {
-                        let _ = command_tx.send(pyroduct::transport::socket::playbook::PlaybookServerCommand::DeleteCallback(uuid)).await;
-                    }
-                    WorkerMessage::Kill => {
-                        tracing::info!("Received kill signal; tearing down playbook worker");
-                        break;
-                    }
-                }
-            }
-
-            // Abort the running server task
-            run_handle.abort();
-
-            // Cleanup socket file if Unix UDS
-            if playbook_socket_clone
-                .parse::<std::net::SocketAddr>()
-                .is_err()
-            {
-                let path = Path::new(&playbook_socket_clone);
-                if path.exists() {
-                    let _ = std::fs::remove_file(path);
-                }
-            }
-        });
+        let shutdown_tx = pyroduct::transport::socket::playbook::run(server.clone(), listener);
 
         Ok(Self {
             name,
             config: pipeline_config,
             socket_path: playbook_socket,
             capability_processes,
-            message_tx,
+            shutdown_tx,
+            server,
         })
     }
 
@@ -141,23 +89,26 @@ impl PlaybookWorker {
         uuid: uuid::Uuid,
         callback: pyroduct::pipeline::Callback,
     ) -> Result<()> {
-        self.message_tx
-            .send(WorkerMessage::AddCallback(uuid, callback))
-            .await
-            .context("Failed to send AddCallback message to playbook worker")?;
+        self.server.add_callback(uuid, callback).await;
         Ok(())
     }
 
     pub async fn delete_callback(&self, uuid: uuid::Uuid) -> Result<()> {
-        self.message_tx
-            .send(WorkerMessage::DeleteCallback(uuid))
-            .await
-            .context("Failed to send DeleteCallback message to playbook worker")?;
+        self.server.delete_callback(uuid).await;
         Ok(())
     }
 
     pub async fn shutdown(self) -> Result<()> {
-        let _ = self.message_tx.send(WorkerMessage::Kill).await;
+        let _ = self.shutdown_tx.send(());
+
+        // Cleanup socket file if Unix UDS
+        if self.socket_path.parse::<std::net::SocketAddr>().is_err() {
+            let path = Path::new(&self.socket_path);
+            if path.exists() {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+
         for mut cap in self.capability_processes {
             let _ = cap.kill().await;
         }

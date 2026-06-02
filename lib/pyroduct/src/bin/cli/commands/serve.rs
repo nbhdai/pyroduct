@@ -7,10 +7,8 @@ use std::path::{Path, PathBuf};
 
 use pyro_artifacts::cache::CacheManager;
 use pyroduct::pipeline::factory::PipelineConfig;
-use pyroduct::transport::http::PlaybookHttpServer;
 use pyroduct::transport::socket::PyroListener;
 use pyroduct::transport::socket::capability::{PyroRouter, PyroServer};
-use pyroduct::transport::socket::playbook::PlaybookServer;
 
 #[derive(ValueEnum, Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -210,17 +208,17 @@ pub async fn serve_playbook(serve_config: &ServeConfig) -> Result<()> {
         let tcp_listener = tokio::net::TcpListener::bind(addr)
             .await
             .context("Failed to bind TCP listener for HTTP server")?;
-        let server = PlaybookHttpServer::new(&loaded_pipeline_config.playbook)
+        let server = pyroduct::pipeline::PipelineServer::new(&loaded_pipeline_config.playbook)
             .await
             .context("Failed to build HTTP playbook server")?;
+        let shutdown_tx = pyroduct::transport::http::run(server, tcp_listener);
         tracing::info!("Playbook HTTP server listening on {}", addr);
-        server
-            .run(tcp_listener)
-            .await
-            .map_err(|e| anyhow!("Playbook HTTP server error: {}", e))?;
+        tracing::info!("Press Ctrl+C to stop.");
+        let _ = tokio::signal::ctrl_c().await;
+        let _ = shutdown_tx.send(());
     } else {
         tracing::info!("Starting playbook TCP/Unix socket server...");
-        let server = PlaybookServer::new(&loaded_pipeline_config.playbook)
+        let server = pyroduct::pipeline::PipelineServer::new(&loaded_pipeline_config.playbook)
             .await
             .context("Failed to build playbook server")?;
 
@@ -240,10 +238,10 @@ pub async fn serve_playbook(serve_config: &ServeConfig) -> Result<()> {
                 .context("Failed to bind Unix listener for playbook server")?
         };
 
-        server
-            .run(listener)
-            .await
-            .context("Playbook server run error")?;
+        let shutdown_tx = pyroduct::transport::socket::playbook::run(server, listener);
+        tracing::info!("Playbook server running. Press Ctrl+C to stop.");
+        let _ = tokio::signal::ctrl_c().await;
+        let _ = shutdown_tx.send(());
     }
 
     Ok(())

@@ -36,7 +36,7 @@ host = [
     "dep:uuid",
 ]
 sql = ["dep:datafusion", "dep:sqlparser"]
-transport = ["host", "dep:axum"]
+transport = ["host", "dep:axum", "dep:hyper", "dep:hyper-util", "dep:tower"]
 module = []
 
 cli = [
@@ -69,6 +69,9 @@ serde.workspace = true
 serde_json.workspace = true
 uuid = { version = "1.6", features = ["v4", "serde"], optional = true }
 axum = { workspace = true, optional = true }
+hyper = { version = "1", features = ["full"], optional = true }
+hyper-util = { version = "0.1", features = ["server-auto", "tokio"], optional = true }
+tower = { version = "0.4", optional = true }
 reqwest = { version = "0.12", features = ["json"], optional = true }
 
 # Value dependencies
