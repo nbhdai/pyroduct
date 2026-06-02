@@ -38,6 +38,7 @@ impl PlaybookClient {
     /// Call the remote playbook pipeline with a row.
     pub async fn call(&mut self, row: &PyroRow<'_>) -> Result<PyroSuccess, PyroFailure> {
         let req_vec = row.to_static().ship().map_err(|e| PyroFailure {
+            row_index: 0,
             result: Err(e.to_string()),
             logs: crate::format::PyroLogs::empty(),
         })?;
@@ -51,16 +52,19 @@ impl PlaybookClient {
             .await
             .capture("Transport request failed")
             .map_err(|e| PyroFailure {
+                row_index: 0,
                 result: Err(e.to_string()),
                 logs: crate::format::PyroLogs::empty(),
             })?;
 
         if resp.is_ok() {
             let row_ref = PyroRow::expose_view(resp.py_ref()).map_err(|e| PyroFailure {
+                row_index: 0,
                 result: Err(e.to_string()),
                 logs: crate::format::PyroLogs::empty(),
             })?;
             Ok(PyroSuccess {
+                row_index: 0,
                 row: PyroRow::from(&*row_ref).to_static(),
                 logs: crate::format::PyroLogs::empty(),
             })
@@ -68,6 +72,7 @@ impl PlaybookClient {
             let err_msg = format!("Request failed with status: {}", resp.status_u8());
             tracing::error!("{}", err_msg);
             Err(PyroFailure {
+                row_index: 0,
                 result: Err(err_msg),
                 logs: crate::format::PyroLogs::empty(),
             })
@@ -81,6 +86,7 @@ impl PlaybookClient {
         row: &PyroRow<'_>,
     ) -> Result<PyroSuccess, PyroFailure> {
         let req_vec = row.to_static().ship().map_err(|e| PyroFailure {
+            row_index: session_id,
             result: Err(e.to_string()),
             logs: crate::format::PyroLogs::empty(),
         })?;
@@ -94,16 +100,19 @@ impl PlaybookClient {
             .await
             .capture("Transport request failed")
             .map_err(|e| PyroFailure {
+                row_index: session_id,
                 result: Err(e.to_string()),
                 logs: crate::format::PyroLogs::empty(),
             })?;
 
         if resp.is_ok() {
             let row_ref = PyroRow::expose_view(resp.py_ref()).map_err(|e| PyroFailure {
+                row_index: session_id,
                 result: Err(e.to_string()),
                 logs: crate::format::PyroLogs::empty(),
             })?;
             Ok(PyroSuccess {
+                row_index: session_id,
                 row: PyroRow::from(&*row_ref).to_static(),
                 logs: crate::format::PyroLogs::empty(),
             })
@@ -111,6 +120,7 @@ impl PlaybookClient {
             let err_msg = format!("Request failed with status: {}", resp.status_u8());
             tracing::error!("{}", err_msg);
             Err(PyroFailure {
+                row_index: session_id,
                 result: Err(err_msg),
                 logs: crate::format::PyroLogs::empty(),
             })

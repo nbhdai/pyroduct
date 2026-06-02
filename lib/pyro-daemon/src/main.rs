@@ -1,5 +1,6 @@
 use std::path::PathBuf;
-use anyhow::{Context, Result};
+use pyroduct::Capture;
+use pyro_daemon::Result;
 use tracing_subscriber::EnvFilter;
 use clap::Parser;
 
@@ -47,7 +48,7 @@ async fn main() -> Result<()> {
     });
 
     // 4. Run the daemon control loop
-    daemon.run().await.context("PyroDaemon crashed in control loop")?;
+    daemon.run().await.capture("PyroDaemon crashed in control loop")?;
 
     Ok(())
 }

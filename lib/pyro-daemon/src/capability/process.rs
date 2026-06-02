@@ -1,5 +1,6 @@
-use anyhow::{Context, Result};
+use crate::Result;
 use pyro_artifacts::cargo::CapabilityIdent;
+use pyroduct::Capture;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -36,7 +37,8 @@ impl CapabilityProcess {
             .arg(cap.to_string());
 
         if let Some(config) = cap_config {
-            let config_json = serde_json::to_string(config)?;
+            let config_json = serde_json::to_string(config)
+                .capture("Failed to serialize capability config to JSON")?;
             cmd.arg("--cap-config").arg(config_json);
         }
 
@@ -46,7 +48,7 @@ impl CapabilityProcess {
 
         let mut child = cmd
             .spawn()
-            .context("Failed to spawn capability runner child process")?;
+            .capture("Failed to spawn capability runner child process")?;
 
         // Start tasks to read stdout/stderr and trace them
         let stdout = child.stdout.take().unwrap();
@@ -75,7 +77,7 @@ impl CapabilityProcess {
         while !socket_path.exists() {
             if retries > 100 {
                 let _ = child.kill().await;
-                anyhow::bail!(
+                pyroduct::bail!(
                     "Capability process failed to bind socket at {:?}",
                     socket_path
                 );

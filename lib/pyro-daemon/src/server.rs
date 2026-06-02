@@ -1,4 +1,5 @@
-use anyhow::{Context, Result};
+use pyroduct::Capture;
+use crate::Result;
 use pyroduct::format::Bridgeable;
 use pyroduct::format::format::Wrapper;
 use pyroduct::format::header::{PyroHeader, PyroHeaderMut};
@@ -14,20 +15,20 @@ impl PyroDaemon {
     pub async fn run(&self) -> Result<()> {
         fs::create_dir_all(&self.working_dir)
             .await
-            .context("Failed to create working directory")?;
+            .capture("Failed to create working directory")?;
         fs::create_dir_all(self.working_dir.join("data"))
             .await
-            .context("Failed to create data directory")?;
+            .capture("Failed to create data directory")?;
 
         if self.control_socket_path.exists() {
             fs::remove_file(&self.control_socket_path)
                 .await
-                .context("Failed to clean up existing control socket file")?;
+                .capture("Failed to clean up existing control socket file")?;
         }
 
         let listener = PyroListener::bind_unix(&self.control_socket_path)
             .await
-            .context("Failed to bind PyroListener Unix control listener")?;
+            .capture("Failed to bind PyroListener Unix control listener")?;
 
         tracing::info!(socket = %self.control_socket_path.display(), "PyroDaemon listing for control commands");
 
@@ -69,7 +70,7 @@ async fn handle_client(
                 {
                     break;
                 }
-                return Err(e).context("Failed to receive from control socket");
+                return Err(e).capture("Failed to receive from control socket");
             }
         };
 
@@ -79,11 +80,11 @@ async fn handle_client(
                 let err_resp = DaemonResponse::Error {
                     message: format!("Invalid JSON request: {}", e),
                 };
-                let resp_vec = err_resp.ship().context("Failed to ship error response")?;
+                let resp_vec = err_resp.ship().capture("Failed to ship error response")?;
                 socket
                     .send(resp_vec.into())
                     .await
-                    .context("Failed to send error response")?;
+                    .capture("Failed to send error response")?;
                 continue;
             }
         };
@@ -110,12 +111,12 @@ async fn handle_client(
             }
         };
 
-        let mut resp_vec = response.ship().context("Failed to ship response")?;
+        let mut resp_vec = response.ship().capture("Failed to ship response")?;
         resp_vec.set_mux_id(mux_id);
         socket
             .send(resp_vec.into())
             .await
-            .context("Failed to send response")?;
+            .capture("Failed to send response")?;
     }
 
     Ok(())

@@ -2,7 +2,6 @@ pub mod callback;
 pub mod data;
 pub mod factory;
 pub mod normal;
-pub mod repository;
 pub mod server;
 pub mod session;
 pub mod session_diff;
@@ -13,7 +12,6 @@ pub mod sql;
 pub use callback::Callback;
 pub use factory::{PipelineConfig, PipelineFactory};
 pub use normal::{ExecutionRecord, Failure, Pipeline, PipelinePool};
-pub use repository::PlaybookRepository;
 pub use server::{PipelineServer, ServerPipeline};
 use thiserror::Error;
 

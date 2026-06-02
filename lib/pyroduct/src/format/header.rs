@@ -1,3 +1,4 @@
+use crate::captured::CapturedErrorInner;
 use crate::error::ErrorKind;
 use crate::format::PyroRef;
 use crate::format::vec_buf::PyroRefPtr;
@@ -391,11 +392,11 @@ pub trait PyroData: private::Sealed + Deref<Target = [u8]> + Sized {
 
     /// Helper to deserialize a CapturedError from the payload (JSON).
     /// Falls back to a generic error if JSON deserialization fails.
-    fn extract_captured_error(&self) -> Box<CapturedError> {
+    fn extract_captured_error(&self) -> CapturedError {
         if let Ok(captured) = serde_json::from_slice::<CapturedError>(self) {
-            Box::new(captured)
+            captured
         } else {
-            Box::new(CapturedError {
+            CapturedErrorInner {
                 message: String::from_utf8_lossy(self).to_string(),
                 file: "unknown".to_string(),
                 line: 0,
@@ -403,7 +404,8 @@ pub trait PyroData: private::Sealed + Deref<Target = [u8]> + Sized {
                 error: Some("Failed to deserialize error details".into()),
                 stack_trace: None,
                 library: None,
-            })
+            }
+            .into()
         }
     }
 }

@@ -1,5 +1,6 @@
 use crate::playbook::PlaybooksManager;
-use anyhow::{Context, Result};
+use pyroduct::Capture;
+use crate::Result;
 use datafusion::prelude::SessionContext;
 use pyro_artifacts::cache::CacheManager;
 use pyroduct::pipeline::data::DataManager;
@@ -67,71 +68,71 @@ impl DaemonDataManager {
             .join("config.toml");
 
         if !config_path.exists() {
-            anyhow::bail!("Playbook configuration not found for: {}", playbook_name);
+            pyroduct::bail!("Playbook configuration not found for: {}", playbook_name);
         }
 
         // 2. Load the pipeline config
         let config_str = tokio::fs::read_to_string(&config_path)
             .await
-            .context("Failed to read playbook pipeline config")?;
+            .capture("Failed to read playbook pipeline config")?;
 
         let pipeline_config: PipelineConfig = match config_path.extension().and_then(|s| s.to_str())
         {
-            Some("toml") => toml::from_str(&config_str).context("Failed to parse pipeline TOML")?,
+            Some("toml") => toml::from_str(&config_str).capture("Failed to parse pipeline TOML")?,
             Some("yaml") | Some("yml") => {
-                serde_yaml::from_str(&config_str).context("Failed to parse pipeline YAML")?
+                serde_yaml::from_str(&config_str).capture("Failed to parse pipeline YAML")?
             }
             Some("json") => {
-                serde_json::from_str(&config_str).context("Failed to parse pipeline JSON")?
+                serde_json::from_str(&config_str).capture("Failed to parse pipeline JSON")?
             }
-            _ => anyhow::bail!("Unknown playbook config extension"),
+            _ => pyroduct::bail!("Unknown playbook config extension"),
         };
 
         // 3. Load factory to get output schema
         let cache = CacheManager::from_env()
             .await
-            .context("Failed to initialize CacheManager")?;
+            .capture("Failed to initialize CacheManager")?;
 
         let loaded = pipeline_config
             .load(&cache)
             .await
-            .map_err(|e| anyhow::anyhow!("{:?}", e))?;
-        let factory = loaded.factory().map_err(|e| anyhow::anyhow!("{:?}", e))?;
+            .map_err(|e| pyroduct::capture!("{:?}", e))?;
+        let factory = loaded.factory().map_err(|e| pyroduct::capture!("{:?}", e))?;
         let output_schema = factory.factory.spec().func.output.clone();
 
         // 4. Create and restore DataManager for output_dir
         let mut dm = DataManager::new(factory.output_dir, output_schema);
-        dm.restore().map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        dm.restore().map_err(|e| pyroduct::capture!("{:?}", e))?;
 
         // 5. Get SQL Provider and execute query
-        let provider = dm.sql_provider().map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        let provider = dm.sql_provider().map_err(|e| pyroduct::capture!("{:?}", e))?;
         let ctx = SessionContext::new();
         ctx.register_table("data", std::sync::Arc::new(provider))
-            .context("Failed to register table in DataFusion")?;
+            .capture("Failed to register table in DataFusion")?;
 
         let df = ctx
             .sql(sql_query)
             .await
-            .context("DataFusion SQL execution failed")?;
+            .capture("DataFusion SQL execution failed")?;
         let results = df
             .collect()
             .await
-            .context("Failed to collect query results")?;
+            .capture("Failed to collect query results")?;
 
         // 6. Serialize RecordBatches to Arrow IPC bytes using FileWriter
         let mut buffer = Vec::new();
         if !results.is_empty() {
             let schema = results[0].schema();
             let mut writer = arrow::ipc::writer::FileWriter::try_new(&mut buffer, &schema)
-                .context("Failed to create Arrow IPC FileWriter")?;
+                .capture("Failed to create Arrow IPC FileWriter")?;
             for batch in results {
                 writer
                     .write(&batch)
-                    .context("Failed to write RecordBatch to Arrow IPC")?;
+                    .capture("Failed to write RecordBatch to Arrow IPC")?;
             }
             writer
                 .finish()
-                .context("Failed to finish Arrow IPC FileWriter")?;
+                .capture("Failed to finish Arrow IPC FileWriter")?;
         }
 
         Ok(buffer)

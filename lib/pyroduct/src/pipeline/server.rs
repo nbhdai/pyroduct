@@ -4,10 +4,12 @@ use tokio::sync::Mutex;
 use pyro_artifacts::artifacts::PlaybookSpec;
 use pyro_artifacts::cache::LoadedPlaybook;
 
+use crate::format::PyroFailure;
 use crate::format::PyroRow;
+use crate::format::PyroSuccess;
+use crate::format::SessionResult;
 use crate::format::log_wal::LogWal;
 use crate::module::PyroFactory;
-use crate::module::SessionResult;
 use crate::pipeline::{
     ExecutionRecord, Pipeline, PipelineError, session::SessionPipeline,
     session_diff::SessionDiffPipeline,
@@ -147,29 +149,28 @@ impl PipelineServer {
     /// Call the pipeline without a specific session ID.
     /// For session-based pipelines, this will generate a new session ID.
     /// Returns `(session_id, success_row)`.
-    pub async fn call(&self, row: PyroRow<'_>) -> Result<(u32, PyroRow<'static>), PyroError> {
+    pub async fn call(&self, row: PyroRow<'_>) -> Result<(u32, PyroRow<'static>), CapturedError> {
         let mut pipeline = self.pipeline.lock().await;
         let native_row = row.to_static();
         match &mut *pipeline {
-            ServerPipeline::Normal(p) => match p.process(0, &native_row).await {
-                Ok(ExecutionRecord::Success { success, .. }) => Ok((0, success)),
-                Ok(ExecutionRecord::Failure { failure, .. }) => {
-                    let err_msg = match failure {
-                        Ok(captured) => format!("{:?}", captured),
-                        Err(s) => s,
+            ServerPipeline::Normal(p) => match p.call(&native_row).await {
+                Ok(PyroSuccess { row, .. }) => Ok((0, row)),
+                Err(PyroFailure { result, .. }) => {
+                    let captured = match result {
+                        Ok(captured) => captured,
+                        Err(s) => CapturedError::new(s),
                     };
-                    Err(PyroError::CodePanic(Box::new(CapturedError::new(err_msg))))
+                    Err(captured)
                 }
-                Err(e) => Err(e),
             },
             ServerPipeline::Session(p) => {
                 let session_id = p.next_session_id();
                 if let Err(e) = p.prep_session(session_id, &[]).await {
-                    let err_msg = match e.result {
-                        Ok(captured) => format!("{:?}", captured),
-                        Err(s) => s,
+                    let captured = match e.result {
+                        Ok(captured) => captured,
+                        Err(s) => CapturedError::new(s),
                     };
-                    return Err(PyroError::CodePanic(Box::new(CapturedError::new(err_msg))));
+                    return Err(captured);
                 }
 
                 match p.call(session_id, &native_row).await {
@@ -179,22 +180,22 @@ impl PipelineServer {
                         SessionResult::Terminate { .. } => Ok((session_id, PyroRow::empty())),
                     },
                     Err(e) => {
-                        let err_msg = match e.result {
-                            Ok(captured) => format!("{:?}", captured),
-                            Err(s) => s,
+                        let captured = match e.result {
+                            Ok(captured) => captured,
+                            Err(s) => CapturedError::new(s),
                         };
-                        Err(PyroError::CodePanic(Box::new(CapturedError::new(err_msg))))
+                        Err(captured)
                     }
                 }
             }
             ServerPipeline::SessionDiff(p) => {
                 let session_id = p.next_session_id();
                 if let Err(e) = p.prep_session(session_id, &[], &[]).await {
-                    let err_msg = match e.result {
-                        Ok(captured) => format!("{:?}", captured),
-                        Err(s) => s,
+                    let captured = match e.result {
+                        Ok(captured) => captured,
+                        Err(s) => CapturedError::new(s),
                     };
-                    return Err(PyroError::CodePanic(Box::new(CapturedError::new(err_msg))));
+                    return Err(captured);
                 }
 
                 match p.call(session_id, &native_row).await {
@@ -204,11 +205,11 @@ impl PipelineServer {
                         SessionResult::Terminate { .. } => Ok((session_id, PyroRow::empty())),
                     },
                     Err(e) => {
-                        let err_msg = match e.result {
-                            Ok(captured) => format!("{:?}", captured),
-                            Err(s) => s,
+                        let captured = match e.result {
+                            Ok(captured) => captured,
+                            Err(s) => CapturedError::new(s),
                         };
-                        Err(PyroError::CodePanic(Box::new(CapturedError::new(err_msg))))
+                        Err(captured)
                     }
                 }
             }
@@ -220,28 +221,28 @@ impl PipelineServer {
         &self,
         client_id: u32,
         row: PyroRow<'_>,
-    ) -> Result<PyroRow<'static>, PyroError> {
+    ) -> Result<PyroRow<'static>, CapturedError> {
         let mut pipeline = self.pipeline.lock().await;
         match &mut *pipeline {
-            ServerPipeline::Normal(p) => match p.process(0, &row).await {
+            ServerPipeline::Normal(p) => match p.process(client_id as usize, &row).await {
                 Ok(ExecutionRecord::Success { success, .. }) => Ok(success),
                 Ok(ExecutionRecord::Failure { failure, .. }) => {
-                    let err_msg = match failure {
-                        Ok(captured) => format!("{:?}", captured),
-                        Err(s) => s,
+                    let captured = match failure {
+                        Ok(captured) => captured,
+                        Err(s) => CapturedError::new(s),
                     };
-                    Err(PyroError::CodePanic(Box::new(CapturedError::new(err_msg))))
+                    Err(captured)
                 }
-                Err(e) => Err(e),
+                Err(e) => Err(CapturedError::new(e.to_string())),
             },
             ServerPipeline::Session(p) => {
                 if !p.active_sessions.contains_key(&client_id) {
                     if let Err(e) = p.prep_session(client_id, &[]).await {
-                        let err_msg = match e.result {
-                            Ok(captured) => format!("{:?}", captured),
-                            Err(s) => s,
+                        let captured = match e.result {
+                            Ok(captured) => captured,
+                            Err(s) => CapturedError::new(s),
                         };
-                        return Err(PyroError::CodePanic(Box::new(CapturedError::new(err_msg))));
+                        return Err(captured);
                     }
                 }
 
@@ -252,22 +253,22 @@ impl PipelineServer {
                         SessionResult::Terminate { .. } => Ok(PyroRow::empty()),
                     },
                     Err(e) => {
-                        let err_msg = match e.result {
-                            Ok(captured) => format!("{:?}", captured),
-                            Err(s) => s,
+                        let captured = match e.result {
+                            Ok(captured) => captured,
+                            Err(s) => CapturedError::new(s),
                         };
-                        Err(PyroError::CodePanic(Box::new(CapturedError::new(err_msg))))
+                        Err(captured)
                     }
                 }
             }
             ServerPipeline::SessionDiff(p) => {
                 if !p.active_sessions.contains_key(&client_id) {
                     if let Err(e) = p.prep_session(client_id, &[], &[]).await {
-                        let err_msg = match e.result {
-                            Ok(captured) => format!("{:?}", captured),
-                            Err(s) => s,
+                        let captured = match e.result {
+                            Ok(captured) => captured,
+                            Err(s) => CapturedError::new(s),
                         };
-                        return Err(PyroError::CodePanic(Box::new(CapturedError::new(err_msg))));
+                        return Err(captured);
                     }
                 }
 
@@ -278,11 +279,11 @@ impl PipelineServer {
                         SessionResult::Terminate { .. } => Ok(PyroRow::empty()),
                     },
                     Err(e) => {
-                        let err_msg = match e.result {
-                            Ok(captured) => format!("{:?}", captured),
-                            Err(s) => s,
+                        let captured = match e.result {
+                            Ok(captured) => captured,
+                            Err(s) => CapturedError::new(s),
                         };
-                        Err(PyroError::CodePanic(Box::new(CapturedError::new(err_msg))))
+                        Err(captured)
                     }
                 }
             }

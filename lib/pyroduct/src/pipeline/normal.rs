@@ -73,14 +73,18 @@ impl Pipeline {
     pub async fn call(&mut self, input: &PyroRow<'_>) -> Result<PyroSuccess, PyroFailure> {
         let index = self.input_manager.len();
         match self.process(index, input).await {
-            Ok(ExecutionRecord::Success { success, logs, .. }) => {
-                Ok(PyroSuccess { row: success, logs })
-            }
+            Ok(ExecutionRecord::Success { success, logs, .. }) => Ok(PyroSuccess {
+                row_index: index as u32,
+                row: success,
+                logs,
+            }),
             Ok(ExecutionRecord::Failure { failure, logs, .. }) => Err(PyroFailure {
+                row_index: index as u32,
                 result: failure,
                 logs,
             }),
             Err(err) => Err(PyroFailure {
+                row_index: index as u32,
                 result: Err(err.to_string()),
                 logs: PyroLogs::empty(),
             }),
@@ -97,7 +101,7 @@ impl Pipeline {
         debug!(row_index, "Processing row");
         self.input_manager.push_record(row_index, input).await?;
 
-        match self.step.call(input).await {
+        match self.step.call(row_index as u32, input).await {
             Ok(output) => {
                 debug!(row_index, "Step succeeded");
 

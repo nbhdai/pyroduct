@@ -1,9 +1,10 @@
-use anyhow::{Context, Result};
+use crate::Result;
+use pyroduct::Capture;
+use pyroduct::pipeline::factory::PipelineConfig;
+use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use rusqlite::{params, Connection};
-use pyroduct::pipeline::factory::PipelineConfig;
 
 #[derive(Clone)]
 pub struct DbStateStore {
@@ -12,9 +13,8 @@ pub struct DbStateStore {
 
 impl DbStateStore {
     pub fn open(db_path: &Path) -> Result<Self> {
-        let conn = Connection::open(db_path)
-            .context("Failed to open SQLite database")?;
-        
+        let conn = Connection::open(db_path).capture("Failed to open SQLite database")?;
+
         // Initialize table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS playbooks (
@@ -25,7 +25,7 @@ impl DbStateStore {
             )",
             [],
         )
-        .context("Failed to initialize database table")?;
+        .capture("Failed to initialize database table")?;
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS playbook_callbacks (
@@ -36,7 +36,7 @@ impl DbStateStore {
             )",
             [],
         )
-        .context("Failed to initialize database callbacks table")?;
+        .capture("Failed to initialize database callbacks table")?;
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -50,16 +50,16 @@ impl DbStateStore {
         config: &PipelineConfig,
         socket_path: Option<&str>,
     ) -> Result<()> {
-        let config_json = serde_json::to_string(config)
-            .context("Failed to serialize PipelineConfig to JSON")?;
-        
+        let config_json =
+            serde_json::to_string(config).capture("Failed to serialize PipelineConfig to JSON")?;
+
         let conn = self.conn.lock().await;
         conn.execute(
             "INSERT OR REPLACE INTO playbooks (name, status, config, socket_path)
              VALUES (?1, ?2, ?3, ?4)",
             params![name, status, config_json, socket_path],
         )
-        .context("Failed to save playbook state to database")?;
+        .capture("Failed to save playbook state to database")?;
         Ok(())
     }
 
@@ -68,19 +68,22 @@ impl DbStateStore {
         name: &str,
     ) -> Result<Option<(String, PipelineConfig, Option<String>)>> {
         let conn = self.conn.lock().await;
-        let mut stmt = conn.prepare(
-            "SELECT status, config, socket_path FROM playbooks WHERE name = ?1",
-        )?;
-        let mut rows = stmt.query(params![name])?;
-        
-        if let Some(row) = rows.next()? {
-            let status: String = row.get(0)?;
-            let config_json: String = row.get(1)?;
-            let socket_path: Option<String> = row.get(2)?;
-            
+        let mut stmt = conn
+            .prepare("SELECT status, config, socket_path FROM playbooks WHERE name = ?1")
+            .capture("Failed to prepare SELECT statement for playbook")?;
+        let mut rows = stmt
+            .query(params![name])
+            .capture("Failed to query playbook state")?;
+
+        if let Some(row) = rows.next().capture("Failed to advance playbook rows")? {
+            let status: String = row.get(0).capture("Failed to read status column")?;
+            let config_json: String = row.get(1).capture("Failed to read config column")?;
+            let socket_path: Option<String> =
+                row.get(2).capture("Failed to read socket_path column")?;
+
             let config: PipelineConfig = serde_json::from_str(&config_json)
-                .context("Failed to deserialize PipelineConfig from JSON")?;
-            
+                .capture("Failed to deserialize PipelineConfig from JSON")?;
+
             Ok(Some((status, config, socket_path)))
         } else {
             Ok(None)
@@ -93,7 +96,7 @@ impl DbStateStore {
             "UPDATE playbooks SET status = ?1 WHERE name = ?2",
             params![status, name],
         )
-        .context("Failed to update playbook status in database")?;
+        .capture("Failed to update playbook status in database")?;
         Ok(())
     }
 
@@ -103,11 +106,8 @@ impl DbStateStore {
             "DELETE FROM playbook_callbacks WHERE source = ?1",
             params![name],
         );
-        conn.execute(
-            "DELETE FROM playbooks WHERE name = ?1",
-            params![name],
-        )
-        .context("Failed to delete playbook from database")?;
+        conn.execute("DELETE FROM playbooks WHERE name = ?1", params![name])
+            .capture("Failed to delete playbook from database")?;
         Ok(())
     }
 
@@ -125,7 +125,7 @@ impl DbStateStore {
              VALUES (?1, ?2, ?3, ?4)",
             params![uuid_str, source, callback_type, target],
         )
-        .context("Failed to insert callback mapping")?;
+        .capture("Failed to insert callback mapping")?;
         Ok(())
     }
 
@@ -136,42 +136,62 @@ impl DbStateStore {
             "DELETE FROM playbook_callbacks WHERE uuid = ?1",
             params![uuid_str],
         )
-        .context("Failed to delete callback mapping")?;
+        .capture("Failed to delete callback mapping")?;
         Ok(())
     }
 
-    pub async fn get_callbacks_for_source(&self, source: &str) -> Result<Vec<(uuid::Uuid, String, String, String)>> {
+    pub async fn get_callbacks_for_source(
+        &self,
+        source: &str,
+    ) -> Result<Vec<(uuid::Uuid, String, String, String)>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
             "SELECT uuid, source, callback_type, target FROM playbook_callbacks WHERE source = ?1",
-        )?;
-        let mut rows = stmt.query(params![source])?;
+        ).capture("Failed to prepare SELECT statement for callbacks")?;
+        let mut rows = stmt
+            .query(params![source])
+            .capture("Failed to query callbacks")?;
         let mut list = Vec::new();
-        while let Some(row) = rows.next()? {
-            let uuid_str: String = row.get(0)?;
-            let uuid = uuid::Uuid::parse_str(&uuid_str).context("Invalid UUID in database")?;
-            let src: String = row.get(1)?;
-            let cb_type: String = row.get(2)?;
-            let target: String = row.get(3)?;
+        while let Some(row) = rows.next().capture("Failed to advance callback rows")? {
+            let uuid_str: String = row.get(0).capture("Failed to read callback UUID column")?;
+            let uuid = uuid::Uuid::parse_str(&uuid_str).capture("Invalid UUID in database")?;
+            let src: String = row
+                .get(1)
+                .capture("Failed to read callback source column")?;
+            let cb_type: String = row.get(2).capture("Failed to read callback type column")?;
+            let target: String = row
+                .get(3)
+                .capture("Failed to read callback target column")?;
             list.push((uuid, src, cb_type, target));
         }
         Ok(list)
     }
 
-    pub async fn list_playbooks(&self) -> Result<Vec<(String, String, PipelineConfig, Option<String>)>> {
+    pub async fn list_playbooks(
+        &self,
+    ) -> Result<Vec<(String, String, PipelineConfig, Option<String>)>> {
         let conn = self.conn.lock().await;
-        let mut stmt = conn.prepare(
-            "SELECT name, status, config, socket_path FROM playbooks",
-        )?;
-        let mut rows = stmt.query([])?;
+        let mut stmt = conn
+            .prepare("SELECT name, status, config, socket_path FROM playbooks")
+            .capture("Failed to prepare SELECT statement for listing playbooks")?;
+        let mut rows = stmt.query([]).capture("Failed to query all playbooks")?;
         let mut list = Vec::new();
-        while let Some(row) = rows.next()? {
-            let name: String = row.get(0)?;
-            let status: String = row.get(1)?;
-            let config_json: String = row.get(2)?;
-            let socket_path: Option<String> = row.get(3)?;
+        while let Some(row) = rows
+            .next()
+            .capture("Failed to advance playbook list rows")?
+        {
+            let name: String = row.get(0).capture("Failed to read playbook name column")?;
+            let status: String = row
+                .get(1)
+                .capture("Failed to read playbook status column")?;
+            let config_json: String = row
+                .get(2)
+                .capture("Failed to read playbook config column")?;
+            let socket_path: Option<String> = row
+                .get(3)
+                .capture("Failed to read playbook socket_path column")?;
             let config: PipelineConfig = serde_json::from_str(&config_json)
-                .context("Failed to deserialize PipelineConfig from JSON")?;
+                .capture("Failed to deserialize PipelineConfig from JSON")?;
             list.push((name, status, config, socket_path));
         }
         Ok(list)

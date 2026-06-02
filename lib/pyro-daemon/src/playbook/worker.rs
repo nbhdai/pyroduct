@@ -1,4 +1,5 @@
-use anyhow::{Context, Result};
+use crate::Result;
+use pyroduct::Capture;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
@@ -22,12 +23,12 @@ impl PlaybookWorker {
         // 1. Load the playbook binary via CacheManager
         let cache = CacheManager::from_env()
             .await
-            .context("Failed to initialize CacheManager")?;
+            .capture("Failed to initialize CacheManager")?;
         let loaded_pipeline = pipeline_config
             .clone()
             .load(&cache)
             .await
-            .context("Failed to load playbook binary")?;
+            .capture("Failed to load playbook binary")?;
 
         let mut capability_processes = Vec::new();
         for (cap, addr) in &loaded_pipeline.playbook.remote {
@@ -48,7 +49,7 @@ impl PlaybookWorker {
 
                 let proc = CapabilityProcess::spawn(cap, socket_path, cap_config.as_ref())
                     .await
-                    .context("Failed to spawn capability process")?;
+                    .capture("Failed to spawn capability process")?;
                 capability_processes.push(proc);
             }
         }
@@ -57,7 +58,7 @@ impl PlaybookWorker {
         tracing::info!(name, "Instantiating playbook server");
         let server = pyroduct::pipeline::PipelineServer::new(&loaded_pipeline.playbook)
             .await
-            .context("Failed to construct PipelineServer")?;
+            .capture("Failed to construct PipelineServer")?;
 
         Ok(Self {
             name,
@@ -71,14 +72,16 @@ impl PlaybookWorker {
 
     pub async fn listen_socket(&mut self, playbook_socket: impl AsRef<Path>) -> Result<()> {
         if self.shutdown_tx.is_some() {
-            anyhow::bail!("Socket listener is already running");
+            pyroduct::bail!("Socket listener is already running");
         }
 
         let socket_path = playbook_socket.as_ref();
         if socket_path.exists() {
             let _ = fs::remove_file(socket_path).await;
         }
-        let listener = PyroListener::bind_unix(socket_path).await?;
+        let listener = PyroListener::bind_unix(socket_path)
+            .await
+            .capture("Failed to bind PyroListener socket")?;
 
         let shutdown_tx = pyroduct::transport::socket::playbook::run(self.server.clone(), listener);
         self.socket_path = Some(socket_path.to_path_buf());
@@ -93,7 +96,7 @@ impl PlaybookWorker {
         self.server
             .call(row)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to call playbook: {:?}", e))
+            .map_err(|e| pyroduct::capture!("Failed to call playbook: {:?}", e))
     }
 
     pub async fn add_callback(

@@ -6,9 +6,9 @@ use tokio::sync::Mutex;
 
 use crate::CapturedError;
 use crate::format::log_wal::{LogEntry, LogWal};
-use crate::module::{PyroInstance, sessions::SessionResult};
+use crate::module::PyroInstance;
 use crate::{
-    format::{PyroFailure, PyroLogs, value::PyroRow},
+    format::{PyroFailure, PyroLogs, SessionResult, value::PyroRow},
     pipeline::{PipelineResult, PyroError},
 };
 
@@ -193,9 +193,9 @@ impl SessionPipeline {
             let _ = self.log_manager.append(&log_entry).await;
 
             return match e.result {
-                Ok(captured) => Err(PyroError::CodePanic(Box::new(captured))),
+                Ok(captured) => Err(PyroError::CodePanic(captured)),
                 Err(msg) => Err(PyroError::local(crate::error::ErrorKind::Transport(
-                    Box::new(CapturedError::new(msg)),
+                    CapturedError::new(msg),
                 ))),
             };
         }
@@ -203,9 +203,9 @@ impl SessionPipeline {
         match self.call(session_id, input).await {
             Ok(res) => {
                 let (row, logs) = match res {
-                    SessionResult::Continue { result, logs } => (result, logs),
-                    SessionResult::End { result, logs } => (result, logs),
-                    SessionResult::Terminate { logs } => (PyroRow::empty(), logs),
+                    SessionResult::Continue { result, logs, .. } => (result, logs),
+                    SessionResult::End { result, logs, .. } => (result, logs),
+                    SessionResult::Terminate { logs, .. } => (PyroRow::empty(), logs),
                 };
 
                 let record = SessionExecutionRecord::Success {
@@ -222,9 +222,9 @@ impl SessionPipeline {
             Err(e) => {
                 let _ = self.close_session(session_id).await;
                 match e.result {
-                    Ok(captured) => Err(PyroError::CodePanic(Box::new(captured))),
+                    Ok(captured) => Err(PyroError::CodePanic(captured)),
                     Err(msg) => Err(PyroError::local(crate::error::ErrorKind::Transport(
-                        Box::new(CapturedError::new(msg)),
+                        CapturedError::new(msg),
                     ))),
                 }
             }
@@ -254,6 +254,7 @@ impl SessionPipeline {
                     .output_manager
                     .set_session_status(session_id as usize, "failed");
                 return Err(PyroFailure {
+                    row_index: session_id,
                     result: Err(e.to_string()),
                     logs: active_logs.clone(),
                 });
@@ -268,6 +269,7 @@ impl SessionPipeline {
                     .output_manager
                     .set_session_status(session_id as usize, "failed");
                 return Err(PyroFailure {
+                    row_index: session_id,
                     result: Err(e.to_string()),
                     logs: active_logs.clone(),
                 });
@@ -291,6 +293,7 @@ impl SessionPipeline {
                         .set_session_status(session_id as usize, "failed");
                     let logs = self.step.unpack_logs();
                     return Err(PyroFailure {
+                        row_index: session_id,
                         result: Err(e.to_string()),
                         logs,
                     });
@@ -303,6 +306,7 @@ impl SessionPipeline {
                     .set_session_status(session_id as usize, "failed");
                 let logs = self.step.unpack_logs();
                 return Err(PyroFailure {
+                    row_index: session_id,
                     result: Err(e.to_string()),
                     logs,
                 });
@@ -336,14 +340,19 @@ impl SessionPipeline {
                 Err(e) => {
                     let logs = self.step.unpack_logs();
                     return Err(PyroFailure {
+                        row_index: session_id,
                         result: Err(e.to_string()),
                         logs,
                     });
                 }
             };
 
-            if let Ok(SessionResult::Continue { result: output_row, .. }) | Ok(SessionResult::End { result: output_row, .. }) =
-                &res
+            if let Ok(SessionResult::Continue {
+                result: output_row, ..
+            })
+            | Ok(SessionResult::End {
+                result: output_row, ..
+            }) = &res
             {
                 let record_index = active.data_wal.records_written() as usize;
                 let _ = active.data_wal.append(record_index, output_row).await;
@@ -355,6 +364,7 @@ impl SessionPipeline {
             Ok(act) => act,
             Err(e) => {
                 return Err(PyroFailure {
+                    row_index: session_id,
                     result: Err(e.to_string()),
                     logs,
                 });

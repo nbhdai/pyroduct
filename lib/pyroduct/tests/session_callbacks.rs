@@ -2,8 +2,7 @@ use pyro_artifacts::{
     build::{AnonPlaybook, Builder},
     cache::CacheManager,
 };
-use pyroduct::module::sessions::SessionResult;
-use pyroduct::{PyroRow, pipeline::PipelineConfig};
+use pyroduct::{PyroRow, format::SessionResult, pipeline::PipelineConfig};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

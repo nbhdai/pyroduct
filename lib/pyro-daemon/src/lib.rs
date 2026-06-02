@@ -98,3 +98,6 @@ impl PyroDaemon {
         }
     }
 }
+
+pub type Result<T, E = pyroduct::CapturedError> = std::result::Result<T, E>;
+

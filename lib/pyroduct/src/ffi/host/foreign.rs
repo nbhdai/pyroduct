@@ -45,14 +45,14 @@ struct ForeignMethod {
 }
 
 impl ForeignMethod {
-    fn new(method: &MethodExport) -> Result<Self, Box<CapturedError>> {
+    fn new(method: &MethodExport) -> Result<Self, CapturedError> {
         if method.name.is_null() {
             return Err(
-                CapturedError::new("Found a method with an empty name (null pointer)").into(),
+                CapturedError::new("Found a method with an empty name (null pointer)"),
             );
         }
         if method.name_len == 0 {
-            return Err(CapturedError::new("Found a method with an empty name").into());
+            return Err(CapturedError::new("Found a method with an empty name"));
         }
         let name_bytes = unsafe { slice::from_raw_parts(method.name, method.name_len) };
         let func_name = std::str::from_utf8(name_bytes).map_err(|err| {
@@ -82,7 +82,7 @@ impl CapabilityClass {
         lib_ident: CapabilityIdent,
         library: Arc<Library>,
         export: ClassExport,
-    ) -> Result<Self, Box<CapturedError>> {
+    ) -> Result<Self, CapturedError> {
         unsafe { Self::from_export_inter(lib_ident, Some(library), export) }
     }
 
@@ -90,9 +90,9 @@ impl CapabilityClass {
         lib_ident: CapabilityIdent,
         library: Option<Arc<Library>>,
         export: ClassExport,
-    ) -> Result<Self, Box<CapturedError>> {
+    ) -> Result<Self, CapturedError> {
         let name = if export.name.is_null() || export.name_len == 0 {
-            return Err(CapturedError::new("Empty name, unable to link").into());
+            return Err(CapturedError::new("Empty name, unable to link"));
         } else {
             let name_bytes = unsafe { slice::from_raw_parts(export.name, export.name_len) };
             let name_str = std::str::from_utf8(name_bytes).map_err(|err| {
@@ -110,7 +110,7 @@ impl CapabilityClass {
         let methods = methods_slice
             .iter()
             .map(ForeignMethod::new)
-            .collect::<Result<Vec<_>, Box<CapturedError>>>()?;
+            .collect::<Result<Vec<_>, CapturedError>>()?;
 
         Ok(Self {
             name,

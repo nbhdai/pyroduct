@@ -6,9 +6,9 @@ use tokio::sync::Mutex;
 
 use crate::CapturedError;
 use crate::format::log_wal::{LogEntry, LogWal};
-use crate::module::{PyroInstance, sessions::SessionResult};
+use crate::module::PyroInstance;
 use crate::{
-    format::{PyroFailure, PyroLogs, value::PyroRow},
+    format::{PyroFailure, PyroLogs, SessionResult, value::PyroRow},
     pipeline::{PipelineResult, PyroError},
 };
 
@@ -211,9 +211,9 @@ impl SessionDiffPipeline {
             let _ = self.log_manager.append(&log_entry).await;
 
             return match e.result {
-                Ok(captured) => Err(PyroError::CodePanic(Box::new(captured))),
+                Ok(captured) => Err(PyroError::CodePanic(captured)),
                 Err(msg) => Err(PyroError::local(crate::error::ErrorKind::Transport(
-                    Box::new(CapturedError::new(msg)),
+                    CapturedError::new(msg),
                 ))),
             };
         }
@@ -221,9 +221,9 @@ impl SessionDiffPipeline {
         match self.call(session_id, input).await {
             Ok(res) => {
                 let (row, logs) = match res {
-                    SessionResult::Continue { result, logs } => (result, logs),
-                    SessionResult::End { result, logs } => (result, logs),
-                    SessionResult::Terminate { logs } => (PyroRow::empty(), logs),
+                    SessionResult::Continue { result, logs, .. } => (result, logs),
+                    SessionResult::End { result, logs, .. } => (result, logs),
+                    SessionResult::Terminate { logs, .. } => (PyroRow::empty(), logs),
                 };
                 let record = SessionDiffExecutionRecord::Success {
                     row_index,
@@ -246,9 +246,9 @@ impl SessionDiffPipeline {
             Err(e) => {
                 let _ = self.close_session(session_id).await;
                 match e.result {
-                    Ok(captured) => Err(PyroError::CodePanic(Box::new(captured))),
+                    Ok(captured) => Err(PyroError::CodePanic(captured)),
                     Err(msg) => Err(PyroError::local(crate::error::ErrorKind::Transport(
-                        Box::new(CapturedError::new(msg)),
+                        CapturedError::new(msg),
                     ))),
                 }
             }
@@ -279,6 +279,7 @@ impl SessionDiffPipeline {
                     .output_manager
                     .set_session_status(session_id as usize, "failed");
                 return Err(PyroFailure {
+                    row_index: session_id,
                     result: Err(e.to_string()),
                     logs: active_logs.clone(),
                 });
@@ -302,6 +303,7 @@ impl SessionDiffPipeline {
                         .output_manager
                         .set_session_status(session_id as usize, "failed");
                     return Err(PyroFailure {
+                        row_index: session_id,
                         result: Err(e.to_string()),
                         logs: active_logs.clone(),
                     });
@@ -354,6 +356,7 @@ impl SessionDiffPipeline {
                 Err(e) => {
                     let logs = self.step.unpack_logs();
                     return Err(PyroFailure {
+                        row_index: session_id,
                         result: Err(e.to_string()),
                         logs,
                     });
@@ -377,6 +380,7 @@ impl SessionDiffPipeline {
             Err(e) => {
                 let logs = self.step.unpack_logs();
                 return Err(PyroFailure {
+                    row_index: session_id,
                     result: Err(e.to_string()),
                     logs,
                 });

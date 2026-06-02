@@ -1,5 +1,5 @@
 use crate::capability::CapabilityProcess;
-use anyhow::Result;
+use crate::Result;
 use pyro_artifacts::cache::CacheManager;
 use pyro_artifacts::cargo::CapabilityIdent;
 use pyro_spec::InterfaceSpec;

@@ -28,11 +28,11 @@ pub enum PyroError {
     IncorrectParse(DataStatus),
 
     #[error("Bad header in an FFI context: {0}")]
-    HeaderFfi(Box<CapturedError>),
+    HeaderFfi(CapturedError),
 
     /// The remote code panicked and we captured it here
     #[error("Remote Code Panic: {0}")]
-    CodePanic(Box<CapturedError>),
+    CodePanic(CapturedError),
 
     /// A pyro/transport error with origin and kind.
     #[error("{origin} {kind}")]
@@ -134,14 +134,14 @@ impl PyroError {
 // Todo: make this capture the stack and library and all that
 impl From<std::io::Error> for PyroError {
     fn from(err: std::io::Error) -> Self {
-        Self::local(ErrorKind::Io(CapturedError::new(err).into()))
+        Self::local(ErrorKind::Io(CapturedError::new(err)))
     }
 }
 
 // Todo: make this capture the stack and library and all that
 impl From<std::str::Utf8Error> for PyroError {
     fn from(err: std::str::Utf8Error) -> Self {
-        Self::local(ErrorKind::Utf8(CapturedError::new(err).into()))
+        Self::local(ErrorKind::Utf8(CapturedError::new(err)))
     }
 }
 
@@ -185,17 +185,17 @@ impl fmt::Display for ErrorOrigin {
 pub enum ErrorKind {
     NotFound(String),
     /// Failed to serialize data.
-    Serialization(Box<CapturedError>),
+    Serialization(CapturedError),
     /// Failed to deserialize data.
-    Deserialization(Box<CapturedError>),
+    Deserialization(CapturedError),
     /// Failed to validate archived data.
-    Validation(Box<CapturedError>),
+    Validation(CapturedError),
     /// Generic transport failure.
-    Transport(Box<CapturedError>),
+    Transport(CapturedError),
     /// I/O error.
-    Io(Box<CapturedError>),
+    Io(CapturedError),
     /// UTF-8 decoding error.
-    Utf8(Box<CapturedError>),
+    Utf8(CapturedError),
     /// Header was invalid
     InvalidHeader,
     /// Layout/capacity calculation failed.
@@ -293,35 +293,35 @@ impl fmt::Display for ErrorKind {
 
 // Convenience constructors for common local errors
 impl PyroError {
-    pub fn remote_code(err: impl Into<Box<CapturedError>>) -> Self {
+    pub fn remote_code(err: impl Into<CapturedError>) -> Self {
         Self::CodePanic(err.into())
     }
 
-    pub fn serialization(err: impl Into<Box<CapturedError>>) -> Self {
+    pub fn serialization(err: impl Into<CapturedError>) -> Self {
         Self::local(ErrorKind::Serialization(err.into()))
     }
 
-    pub fn deserialization(err: impl Into<Box<CapturedError>>) -> Self {
+    pub fn deserialization(err: impl Into<CapturedError>) -> Self {
         Self::local(ErrorKind::Deserialization(err.into()))
     }
 
-    pub fn validation(err: impl Into<Box<CapturedError>>) -> Self {
+    pub fn validation(err: impl Into<CapturedError>) -> Self {
         Self::local(ErrorKind::Validation(err.into()))
     }
 
-    pub fn transport(err: impl Into<Box<CapturedError>>) -> Self {
+    pub fn transport(err: impl Into<CapturedError>) -> Self {
         Self::local(ErrorKind::Transport(err.into()))
     }
 
-    pub fn local_io(err: impl Into<Box<CapturedError>>) -> Self {
+    pub fn local_io(err: impl Into<CapturedError>) -> Self {
         Self::local(ErrorKind::Io(err.into()))
     }
 
-    pub fn remote_io(err: impl Into<Box<CapturedError>>) -> Self {
+    pub fn remote_io(err: impl Into<CapturedError>) -> Self {
         Self::remote(ErrorKind::Io(err.into()))
     }
 
-    pub fn remote_utf8(err: impl Into<Box<CapturedError>>) -> Self {
+    pub fn remote_utf8(err: impl Into<CapturedError>) -> Self {
         Self::remote(ErrorKind::Utf8(err.into()))
     }
 

@@ -1,6 +1,7 @@
+use crate::Result;
 use crate::playbook::PlaybookWorker;
-use anyhow::{Context, Result};
 use pyro_artifacts::cargo::CapabilityIdent;
+use pyroduct::Capture;
 use pyroduct::PyroRow;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -232,7 +233,7 @@ impl PlaybooksManager {
         let playbook_dir = self.working_dir.join("playbooks").join(&name);
 
         if playbook_dir.exists() {
-            anyhow::bail!(
+            pyroduct::bail!(
                 "Name conflict: playbook with name '{}' already exists",
                 name
             );
@@ -240,21 +241,23 @@ impl PlaybooksManager {
 
         let config_str = tokio::fs::read_to_string(&playbook_config_path)
             .await
-            .context("Failed to read playbook config file")?;
+            .capture("Failed to read playbook config file")?;
 
         let mut pipeline_config: pyroduct::pipeline::factory::PipelineConfig =
             match playbook_config_path.extension().and_then(|s| s.to_str()) {
                 Some("toml") => {
-                    toml::from_str(&config_str).context("Failed to parse pipeline TOML")?
+                    toml::from_str(&config_str).capture("Failed to parse pipeline TOML")?
                 }
                 Some("yaml") | Some("yml") => {
-                    serde_yaml::from_str(&config_str).context("Failed to parse pipeline YAML")?
+                    serde_yaml::from_str(&config_str).capture("Failed to parse pipeline YAML")?
                 }
                 Some("json") => {
-                    serde_json::from_str(&config_str).context("Failed to parse pipeline JSON")?
+                    serde_json::from_str(&config_str).capture("Failed to parse pipeline JSON")?
                 }
                 _ => {
-                    anyhow::bail!("Unknown playbook config extension; supports toml, yaml and json")
+                    pyroduct::bail!(
+                        "Unknown playbook config extension; supports toml, yaml and json"
+                    )
                 }
             };
 
@@ -264,9 +267,15 @@ impl PlaybooksManager {
         let log_dir = playbook_dir.join("log");
 
         // Create these directories
-        tokio::fs::create_dir_all(&input_dir).await?;
-        tokio::fs::create_dir_all(&output_dir).await?;
-        tokio::fs::create_dir_all(&log_dir).await?;
+        tokio::fs::create_dir_all(&input_dir)
+            .await
+            .capture("Failed to create input directory")?;
+        tokio::fs::create_dir_all(&output_dir)
+            .await
+            .capture("Failed to create output directory")?;
+        tokio::fs::create_dir_all(&log_dir)
+            .await
+            .capture("Failed to create log directory")?;
 
         pipeline_config.input_dir = input_dir;
         pipeline_config.output_dir = output_dir;
@@ -278,25 +287,31 @@ impl PlaybooksManager {
                 playbook_dir.join("input_dir"),
                 pipeline_config.input_dir.to_string_lossy().as_bytes(),
             )
-            .await?;
+            .await
+            .capture("Failed to write custom input directory reference")?;
         }
         if pipeline_config.output_dir != playbook_dir.join("output") {
             tokio::fs::write(
                 playbook_dir.join("output_dir"),
                 pipeline_config.output_dir.to_string_lossy().as_bytes(),
             )
-            .await?;
+            .await
+            .capture("Failed to write custom output directory reference")?;
         }
 
         // Store PipelineConfig in ROOT/playbooks/{playbook_name}/config.toml
         let new_config_path = playbook_dir.join("config.toml");
         let toml_string = toml::to_string_pretty(&pipeline_config)
-            .context("Failed to serialize modified PipelineConfig to TOML")?;
-        tokio::fs::write(&new_config_path, toml_string).await?;
+            .capture("Failed to serialize modified PipelineConfig to TOML")?;
+        tokio::fs::write(&new_config_path, toml_string)
+            .await
+            .capture("Failed to write config.toml")?;
 
         // Store playbook socket path persistently if provided
         if let Some(ref socket) = playbook_socket {
-            tokio::fs::write(playbook_dir.join("socket_path"), socket.as_bytes()).await?;
+            tokio::fs::write(playbook_dir.join("socket_path"), socket.as_bytes())
+                .await
+                .capture("Failed to write socket_path reference file")?;
         }
 
         // Save state and config in SQLite database
@@ -333,13 +348,13 @@ impl PlaybooksManager {
     pub async fn resume_playbook(self: &Arc<Self>, name: String) -> Result<()> {
         let mut guard = self.workers.lock().await;
         if guard.contains_key(&name) {
-            anyhow::bail!("Playbook '{}' is already running", name);
+            pyroduct::bail!("Playbook '{}' is already running", name);
         }
 
         let db_entry = self.db.get_playbook(&name).await?;
         let (_status, pipeline_config, socket_path) = match db_entry {
             Some(entry) => entry,
-            None => anyhow::bail!("Playbook '{}' does not exist in state store", name),
+            None => pyroduct::bail!("Playbook '{}' does not exist in state store", name),
         };
 
         let mut worker = PlaybookWorker::start(name.clone(), pipeline_config).await?;
@@ -364,7 +379,7 @@ impl PlaybooksManager {
         if playbook_dir.exists() {
             tokio::fs::remove_dir_all(&playbook_dir)
                 .await
-                .context("Failed to delete playbook directory")?;
+                .capture("Failed to delete playbook directory")?;
         }
         Ok(())
     }
@@ -490,7 +505,7 @@ impl PlaybooksManager {
             pyroduct::pipeline::Callback::connect_socket_tcp(addr)
                 .await
                 .map_err(|e| {
-                    anyhow::anyhow!(
+                    pyroduct::capture!(
                         "Failed to connect to TCP callback target {}: {:?}",
                         target,
                         e
@@ -501,7 +516,7 @@ impl PlaybooksManager {
             pyroduct::pipeline::Callback::connect_socket_unix(path)
                 .await
                 .map_err(|e| {
-                    anyhow::anyhow!(
+                    pyroduct::capture!(
                         "Failed to connect to UDS callback target {}: {:?}",
                         target,
                         e
@@ -568,24 +583,24 @@ impl PlaybooksManager {
             let workers = self.workers.lock().await;
             let worker = workers
                 .get(name)
-                .ok_or_else(|| anyhow::anyhow!("Playbook '{}' is not running", name))?;
+                .ok_or_else(|| pyroduct::capture!("Playbook '{}' is not running", name))?;
             (worker.server.clone(), worker.server.spec())
         };
 
         let input_row: PyroRow<'static> = serde_json::from_value(payload)
-            .context("Invalid JSON payload: failed to deserialize into PyroRow")?;
+            .capture("Invalid JSON payload: failed to deserialize into PyroRow")?;
 
         let repaired_row = input_row
             .project_repair(spec.func.input.fields())
-            .context("Failed to repair input JSON according to module spec")?;
+            .capture("Failed to repair input JSON according to module spec")?;
 
         let (_session_id, res) = worker
             .call(repaired_row)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to call playbook: {:?}", e))?;
+            .map_err(|e| pyroduct::capture!("Failed to call playbook: {:?}", e))?;
 
         let result_val =
-            serde_json::to_value(&res).context("Failed to serialize returned row to JSON")?;
+            serde_json::to_value(&res).capture("Failed to serialize returned row to JSON")?;
         Ok(result_val)
     }
 }

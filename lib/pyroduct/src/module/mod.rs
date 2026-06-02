@@ -19,9 +19,7 @@ use pyro_artifacts::build::BuildError;
 use pyro_artifacts::cache::{CacheError, LoadedPlaybook, RemoteAddress};
 use pyro_artifacts::cargo::CapabilityIdent;
 use pyro_artifacts::environment::EnvironmentError;
-use wasmtime::{
-    Caller, Engine, Instance, Linker, Memory, Store, TypedFunc,
-};
+use wasmtime::{Caller, Engine, Instance, Linker, Memory, Store, TypedFunc};
 
 use crate::format::Bridgeable;
 use crate::format::{
@@ -40,8 +38,7 @@ mod state;
 // #[cfg(all(test, feature = "module"))]
 // mod tests;
 
-use capability::{CapabilityLibrary, CapabilityError};
-pub use sessions::SessionResult;
+use capability::{CapabilityError, CapabilityLibrary};
 pub use state::{PyroModule, PyroState};
 
 use thiserror::Error;
@@ -334,13 +331,17 @@ impl PyroInstance {
         &self.spec
     }
 
-    pub async fn call(&mut self, input: &PyroRow<'_>) -> Result<PyroSuccess, PyroFailure> {
+    pub async fn call(
+        &mut self,
+        row_index: u32,
+        input: &PyroRow<'_>,
+    ) -> Result<PyroSuccess, PyroFailure> {
         tracing::debug!("Calling wasm module");
         // Ship the input row via rkyv into a PyroVec
         let input_row_owned = input.to_static();
         let input_vec = input_row_owned
             .ship()
-            .map_err(|err| self.pack_pyro_error(err))?;
+            .map_err(|err| self.pack_pyro_error(row_index, err))?;
         let input_view: PyroView = input_vec.view();
 
         // 1. Write Input using PyroCallIo
@@ -348,7 +349,7 @@ impl PyroInstance {
         let input_ptr = io
             .new_input(&input_view)
             .await
-            .map_err(|err| self.pack_pyro_error(err))?;
+            .map_err(|err| self.pack_pyro_error(row_index, err))?;
 
         tracing::debug!("input_ptr = {:#x}", input_ptr);
 
@@ -361,7 +362,7 @@ impl PyroInstance {
                     CapturedError::new(format!("Missing main function: {}", e)).into(),
                 )
             })
-            .map_err(|err| self.pack_pyro_error(err))?;
+            .map_err(|err| self.pack_pyro_error(row_index, err))?;
 
         tracing::debug!("calling call_extern...");
         let output_ptr = match entry.call_async(&mut self.store, input_ptr).await {
@@ -371,20 +372,21 @@ impl PyroInstance {
                 if let Ok(Some(err_vec)) = io.get_panic_error().await {
                     match err_vec.status() {
                         Ok(DataStatus::RkyvError) => match serde_json::from_slice(&err_vec) {
-                            Ok(error) => return Err(self.pack_user_error(error)),
+                            Ok(error) => return Err(self.pack_user_error(row_index, error)),
                             Err(error) => {
-                                return Err(
-                                    self.pack_pyro_error(PyroError::capture_json(error, &err_vec))
-                                );
+                                return Err(self.pack_pyro_error(
+                                    row_index,
+                                    PyroError::capture_json(error, &err_vec),
+                                ));
                             }
                         },
                         _ => match err_vec.parse_as_error() {
-                            Ok(_) => return Err(self.pack_pyro_error(classify_error(e))),
-                            Err(err) => return Err(self.pack_pyro_error(err)),
+                            Ok(_) => return Err(self.pack_pyro_error(row_index, classify_error(e))),
+                            Err(err) => return Err(self.pack_pyro_error(row_index, err)),
                         },
                     }
                 }
-                return Err(self.pack_pyro_error(classify_error(e)));
+                return Err(self.pack_pyro_error(row_index, classify_error(e)));
             }
         };
         tracing::debug!("output_ptr = {:#x}", output_ptr);
@@ -395,47 +397,45 @@ impl PyroInstance {
         let output_vec = io
             .get_output(output_ptr)
             .await
-            .map_err(|err| self.pack_pyro_error(err))?;
+            .map_err(|err| self.pack_pyro_error(row_index, err))?;
         tracing::debug!("output_vec received");
 
         // 4. Parse the result (Zero-copy view of the host-owned vector)
         let result_view = output_vec.view();
         result_view
             .parse_as_error()
-            .map_err(|err| self.pack_pyro_error(err))?;
+            .map_err(|err| self.pack_pyro_error(row_index, err))?;
 
         let pyref = result_view.py_ref();
         match result_view.status() {
             Ok(DataStatus::RkyvValid) => {
                 tracing::debug!("Result status: RkyvValid");
-                let row = PyroRow::expose_view(pyref).map_err(|err| self.pack_pyro_error(err))?;
-                Ok(self.pack_success(PyroRow::from(&*row).to_static()))
+                let row = PyroRow::expose_view(pyref)
+                    .map_err(|err| self.pack_pyro_error(row_index, err))?;
+                Ok(self.pack_success(row_index, PyroRow::from(&*row).to_static()))
             }
             Ok(DataStatus::RkyvError) => {
                 tracing::debug!("Result status: RkyvError");
                 match serde_json::from_slice(&result_view) {
-                    Ok(error) => Err(self.pack_user_error(error)),
-                    Err(error) => {
-                        Err(self.pack_pyro_error(PyroError::capture_json(error, &result_view)))
-                    }
+                    Ok(error) => Err(self.pack_user_error(row_index, error)),
+                    Err(error) => Err(self
+                        .pack_pyro_error(row_index, PyroError::capture_json(error, &result_view))),
                 }
             }
             Ok(DataStatus::CodeError) => {
                 tracing::debug!("Result status: CodeError");
                 match serde_json::from_slice(&result_view) {
-                    Ok(error) => Err(self.pack_user_error(error)),
-                    Err(error) => {
-                        Err(self.pack_pyro_error(PyroError::capture_json(error, &result_view)))
-                    }
+                    Ok(error) => Err(self.pack_user_error(row_index, error)),
+                    Err(error) => Err(self
+                        .pack_pyro_error(row_index, PyroError::capture_json(error, &result_view))),
                 }
             }
             _ => {
                 tracing::debug!(status = result_view.status_u8(), "Result status: Unknown");
-                Err(
-                    self.pack_pyro_error(PyroError::Header(ParseError::UnknownStatus(
-                        result_view.status_u8(),
-                    ))),
-                )
+                Err(self.pack_pyro_error(
+                    row_index,
+                    PyroError::Header(ParseError::UnknownStatus(result_view.status_u8())),
+                ))
             }
         }
     }
@@ -449,29 +449,33 @@ impl PyroInstance {
         }
     }
 
-    pub fn pack_pyro_error(&self, error: impl std::error::Error) -> PyroFailure {
+    pub fn pack_pyro_error(&self, row_index: u32, error: impl std::error::Error) -> PyroFailure {
         PyroFailure {
+            row_index,
             result: Err(error.to_string()),
             logs: self.unpack_logs(),
         }
     }
 
-    pub fn pack_setup_pyro_error(error: impl std::error::Error) -> PyroFailure {
+    pub fn pack_setup_pyro_error(row_index: u32, error: impl std::error::Error) -> PyroFailure {
         PyroFailure {
+            row_index,
             result: Err(error.to_string()),
             logs: PyroLogs::empty(),
         }
     }
 
-    pub fn pack_user_error(&self, error: CapturedError) -> PyroFailure {
+    pub fn pack_user_error(&self, row_index: u32, error: CapturedError) -> PyroFailure {
         PyroFailure {
+            row_index,
             result: Ok(error),
             logs: self.unpack_logs(),
         }
     }
 
-    pub fn pack_success(&self, row: PyroRow<'static>) -> PyroSuccess {
+    pub fn pack_success(&self, row_index: u32, row: PyroRow<'static>) -> PyroSuccess {
         PyroSuccess {
+            row_index,
             row,
             logs: self.unpack_logs(),
         }

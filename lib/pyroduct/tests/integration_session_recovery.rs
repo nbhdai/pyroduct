@@ -2,9 +2,9 @@ use pyro_artifacts::{
     build::{AnonPlaybook, Builder},
     cache::CacheManager,
 };
-use pyroduct::module::sessions::SessionResult;
 use pyroduct::{
     PyroRow,
+    format::SessionResult,
     pipeline::{
         PipelineConfig, session::SessionExecutionRecord, session_diff::SessionDiffExecutionRecord,
     },

@@ -40,7 +40,7 @@ impl PyroError {
                 err_vec
             }
             PyroError::Pyro { kind, .. } => {
-                let error: Option<&Box<CapturedError>> = match kind {
+                let error: Option<&CapturedError> = match kind {
                     ErrorKind::Serialization(error_payload) => Some(error_payload),
                     ErrorKind::Deserialization(error_payload) => Some(error_payload),
                     ErrorKind::Validation(error_payload) => Some(error_payload),
