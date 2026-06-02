@@ -1,4 +1,6 @@
+use crate::module::interconnect::PlaybookInterconnect;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use pyro_artifacts::{
     artifacts::PlaybookIdent,
@@ -102,6 +104,14 @@ pub struct PipelineFactory {
     pub error_log_retention_secs: u64,
 }
 
+impl PipelineFactory {
+    /// Configure the factory with an interconnect.
+    pub fn with_interconnect(mut self, interconnect: Arc<dyn PlaybookInterconnect>) -> Self {
+        self.factory.set_interconnect(interconnect);
+        self
+    }
+}
+
 // =============================================================================
 // Loading
 // =============================================================================
@@ -112,7 +122,7 @@ impl PipelineFactory {
     /// Compiles and instantiates the single wasm module, configuring it with WAL.
     pub async fn build(&self) -> Result<Pipeline, PipelineError> {
         tracing::debug!("Building wasm module for playbook");
-        let instance = self.factory.instantiate(None).await?;
+        let instance = self.factory.instantiate().await?;
         let input_schema = self.factory.spec().func.input.clone();
         let output_schema = self.factory.spec().func.output.clone();
 
@@ -138,7 +148,7 @@ impl PipelineFactory {
     /// Compiles and instantiates the single wasm module, configuring it with WAL.
     pub async fn build_session(&self) -> Result<SessionPipeline, PipelineError> {
         tracing::debug!("Building wasm module for playbook");
-        let instance = self.factory.instantiate(None).await?;
+        let instance = self.factory.instantiate().await?;
         let input_schema = self.factory.spec().func.input.clone();
         let output_schema_from_func = self.factory.spec().func.output.clone();
 
@@ -208,7 +218,7 @@ impl PipelineFactory {
     /// Compiles and instantiates the single wasm module, configuring it with WAL.
     pub async fn build_session_diff(&self) -> Result<SessionDiffPipeline, PipelineError> {
         tracing::debug!("Building wasm module for playbook");
-        let instance = self.factory.instantiate(None).await?;
+        let instance = self.factory.instantiate().await?;
         let input_schema = self.factory.spec().func.input.clone();
         let output_schema = self.factory.spec().func.output.clone();
 

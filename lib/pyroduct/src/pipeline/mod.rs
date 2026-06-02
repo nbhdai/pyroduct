@@ -1,6 +1,7 @@
 pub mod callback;
 pub mod data;
 pub mod factory;
+pub mod interconnect;
 pub mod normal;
 pub mod server;
 pub mod session;
@@ -11,6 +12,7 @@ pub mod sql;
 
 pub use callback::Callback;
 pub use factory::{PipelineConfig, PipelineFactory};
+pub use interconnect::PlaybookCollection;
 pub use normal::{ExecutionRecord, Failure, Pipeline, PipelinePool};
 pub use server::{PipelineServer, ServerPipeline};
 use thiserror::Error;

@@ -6,6 +6,7 @@ use pyro_artifacts::cache::LoadedPlaybook;
 
 use crate::format::{PyroFailure, PyroRow, PyroSuccess, SessionResult, log_wal::LogWal};
 use crate::module::PyroFactory;
+use crate::module::interconnect::PlaybookInterconnect;
 use crate::pipeline::{
     ExecutionRecord, Pipeline, PipelineError, session::SessionPipeline,
     session_diff::SessionDiffPipeline,
@@ -29,8 +30,16 @@ pub struct PipelineServer {
 impl PipelineServer {
     /// Create a new server pipeline from a loaded playbook.
     pub async fn new(playbook: &LoadedPlaybook) -> Result<Self, PipelineError> {
-        let factory = PyroFactory::from_playbook(playbook)?;
-        let instance = factory.instantiate(None).await?;
+        Self::new_with_interconnect(playbook, None).await
+    }
+
+    /// Create a new server pipeline from a loaded playbook with an interconnect.
+    pub async fn new_with_interconnect(
+        playbook: &LoadedPlaybook,
+        interconnect: Option<Arc<dyn PlaybookInterconnect>>,
+    ) -> Result<Self, PipelineError> {
+        let factory = PyroFactory::from_playbook(playbook)?.with_interconnect(interconnect);
+        let instance = factory.instantiate().await?;
         let spec = instance.spec.clone();
         let input_schema = factory.spec().func.input.clone();
         let output_schema = factory.spec().func.output.clone();

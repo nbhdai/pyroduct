@@ -120,11 +120,16 @@ pub struct PyroFactory {
     libraries: Vec<Arc<CapabilityLibrary>>,
     module: PyroModule,
     remote: HashMap<CapabilityIdent, RemoteAddress>,
+    interconnect: Option<Arc<dyn PlaybookInterconnect>>,
 }
 
 impl PyroFactory {
     pub fn spec(&self) -> &PlaybookSpec {
         &self.spec
+    }
+
+    pub fn set_interconnect(&mut self, interconnect: Arc<dyn PlaybookInterconnect>) {
+        self.interconnect = Some(interconnect);
     }
 
     pub fn from_playbook(playbook: &LoadedPlaybook) -> Result<Self, WasmError> {
@@ -161,7 +166,16 @@ impl PyroFactory {
             configurations,
             module: pyro_module,
             remote: playbook.remote.clone(),
+            interconnect: None,
         })
+    }
+
+    pub fn with_interconnect(
+        mut self,
+        interconnect: Option<Arc<dyn PlaybookInterconnect>>,
+    ) -> Self {
+        self.interconnect = interconnect;
+        self
     }
 
     // Todo: make this more robust.
@@ -254,19 +268,16 @@ impl PyroFactory {
         Ok(caps)
     }
 
-    pub async fn instantiate(
-        &self,
-        interconnect: Option<Arc<dyn PlaybookInterconnect>>,
-    ) -> Result<PyroInstance, WasmError> {
+    pub async fn instantiate(&self) -> Result<PyroInstance, WasmError> {
         tracing::info!("Instantiating PyroInstance");
-        let pyro_state = PyroState::new(interconnect.clone());
+        let pyro_state = PyroState::new(self.interconnect.clone());
         let mut store = Store::new(&DEFAULT_ENGINE, pyro_state);
         let objects = self.create_capabilities().await?;
         let mut linker = Linker::new(&DEFAULT_ENGINE);
 
         Self::link_logger(&mut linker)?;
         Self::link_capabilities(&mut linker, &objects)?;
-        if let Some(interconnect) = &interconnect {
+        if let Some(interconnect) = &self.interconnect {
             interconnect::link_interconnect(&mut linker, interconnect.clone())?;
         }
 
@@ -290,7 +301,7 @@ impl PyroFactory {
             session_states: HashMap::new(),
         };
 
-        if let Some(interconnect) = &interconnect {
+        if let Some(interconnect) = &self.interconnect {
             interconnect::add_playbooks(interconnect.playbooks(), &mut pyro_instance).await?;
         }
 
