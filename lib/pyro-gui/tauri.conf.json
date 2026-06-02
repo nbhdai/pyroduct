@@ -1,0 +1,27 @@
+{
+  "productName": "Pyroduct GUI",
+  "version": "0.1.0",
+  "identifier": "com.pyroduct.gui",
+  "build": {
+    "beforeDevCommand": "",
+    "beforeBuildCommand": "",
+    "frontendDist": "./ui"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Pyroduct Control Panel",
+        "width": 1100,
+        "height": 750,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "withGlobalTauri": true
+  },
+  "bundle": {
+    "active": false
+  }
+}

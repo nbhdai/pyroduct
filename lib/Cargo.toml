@@ -7,6 +7,7 @@ members = [
     "pyro-spec",
     "pyro-artifacts",
     "pyro-daemon",
+    "pyro-gui",
 ]
 
 default-members = [
@@ -16,6 +17,7 @@ default-members = [
     "pyro-spec",
     "pyro-artifacts",
     "pyro-daemon",
+    "pyro-gui",
 ]
 resolver = "2"
 

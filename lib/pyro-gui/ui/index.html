@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pyroduct Command Center</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Source+Code+Pro:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="logo-icon">▲</div>
+                <div class="brand-name">Pyroduct</div>
+            </div>
+            
+            <nav class="nav-menu">
+                <button class="nav-btn active" data-tab="dashboard">
+                    <span class="btn-icon">⚡</span> Dashboard
+                </button>
+                <button class="nav-btn" data-tab="cache">
+                    <span class="btn-icon">📦</span> Cache Explorer
+                </button>
+                <button class="nav-btn" data-tab="playbooks">
+                    <span class="btn-icon">⚙️</span> Playbooks
+                </button>
+            </nav>
+
+            <div class="daemon-quick-status">
+                <div class="status-indicator-wrapper">
+                    <span id="daemon-pulse" class="status-pulse offline"></span>
+                    <span id="daemon-status-text" class="status-text">Daemon: Checking...</span>
+                </div>
+                <div id="daemon-sub-info" class="sub-info">socket: offline</div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="content-area">
+            <header class="top-header">
+                <h1 id="page-title">Dashboard</h1>
+                <div class="header-actions">
+                    <button id="refresh-all-btn" class="btn btn-secondary">🔄 Refresh</button>
+                </div>
+            </header>
+
+            <div class="tab-content active" id="tab-dashboard">
+                <div class="grid-layout">
+                    <!-- Status Card -->
+                    <div class="card status-card">
+                        <h2>Daemon Information</h2>
+                        <div class="info-list">
+                            <div class="info-row">
+                                <span class="label">Daemon Status</span>
+                                <span id="info-status" class="value badge badge-offline">Offline</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="label">Active Workers</span>
+                                <span id="info-workers" class="value">0</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="label">Daemon Version</span>
+                                <span id="info-version" class="value">-</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="label">Control Socket</span>
+                                <span id="info-socket" class="value code-text">-</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Actions Card -->
+                    <div class="card actions-card">
+                        <h2>Quick Actions</h2>
+                        <div class="action-buttons">
+                            <button id="quick-refresh-btn" class="btn btn-primary btn-block">Query Status</button>
+                            <button id="quick-purge-btn" class="btn btn-danger btn-block">Purge Local Cache</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Console / Logs -->
+                <div class="card log-card mt-20">
+                    <h2>Event Console</h2>
+                    <div id="console-logs" class="console-box">
+                        <div class="log-line system">[system] Console initialized. Ready to interact with pyro-daemond.</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-content" id="tab-cache">
+                <div class="cache-header">
+                    <div>
+                        <p class="subtitle">Local Repository: <span id="cache-root-path" class="code-text">~/.pyroduct</span></p>
+                    </div>
+                    <button id="purge-cache-btn" class="btn btn-danger">Purge Cache</button>
+                </div>
+
+                <div class="tabs-sub">
+                    <button class="sub-tab-btn active" data-subtab="capabilities">Capabilities</button>
+                    <button class="sub-tab-btn" data-subtab="modules">Modules (Playbooks)</button>
+                </div>
+
+                <div class="sub-tab-content active" id="subtab-capabilities">
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Author</th>
+                                    <th>Package</th>
+                                    <th>Version</th>
+                                </tr>
+                            </thead>
+                            <tbody id="capabilities-table-body">
+                                <tr>
+                                    <td colspan="3" class="text-center">No capabilities found in cache.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="sub-tab-content" id="subtab-modules">
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Author</th>
+                                    <th>Package</th>
+                                    <th>Version</th>
+                                </tr>
+                            </thead>
+                            <tbody id="modules-table-body">
+                                <tr>
+                                    <td colspan="3" class="text-center">No playbooks found in cache.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-content" id="tab-playbooks">
+                <div class="playbooks-header">
+                    <h2>Running Workers</h2>
+                    <button id="open-start-playbook-modal" class="btn btn-success">+ Start Playbook</button>
+                </div>
+
+                <div class="playbooks-grid" id="playbooks-list">
+                    <div class="empty-state">
+                        <span class="empty-icon">⚙️</span>
+                        <p>No active playbooks found running on the daemon.</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Start Playbook Modal -->
+    <div class="modal-overlay" id="start-playbook-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Start New Playbook</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="start-playbook-form">
+                    <div class="form-group">
+                        <label for="playbook-name">Playbook Name *</label>
+                        <input type="text" id="playbook-name" required placeholder="e.g. my-agent-run">
+                    </div>
+                    <div class="form-group">
+                        <label for="playbook-config-path">Config File Path (.toml / .yaml) *</label>
+                        <input type="text" id="playbook-config-path" required placeholder="e.g. /path/to/playbook.toml">
+                    </div>
+                    <div class="form-group">
+                        <label for="playbook-socket">Custom Socket Path (Optional)</label>
+                        <input type="text" id="playbook-socket" placeholder="e.g. /tmp/playbook.sock">
+                    </div>
+                    <div class="form-group">
+                        <label for="playbook-input-dir">Input Directory (Optional)</label>
+                        <input type="text" id="playbook-input-dir" placeholder="Defaults to playbook workspace input/">
+                    </div>
+                    <div class="form-group">
+                        <label for="playbook-output-dir">Output Directory (Optional)</label>
+                        <input type="text" id="playbook-output-dir" placeholder="Defaults to playbook workspace output/">
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary modal-close-btn">Cancel</button>
+                        <button type="submit" class="btn btn-success">Launch Worker</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Call Playbook Modal -->
+    <div class="modal-overlay" id="call-playbook-modal">
+        <div class="modal modal-lg">
+            <div class="modal-header">
+                <h3>Call Playbook: <span id="call-playbook-target-name">...</span></h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="call-playbook-form">
+                    <input type="hidden" id="call-playbook-name">
+                    
+                    <div class="form-group">
+                        <label for="call-playbook-payload">Payload (JSON) *</label>
+                        <textarea id="call-playbook-payload" rows="8" required placeholder='{
+  "fields": [
+    {"name": "input_text", "value": "hello"}
+  ]
+}'></textarea>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary modal-close-btn">Cancel</button>
+                        <button type="submit" id="submit-call-btn" class="btn btn-primary">Send Call</button>
+                    </div>
+                </form>
+
+                <div id="call-result-container" class="mt-20 hidden">
+                    <h4>Result</h4>
+                    <pre class="console-box" id="call-result-box"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="main.js"></script>
+</body>
+</html>
