@@ -209,12 +209,10 @@ impl Pipeline {
                 })
             } else {
                 debug!(index, "Fallback search failed to find matching record");
-                Ok(ExecutionRecord::Failure {
-                    row_index: index,
-                    input: input_row,
-                    failure: Err("Log cleaned and no success record found".to_string()),
-                    logs: PyroLogs::empty(),
-                })
+                Err(PyroError::not_found(format!(
+                    "Unable to find record {}",
+                    index.to_string()
+                )))
             }
         }
     }

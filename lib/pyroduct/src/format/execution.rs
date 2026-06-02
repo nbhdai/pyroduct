@@ -89,4 +89,3 @@ impl<S: ResponseIndex, F: ResponseIndex> ResponseIndex for Result<S, F> {
         }
     }
 }
-

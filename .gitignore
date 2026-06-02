@@ -27,3 +27,4 @@ examples/**/logs
 *.pyrolog.idx
 *.pyrowal
 *.db
+lib/pyroduct/errors.md

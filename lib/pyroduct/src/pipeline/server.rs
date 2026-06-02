@@ -4,11 +4,7 @@ use tokio::sync::Mutex;
 use pyro_artifacts::artifacts::PlaybookSpec;
 use pyro_artifacts::cache::LoadedPlaybook;
 
-use crate::format::PyroFailure;
-use crate::format::PyroRow;
-use crate::format::PyroSuccess;
-use crate::format::SessionResult;
-use crate::format::log_wal::LogWal;
+use crate::format::{PyroFailure, PyroRow, PyroSuccess, SessionResult, log_wal::LogWal};
 use crate::module::PyroFactory;
 use crate::pipeline::{
     ExecutionRecord, Pipeline, PipelineError, session::SessionPipeline,
