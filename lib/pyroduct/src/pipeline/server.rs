@@ -30,7 +30,7 @@ impl PipelineServer {
     /// Create a new server pipeline from a loaded playbook.
     pub async fn new(playbook: &LoadedPlaybook) -> Result<Self, PipelineError> {
         let factory = PyroFactory::from_playbook(playbook)?;
-        let instance = factory.instantiate().await?;
+        let instance = factory.instantiate(None).await?;
         let spec = instance.spec.clone();
         let input_schema = factory.spec().func.input.clone();
         let output_schema = factory.spec().func.output.clone();

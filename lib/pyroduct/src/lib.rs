@@ -14,6 +14,11 @@ pub mod module;
 #[cfg(feature = "module")]
 pub mod wasm;
 
+#[cfg(feature = "module")]
+pub use wasm::interconnect::{
+    call_playbook, call_session, query_all_specs, query_spec, with_spec, with_specs,
+};
+
 #[cfg(feature = "host")]
 pub mod pipeline;
 

@@ -1,8 +1,9 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use wasmtime::{ExternType, Instance, Module, Store, TypedFunc, ValType};
 
 use crate::module::WasmError;
+use crate::module::interconnect::PlaybookInterconnect;
 
 // ---------------------------------------------------------------------------
 // PyroModule — validated wrapper around wasmtime::Module
@@ -288,20 +289,24 @@ impl PyroMethods {
 pub struct PyroState {
     methods: Option<PyroMethods>,
     module_log: Mutex<Vec<String>>,
+    pub interconnect: Option<Arc<dyn PlaybookInterconnect>>,
+    pub current_session_id: Mutex<Option<u32>>,
 }
 
 impl Default for PyroState {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
 impl PyroState {
     /// Create an un-linked state (methods not yet resolved).
-    pub fn new() -> Self {
+    pub fn new(interconnect: Option<Arc<dyn PlaybookInterconnect>>) -> Self {
         Self {
             methods: None,
             module_log: Mutex::new(Vec::new()),
+            interconnect,
+            current_session_id: Mutex::new(None),
         }
     }
 

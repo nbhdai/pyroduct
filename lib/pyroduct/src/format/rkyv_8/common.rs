@@ -7,16 +7,12 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 
-use crate::format::{Bridgeable, format::UserHeaderValues, rkyv_8::Rkyv};
+use crate::format::{Bridgeable, rkyv_8::Rkyv};
 // --- Macro to reduce boilerplate ---
 
 /// Internal macro for implementing Bridgeable on types that satisfy rkyv bounds.
 macro_rules! impl_bridgeable {
     ($ty:ty) => {
-        impl UserHeaderValues for $ty {
-            const VERSION: u8 = 0;
-        }
-
         impl Bridgeable for $ty {
             type Format = Rkyv<$ty>;
         }
@@ -26,15 +22,7 @@ macro_rules! impl_bridgeable {
 /// Internal macro for implementing Bridgeable on generic types with one type parameter.
 macro_rules! impl_bridgeable_generic1 {
     ($ty:ident < $T:ident > $(where $($bound:tt)+)?) => {
-        impl<$T: UserHeaderValues> UserHeaderValues for $ty<$T>
-        where
-            $T: rkyv::Archive,
-            $($($bound)+)?
-        {
-            const VERSION: u8 = <$T as UserHeaderValues>::VERSION;
-        }
-
-        impl<$T: UserHeaderValues> Bridgeable for $ty<$T>
+        impl<$T> Bridgeable for $ty<$T>
         where
             $T: rkyv::Archive,
             <$T as rkyv::Archive>::Archived: 'static,
@@ -72,16 +60,8 @@ macro_rules! impl_bridgeable_generic1 {
 /// Internal macro for implementing Bridgeable on generic types with two type parameters.
 macro_rules! impl_bridgeable_generic2 {
     ($ty:ident < $K:ident, $V:ident > $(where $($bound:tt)+)?) => {
-        impl<$K: UserHeaderValues, $V: UserHeaderValues> UserHeaderValues for $ty<$K, $V>
-        where
-            $K: rkyv::Archive,
-            $V: rkyv::Archive,
-            $($($bound)+)?
-        {
-            const VERSION: u8 = (K::VERSION << 4) | (V::VERSION & 0x0F);
-        }
 
-        impl<$K: UserHeaderValues, $V: UserHeaderValues> Bridgeable for $ty<$K, $V>
+        impl<$K, $V> Bridgeable for $ty<$K, $V>
         where
             $K: rkyv::Archive,
             <$K as rkyv::Archive>::Archived: 'static,
@@ -128,10 +108,6 @@ macro_rules! impl_bridgeable_generic2 {
 
 // --- Unit Type ---
 
-impl UserHeaderValues for () {
-    const VERSION: u8 = 0;
-}
-
 impl Bridgeable for () {
     type Format = Rkyv<()>;
 }
@@ -158,10 +134,6 @@ impl_bridgeable!(String);
 
 // --- Box<str> ---
 
-impl UserHeaderValues for Box<str> {
-    const VERSION: u8 = 0;
-}
-
 impl Bridgeable for Box<str> {
     type Format = Rkyv<Box<str>>;
 }
@@ -172,14 +144,7 @@ impl_bridgeable_generic1!(Vec<T>);
 
 // --- Box<[T]> ---
 
-impl<T: UserHeaderValues> UserHeaderValues for Box<[T]>
-where
-    T: rkyv::Archive,
-{
-    const VERSION: u8 = <T as UserHeaderValues>::VERSION;
-}
-
-impl<T: UserHeaderValues> Bridgeable for Box<[T]>
+impl<T> Bridgeable for Box<[T]>
 where
     T: rkyv::Archive,
     <T as rkyv::Archive>::Archived: 'static,
@@ -222,14 +187,7 @@ impl_bridgeable_generic2!(HashMap<K, V> where
 
 // --- HashSet<T> ---
 
-impl<T: UserHeaderValues> UserHeaderValues for HashSet<T>
-where
-    T: rkyv::Archive + Hash + Eq,
-{
-    const VERSION: u8 = 0;
-}
-
-impl<T: UserHeaderValues> Bridgeable for HashSet<T>
+impl<T> Bridgeable for HashSet<T>
 where
     T: rkyv::Archive + Hash + Eq,
     <T as rkyv::Archive>::Archived: 'static,
@@ -269,14 +227,7 @@ impl_bridgeable_generic2!(BTreeMap<K, V> where
 
 // --- BTreeSet<T> ---
 
-impl<T: UserHeaderValues> UserHeaderValues for BTreeSet<T>
-where
-    T: rkyv::Archive + Ord,
-{
-    const VERSION: u8 = <T as UserHeaderValues>::VERSION;
-}
-
-impl<T: UserHeaderValues> Bridgeable for BTreeSet<T>
+impl<T> Bridgeable for BTreeSet<T>
 where
     T: rkyv::Archive + Ord,
     <T as rkyv::Archive>::Archived: 'static,
@@ -311,13 +262,6 @@ where
 
 macro_rules! impl_bridgeable_tuple {
     ($($T:ident),+ $(,)?) => {
-        impl<$($T),+> UserHeaderValues for ($($T,)+)
-        where
-            $($T: rkyv::Archive,)+
-        {
-            const VERSION: u8 = 0;
-        }
-
         impl<$($T),+> Bridgeable for ($($T,)+)
         where
             $(
@@ -366,14 +310,7 @@ impl_bridgeable_tuple!(A, B, C, D, E, F, G, H, I, J, K);
 impl_bridgeable_tuple!(A, B, C, D, E, F, G, H, I, J, K, L);
 
 // --- Arrays ---
-impl<T: UserHeaderValues, const N: usize> UserHeaderValues for [T; N]
-where
-    T: rkyv::Archive,
-{
-    const VERSION: u8 = <T as UserHeaderValues>::VERSION;
-}
-
-impl<T: UserHeaderValues, const N: usize> Bridgeable for [T; N]
+impl<T, const N: usize> Bridgeable for [T; N]
 where
     T: rkyv::Archive,
     <T as rkyv::Archive>::Archived: 'static,

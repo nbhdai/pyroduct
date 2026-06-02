@@ -28,11 +28,13 @@ use crate::format::{
 };
 use crate::module::call::PyroCallIo;
 use crate::module::capability::ForeignCapability;
+use crate::module::interconnect::PlaybookInterconnect;
 use crate::transport::socket::capability::RemoteCapability;
 use crate::{CapturedError, PyroError};
 
 pub(crate) mod call;
 pub mod capability;
+pub mod interconnect;
 pub mod sessions;
 mod state;
 // #[cfg(all(test, feature = "module"))]
@@ -252,15 +254,21 @@ impl PyroFactory {
         Ok(caps)
     }
 
-    pub async fn instantiate(&self) -> Result<PyroInstance, WasmError> {
+    pub async fn instantiate(
+        &self,
+        interconnect: Option<Arc<dyn PlaybookInterconnect>>,
+    ) -> Result<PyroInstance, WasmError> {
         tracing::info!("Instantiating PyroInstance");
-        let pyro_state = PyroState::new();
+        let pyro_state = PyroState::new(interconnect.clone());
         let mut store = Store::new(&DEFAULT_ENGINE, pyro_state);
         let objects = self.create_capabilities().await?;
         let mut linker = Linker::new(&DEFAULT_ENGINE);
 
         Self::link_logger(&mut linker)?;
         Self::link_capabilities(&mut linker, &objects)?;
+        if let Some(interconnect) = &interconnect {
+            interconnect::link_interconnect(&mut linker, interconnect.clone())?;
+        }
 
         let instance = linker
             .instantiate_async(&mut store, self.module.module())
@@ -272,15 +280,22 @@ impl PyroFactory {
 
         // Link the PyroState methods to the instance exports
         PyroState::link(&mut store, &instance)?;
-        tracing::info!("PyroInstance instantiated successfully");
-        Ok(PyroInstance {
+
+        let mut pyro_instance = PyroInstance {
             spec: self.spec.clone(),
             store,
             instance,
             memory,
             objects,
             session_states: HashMap::new(),
-        })
+        };
+
+        if let Some(interconnect) = &interconnect {
+            interconnect::add_playbooks(interconnect.playbooks(), &mut pyro_instance).await?;
+        }
+
+        tracing::info!("PyroInstance instantiated successfully");
+        Ok(pyro_instance)
     }
 
     fn link_logger(linker: &mut Linker<PyroState>) -> Result<(), WasmError> {

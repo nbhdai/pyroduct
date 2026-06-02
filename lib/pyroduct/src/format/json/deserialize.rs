@@ -7,7 +7,7 @@ use crate::{CapturedError, PyroError, PyroResult};
 
 use crate::format::{
     PyroRef, PyroView,
-    format::{Parser, UserHeaderValues, Wrapper},
+    format::{Parser, Wrapper},
     header::PyroData,
     json::buffers::JsonBuf,
 };
@@ -33,7 +33,7 @@ impl<BD: PyroData, T> Wrapper for JsonParser<BD, T> {
 
 impl<T> Parser<PyroView, T> for JsonParser<PyroView, T>
 where
-    T: UserHeaderValues + DeserializeOwned,
+    T: DeserializeOwned,
 {
     type HeaderValues = super::JsonHeader;
     /// For JSON the "parsed type" is just `T` — no archived form.
@@ -63,7 +63,7 @@ where
 
 impl<'a, T> Parser<PyroRef<'a>, T> for JsonParser<PyroRef<'a>, T>
 where
-    T: UserHeaderValues + DeserializeOwned,
+    T: DeserializeOwned,
 {
     type HeaderValues = super::JsonHeader;
     type ParsedType = T;

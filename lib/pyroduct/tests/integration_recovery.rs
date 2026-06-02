@@ -4,7 +4,7 @@ use pyro_artifacts::{
     cache::CacheManager,
 };
 use pyroduct::{
-    PyroRow,
+    PyroError, PyroRow,
     pipeline::{ExecutionRecord, PipelineConfig},
 };
 use std::collections::{BTreeMap, HashMap};
@@ -182,21 +182,8 @@ async fn test_pipeline_get_record() {
 
     tracing::info!("Getting 1");
 
-    let rec_1_clean = pipeline.get_record(1).await.unwrap();
-    match &rec_1_clean {
-        ExecutionRecord::Failure {
-            row_index,
-            input,
-            logs,
-            ..
-        } => {
-            assert_eq!(*row_index, 1);
-            assert_eq!(input.get_str("input").unwrap(), "invalid");
-            assert!(logs.module_logs.is_empty());
-            assert!(logs.capability_logs.is_empty());
-        }
-        _ => panic!("Expected Failure with blank logs for index 1"),
-    }
+    let rec_1_clean = pipeline.get_record(1).await.unwrap_err();
+    assert!(matches!(rec_1_clean, PyroError::NotFound(_)));
 
     let rec_2_clean = pipeline.get_record(2).await.unwrap();
     match &rec_2_clean {

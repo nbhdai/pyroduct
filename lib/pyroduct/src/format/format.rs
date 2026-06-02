@@ -46,10 +46,6 @@ pub trait PyroHeaderValues {
     const ERR_CODE: DataStatus;
 }
 
-pub trait UserHeaderValues {
-    const VERSION: u8 = 0;
-}
-
 // =============================================================================
 // ReadError (unchanged)
 // =============================================================================
@@ -69,10 +65,7 @@ impl<T> From<PyroError> for ReadError<T> {
 // Parser trait (unchanged)
 // =============================================================================
 
-pub trait Parser<BD: PyroData, T>: Wrapper<Wrapping = BD> + Sized
-where
-    T: UserHeaderValues,
-{
+pub trait Parser<BD: PyroData, T>: Wrapper<Wrapping = BD> + Sized {
     type HeaderValues: PyroHeaderValues;
     type ParsedType;
     type TypedWrapper: TypedWrapper<Self::ParsedType>;
@@ -104,10 +97,7 @@ where
 // Writer trait (unchanged)
 // =============================================================================
 
-pub trait Writer<BD: MutPyroData, T>: Wrapper<Wrapping = BD> + MutWrapper + Sized
-where
-    T: UserHeaderValues,
-{
+pub trait Writer<BD: MutPyroData, T>: Wrapper<Wrapping = BD> + MutWrapper + Sized {
     type HeaderValues: PyroHeaderValues;
 
     fn write_raw(&mut self, value: &T) -> PyroResult<usize>;
@@ -138,7 +128,6 @@ where
     fn write_result<E>(mut self, value: Result<&T, &E>) -> PyroResult<BD>
     where
         Self: Writer<BD, E>,
-        E: UserHeaderValues,
     {
         match value {
             Ok(val) => {
@@ -178,10 +167,7 @@ where
 ///
 /// Zero-copy formats additionally implement [`PyroZeroCopyFormat`] to gain
 /// borrowed-view parsing.
-pub trait PyroFormat<T>: Sized
-where
-    T: UserHeaderValues,
-{
+pub trait PyroFormat<T>: Sized {
     /// The wire-format byte written to header offset `0x0C`.
     /// Used by fallback pyros to dispatch on incoming data.
     const WIRE_FORMAT: u8;
@@ -299,10 +285,7 @@ where
 /// Only formats where the parsed representation is a reference into the buffer
 /// (like rkyv's `T::Archived`) should implement this. Owned formats like JSON
 /// do not benefit from view parsing and should only implement `PyroFormat`.
-pub trait PyroZeroCopyFormat<T>: PyroFormat<T>
-where
-    T: UserHeaderValues,
-{
+pub trait PyroZeroCopyFormat<T>: PyroFormat<T> {
     type Receiver: Receiver<<Self::Parser as Parser<PyroView, T>>::ParsedType, T>;
     fn receiver() -> Self::Receiver;
 }

@@ -60,6 +60,18 @@ impl<'a> PyroCallIo<Caller<'a, PyroState>> {
 
 // Methods that require PyroState as the store data.
 impl<S: AsContextMut<Data = PyroState>> PyroCallIo<S> {
+    /// Read a name from wasm memory at the given pointer and length.
+    pub fn get_name(&self, ptr: i32, len: i32) -> Result<String, WasmError> {
+        let wasm_memory = self.memory.data(self.ctx.as_context());
+        let slice = wasm_memory
+            .get(ptr as usize..ptr as usize + len as usize)
+            .ok_or_else(|| WasmError::InputMemory(wasmtime::Error::msg("Name out of bounds")))?;
+        let name = std::str::from_utf8(slice)
+            .map_err(|e| WasmError::InputMemory(wasmtime::Error::msg(e.to_string())))?
+            .to_string();
+        Ok(name)
+    }
+
     /// Read a `PyroView` from wasm memory at the given pointer.
     pub async fn get_output(&mut self, ptr: i32) -> Result<PyroVec, WasmError> {
         let wasm_memory = self.memory.data(self.ctx.as_context());

@@ -14,7 +14,7 @@ use rkyv::validation::shared::SharedValidator;
 use crate::format::{PyroRef, PyroView};
 use crate::format::{
     PyroVec,
-    format::{PyroFormat, PyroZeroCopyFormat, UserHeaderValues},
+    format::{PyroFormat, PyroZeroCopyFormat},
     header::PROTOCOL_VERSION,
 };
 
@@ -27,7 +27,7 @@ pub struct Rkyv<T> {
 
 impl<T> PyroFormat<T> for Rkyv<T>
 where
-    T: Archive + UserHeaderValues,
+    T: Archive,
     T::Archived: 'static,
     T::Archived:
         for<'a> CheckBytes<Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, RancorError>>,
@@ -74,7 +74,7 @@ where
 
 impl<T> PyroZeroCopyFormat<T> for Rkyv<T>
 where
-    T: Archive + UserHeaderValues,
+    T: Archive,
     T::Archived: 'static,
     T::Archived:
         for<'a> CheckBytes<Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, RancorError>>,

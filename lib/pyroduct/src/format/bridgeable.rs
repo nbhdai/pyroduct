@@ -3,9 +3,7 @@
 use tracing::{debug, trace, warn};
 
 use crate::PyroError;
-use crate::format::format::{
-    Parser, PyroFormat, PyroHeaderValues, PyroZeroCopyFormat, UserHeaderValues,
-};
+use crate::format::format::{Parser, PyroFormat, PyroHeaderValues, PyroZeroCopyFormat};
 use crate::format::header::{PyroData, PyroHeader, PyroHeaderMut};
 use crate::format::{ParseError, PyroRef, PyroVec, PyroView};
 // =============================================================================
@@ -19,7 +17,7 @@ use crate::format::{ParseError, PyroRef, PyroVec, PyroView};
 ///
 /// For explicit format control, use [`Pyro<T, F>`](crate::pyro::Pyro)
 /// instead.
-pub trait Bridgeable: UserHeaderValues + Sized {
+pub trait Bridgeable: Sized {
     type Format: PyroFormat<Self>;
 
     fn format() -> Self::Format {
@@ -28,11 +26,7 @@ pub trait Bridgeable: UserHeaderValues + Sized {
 
     /// Serialize into a `PyroVec` using the default format.
     fn ship(&self) -> Result<PyroVec, PyroError> {
-        trace!(
-            type_name = std::any::type_name::<Self>(),
-            version = Self::VERSION,
-            "shipping value"
-        );
+        trace!(type_name = std::any::type_name::<Self>(), "shipping value");
         let result = <Self as Bridgeable>::Format::ship(self);
         match &result {
             Ok(vec) => debug!(
@@ -165,7 +159,6 @@ where
                 trace!(
                     ok_type = std::any::type_name::<T>(),
                     variant = "Ok",
-                    version = <T as UserHeaderValues>::VERSION,
                     "shipping Result::Ok"
                 );
 
@@ -177,7 +170,6 @@ where
                 trace!(
                     err_type = std::any::type_name::<E>(),
                     variant = "Err",
-                    error_version = <E as UserHeaderValues>::VERSION,
                     "shipping Result::Err"
                 );
                 let mut vec = E::ship(error)?;

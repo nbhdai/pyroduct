@@ -42,16 +42,8 @@ pub use state::DbStateStore;
 
 use crate::playbook::PlaybooksManager;
 
-impl pyroduct::format::format::UserHeaderValues for DaemonRequest {
-    const VERSION: u8 = 0;
-}
-
 impl pyroduct::format::Bridgeable for DaemonRequest {
     type Format = pyroduct::format::json::Json<DaemonRequest>;
-}
-
-impl pyroduct::format::format::UserHeaderValues for DaemonResponse {
-    const VERSION: u8 = 0;
 }
 
 impl pyroduct::format::Bridgeable for DaemonResponse {
@@ -100,4 +92,3 @@ impl PyroDaemon {
 }
 
 pub type Result<T, E = pyroduct::CapturedError> = std::result::Result<T, E>;
-

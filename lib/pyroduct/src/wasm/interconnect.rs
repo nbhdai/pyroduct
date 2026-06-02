@@ -3,6 +3,8 @@ use std::{collections::HashMap, sync::Mutex};
 
 use crate::CapturedError;
 use crate::format::PyroVec;
+use crate::format::format::Receiver;
+use crate::format::header::PyroHeader;
 use crate::format::value::PyroRow;
 
 static INTERCONNECT_SPECS: Mutex<Option<HashMap<String, ModuleFunc<'static>>>> = Mutex::new(None);
@@ -67,62 +69,108 @@ pub extern "C" fn clear_interconnect_specs() {
 /// Invokes an interconnect function.
 /// Ships the input `PyroRow` to the host, runs the FFI call, retrieves and
 /// exposes the returned output `PyroRow`. Works similarly to capability calls.
-pub fn invoke_interconnect(
+fn call_playbook_internal(
     name: &str,
+    session_id: Option<u32>,
     input: &PyroRow<'_>,
-) -> Result<PyroRow<'static>, CapturedError> {
+) -> (u32, PyroRow<'static>) {
     use crate::format::Bridgeable;
     use crate::format::bridgeable::BridgeableZeroCopy;
-    use crate::format::header::PyroData;
+    use crate::format::header::{PyroData, PyroHeaderMut};
 
     let input_owned = input.clone().into_owned();
-    let input_vec = input_owned.ship().map_err(|e| {
-        CapturedError::new(format!(
-            "invoke_interconnect: failed to ship input row for '{}': {}",
-            name, e
-        ))
-    })?;
+    let mut input_vec = match input_owned.ship() {
+        Ok(v) => v,
+        Err(e) => {
+            let err = CapturedError::new(format!(
+                "call_playbook: failed to ship input row for '{}': {}",
+                name, e
+            ));
+            super::store_error(err.encode());
+            panic!(
+                "call_playbook: failed to ship input row for '{}': {}",
+                name, e
+            );
+        }
+    };
+
+    if let Some(sid) = session_id {
+        input_vec.set_mux_id(sid);
+    }
 
     let result_ptr =
         unsafe { call_interconnect(name.as_ptr(), name.len(), super::lend(&input_vec)) };
 
     if result_ptr.is_null() {
-        return Err(CapturedError::new(format!(
-            "invoke_interconnect: FFI call to '{}' returned null pointer",
+        let msg = format!(
+            "call_playbook: FFI call to '{}' returned null pointer",
             name
-        )));
+        );
+        let err = CapturedError::new(msg.clone());
+        super::store_error(err.encode());
+        panic!("{}", msg);
     }
 
     let result_vec = match super::get_input(result_ptr) {
         Some(v) => v,
         None => {
-            return Err(CapturedError::new(format!(
-                "invoke_interconnect: result pointer {:#x} not found in output registry",
+            let msg = format!(
+                "call_playbook: result pointer {:#x} not found in output registry",
                 result_ptr as usize
-            )));
+            );
+            let err = CapturedError::new(msg.clone());
+            super::store_error(err.encode());
+            panic!("{}", msg);
         }
     };
 
-    if let Err(e) = result_vec.parse_as_error() {
-        return Err(e.into());
+    let returned_session_id = result_vec.mux_id();
+
+    if let Err(err) = result_vec.parse_as_error() {
+        super::store_error(err.encode());
+        panic!("call_playbook: error returned from '{}': {:?}", name, err);
     }
 
-    let typed = PyroRow::<'static>::expose(result_vec.view()).map_err(|e| {
-        CapturedError::new(format!(
-            "invoke_interconnect: failed to expose result for '{}': {}",
-            name, e
-        ))
-    })?;
+    let typed = match PyroRow::<'static>::expose(result_vec.view()) {
+        Ok(t) => t,
+        Err(e) => {
+            let err = CapturedError::new(format!(
+                "call_playbook: failed to expose result for '{}': {}",
+                name, e
+            ));
+            super::store_error(err.encode());
+            panic!(
+                "call_playbook: failed to expose result for '{}': {}",
+                name, e
+            );
+        }
+    };
 
     let mut receiver = <PyroRow<'static> as BridgeableZeroCopy>::receiver();
-    let recovered = receiver.receive(&typed).map_err(|e| {
-        CapturedError::new(format!(
-            "invoke_interconnect: failed to receive result for '{}': {}",
-            name, e
-        ))
-    })?;
+    let recovered = match receiver.receive(&typed) {
+        Ok(r) => r,
+        Err(e) => {
+            let err = CapturedError::new(format!(
+                "call_playbook: failed to receive result for '{}': {}",
+                name, e
+            ));
+            super::store_error(err.encode());
+            panic!(
+                "call_playbook: failed to receive result for '{}': {}",
+                name, e
+            );
+        }
+    };
 
-    Ok(recovered)
+    (returned_session_id, recovered)
+}
+
+pub fn call_playbook(name: &str, input: &PyroRow<'_>) -> (u32, PyroRow<'static>) {
+    call_playbook_internal(name, None, input)
+}
+
+pub fn call_session(name: &str, session_id: u32, input: &PyroRow<'_>) -> PyroRow<'static> {
+    call_playbook_internal(name, Some(session_id), input).1
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -21,17 +21,13 @@
 //! let vec = row.ship().unwrap();
 //! ```
 
-use crate::format::{Bridgeable, format::UserHeaderValues, rkyv_8::Rkyv};
+use crate::format::{Bridgeable, rkyv_8::Rkyv};
 
 use super::{PyroRow, PyroValue};
 
 // =============================================================================
 // UserHeaderValues + Bridgeable for PyroRowOwned
 // =============================================================================
-
-impl UserHeaderValues for PyroRow<'static> {
-    const VERSION: u8 = 0;
-}
 
 impl Bridgeable for PyroRow<'static> {
     type Format = Rkyv<PyroRow<'static>>;
@@ -40,10 +36,6 @@ impl Bridgeable for PyroRow<'static> {
 // =============================================================================
 // UserHeaderValues + Bridgeable for PyroValue<'static>
 // =============================================================================
-
-impl UserHeaderValues for PyroValue<'static> {
-    const VERSION: u8 = 0;
-}
 
 impl Bridgeable for PyroValue<'static> {
     type Format = Rkyv<PyroValue<'static>>;

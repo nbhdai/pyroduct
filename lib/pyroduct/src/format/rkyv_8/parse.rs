@@ -10,7 +10,7 @@ use rkyv::{
 
 use crate::format::{
     PyroRef, PyroView, TypedPyroRef,
-    format::{Parser, UserHeaderValues, Wrapper},
+    format::{Parser, Wrapper},
     header::PyroData,
     rkyv_8::TypedBuf,
 };
@@ -32,7 +32,6 @@ impl<BD: PyroData, T> Wrapper for RkyvParser<BD, T> {
 
 impl<T> Parser<PyroView, T> for RkyvParser<PyroView, T>
 where
-    T: UserHeaderValues,
     T: Archive,
     T::Archived: 'static,
     T::Archived:
@@ -68,7 +67,6 @@ where
 
 impl<'a, T> Parser<PyroRef<'a>, T> for RkyvParser<PyroRef<'a>, T>
 where
-    T: UserHeaderValues,
     T: Archive,
     T::Archived: 'static,
     T::Archived:

@@ -48,10 +48,6 @@ pub fn bridgeable(
 
     // 3. Generate UserHeaderValues + Bridgeable impls (matching common.rs)
     let bridgeable_block = quote! {
-        impl #impl_generics #import_location::format::format::UserHeaderValues for #name #ty_generics #where_clause {
-            const VERSION: u8 = 0;
-        }
-
         impl #impl_generics #import_location::format::Bridgeable for #name #ty_generics #where_clause {
             type Format = #import_location::format::rkyv_8::Rkyv<#name #ty_generics>;
         }

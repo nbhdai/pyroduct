@@ -112,7 +112,7 @@ impl PipelineFactory {
     /// Compiles and instantiates the single wasm module, configuring it with WAL.
     pub async fn build(&self) -> Result<Pipeline, PipelineError> {
         tracing::debug!("Building wasm module for playbook");
-        let instance = self.factory.instantiate().await?;
+        let instance = self.factory.instantiate(None).await?;
         let input_schema = self.factory.spec().func.input.clone();
         let output_schema = self.factory.spec().func.output.clone();
 
@@ -138,7 +138,7 @@ impl PipelineFactory {
     /// Compiles and instantiates the single wasm module, configuring it with WAL.
     pub async fn build_session(&self) -> Result<SessionPipeline, PipelineError> {
         tracing::debug!("Building wasm module for playbook");
-        let instance = self.factory.instantiate().await?;
+        let instance = self.factory.instantiate(None).await?;
         let input_schema = self.factory.spec().func.input.clone();
         let output_schema_from_func = self.factory.spec().func.output.clone();
 
@@ -208,7 +208,7 @@ impl PipelineFactory {
     /// Compiles and instantiates the single wasm module, configuring it with WAL.
     pub async fn build_session_diff(&self) -> Result<SessionDiffPipeline, PipelineError> {
         tracing::debug!("Building wasm module for playbook");
-        let instance = self.factory.instantiate().await?;
+        let instance = self.factory.instantiate(None).await?;
         let input_schema = self.factory.spec().func.input.clone();
         let output_schema = self.factory.spec().func.output.clone();
 

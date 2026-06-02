@@ -16,7 +16,7 @@ use crate::format::{
 use crate::CapturedError;
 use crate::session::SessionResponse;
 
-// mod interconnect;
+pub mod interconnect;
 mod logger;
 
 pub type ModuleResult<T> = Result<T, CapturedError>;
@@ -38,6 +38,12 @@ static SESSION_INPUT: Mutex<Option<HashMap<u32, Vec<PyroVec>>>> = Mutex::new(Non
 static SESSION_OUTPUT: Mutex<Option<HashMap<u32, Vec<PyroVec>>>> = Mutex::new(None);
 
 static ERROR_REGISTRY: Mutex<Option<PyroVec>> = Mutex::new(None);
+
+fn store_error(mut vec: PyroVec) {
+    vec.set_status(DataStatus::RkyvError);
+    ERROR_REGISTRY.clear_poison();
+    *ERROR_REGISTRY.lock().unwrap() = Some(vec);
+}
 
 static REGISTER_PANIC_HOOK: Once = Once::new();
 
