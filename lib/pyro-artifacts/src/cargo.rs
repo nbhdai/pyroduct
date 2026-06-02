@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path};
 use toml::Value;
 
-use crate::artifacts::CapabilityConfig;
+use crate::artifacts::{CapabilityConfig, PlaybookIdent};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Eq, PartialOrd, Ord, Hash)]
 pub struct CapabilityIdent {
@@ -164,6 +164,8 @@ pub struct ModuleManifest<Metadata = Value> {
     pub example: Vec<Product>,
     #[serde(default)]
     pub lints: Inheritable<LintGroups>,
+    #[serde(default)]
+    pub interconnect: BTreeMap<String, PlaybookIdent>,
 }
 
 fn default_pyroduct() -> Dependency {

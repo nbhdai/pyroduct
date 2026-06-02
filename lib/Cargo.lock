@@ -3666,6 +3666,7 @@ name = "pyro-daemon"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "async-trait",
  "clap",
  "datafusion",
  "pyro-artifacts",

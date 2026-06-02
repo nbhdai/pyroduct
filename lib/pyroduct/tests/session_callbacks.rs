@@ -52,6 +52,7 @@ async fn test_session_callbacks() {
         dependencies: std::collections::BTreeMap::new(),
         configurations: Vec::new(),
         source: SIMPLE_SESSION_MODULE.to_string(),
+        interconnect: std::collections::BTreeMap::new(),
     };
     let _ = cache
         .remove_module("anon", "test_session_cb", "0.1.0")

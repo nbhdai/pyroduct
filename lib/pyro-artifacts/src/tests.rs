@@ -172,6 +172,7 @@ async fn test_anon_compile_with_interface() {
         dependencies: BTreeMap::new(),
         configurations: vec![cap],
         source: HTTPC_MODULE.to_string(),
+        interconnect: BTreeMap::new(),
     };
     let anon = builder.compile_anon(&anon_playbook).await.unwrap();
 
@@ -211,6 +212,7 @@ async fn test_module_wasm_exact_match() {
         },
         Vec::new(),
         BASIC_MODULE.to_string(),
+        std::collections::BTreeMap::new(),
     );
     cache.write_artifacts(&source.clone().into()).await.unwrap();
     let binary = builder.compile(&source).await.unwrap();
@@ -319,6 +321,7 @@ async fn test_load_playbook() {
             },
         }],
         HTTPC_MODULE.to_string(),
+        std::collections::BTreeMap::new(),
     );
     let binary = builder.compile(&mod_source).await.unwrap();
 

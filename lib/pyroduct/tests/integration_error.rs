@@ -43,6 +43,7 @@ async fn test_module_errors_and_panics() {
         dependencies: BTreeMap::new(),
         configurations: Vec::new(),
         source: ERROR_MODULE.to_string(),
+        interconnect: std::collections::BTreeMap::new(),
     };
     cache
         .remove_module("anon", "test_integration_error", "0.1.0")

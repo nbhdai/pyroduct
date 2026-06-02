@@ -719,6 +719,7 @@ impl CacheManager {
             },
             playbook.configurations,
             playbook.source,
+            playbook.interconnect,
         )
     }
 }

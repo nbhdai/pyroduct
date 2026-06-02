@@ -59,6 +59,7 @@ async fn test_capability_configuration_respect() {
             },
         }],
         source: CODE.to_string(),
+        interconnect: std::collections::BTreeMap::new(),
     };
     cache
         .remove_module("anon", "test_integration_config", "0.1.0")

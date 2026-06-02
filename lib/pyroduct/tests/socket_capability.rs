@@ -52,6 +52,7 @@ async fn test_socket_capability_remote() {
             },
         }],
         source: CODE.to_string(),
+        interconnect: std::collections::BTreeMap::new(),
     };
     cache
         .remove_module("anon", "test_socket_capability", "0.1.0")

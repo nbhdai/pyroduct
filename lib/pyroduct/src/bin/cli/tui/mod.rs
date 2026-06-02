@@ -275,6 +275,7 @@ impl App {
                 dependencies: std::collections::BTreeMap::new(),
                 configurations,
                 source: source_pipeline.source.clone(),
+                interconnect: std::collections::BTreeMap::new(),
             };
 
             let binary = self

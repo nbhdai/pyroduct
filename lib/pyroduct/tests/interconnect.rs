@@ -53,6 +53,7 @@ async fn test_interconnect_lifecycle() {
         dependencies: std::collections::BTreeMap::new(),
         configurations: Vec::new(),
         source: TARGET_MODULE.to_string(),
+        interconnect: std::collections::BTreeMap::new(),
     };
     cache
         .remove_module("anon", "test_interconnect_target", "0.1.0")
@@ -64,11 +65,14 @@ async fn test_interconnect_lifecycle() {
         .expect("Target module should compile");
 
     // 2. Compile caller playbook
+    let mut interconnect_map = std::collections::BTreeMap::new();
+    interconnect_map.insert("target".to_string(), target_binary.spec.ident.clone());
     let caller_source = AnonPlaybook {
         package: "test_interconnect_caller".to_string(),
         dependencies: std::collections::BTreeMap::new(),
         configurations: Vec::new(),
         source: CALLER_MODULE.to_string(),
+        interconnect: interconnect_map,
     };
     cache
         .remove_module("anon", "test_interconnect_caller", "0.1.0")

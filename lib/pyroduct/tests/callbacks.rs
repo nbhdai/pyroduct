@@ -50,6 +50,7 @@ async fn test_pipeline_success_callbacks() {
         dependencies: BTreeMap::new(),
         configurations: Vec::new(),
         source: ERROR_MODULE.to_string(),
+        interconnect: std::collections::BTreeMap::new(),
     };
     cache
         .remove_module("anon", "test_integration_callback", "0.1.0")

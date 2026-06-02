@@ -170,14 +170,6 @@ impl PyroFactory {
         })
     }
 
-    pub fn with_interconnect(
-        mut self,
-        interconnect: Option<Arc<dyn PlaybookInterconnect>>,
-    ) -> Self {
-        self.interconnect = interconnect;
-        self
-    }
-
     // Todo: make this more robust.
     async fn create_capabilities(
         &self,
@@ -270,6 +262,20 @@ impl PyroFactory {
 
     pub async fn instantiate(&self) -> Result<PyroInstance, WasmError> {
         tracing::info!("Instantiating PyroInstance");
+        if !self.spec.interconnect.is_empty() {
+            let interconnect = self.interconnect.as_ref().ok_or_else(|| {
+                WasmError::InstantiationFailed("Interconnect was expected but none was provided".to_string())
+            })?;
+            for name in self.spec.interconnect.keys() {
+                if !interconnect.playbooks().contains_key(name) {
+                    return Err(WasmError::InstantiationFailed(format!(
+                        "Expected playbook '{}' was not found in the interconnect collection",
+                        name
+                    )));
+                }
+            }
+        }
+
         let pyro_state = PyroState::new(self.interconnect.clone());
         let mut store = Store::new(&DEFAULT_ENGINE, pyro_state);
         let objects = self.create_capabilities().await?;

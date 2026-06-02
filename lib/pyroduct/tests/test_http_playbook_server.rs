@@ -65,6 +65,7 @@ async fn test_http_playbook_server_and_repair() {
             },
         }],
         source: CODE.to_string(),
+        interconnect: std::collections::BTreeMap::new(),
     };
 
     let binary = builder

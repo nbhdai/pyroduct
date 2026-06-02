@@ -56,6 +56,7 @@ async fn test_pipeline_get_record() {
             },
         }],
         source: CODE.to_string(),
+        interconnect: std::collections::BTreeMap::new(),
     };
     cache
         .remove_module("anon", "test_recovery", "0.1.0")

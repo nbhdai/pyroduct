@@ -1,5 +1,6 @@
 use crate::Result;
 use crate::playbook::PlaybookWorker;
+use pyro_artifacts::cache::CacheManager;
 use pyro_artifacts::cargo::CapabilityIdent;
 use pyroduct::Capture;
 use pyroduct::PyroRow;
@@ -88,7 +89,7 @@ pub enum PlaybookResponse {
 #[derive(Clone)]
 pub struct PlaybooksManager {
     pub working_dir: PathBuf,
-    workers: Arc<Mutex<HashMap<String, PlaybookWorker>>>,
+    pub(crate) workers: Arc<Mutex<HashMap<String, PlaybookWorker>>>,
     pub db: crate::state::DbStateStore,
 }
 
@@ -324,7 +325,22 @@ impl PlaybooksManager {
             )
             .await?;
 
-        let mut worker = PlaybookWorker::start(name.clone(), pipeline_config).await?;
+        let cache = CacheManager::from_env()
+            .await
+            .capture("Failed to initialize CacheManager")?;
+        let loaded_pipeline = pipeline_config
+            .clone()
+            .load(&cache)
+            .await
+            .capture("Failed to load playbook binary")?;
+
+        tracing::info!(spec = ?loaded_pipeline.playbook.binary.spec, "start_playbook: loaded playbook spec");
+        let interconnect = self
+            .build_interconnect(&loaded_pipeline.playbook.binary.spec)
+            .await?;
+
+        let mut worker =
+            PlaybookWorker::start(name.clone(), pipeline_config, Some(interconnect)).await?;
         if let Some(ref socket) = playbook_socket {
             worker.listen_socket(socket).await?;
         }
@@ -357,7 +373,21 @@ impl PlaybooksManager {
             None => pyroduct::bail!("Playbook '{}' does not exist in state store", name),
         };
 
-        let mut worker = PlaybookWorker::start(name.clone(), pipeline_config).await?;
+        let cache = CacheManager::from_env()
+            .await
+            .capture("Failed to initialize CacheManager")?;
+        let loaded_pipeline = pipeline_config
+            .clone()
+            .load(&cache)
+            .await
+            .capture("Failed to load playbook binary")?;
+
+        let interconnect = self
+            .build_interconnect(&loaded_pipeline.playbook.binary.spec)
+            .await?;
+
+        let mut worker =
+            PlaybookWorker::start(name.clone(), pipeline_config, Some(interconnect)).await?;
         if let Some(ref socket) = socket_path {
             worker.listen_socket(socket).await?;
         }

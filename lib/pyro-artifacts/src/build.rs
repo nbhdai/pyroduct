@@ -5,12 +5,15 @@ use crate::command::{CommandError, format_syn_error, run_command};
 use cargo_toml::Dependency;
 use pyro_macro::module::generate_module_spec;
 
+use crate::artifacts::PlaybookIdent;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnonPlaybook {
     pub package: String,
     pub dependencies: std::collections::BTreeMap<String, Dependency>,
     pub configurations: Vec<ConfiguredCapability>,
     pub source: String,
+    pub interconnect: std::collections::BTreeMap<String, PlaybookIdent>,
 }
 use std::io;
 use std::path::{Path, PathBuf};
@@ -398,6 +401,7 @@ name = "mod_slot"
             hash,
             func,
             capabilities: source.dependencies().capabilities.clone(),
+            interconnect: source.manifest.interconnect.clone(),
         };
 
         let binary = PlaybookBinary {

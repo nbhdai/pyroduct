@@ -1,6 +1,7 @@
 use crate::Result;
 use pyroduct::Capture;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::fs;
 
 use pyro_artifacts::cache::CacheManager;
@@ -18,8 +19,14 @@ pub struct PlaybookWorker {
     pub server: pyroduct::pipeline::PipelineServer,
 }
 
+use pyroduct::module::interconnect::PlaybookInterconnect;
+
 impl PlaybookWorker {
-    pub async fn start(name: String, pipeline_config: PipelineConfig) -> Result<Self> {
+    pub async fn start(
+        name: String,
+        pipeline_config: PipelineConfig,
+        interconnect: Option<Arc<dyn PlaybookInterconnect>>,
+    ) -> Result<Self> {
         // 1. Load the playbook binary via CacheManager
         let cache = CacheManager::from_env()
             .await
@@ -56,9 +63,15 @@ impl PlaybookWorker {
 
         // 2. Instantiate playbook Server in-process
         tracing::info!(name, "Instantiating playbook server");
-        let server = pyroduct::pipeline::PipelineServer::new(&loaded_pipeline.playbook)
-            .await
-            .capture("Failed to construct PipelineServer")?;
+        let server = if let Some(ic) = interconnect {
+            pyroduct::pipeline::PipelineServer::new_with_interconnect(&loaded_pipeline.playbook, ic)
+                .await
+                .capture("Failed to construct PipelineServer with interconnect")?
+        } else {
+            pyroduct::pipeline::PipelineServer::new(&loaded_pipeline.playbook)
+                .await
+                .capture("Failed to construct PipelineServer")?
+        };
 
         Ok(Self {
             name,
@@ -134,6 +147,7 @@ impl PlaybookWorker {
 
 #[cfg(test)]
 mod tests {
+    use super::super::PlaybooksManager;
     use super::*;
     use pyro_artifacts::build::Builder;
     use pyroduct::PyroRow;
@@ -161,6 +175,7 @@ pub fn call(input: String) -> Result<String> {
             dependencies: BTreeMap::new(),
             configurations: std::vec::Vec::new(),
             source: TEST_CODE.to_string(),
+            interconnect: BTreeMap::new(),
         };
 
         let binary = builder
@@ -184,7 +199,7 @@ pub fn call(input: String) -> Result<String> {
             log_dir: tmp_dir.path().to_path_buf(),
         };
 
-        let mut worker = PlaybookWorker::start("test".to_string(), pipeline_config)
+        let mut worker = PlaybookWorker::start("test".to_string(), pipeline_config, None)
             .await
             .expect("Failed to start playbook worker");
 
@@ -221,6 +236,7 @@ pub fn call(input: String) -> Result<String> {
             dependencies: BTreeMap::new(),
             configurations: std::vec::Vec::new(),
             source: TEST_CODE.to_string(),
+            interconnect: BTreeMap::new(),
         };
 
         let binary = builder
@@ -242,7 +258,7 @@ pub fn call(input: String) -> Result<String> {
             log_dir: tmp_dir.path().to_path_buf(),
         };
 
-        let worker = PlaybookWorker::start("test_plain".to_string(), pipeline_config)
+        let worker = PlaybookWorker::start("test_plain".to_string(), pipeline_config, None)
             .await
             .expect("Failed to start playbook worker");
 
@@ -276,6 +292,7 @@ pub fn call(input: String) -> Result<String> {
             dependencies: BTreeMap::new(),
             configurations: std::vec::Vec::new(),
             source: TEST_CODE.to_string(),
+            interconnect: BTreeMap::new(),
         };
 
         let binary = builder
@@ -299,7 +316,7 @@ pub fn call(input: String) -> Result<String> {
             log_dir: tmp_dir.path().to_path_buf(),
         };
 
-        let mut worker = PlaybookWorker::start("test_cb".to_string(), pipeline_config)
+        let mut worker = PlaybookWorker::start("test_cb".to_string(), pipeline_config, None)
             .await
             .expect("Failed to start playbook worker");
         worker
@@ -338,5 +355,125 @@ pub fn call(input: String) -> Result<String> {
         assert_eq!(CALLBACK_CALL_COUNT.load(Ordering::SeqCst), 1);
 
         worker.shutdown().await.expect("Failed to shutdown worker");
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_playbook_worker_with_interconnect() {
+        tracing::info!("Starting test_playbook_worker_with_interconnect");
+        let cache = std::sync::Arc::new(CacheManager::from_env().await.unwrap());
+        let builder = Builder::from_env(cache.clone()).await.unwrap();
+
+        let target_playbook = pyro_artifacts::build::AnonPlaybook {
+            package: "test_interconnect_target".to_string(),
+            dependencies: BTreeMap::new(),
+            configurations: std::vec::Vec::new(),
+            source: r#"
+use pyroduct;
+
+#[pyroduct::module(output = message)]
+pub fn call(input: String) -> Result<String> {
+    Ok(format!("Hello: {}", input))
+}
+"#
+            .to_string(),
+            interconnect: BTreeMap::new(),
+        };
+
+        let target_binary = builder
+            .compile_anon(&target_playbook)
+            .await
+            .expect("Target module should compile");
+
+        let mut interconnect_map = BTreeMap::new();
+        interconnect_map.insert("target".to_string(), target_binary.spec.ident.clone());
+
+        let caller_playbook = pyro_artifacts::build::AnonPlaybook {
+            package: "test_interconnect_caller".to_string(),
+            dependencies: BTreeMap::new(),
+            configurations: std::vec::Vec::new(),
+            source: r#"
+use pyroduct;
+use pyroduct::call_playbook;
+use pyroduct::format::PyroRow;
+
+#[pyroduct::module(output = message)]
+pub fn call(input: String) -> Result<String> {
+    let target_input = PyroRow::from([("input", input.into())]);
+    let (_session_id, target_output) = call_playbook("target", &target_input);
+    let msg = target_output.get_str("message").unwrap();
+    Ok(format!("Caller received: {}", msg))
+}
+"#
+            .to_string(),
+            interconnect: interconnect_map,
+        };
+
+        let caller_binary = builder
+            .compile_anon(&caller_playbook)
+            .await
+            .expect("Caller module should compile");
+
+        let tmp_dir = tempdir().unwrap();
+        let manager_dir = tmp_dir.path().join("manager_dir");
+        let manager = Arc::new(PlaybooksManager::new(manager_dir));
+
+        let config_a_path = tmp_dir.path().join("config_a.toml");
+        let pipeline_config_a = PipelineConfig {
+            playbook: target_binary.spec.ident.clone(),
+            remote: HashMap::new(),
+            wal_capacity: 10,
+            success_log_retention_secs: 3600,
+            error_log_retention_secs: 86400 * 7,
+            input_dir: tmp_dir.path().to_path_buf(),
+            output_dir: tmp_dir.path().to_path_buf(),
+            log_dir: tmp_dir.path().to_path_buf(),
+        };
+        let toml_a = toml::to_string_pretty(&pipeline_config_a).unwrap();
+        std::fs::write(&config_a_path, toml_a).unwrap();
+
+        let config_b_path = tmp_dir.path().join("config_b.toml");
+        let pipeline_config_b = PipelineConfig {
+            playbook: caller_binary.spec.ident.clone(),
+            remote: HashMap::new(),
+            wal_capacity: 10,
+            success_log_retention_secs: 3600,
+            error_log_retention_secs: 86400 * 7,
+            input_dir: tmp_dir.path().to_path_buf(),
+            output_dir: tmp_dir.path().to_path_buf(),
+            log_dir: tmp_dir.path().to_path_buf(),
+        };
+        let toml_b = toml::to_string_pretty(&pipeline_config_b).unwrap();
+        std::fs::write(&config_b_path, toml_b).unwrap();
+
+        // 1. Start target playbook first
+        manager
+            .start_playbook("target".to_string(), config_a_path, None, None, None)
+            .await
+            .expect("Failed to start target playbook");
+
+        // 2. Start caller playbook, which requires the target playbook in its interconnect
+        manager
+            .start_playbook("caller".to_string(), config_b_path, None, None, None)
+            .await
+            .expect("Failed to start caller playbook");
+
+        // 3. Invoke caller playbook via call_playbook RPC
+        let payload = serde_json::json!({
+            "input": "World"
+        });
+        let res = manager
+            .call_playbook("caller", payload)
+            .await
+            .expect("Failed to call caller playbook");
+
+        assert_eq!(
+            res.get("message").and_then(|v| v.as_str()).unwrap(),
+            "Caller received: Hello: World"
+        );
+
+        // 4. Shutdown workers
+        manager.stop_playbook("caller").await.unwrap();
+        manager.stop_playbook("target").await.unwrap();
     }
 }

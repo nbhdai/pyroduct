@@ -359,6 +359,7 @@ impl Environment {
                                 hash,
                                 func,
                                 capabilities: source.dependencies().capabilities,
+                                interconnect: source.manifest.interconnect.clone(),
                             })
                             .ok_or_else(|| {
                                 EnvironmentError::InterfaceGeneration(
@@ -489,6 +490,7 @@ impl Environment {
                             hash,
                             func,
                             capabilities: source.dependencies().capabilities,
+                            interconnect: source.manifest.interconnect.clone(),
                         })
                         .ok_or_else(|| {
                             EnvironmentError::InterfaceGeneration(
@@ -605,6 +607,7 @@ impl Environment {
                         },
                         std::vec::Vec::new(),
                         src_lib_rs.clone(),
+                        module_manifest.interconnect.clone(),
                     );
                     let hash = source.hash();
 
@@ -615,6 +618,7 @@ impl Environment {
                             hash,
                             func: spec,
                             capabilities: vec![], // Capabilities not needed for WAT/RS generation
+                            interconnect: std::collections::BTreeMap::new(),
                         },
                         configurations: std::vec::Vec::new(),
                     };
@@ -720,6 +724,7 @@ impl Environment {
                     },
                     std::vec::Vec::new(),
                     src_lib_rs.clone(),
+                    module_manifest.interconnect.clone(),
                 );
                 let hash = source.hash();
 
@@ -734,6 +739,7 @@ impl Environment {
                         hash,
                         func,
                         capabilities: resolved_capabilities,
+                        interconnect: module_manifest.interconnect.clone(),
                     })
                     .ok_or_else(|| {
                         let err = EnvironmentError::InterfaceGeneration(

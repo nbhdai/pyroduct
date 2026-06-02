@@ -52,6 +52,7 @@ async fn test_socket_session_server_client() {
         dependencies: std::collections::BTreeMap::new(),
         configurations: Vec::new(),
         source: SIMPLE_SESSION_MODULE.to_string(),
+        interconnect: std::collections::BTreeMap::new(),
     };
     cache.remove_module("anon", "test_socket_session", "0.1.0").await.unwrap();
 

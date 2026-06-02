@@ -85,6 +85,7 @@ async fn test_session_recovery_lifecycle() {
         dependencies: std::collections::BTreeMap::new(),
         configurations: Vec::new(),
         source: RECOVERY_SESSION_MODULE.to_string(),
+        interconnect: std::collections::BTreeMap::new(),
     };
     cache
         .remove_module("anon", "test_session_rec", "0.1.0")
@@ -301,6 +302,7 @@ async fn test_session_diff_recovery_lifecycle() {
         dependencies: std::collections::BTreeMap::new(),
         configurations: Vec::new(),
         source: RECOVERY_SESSION_DIFF_MODULE.to_string(),
+        interconnect: std::collections::BTreeMap::new(),
     };
     cache
         .remove_module("anon", "test_session_diff_rec", "0.1.0")

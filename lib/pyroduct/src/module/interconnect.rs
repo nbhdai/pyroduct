@@ -119,6 +119,7 @@ pub fn link_interconnect(
                     let current_session_id = { *caller.data().current_session_id.lock().unwrap() };
                     let mut io = PyroCallIo::from_caller(caller)?;
                     let name = io.get_name(name_ptr, name_len)?;
+                    tracing::debug!(name = %name, "link_interconnect: guest requested playbook call");
 
                     let input_view_ref = io.borrow_argument(input_ptr).await?;
                     let session_id = if input_view_ref.mux_id() != 0 {
@@ -145,11 +146,18 @@ pub fn link_interconnect(
                                 WasmError::OutputMemory(wasmtime::Error::msg(e.to_string()))
                             })?;
                             result_vec.set_mux_id(session_id);
+                            tracing::debug!(
+                                header = ?result_vec.header(),
+                                status = ?result_vec.status(),
+                                len = result_vec.len(),
+                                "link_interconnect: result_vec details"
+                            );
                             let view = result_vec.view();
                             let ptr = io.new_input(&view).await?;
                             results[0] = Val::I32(ptr);
                         }
                         Err(e) => {
+                            tracing::error!(error = ?e, "link_interconnect: host error");
                             let mut vec = e.encode();
                             vec.set_status(crate::format::header::DataStatus::RkyvError);
                             let view = vec.view();

@@ -48,6 +48,7 @@ async fn test_session_lifecycle() {
         dependencies: std::collections::BTreeMap::new(),
         configurations: Vec::new(),
         source: SIMPLE_SESSION_MODULE.to_string(),
+        interconnect: std::collections::BTreeMap::new(),
     };
     cache
         .remove_module("anon", "test_session", "0.1.0")

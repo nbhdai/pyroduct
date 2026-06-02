@@ -30,15 +30,25 @@ pub struct PipelineServer {
 impl PipelineServer {
     /// Create a new server pipeline from a loaded playbook.
     pub async fn new(playbook: &LoadedPlaybook) -> Result<Self, PipelineError> {
-        Self::new_with_interconnect(playbook, None).await
+        Self::new_internal(playbook, None).await
     }
 
     /// Create a new server pipeline from a loaded playbook with an interconnect.
     pub async fn new_with_interconnect(
         playbook: &LoadedPlaybook,
+        interconnect: Arc<dyn PlaybookInterconnect>,
+    ) -> Result<Self, PipelineError> {
+        Self::new_internal(playbook, Some(interconnect)).await
+    }
+
+    async fn new_internal(
+        playbook: &LoadedPlaybook,
         interconnect: Option<Arc<dyn PlaybookInterconnect>>,
     ) -> Result<Self, PipelineError> {
-        let factory = PyroFactory::from_playbook(playbook)?.with_interconnect(interconnect);
+        let mut factory = PyroFactory::from_playbook(playbook)?;
+        if let Some(ic) = interconnect {
+            factory.set_interconnect(ic);
+        }
         let instance = factory.instantiate().await?;
         let spec = instance.spec.clone();
         let input_schema = factory.spec().func.input.clone();

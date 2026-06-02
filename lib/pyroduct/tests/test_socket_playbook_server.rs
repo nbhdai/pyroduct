@@ -47,6 +47,7 @@ async fn test_playbook_server_client() {
         dependencies: BTreeMap::new(),
         configurations: Vec::new(),
         source: CODE.to_string(),
+        interconnect: std::collections::BTreeMap::new(),
     };
 
     let binary = builder

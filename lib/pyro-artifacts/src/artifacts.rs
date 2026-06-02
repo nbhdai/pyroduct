@@ -58,7 +58,7 @@ pub struct ModuleDependencies {
 }
 
 /// Identity for a named module (from Module.toml [module] section).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PlaybookIdent {
     pub author: String,
     pub package: String,
@@ -77,6 +77,8 @@ pub struct PlaybookSpec {
     pub hash: String,
     pub func: ModuleFunc<'static>,
     pub capabilities: Vec<CapabilityIdent>,
+    #[serde(default)]
+    pub interconnect: BTreeMap<String, PlaybookIdent>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
@@ -156,11 +158,17 @@ impl PlaybookSource {
                 version: cap.version.clone(),
             });
         }
-        Self::compute_hash(
+        let base_hash = Self::compute_hash(
             &self.source,
             &self.manifest.dependencies,
             &resolved_capabilities,
-        )
+        );
+        let mut hasher = Sha256::new();
+        hasher.update(base_hash.as_bytes());
+        if let Ok(interconnect_json) = serde_json::to_string(&self.manifest.interconnect) {
+            hasher.update(interconnect_json.as_bytes());
+        }
+        format!("{:x}", hasher.finalize())
     }
 
     pub fn compute_hash(
@@ -196,6 +204,7 @@ impl PlaybookSource {
         dependencies: ModuleDependencies,
         configurations: Vec<ConfiguredCapability>,
         source: String,
+        interconnect: BTreeMap<String, PlaybookIdent>,
     ) -> Self {
         let mut capabilities_map: BTreeMap<String, ConfiguredCapability> = BTreeMap::new();
         for cap in configurations {
@@ -244,6 +253,7 @@ impl PlaybookSource {
             test: Vec::new(),
             example: Vec::new(),
             lints: Default::default(),
+            interconnect,
         };
         Self { manifest, source }
     }
@@ -886,6 +896,7 @@ impl Artifact for PlaybookSource {
                 test: Vec::new(),
                 example: Vec::new(),
                 lints: Default::default(),
+                interconnect: BTreeMap::new(),
             };
             Ok(PlaybookSource { manifest, source })
         }
@@ -984,6 +995,7 @@ impl Artifact for PlaybookSource {
                 test: Vec::new(),
                 example: Vec::new(),
                 lints: Default::default(),
+                interconnect: BTreeMap::new(),
             };
             Ok(PlaybookSource { manifest, source })
         }
@@ -1038,6 +1050,7 @@ impl Artifact for PlaybookBinary {
             test: Vec::new(),
             example: Vec::new(),
             lints: Default::default(),
+            interconnect: self.spec.interconnect.clone(),
         };
         let toml_str = toml::to_string_pretty(&manifest).map_err(|e| {
             let err = io::Error::new(
@@ -1095,6 +1108,7 @@ impl Artifact for PlaybookBinary {
             test: Vec::new(),
             example: Vec::new(),
             lints: Default::default(),
+            interconnect: self.spec.interconnect.clone(),
         };
         let toml_str = toml::to_string_pretty(&manifest).map_err(|e| {
             io::Error::new(
