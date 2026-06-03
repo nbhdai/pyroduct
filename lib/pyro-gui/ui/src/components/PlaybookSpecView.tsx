@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { PlaybookSpec, PyroSchema } from "../types";
+import { PyroSchema } from "../types";
 
 interface PlaybookSpecViewProps {
   author: string;
@@ -10,7 +10,7 @@ interface PlaybookSpecViewProps {
 }
 
 export function PlaybookSpecView({ author, name, version, onBack }: PlaybookSpecViewProps) {
-  const [spec, setSpec] = useState<PlaybookSpec | null>(null);
+  const [spec, setSpec] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,7 +22,7 @@ export function PlaybookSpecView({ author, name, version, onBack }: PlaybookSpec
     invoke("get_playbook_spec", { author, name, version })
       .then((res) => {
         if (active) {
-          setSpec(res as PlaybookSpec);
+          setSpec(res);
           setLoading(false);
         }
       })
@@ -39,6 +39,7 @@ export function PlaybookSpecView({ author, name, version, onBack }: PlaybookSpec
   }, [author, name, version]);
 
   const renderType = (type: any): string => {
+    if (!type) return "Unknown";
     if (typeof type === "string") return type;
     if (type && typeof type === "object") {
       if (type.PrimitiveScalar) return type.PrimitiveScalar;
@@ -54,8 +55,8 @@ export function PlaybookSpecView({ author, name, version, onBack }: PlaybookSpec
     return "Unknown";
   };
 
-  const renderSchemaTable = (schema: PyroSchema) => {
-    if (!schema.fields || schema.fields.length === 0) {
+  const renderSchemaTable = (schema?: PyroSchema) => {
+    if (!schema || !schema.fields || schema.fields.length === 0) {
       return <p className="text-muted small">Empty schema</p>;
     }
 
@@ -77,7 +78,7 @@ export function PlaybookSpecView({ author, name, version, onBack }: PlaybookSpec
                 <td>
                   <span className="code-text">{renderType(field.data_type)}</span>
                 </td>
-                <td>{field.nullable ? "✅" : "❌"}</td>
+                <td>{field.nullable ? "Yes" : "No"}</td>
                 <td className="text-muted text-sm">{field.documentation || "-"}</td>
               </tr>
             ))}
@@ -87,13 +88,24 @@ export function PlaybookSpecView({ author, name, version, onBack }: PlaybookSpec
     );
   };
 
+  // Helper variables with fallback defaults to prevent crashes
+  const specHash = spec?.hash || "Unknown";
+  const func = spec?.func || {};
+  const funcName = func.name || "main";
+  const funcDescription = func.description;
+  const funcKind = func.kind;
+  const inputSchema = func.input;
+  const outputSchema = func.output;
+  const capabilities = spec?.capabilities || [];
+  const interconnect = spec?.interconnect || {};
+
   return (
     <div className="spec-view-container">
       <div className="spec-view-header">
         <div className="flex items-center gap-15">
           {onBack && (
             <button onClick={onBack} className="btn btn-secondary btn-sm btn-back">
-              ⬅️ Back
+              ← Back
             </button>
           )}
           <div>
@@ -127,12 +139,12 @@ export function PlaybookSpecView({ author, name, version, onBack }: PlaybookSpec
             <div className="info-list mt-10">
               <div className="info-row">
                 <span className="label">Spec Hash</span>
-                <span className="value code-text">{spec.hash}</span>
+                <span className="value code-text">{specHash}</span>
               </div>
-              {spec.func.kind && (
+              {funcKind && (
                 <div className="info-row">
                   <span className="label">Execution Model</span>
-                  <span className="value badge badge-online">{spec.func.kind.toUpperCase()}</span>
+                  <span className="value badge badge-online">{String(funcKind).toUpperCase()}</span>
                 </div>
               )}
             </div>
@@ -141,20 +153,20 @@ export function PlaybookSpecView({ author, name, version, onBack }: PlaybookSpec
           {/* Main Function spec */}
           <div className="card p-24 mb-20">
             <div className="class-header mb-15">
-              <h4 className="class-name">Main Function: {spec.func.name}</h4>
-              {spec.func.description && (
-                <p className="class-desc text-muted mt-5">{spec.func.description}</p>
+              <h4 className="class-name">Main Function: {funcName}</h4>
+              {funcDescription && (
+                <p className="class-desc text-muted mt-5">{funcDescription}</p>
               )}
             </div>
 
             <div className="schema-group mb-20">
-              <h5 className="schema-title">📥 Input Schema</h5>
-              {renderSchemaTable(spec.func.input)}
+              <h5 className="schema-title">Input Schema</h5>
+              {renderSchemaTable(inputSchema)}
             </div>
 
             <div className="schema-group">
-              <h5 className="schema-title">📤 Output Schema</h5>
-              {renderSchemaTable(spec.func.output)}
+              <h5 className="schema-title">Output Schema</h5>
+              {renderSchemaTable(outputSchema)}
             </div>
           </div>
 
@@ -162,15 +174,20 @@ export function PlaybookSpecView({ author, name, version, onBack }: PlaybookSpec
             {/* Required Capabilities */}
             <div className="card p-20">
               <h3 className="section-title mb-15">Capabilities Required</h3>
-              {spec.capabilities.length === 0 ? (
+              {capabilities.length === 0 ? (
                 <p className="text-muted">No external capabilities required by this playbook.</p>
               ) : (
                 <div className="capability-pills">
-                  {spec.capabilities.map((cap, idx) => (
-                    <span key={idx} className="cap-pill" style={{ padding: "6px 12px", fontSize: "12px" }}>
-                      {cap.author}/{cap.package} v{cap.version}
-                    </span>
-                  ))}
+                  {capabilities.map((cap: any, idx: number) => {
+                    const cAuthor = cap?.author || "unknown";
+                    const cPackage = cap?.package || "unknown";
+                    const cVersion = cap?.version || "";
+                    return (
+                      <span key={idx} className="cap-pill" style={{ padding: "6px 12px", fontSize: "12px" }}>
+                        {cAuthor}/{cPackage} {cVersion && `v${cVersion}`}
+                      </span>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -178,7 +195,7 @@ export function PlaybookSpecView({ author, name, version, onBack }: PlaybookSpec
             {/* Interconnect map */}
             <div className="card p-20">
               <h3 className="section-title mb-15">Sub-playbook Links (Interconnect)</h3>
-              {Object.keys(spec.interconnect).length === 0 ? (
+              {Object.keys(interconnect).length === 0 ? (
                 <p className="text-muted">No interconnected playbooks.</p>
               ) : (
                 <div className="table-container">
@@ -190,14 +207,19 @@ export function PlaybookSpecView({ author, name, version, onBack }: PlaybookSpec
                       </tr>
                     </thead>
                     <tbody>
-                      {Object.entries(spec.interconnect).map(([alias, target], idx) => (
-                        <tr key={idx}>
-                          <td className="font-semibold text-primary">{alias}</td>
-                          <td className="text-muted">
-                            {target.author}/{target.package} v{target.version}
-                          </td>
-                        </tr>
-                      ))}
+                      {Object.entries(interconnect).map(([alias, target]: [string, any], idx) => {
+                        const tAuthor = target?.author || "unknown";
+                        const tPackage = target?.package || "unknown";
+                        const tVersion = target?.version || "";
+                        return (
+                          <tr key={idx}>
+                            <td className="font-semibold text-primary">{alias}</td>
+                            <td className="text-muted">
+                              {tAuthor}/{tPackage} {tVersion && `v${tVersion}`}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

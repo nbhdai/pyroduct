@@ -221,7 +221,7 @@ export function App() {
           <h1>{getPageTitle()}</h1>
           <div className="header-actions">
             <button onClick={handleGlobalRefresh} className="btn btn-secondary">
-              🔄 Refresh
+              Refresh
             </button>
           </div>
         </header>

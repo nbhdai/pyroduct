@@ -109,7 +109,7 @@ export function RepositoryTab({ cacheStatus, onPurgeCache }: RepositoryTabProps)
                       </td>
                       <td>
                         <button className="btn btn-secondary btn-sm" style={{ padding: "4px 8px", fontSize: "12px" }}>
-                          🔍 View Spec
+                          View Spec
                         </button>
                       </td>
                     </tr>
@@ -161,7 +161,7 @@ export function RepositoryTab({ cacheStatus, onPurgeCache }: RepositoryTabProps)
                       </td>
                       <td>
                         <button className="btn btn-secondary btn-sm" style={{ padding: "4px 8px", fontSize: "12px" }}>
-                          🔍 View Spec
+                          View Spec
                         </button>
                       </td>
                     </tr>

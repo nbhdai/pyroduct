@@ -25,7 +25,7 @@ export function PlaybooksTab({
       <div className="playbooks-grid">
         {playbooks.length === 0 ? (
           <div className="empty-state">
-            <span className="empty-icon">⚙️</span>
+            <span className="empty-icon">⚙</span>
             <p>No active playbooks found running on the daemon.</p>
           </div>
         ) : (
@@ -68,13 +68,13 @@ export function PlaybooksTab({
                     onClick={() => onCallPlaybookClick(pb.name)}
                     className="btn btn-secondary call-pb-btn"
                   >
-                    📞 Call
+                    Call
                   </button>
                   <button
                     onClick={() => onStopPlaybookClick(pb.name)}
                     className="btn btn-danger stop-pb-btn"
                   >
-                    ⏹️ Stop
+                    Stop
                   </button>
                 </div>
               </div>

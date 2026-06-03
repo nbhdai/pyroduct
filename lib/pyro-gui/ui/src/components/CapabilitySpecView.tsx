@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { InterfaceSpec, PyroSchema } from "../types";
+import { PyroSchema } from "../types";
 
 interface CapabilitySpecViewProps {
   author: string;
@@ -10,7 +10,7 @@ interface CapabilitySpecViewProps {
 }
 
 export function CapabilitySpecView({ author, name, version, onBack }: CapabilitySpecViewProps) {
-  const [spec, setSpec] = useState<InterfaceSpec | null>(null);
+  const [spec, setSpec] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,7 +22,7 @@ export function CapabilitySpecView({ author, name, version, onBack }: Capability
     invoke("get_capability_interface_spec", { author, name, version })
       .then((res) => {
         if (active) {
-          setSpec(res as InterfaceSpec);
+          setSpec(res);
           setLoading(false);
         }
       })
@@ -39,6 +39,7 @@ export function CapabilitySpecView({ author, name, version, onBack }: Capability
   }, [author, name, version]);
 
   const renderType = (type: any): string => {
+    if (!type) return "Unknown";
     if (typeof type === "string") return type;
     if (type && typeof type === "object") {
       if (type.PrimitiveScalar) return type.PrimitiveScalar;
@@ -54,8 +55,8 @@ export function CapabilitySpecView({ author, name, version, onBack }: Capability
     return "Unknown";
   };
 
-  const renderSchemaTable = (schema: PyroSchema) => {
-    if (!schema.fields || schema.fields.length === 0) {
+  const renderSchemaTable = (schema?: PyroSchema) => {
+    if (!schema || !schema.fields || schema.fields.length === 0) {
       return <p className="text-muted small">Empty schema</p>;
     }
 
@@ -77,7 +78,7 @@ export function CapabilitySpecView({ author, name, version, onBack }: Capability
                 <td>
                   <span className="code-text">{renderType(field.data_type)}</span>
                 </td>
-                <td>{field.nullable ? "✅" : "❌"}</td>
+                <td>{field.nullable ? "Yes" : "No"}</td>
                 <td className="text-muted text-sm">{field.documentation || "-"}</td>
               </tr>
             ))}
@@ -87,13 +88,16 @@ export function CapabilitySpecView({ author, name, version, onBack }: Capability
     );
   };
 
+  const classes = spec?.classes || [];
+  const description = spec?.description;
+
   return (
     <div className="spec-view-container">
       <div className="spec-view-header">
         <div className="flex items-center gap-15">
           {onBack && (
             <button onClick={onBack} className="btn btn-secondary btn-sm btn-back">
-              ⬅️ Back
+              ← Back
             </button>
           )}
           <div>
@@ -121,77 +125,92 @@ export function CapabilitySpecView({ author, name, version, onBack }: Capability
 
       {!loading && !error && spec && (
         <div className="spec-content mt-20">
-          {spec.description && (
+          {description && (
             <div className="card p-20 mb-20">
-              <p className="description-text">{spec.description}</p>
+              <p className="description-text">{description}</p>
             </div>
           )}
 
           <div className="classes-section">
             <h3 className="section-title">Classes Defined</h3>
-            {spec.classes.length === 0 ? (
+            {classes.length === 0 ? (
               <p className="text-muted">No classes defined in this capability.</p>
             ) : (
-              spec.classes.map((cls, clsIdx) => (
-                <div key={clsIdx} className="card class-card p-24 mb-20">
-                  <div className="class-header mb-15">
-                    <h4 className="class-name">{cls.name}</h4>
-                    {cls.description && <p className="class-desc text-muted mt-5">{cls.description}</p>}
-                  </div>
+              classes.map((cls: any, clsIdx: number) => {
+                const clsName = cls?.name || "UnnamedClass";
+                const clsDesc = cls?.description;
+                const clsConfig = cls?.config;
+                const clsClient = cls?.client;
+                const clsMethods = cls?.methods || [];
 
-                  {cls.config && cls.config.fields && cls.config.fields.length > 0 && (
-                    <div className="schema-group mb-20">
-                      <h5 className="schema-title">⚙️ Configuration Schema</h5>
-                      {cls.config.documentation && (
-                        <p className="text-muted text-sm mb-5">{cls.config.documentation}</p>
-                      )}
-                      {renderSchemaTable(cls.config)}
+                return (
+                  <div key={clsIdx} className="card class-card p-24 mb-20">
+                    <div className="class-header mb-15">
+                      <h4 className="class-name">{clsName}</h4>
+                      {clsDesc && <p className="class-desc text-muted mt-5">{clsDesc}</p>}
                     </div>
-                  )}
 
-                  {cls.client && cls.client.fields && cls.client.fields.length > 0 && (
-                    <div className="schema-group mb-20">
-                      <h5 className="schema-title">🔌 Client Schema</h5>
-                      {cls.client.documentation && (
-                        <p className="text-muted text-sm mb-5">{cls.client.documentation}</p>
-                      )}
-                      {renderSchemaTable(cls.client)}
-                    </div>
-                  )}
-
-                  <div className="methods-group">
-                    <h5 className="schema-title mb-10">⚡ Methods</h5>
-                    {cls.methods.length === 0 ? (
-                      <p className="text-muted text-sm">No methods defined</p>
-                    ) : (
-                      <div className="methods-list">
-                        {cls.methods.map((method, mIdx) => (
-                          <div key={mIdx} className="method-item p-16 mb-12">
-                            <div className="method-header flex justify-between items-start">
-                              <div>
-                                <span className="method-name font-semibold text-primary">{method.name}</span>
-                                <span className="text-muted text-sm ml-10">
-                                  → returns <code className="code-text">{renderType(method.output)}</code>
-                                </span>
-                              </div>
-                            </div>
-                            {method.description && (
-                              <p className="method-desc text-muted text-sm mt-5">{method.description}</p>
-                            )}
-
-                            {method.input && method.input.fields && method.input.fields.length > 0 && (
-                              <div className="mt-10">
-                                <span className="text-xs font-semibold text-muted">INPUT ARGUMENTS:</span>
-                                {renderSchemaTable(method.input)}
-                              </div>
-                            )}
-                          </div>
-                        ))}
+                    {clsConfig && clsConfig.fields && clsConfig.fields.length > 0 && (
+                      <div className="schema-group mb-20">
+                        <h5 className="schema-title">Configuration Schema</h5>
+                        {clsConfig.documentation && (
+                          <p className="text-muted text-sm mb-5">{clsConfig.documentation}</p>
+                        )}
+                        {renderSchemaTable(clsConfig)}
                       </div>
                     )}
+
+                    {clsClient && clsClient.fields && clsClient.fields.length > 0 && (
+                      <div className="schema-group mb-20">
+                        <h5 className="schema-title">Client Schema</h5>
+                        {clsClient.documentation && (
+                          <p className="text-muted text-sm mb-5">{clsClient.documentation}</p>
+                        )}
+                        {renderSchemaTable(clsClient)}
+                      </div>
+                    )}
+
+                    <div className="methods-group">
+                      <h5 className="schema-title mb-10">Methods</h5>
+                      {clsMethods.length === 0 ? (
+                        <p className="text-muted text-sm">No methods defined</p>
+                      ) : (
+                        <div className="methods-list">
+                          {clsMethods.map((method: any, mIdx: number) => {
+                            const methodName = method?.name || "unnamed_method";
+                            const methodDesc = method?.description;
+                            const methodOutput = method?.output;
+                            const methodInput = method?.input;
+
+                            return (
+                              <div key={mIdx} className="method-item p-16 mb-12">
+                                <div className="method-header flex justify-between items-start">
+                                  <div>
+                                    <span className="method-name font-semibold text-primary">{methodName}</span>
+                                    <span className="text-muted text-sm ml-10">
+                                      → returns <code className="code-text">{renderType(methodOutput)}</code>
+                                    </span>
+                                  </div>
+                                </div>
+                                {methodDesc && (
+                                  <p className="method-desc text-muted text-sm mt-5">{methodDesc}</p>
+                                )}
+
+                                {methodInput && methodInput.fields && methodInput.fields.length > 0 && (
+                                  <div className="mt-10">
+                                    <span className="text-xs font-semibold text-muted">INPUT ARGUMENTS:</span>
+                                    {renderSchemaTable(methodInput)}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

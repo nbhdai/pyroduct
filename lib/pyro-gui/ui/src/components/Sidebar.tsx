@@ -38,19 +38,19 @@ export function Sidebar({ activeTab, onTabChange, daemonStatus }: SidebarProps) 
           className={`nav-btn ${activeTab === "dashboard" ? "active" : ""}`}
           onClick={() => onTabChange("dashboard")}
         >
-          <span className="btn-icon">⚡</span> Dashboard
+          Dashboard
         </button>
         <button
           className={`nav-btn ${activeTab === "repository" ? "active" : ""}`}
           onClick={() => onTabChange("repository")}
         >
-          <span className="btn-icon">📦</span> Repository
+          Repository
         </button>
         <button
           className={`nav-btn ${activeTab === "playbooks" ? "active" : ""}`}
           onClick={() => onTabChange("playbooks")}
         >
-          <span className="btn-icon">⚙️</span> Playbooks
+          Playbooks
         </button>
       </nav>
 
