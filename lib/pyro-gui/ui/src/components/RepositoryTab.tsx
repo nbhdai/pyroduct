@@ -14,12 +14,12 @@ type SelectedItem = {
 } | null;
 
 export function RepositoryTab({ cacheStatus }: RepositoryTabProps) {
-  const [subTab, setSubTab] = useState<"capabilities" | "modules">("capabilities");
+  const [subTab, setSubTab] = useState<"capabilities" | "playbooks">("capabilities");
   const [selectedCap, setSelectedCap] = useState<SelectedItem>(null);
-  const [selectedModule, setSelectedModule] = useState<SelectedItem>(null);
+  const [selectedPlaybook, setSelectedPlaybook] = useState<SelectedItem>(null);
 
   const capabilities = cacheStatus?.capabilities ?? [];
-  const modules = cacheStatus?.modules ?? [];
+  const playbooks = cacheStatus?.playbooks ?? [];
   const cacheRoot = cacheStatus?.cache_root ?? "~/.pyroduct";
 
   if (selectedCap) {
@@ -33,13 +33,13 @@ export function RepositoryTab({ cacheStatus }: RepositoryTabProps) {
     );
   }
 
-  if (selectedModule) {
+  if (selectedPlaybook) {
     return (
       <PlaybookSpecView
-        author={selectedModule.author}
-        name={selectedModule.name}
-        version={selectedModule.version}
-        onBack={() => setSelectedModule(null)}
+        author={selectedPlaybook.author}
+        name={selectedPlaybook.name}
+        version={selectedPlaybook.version}
+        onBack={() => setSelectedPlaybook(null)}
       />
     );
   }
@@ -62,10 +62,10 @@ export function RepositoryTab({ cacheStatus }: RepositoryTabProps) {
           Capabilities
         </button>
         <button
-          className={`sub-tab-btn ${subTab === "modules" ? "active" : ""}`}
-          onClick={() => setSubTab("modules")}
+          className={`sub-tab-btn ${subTab === "playbooks" ? "active" : ""}`}
+          onClick={() => setSubTab("playbooks")}
         >
-          Modules (Playbooks)
+          Playbooks
         </button>
       </div>
 
@@ -117,7 +117,7 @@ export function RepositoryTab({ cacheStatus }: RepositoryTabProps) {
         </div>
       )}
 
-      {subTab === "modules" && (
+      {subTab === "playbooks" && (
         <div className="sub-tab-content active">
           <div className="table-container">
             <table className="table">
@@ -130,19 +130,19 @@ export function RepositoryTab({ cacheStatus }: RepositoryTabProps) {
                 </tr>
               </thead>
               <tbody>
-                {modules.length === 0 ? (
+                {playbooks.length === 0 ? (
                   <tr>
                     <td colSpan={4} className="text-center">
-                      No modules found in repository.
+                      No playbooks found in repository.
                     </td>
                   </tr>
                 ) : (
-                  modules.map((mod, idx) => (
+                  playbooks.map((mod, idx) => (
                     <tr
                       key={idx}
                       className="cursor-pointer"
                       onClick={() =>
-                        setSelectedModule({
+                        setSelectedPlaybook({
                           author: mod.author,
                           name: mod.name,
                           version: mod.version,

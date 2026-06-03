@@ -12,7 +12,7 @@ export interface Capability {
   version: string;
 }
 
-export interface Module {
+export interface Playbook {
   author: string;
   name: string;
   version: string;
@@ -21,7 +21,7 @@ export interface Module {
 export interface CacheStatus {
   cache_root: string;
   capabilities: Capability[];
-  modules: Module[];
+  playbooks: Playbook[];
 }
 
 export interface PlaybookCapability {

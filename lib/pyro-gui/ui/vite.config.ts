@@ -21,7 +21,7 @@ export default defineConfig({
         }
       : undefined,
     watch: {
-      ignored: ["**/src/**", "**/gen/**"], // Ignore Rust source files changes for Vite
+      ignored: ["../src/**", "../gen/**"], // Ignore Rust source files changes for Vite
     },
   },
 });

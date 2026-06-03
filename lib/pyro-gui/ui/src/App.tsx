@@ -66,7 +66,7 @@ export function App() {
       const res = (await invoke("get_cache_status")) as CacheStatus;
       setCacheStatus(res);
       addLog(
-        `Loaded ${res.capabilities.length} capabilities and ${res.modules.length} modules from cache.`,
+        `Loaded ${res.capabilities.length} capabilities and ${res.playbooks.length} playbooks from cache.`,
         "success"
       );
     } catch (err) {
@@ -111,14 +111,14 @@ export function App() {
     }
   }, [addLog, loadCache]);
 
-  const purgeModules = useCallback(async () => {
+  const purgePlaybooks = useCallback(async () => {
     try {
-      addLog("Purging modules cache...", "command");
-      const msg = (await invoke("purge_modules_cache")) as string;
+      addLog("Purging playbooks cache...", "command");
+      const msg = (await invoke("purge_playbooks_cache")) as string;
       addLog(msg, "success");
       await loadCache();
     } catch (err) {
-      addLog(`Failed to purge modules: ${err}`, "error");
+      addLog(`Failed to purge playbooks: ${err}`, "error");
       throw err;
     }
   }, [addLog, loadCache]);
@@ -277,7 +277,7 @@ export function App() {
           <OptionsTab
             onPurgeAll={purgeCache}
             onPurgeCapabilities={purgeCapabilities}
-            onPurgeModules={purgeModules}
+            onPurgePlaybooks={purgePlaybooks}
           />
         )}
       </main>

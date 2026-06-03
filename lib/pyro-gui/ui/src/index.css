@@ -908,4 +908,47 @@ body {
     gap: 20px;
 }
 
+/* Code container styles */
+.code-container {
+    background-color: #0b0c10;
+    border: 1px solid var(--bg-card-border);
+    border-radius: var(--border-radius);
+    padding: 16px 20px;
+    margin-top: 15px;
+    overflow-x: auto;
+}
+
+.code-block {
+    font-family: 'Source Code Pro', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #e5e9f0;
+    white-space: pre;
+    text-align: left;
+}
+
+/* Syntax Highlighting */
+.hl-keyword {
+    color: #ff5c00; /* Warm orange */
+    font-weight: 600;
+}
+
+.hl-type {
+    color: #61afef; /* Ice blue */
+}
+
+.hl-string {
+    color: #98c379; /* Soft green */
+}
+
+.hl-attr {
+    color: #d19a66; /* Light peach/gold */
+}
+
+.hl-comment {
+    color: var(--text-muted);
+    font-style: italic;
+    opacity: 0.85;
+}
+
 

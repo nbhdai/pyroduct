@@ -5,10 +5,10 @@ import { PyroductConfig } from "../types";
 interface OptionsTabProps {
   onPurgeAll: () => Promise<void>;
   onPurgeCapabilities: () => Promise<void>;
-  onPurgeModules: () => Promise<void>;
+  onPurgePlaybooks: () => Promise<void>;
 }
 
-export function OptionsTab({ onPurgeAll, onPurgeCapabilities, onPurgeModules }: OptionsTabProps) {
+export function OptionsTab({ onPurgeAll, onPurgeCapabilities, onPurgePlaybooks }: OptionsTabProps) {
   const [config, setConfig] = useState<PyroductConfig>({ author: "", build_slots: 4 });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -156,22 +156,22 @@ export function OptionsTab({ onPurgeAll, onPurgeCapabilities, onPurgeModules }: 
               </button>
             </div>
 
-            {/* Purge Modules */}
+            {/* Purge Playbooks */}
             <div className="info-row flex justify-between items-center py-12" style={{ borderBottom: "1px solid var(--bg-card-border)", paddingTop: "16px", paddingBottom: "16px" }}>
               <div>
-                <div className="font-semibold text-main">Modules Cache</div>
-                <div className="text-muted text-xs mt-2">Purges modules and compiled playbooks.</div>
+                <div className="font-semibold text-main">Playbooks Cache</div>
+                <div className="text-muted text-xs mt-2">Purges compiled playbooks cache.</div>
               </div>
               <button
                 onClick={() =>
                   handlePurgeClick(
-                    onPurgeModules,
-                    "Are you sure you want to purge modules cache? This deletes all compiled playbooks."
+                    onPurgePlaybooks,
+                    "Are you sure you want to purge playbooks cache? This deletes all compiled playbooks."
                   )
                 }
                 className="btn btn-danger btn-sm"
               >
-                Purge Modules
+                Purge Playbooks
               </button>
             </div>
 
@@ -179,13 +179,13 @@ export function OptionsTab({ onPurgeAll, onPurgeCapabilities, onPurgeModules }: 
             <div className="info-row flex justify-between items-center py-12" style={{ paddingTop: "16px" }}>
               <div>
                 <div className="font-semibold text-main text-danger">Entire Cache</div>
-                <div className="text-muted text-xs mt-2">Deletes all cached items including capabilities, modules, and interfaces.</div>
+                <div className="text-muted text-xs mt-2">Deletes all cached items including capabilities, playbooks, and interfaces.</div>
               </div>
               <button
                 onClick={() =>
                   handlePurgeClick(
                     onPurgeAll,
-                    "Are you sure you want to purge the entire cache? This will delete all locally cached capabilities, modules, and specifications."
+                    "Are you sure you want to purge the entire cache? This will delete all locally cached capabilities, playbooks, and specifications."
                   )
                 }
                 className="btn btn-danger btn-sm"

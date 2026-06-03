@@ -77,7 +77,7 @@ async fn get_cache_status() -> Result<Value, String> {
     let mods = mgr
         .list_available_modules()
         .await
-        .map_err(|e| format!("Failed to list modules: {:?}", e))?;
+        .map_err(|e| format!("Failed to list playbooks: {:?}", e))?;
 
     let caps_json: Vec<Value> = caps.into_iter().map(|(author, name, version)| {
         serde_json::json!({ "author": author, "name": name, "version": version })
@@ -90,7 +90,7 @@ async fn get_cache_status() -> Result<Value, String> {
     Ok(serde_json::json!({
         "cache_root": mgr.root.to_string_lossy(),
         "capabilities": caps_json,
-        "modules": mods_json
+        "playbooks": mods_json
     }))
 }
 
@@ -266,6 +266,19 @@ async fn get_playbook_spec(author: String, name: String, version: String) -> Res
 }
 
 #[tauri::command]
+async fn get_playbook_source(author: String, name: String, version: String) -> Result<String, String> {
+    let mgr = get_cache_manager().await?;
+    let path = mgr.module_dir(&author, &name, &version).join("source.rs");
+    if !path.exists() {
+        return Ok("".to_string());
+    }
+    let src = tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|e| format!("Failed to read playbook source: {:?}", e))?;
+    Ok(src)
+}
+
+#[tauri::command]
 async fn get_pyroduct_config() -> Result<Value, String> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -338,12 +351,12 @@ async fn purge_capabilities_cache() -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn purge_modules_cache() -> Result<String, String> {
+async fn purge_playbooks_cache() -> Result<String, String> {
     let mgr = get_cache_manager().await?;
     mgr.purge_modules()
         .await
-        .map_err(|e| format!("Failed to purge modules: {:?}", e))?;
-    Ok("Modules cache purged successfully".to_string())
+        .map_err(|e| format!("Failed to purge playbooks: {:?}", e))?;
+    Ok("Playbooks cache purged successfully".to_string())
 }
 
 fn main() {
@@ -359,10 +372,11 @@ fn main() {
             call_playbook,
             get_capability_interface_spec,
             get_playbook_spec,
+            get_playbook_source,
             get_pyroduct_config,
             update_pyroduct_config,
             purge_capabilities_cache,
-            purge_modules_cache
+            purge_playbooks_cache
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
