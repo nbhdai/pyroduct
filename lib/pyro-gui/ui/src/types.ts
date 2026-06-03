@@ -103,3 +103,9 @@ export interface PlaybookSpec {
   }>;
 }
 
+export interface PyroductConfig {
+  author: string;
+  build_slots?: number;
+}
+
+

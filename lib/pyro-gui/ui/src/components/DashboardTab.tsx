@@ -4,11 +4,10 @@ import { DaemonStatus, LogEntry } from "../types";
 interface DashboardTabProps {
   daemonStatus: DaemonStatus;
   onQueryStatus: () => void;
-  onPurgeCache: () => void;
   logs: LogEntry[];
 }
 
-export function DashboardTab({ daemonStatus, onQueryStatus, onPurgeCache, logs }: DashboardTabProps) {
+export function DashboardTab({ daemonStatus, onQueryStatus, logs }: DashboardTabProps) {
   const consoleEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -61,9 +60,6 @@ export function DashboardTab({ daemonStatus, onQueryStatus, onPurgeCache, logs }
           <div className="action-buttons">
             <button onClick={onQueryStatus} className="btn btn-primary btn-block">
               Query Status
-            </button>
-            <button onClick={onPurgeCache} className="btn btn-danger btn-block">
-              Purge Local Cache
             </button>
           </div>
         </div>

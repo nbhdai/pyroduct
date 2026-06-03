@@ -5,7 +5,6 @@ import { PlaybookSpecView } from "./PlaybookSpecView";
 
 interface RepositoryTabProps {
   cacheStatus: CacheStatus | null;
-  onPurgeCache: () => void;
 }
 
 type SelectedItem = {
@@ -14,7 +13,7 @@ type SelectedItem = {
   version: string;
 } | null;
 
-export function RepositoryTab({ cacheStatus, onPurgeCache }: RepositoryTabProps) {
+export function RepositoryTab({ cacheStatus }: RepositoryTabProps) {
   const [subTab, setSubTab] = useState<"capabilities" | "modules">("capabilities");
   const [selectedCap, setSelectedCap] = useState<SelectedItem>(null);
   const [selectedModule, setSelectedModule] = useState<SelectedItem>(null);
@@ -53,9 +52,6 @@ export function RepositoryTab({ cacheStatus, onPurgeCache }: RepositoryTabProps)
             Local Repository: <span className="code-text">{cacheRoot}</span>
           </p>
         </div>
-        <button onClick={onPurgeCache} className="btn btn-danger">
-          Purge Cache
-        </button>
       </div>
 
       <div className="tabs-sub">

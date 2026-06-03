@@ -4,12 +4,13 @@ import { Sidebar } from "./components/Sidebar";
 import { DashboardTab } from "./components/DashboardTab";
 import { RepositoryTab } from "./components/RepositoryTab";
 import { PlaybooksTab } from "./components/PlaybooksTab";
+import { OptionsTab } from "./components/OptionsTab";
 import { StartPlaybookModal } from "./components/StartPlaybookModal";
 import { CallPlaybookModal } from "./components/CallPlaybookModal";
 import { DaemonStatus, CacheStatus, Playbook, LogEntry } from "./types";
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<"dashboard" | "repository" | "playbooks">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "repository" | "playbooks" | "options">("dashboard");
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus>({ status: "offline" });
   const [cacheStatus, setCacheStatus] = useState<CacheStatus | null>(null);
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
@@ -87,11 +88,6 @@ export function App() {
 
   // 4. Purge Cache
   const purgeCache = useCallback(async () => {
-    const confirmed = window.confirm(
-      "Are you sure you want to purge the local cache repository? This deletes cached capability binaries, specifications, and modules."
-    );
-    if (!confirmed) return;
-
     try {
       addLog("Purging cache...", "command");
       const msg = (await invoke("purge_cache")) as string;
@@ -99,6 +95,31 @@ export function App() {
       await loadCache();
     } catch (err) {
       addLog(`Failed to purge cache: ${err}`, "error");
+      throw err;
+    }
+  }, [addLog, loadCache]);
+
+  const purgeCapabilities = useCallback(async () => {
+    try {
+      addLog("Purging capabilities cache...", "command");
+      const msg = (await invoke("purge_capabilities_cache")) as string;
+      addLog(msg, "success");
+      await loadCache();
+    } catch (err) {
+      addLog(`Failed to purge capabilities: ${err}`, "error");
+      throw err;
+    }
+  }, [addLog, loadCache]);
+
+  const purgeModules = useCallback(async () => {
+    try {
+      addLog("Purging modules cache...", "command");
+      const msg = (await invoke("purge_modules_cache")) as string;
+      addLog(msg, "success");
+      await loadCache();
+    } catch (err) {
+      addLog(`Failed to purge modules: ${err}`, "error");
+      throw err;
     }
   }, [addLog, loadCache]);
 
@@ -203,6 +224,8 @@ export function App() {
         return "Repository";
       case "playbooks":
         return "Playbooks";
+      case "options":
+        return "Options";
     }
   };
 
@@ -230,13 +253,12 @@ export function App() {
           <DashboardTab
             daemonStatus={daemonStatus}
             onQueryStatus={queryDaemonStatus}
-            onPurgeCache={purgeCache}
             logs={logs}
           />
         )}
 
         {activeTab === "repository" && (
-          <RepositoryTab cacheStatus={cacheStatus} onPurgeCache={purgeCache} />
+          <RepositoryTab cacheStatus={cacheStatus} />
         )}
 
         {activeTab === "playbooks" && (
@@ -248,6 +270,14 @@ export function App() {
               setCallModalOpen(true);
             }}
             onStopPlaybookClick={stopPlaybook}
+          />
+        )}
+
+        {activeTab === "options" && (
+          <OptionsTab
+            onPurgeAll={purgeCache}
+            onPurgeCapabilities={purgeCapabilities}
+            onPurgeModules={purgeModules}
           />
         )}
       </main>

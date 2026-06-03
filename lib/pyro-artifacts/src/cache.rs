@@ -190,6 +190,40 @@ impl CacheManager {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
+    pub async fn purge_capabilities(&self) -> Result<(), CacheError> {
+        tracing::debug!("Purging Capabilities from CacheManager");
+        let dirs = [
+            self.capabilities_base_dir(),
+            self.interfaces_base_dir(),
+        ];
+        for dir in dirs {
+            if dir.exists() {
+                fs::remove_dir_all(&dir).await.map_err(|e| CacheError::Io {
+                    context: format!("Failed to remove capabilities cache dir {}", dir.display()),
+                    error: e,
+                })?;
+            }
+        }
+        self.init().await?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn purge_modules(&self) -> Result<(), CacheError> {
+        tracing::debug!("Purging Modules from CacheManager");
+        let dir = self.root.join("modules");
+        if dir.exists() {
+            fs::remove_dir_all(&dir).await.map_err(|e| CacheError::Io {
+                context: format!("Failed to remove modules cache dir {}", dir.display()),
+                error: e,
+            })?;
+        }
+        self.init().await?;
+        Ok(())
+    }
+
+
     pub async fn list_available_capabilities(
         &self,
     ) -> Result<Vec<(String, String, String)>, CacheError> {

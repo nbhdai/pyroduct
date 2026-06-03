@@ -254,11 +254,7 @@ async fn get_capability_interface_spec(
 }
 
 #[tauri::command]
-async fn get_playbook_spec(
-    author: String,
-    name: String,
-    version: String,
-) -> Result<Value, String> {
+async fn get_playbook_spec(author: String, name: String, version: String) -> Result<Value, String> {
     let mgr = get_cache_manager().await?;
     let path = mgr.module_dir(&author, &name, &version).join("spec.json");
     let spec_str = tokio::fs::read_to_string(&path)
@@ -267,6 +263,87 @@ async fn get_playbook_spec(
     let spec: Value = serde_json::from_str(&spec_str)
         .map_err(|e| format!("Failed to parse playbook spec JSON: {:?}", e))?;
     Ok(spec)
+}
+
+#[tauri::command]
+async fn get_pyroduct_config() -> Result<Value, String> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let root = std::env::var("PYRODUCT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| home.join(".pyroduct"));
+    let config_path = root.join("config.toml");
+    if !config_path.exists() {
+        return Ok(serde_json::json!({
+            "author": "anon",
+            "build_slots": 4
+        }));
+    }
+    let content = tokio::fs::read_to_string(&config_path)
+        .await
+        .map_err(|e| format!("Failed to read config file: {:?}", e))?;
+    let config: Value =
+        toml::from_str(&content).map_err(|e| format!("Failed to parse config file: {:?}", e))?;
+    Ok(config)
+}
+
+#[tauri::command]
+async fn update_pyroduct_config(author: String, build_slots: Option<usize>) -> Result<(), String> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let root = std::env::var("PYRODUCT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| home.join(".pyroduct"));
+    let config_path = root.join("config.toml");
+
+    let mut config = if config_path.exists() {
+        let content = tokio::fs::read_to_string(&config_path)
+            .await
+            .map_err(|e| format!("Failed to read config file: {:?}", e))?;
+        toml::from_str::<pyro_artifacts::cache::PyroductConfig>(&content)
+            .map_err(|e| format!("Failed to parse config file: {:?}", e))?
+    } else {
+        pyro_artifacts::cache::PyroductConfig {
+            author: "anon".to_string(),
+            target: None,
+            pyroduct: None,
+            build_slots: Some(4),
+        }
+    };
+
+    config.author = author;
+    config.build_slots = build_slots;
+
+    let content = toml::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize config: {:?}", e))?;
+
+    tokio::fs::write(&config_path, content)
+        .await
+        .map_err(|e| format!("Failed to write config file: {:?}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn purge_capabilities_cache() -> Result<String, String> {
+    let mgr = get_cache_manager().await?;
+    mgr.purge_capabilities()
+        .await
+        .map_err(|e| format!("Failed to purge capabilities: {:?}", e))?;
+    Ok("Capabilities cache purged successfully".to_string())
+}
+
+#[tauri::command]
+async fn purge_modules_cache() -> Result<String, String> {
+    let mgr = get_cache_manager().await?;
+    mgr.purge_modules()
+        .await
+        .map_err(|e| format!("Failed to purge modules: {:?}", e))?;
+    Ok("Modules cache purged successfully".to_string())
 }
 
 fn main() {
@@ -281,7 +358,11 @@ fn main() {
             delete_playbook,
             call_playbook,
             get_capability_interface_spec,
-            get_playbook_spec
+            get_playbook_spec,
+            get_pyroduct_config,
+            update_pyroduct_config,
+            purge_capabilities_cache,
+            purge_modules_cache
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

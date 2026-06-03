@@ -902,3 +902,10 @@ body {
 .text-md { font-size: 16px; }
 .small { font-size: 12px; }
 
+.options-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+
