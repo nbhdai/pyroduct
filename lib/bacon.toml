@@ -1,0 +1,36 @@
+# This is a bacon configuration file.
+# Reference: https://dystroy.org/bacon/config/
+
+default_job = "check"
+
+[jobs.check]
+command = ["cargo", "check", "--workspace"]
+need_stdout = false
+
+[jobs.check-all]
+command = ["cargo", "check", "--workspace", "--all-targets", "--all-features"]
+need_stdout = false
+
+[jobs.clippy]
+command = ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]
+need_stdout = false
+
+[jobs.test]
+command = ["cargo", "test", "--workspace"]
+need_stdout = true
+
+[jobs.doc]
+command = ["cargo", "doc", "--workspace", "--no-deps"]
+need_stdout = false
+
+# Runs the background daemon (pyro-daemond)
+[jobs.daemon]
+command = ["cargo", "run", "--bin", "pyro-daemond"]
+need_stdout = true
+allow_warnings = true
+
+# Runs the GUI development loop (Vite + Tauri)
+[jobs.gui]
+command = ["cargo", "tauri", "dev", "--manifest-path", "pyro-gui/Cargo.toml"]
+need_stdout = true
+allow_warnings = true

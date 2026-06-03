@@ -29,7 +29,7 @@ export function Sidebar({ activeTab, onTabChange, daemonStatus }: SidebarProps) 
   return (
     <aside className="sidebar">
       <div className="brand">
-        <div className="logo-icon">▲</div>
+        <img src="/icon.png" alt="Pyroduct Logo" className="logo-icon-img" />
         <div className="brand-name">Pyroduct</div>
       </div>
 

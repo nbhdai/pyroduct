@@ -170,6 +170,7 @@
               pkgs.cargo-expand
               pkgs.nodejs
               pkgs.cargo-tauri
+              pkgs.bacon
             ]
             ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.valgrind ];
             RUST_SRC_PATH = "${wasmToolchain}/lib/rustlib/src/rust/library";

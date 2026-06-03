@@ -17,4 +17,4 @@ pyro-artifacts = { path = "../pyro-artifacts" }
 pyroduct = { path = "../pyroduct", features = ["host", "transport", "cli", "sql"] }
 
 [build-dependencies]
-tauri-build = { version = "2.1" }
+tauri-build = { version = "2.1", features = [] }
