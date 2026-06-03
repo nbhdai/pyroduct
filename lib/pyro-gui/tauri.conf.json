@@ -3,9 +3,10 @@
   "version": "0.1.0",
   "identifier": "com.pyroduct.gui",
   "build": {
-    "beforeDevCommand": "",
-    "beforeBuildCommand": "",
-    "frontendDist": "./ui"
+    "beforeDevCommand": "npm --prefix ui run dev",
+    "beforeBuildCommand": "npm --prefix ui run build",
+    "frontendDist": "./ui/dist",
+    "devUrl": "http://localhost:1420"
   },
   "app": {
     "windows": [

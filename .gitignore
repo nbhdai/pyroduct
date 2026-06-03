@@ -28,3 +28,7 @@ examples/**/logs
 *.pyrowal
 *.db
 lib/pyroduct/errors.md
+
+# Node/NPM build files and dependencies
+**/node_modules/
+**/dist/
