@@ -31,6 +31,6 @@ allow_warnings = true
 
 # Runs the GUI development loop (Vite + Tauri)
 [jobs.gui]
-command = ["cargo", "tauri", "dev", "--manifest-path", "pyro-gui/Cargo.toml"]
+command = ["cargo", "tauri", "dev", "-p", "pyro-gui"]
 need_stdout = true
 allow_warnings = true

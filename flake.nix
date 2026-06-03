@@ -11,6 +11,10 @@
     crane = {
       url = "github:ipetkov/crane";
     };
+    process-compose-flake = {
+      url = "github:Platonic-Systems/process-compose-flake";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -19,6 +23,7 @@
       flake-utils,
       fenix,
       crane,
+      process-compose-flake,
       ...
     }:
     flake-utils.lib.eachDefaultSystem (
@@ -109,14 +114,18 @@
         };
 
         devGui = pkgs.writeShellScriptBin "dev-gui" ''
-          exec ${pkgs.bacon}/bin/bacon --project lib --job gui "$@"
+          cd lib/pyro-gui
+          exec ${pkgs.bacon}/bin/bacon --job gui "$@"
         '';
+
+        guiDev = import ./nix/gui-dev.nix { inherit pkgs process-compose-flake; };
 
       in
       {
         packages = {
           inherit pyroduct;
           dev-gui = devGui;
+          process-compose = guiDev;
           default = pyroduct;
         };
 
@@ -130,6 +139,7 @@
         apps = {
           default = flake-utils.lib.mkApp { drv = pyroduct; };
           dev-gui = flake-utils.lib.mkApp { drv = devGui; };
+          process-compose = flake-utils.lib.mkApp { drv = guiDev; };
         }
         // (lib.optionalAttrs pkgs.stdenv.isLinux {
           valgrind-test = {
@@ -172,6 +182,7 @@
               rustTests.bin
               rustTests.prepare
               devGui
+              guiDev
               pkgs.jq
               pkgs.bzip2
               pkgs.cargo-expand
@@ -187,18 +198,22 @@
             PYRODUCT = ROOT_DIR + "/test";
 
             shellHook = ''
+              export PYRO_DAEMON_DIR="''${ROOT_DIR:-$PWD}/target/pyro-daemon"
+              mkdir -p "$PYRO_DAEMON_DIR"
+              export PYRODUCT_ROOT="''${ROOT_DIR:-$PWD}"
+
               ${lib.optionalString pkgs.stdenv.isLinux ''
                 export LD_LIBRARY_PATH="${lib.makeLibraryPath [ pkgs.systemd ]}:''${LD_LIBRARY_PATH:-}"
               ''}
               ${lib.optionalString pkgs.stdenv.isDarwin ''
                 unset DEVELOPER_DIR
                 echo "  - SDKROOT: ''${SDKROOT:-default}"
-              ''}`
+              ''}
 
               echo "Development shell loaded!"
               echo ""
               echo "Available commands:"
-              echo "  pyroduct prepare-pyro test-rust dev-gui"
+              echo "  pyroduct prepare-pyro test-rust dev-gui process-compose"
               echo ""
             '';
           }
