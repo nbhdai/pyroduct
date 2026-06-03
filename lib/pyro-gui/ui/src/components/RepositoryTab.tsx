@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { CacheStatus } from "../types";
 
-interface CacheTabProps {
+interface RepositoryTabProps {
   cacheStatus: CacheStatus | null;
   onPurgeCache: () => void;
 }
 
-export function CacheTab({ cacheStatus, onPurgeCache }: CacheTabProps) {
+export function RepositoryTab({ cacheStatus, onPurgeCache }: RepositoryTabProps) {
   const [subTab, setSubTab] = useState<"capabilities" | "modules">("capabilities");
 
   const capabilities = cacheStatus?.capabilities ?? [];
@@ -15,7 +15,7 @@ export function CacheTab({ cacheStatus, onPurgeCache }: CacheTabProps) {
 
   return (
     <div className="tab-content active">
-      <div className="cache-header">
+      <div className="repository-header">
         <div>
           <p className="subtitle">
             Local Repository: <span className="code-text">{cacheRoot}</span>
@@ -56,7 +56,7 @@ export function CacheTab({ cacheStatus, onPurgeCache }: CacheTabProps) {
                 {capabilities.length === 0 ? (
                   <tr>
                     <td colSpan={3} className="text-center">
-                      No capabilities found in cache.
+                      No capabilities found in repository.
                     </td>
                   </tr>
                 ) : (
@@ -91,7 +91,7 @@ export function CacheTab({ cacheStatus, onPurgeCache }: CacheTabProps) {
                 {modules.length === 0 ? (
                   <tr>
                     <td colSpan={3} className="text-center">
-                      No modules found in cache.
+                      No modules found in repository.
                     </td>
                   </tr>
                 ) : (

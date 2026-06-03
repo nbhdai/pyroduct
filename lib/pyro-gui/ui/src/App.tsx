@@ -2,14 +2,14 @@ import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Sidebar } from "./components/Sidebar";
 import { DashboardTab } from "./components/DashboardTab";
-import { CacheTab } from "./components/CacheTab";
+import { RepositoryTab } from "./components/RepositoryTab";
 import { PlaybooksTab } from "./components/PlaybooksTab";
 import { StartPlaybookModal } from "./components/StartPlaybookModal";
 import { CallPlaybookModal } from "./components/CallPlaybookModal";
 import { DaemonStatus, CacheStatus, Playbook, LogEntry } from "./types";
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<"dashboard" | "cache" | "playbooks">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "repository" | "playbooks">("dashboard");
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus>({ status: "offline" });
   const [cacheStatus, setCacheStatus] = useState<CacheStatus | null>(null);
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
@@ -175,7 +175,7 @@ export function App() {
   // Initial and tab-change loads
   useEffect(() => {
     queryDaemonStatus();
-    if (activeTab === "cache") {
+    if (activeTab === "repository") {
       loadCache();
     } else if (activeTab === "playbooks") {
       loadPlaybooks();
@@ -191,7 +191,7 @@ export function App() {
   // Global refresh
   const handleGlobalRefresh = () => {
     queryDaemonStatus();
-    if (activeTab === "cache") loadCache();
+    if (activeTab === "repository") loadCache();
     if (activeTab === "playbooks") loadPlaybooks();
   };
 
@@ -199,8 +199,8 @@ export function App() {
     switch (activeTab) {
       case "dashboard":
         return "Dashboard";
-      case "cache":
-        return "Cache Explorer";
+      case "repository":
+        return "Repository";
       case "playbooks":
         return "Playbooks";
     }
@@ -235,8 +235,8 @@ export function App() {
           />
         )}
 
-        {activeTab === "cache" && (
-          <CacheTab cacheStatus={cacheStatus} onPurgeCache={purgeCache} />
+        {activeTab === "repository" && (
+          <RepositoryTab cacheStatus={cacheStatus} onPurgeCache={purgeCache} />
         )}
 
         {activeTab === "playbooks" && (

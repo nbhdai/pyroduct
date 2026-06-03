@@ -408,7 +408,7 @@ body {
 }
 
 /* Cache Section */
-.cache-header {
+.repository-header {
     display: flex;
     justify-content: space-between;
     align-items: center;

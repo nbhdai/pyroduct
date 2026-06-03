@@ -8,12 +8,20 @@ processComposeLib.makeProcessCompose {
     {
       settings.processes = {
         daemon = {
-          command = "${pkgs.bacon}/bin/bacon --job daemon";
+          command = "${pkgs.bacon}/bin/bacon --job daemon --headless";
           working_dir = "lib";
+          environment = {
+            PYRO_DAEMON_DIR = "../test";
+            PYRODUCT = "../test";
+          };
         };
         tauri = {
           command = "${pkgs.cargo-tauri}/bin/cargo-tauri dev";
           working_dir = "lib/pyro-gui";
+          environment = {
+            PYRO_DAEMON_DIR = "../../test";
+            PYRODUCT = "../../test";
+          };
         };
       };
     }

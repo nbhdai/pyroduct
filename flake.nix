@@ -198,9 +198,9 @@
             PYRODUCT = ROOT_DIR + "/test";
 
             shellHook = ''
-              export PYRO_DAEMON_DIR="''${ROOT_DIR:-$PWD}/target/pyro-daemon"
+              export PYRO_DAEMON_DIR="''${ROOT_DIR:-$PWD}/test/"
               mkdir -p "$PYRO_DAEMON_DIR"
-              export PYRODUCT_ROOT="''${ROOT_DIR:-$PWD}"
+              export PYRODUCT_ROOT="''${ROOT_DIR:-$PWD}/test/"
 
               ${lib.optionalString pkgs.stdenv.isLinux ''
                 export LD_LIBRARY_PATH="${lib.makeLibraryPath [ pkgs.systemd ]}:''${LD_LIBRARY_PATH:-}"
