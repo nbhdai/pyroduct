@@ -108,10 +108,15 @@
           pyroductSrc = pyroSrc;
         };
 
+        devGui = pkgs.writeShellScriptBin "dev-gui" ''
+          exec ${pkgs.bacon}/bin/bacon --project lib --job gui "$@"
+        '';
+
       in
       {
         packages = {
           inherit pyroduct;
+          dev-gui = devGui;
           default = pyroduct;
         };
 
@@ -124,6 +129,7 @@
 
         apps = {
           default = flake-utils.lib.mkApp { drv = pyroduct; };
+          dev-gui = flake-utils.lib.mkApp { drv = devGui; };
         }
         // (lib.optionalAttrs pkgs.stdenv.isLinux {
           valgrind-test = {
@@ -165,6 +171,7 @@
               miriTests.bin
               rustTests.bin
               rustTests.prepare
+              devGui
               pkgs.jq
               pkgs.bzip2
               pkgs.cargo-expand
@@ -191,7 +198,7 @@
               echo "Development shell loaded!"
               echo ""
               echo "Available commands:"
-              echo "  pyroduct prepare-pyro test-rust"
+              echo "  pyroduct prepare-pyro test-rust dev-gui"
               echo ""
             '';
           }
