@@ -237,6 +237,38 @@ async fn call_playbook(name: String, payload: Value) -> Result<Value, String> {
     }
 }
 
+#[tauri::command]
+async fn get_capability_interface_spec(
+    author: String,
+    name: String,
+    version: String,
+) -> Result<Value, String> {
+    let mgr = get_cache_manager().await?;
+    let spec_str = mgr
+        .capability_interface_spec(&author, &name, &version)
+        .await
+        .map_err(|e| format!("Failed to read interface spec: {:?}", e))?;
+    let spec: Value = serde_json::from_str(&spec_str)
+        .map_err(|e| format!("Failed to parse interface spec JSON: {:?}", e))?;
+    Ok(spec)
+}
+
+#[tauri::command]
+async fn get_playbook_spec(
+    author: String,
+    name: String,
+    version: String,
+) -> Result<Value, String> {
+    let mgr = get_cache_manager().await?;
+    let path = mgr.module_dir(&author, &name, &version).join("spec.json");
+    let spec_str = tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|e| format!("Failed to read playbook spec: {:?}", e))?;
+    let spec: Value = serde_json::from_str(&spec_str)
+        .map_err(|e| format!("Failed to parse playbook spec JSON: {:?}", e))?;
+    Ok(spec)
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -247,7 +279,9 @@ fn main() {
             start_playbook,
             stop_playbook,
             delete_playbook,
-            call_playbook
+            call_playbook,
+            get_capability_interface_spec,
+            get_playbook_spec
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
