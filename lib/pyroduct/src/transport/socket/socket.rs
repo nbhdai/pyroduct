@@ -34,6 +34,7 @@ pub struct PyroSocket {
 struct SocketInner {
     tx: mpsc::UnboundedSender<Request>,
     pending: DashMap<u32, oneshot::Sender<PyroView>>,
+    streams: DashMap<u32, mpsc::UnboundedSender<PyroView>>,
     unmatched_tx: mpsc::UnboundedSender<PyroView>,
     next_id: AtomicU32,
     settings: PyroStreamSettings,
@@ -84,6 +85,7 @@ impl PyroSocket {
         let inner = Arc::new(SocketInner {
             tx,
             pending: DashMap::new(),
+            streams: DashMap::new(),
             unmatched_tx,
             next_id: AtomicU32::new(1),
             settings,
@@ -107,8 +109,13 @@ impl PyroSocket {
                                 let _ = sender.send(vec.view());
                                 continue;
                             }
+                            if let Some(stream_sender) = inner_read.streams.get(&id) {
+                                tracing::debug!("READ TASK: routing to stream mux_id={}", id);
+                                let _ = stream_sender.send(vec.view());
+                                continue;
+                            }
                             tracing::debug!(
-                                "READ TASK: mux_id={} not in pending, routing to unmatched",
+                                "READ TASK: mux_id={} not in pending or streams, routing to unmatched",
                                 id
                             );
                         }
@@ -222,6 +229,48 @@ impl PyroSocket {
         })
     }
 
+    /// Start a multiplexed stream request.
+    ///
+    /// This assigns a unique `mux_id` to the request, registers an unbounded channel
+    /// in `streams`, sends the request, and returns a [`PyroStream`] to receive responses.
+    pub async fn request_stream(
+        &self,
+        client_id: Option<u32>,
+        class_id: Option<u8>,
+        fn_id: Option<u8>,
+        inner: PyroView,
+    ) -> std::io::Result<PyroStream> {
+        let mux_id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);
+        let request = Request {
+            client_id,
+            class_id,
+            fn_id,
+            mux_id: Some(mux_id),
+            inner,
+        };
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.inner.streams.insert(mux_id, tx);
+
+        if let Err(_) = self.inner.tx.send(request) {
+            self.inner.streams.remove(&mux_id);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "socket write task closed",
+            ));
+        }
+
+        Ok(PyroStream {
+            mux_id,
+            socket: self.clone(),
+            rx,
+        })
+    }
+
+    /// Close / deregister a stream by its `mux_id`.
+    pub fn close_stream(&self, mux_id: u32) {
+        self.inner.streams.remove(&mux_id);
+    }
+
     /// Split the socket into read and write halves.
     ///
     /// Since `PyroSocket` is internally multiplexed and cloneable, these halves
@@ -235,6 +284,31 @@ impl PyroSocket {
                 socket: self.clone(),
             },
         )
+    }
+}
+
+/// A multiplexed stream of [`PyroView`] responses for a specific `mux_id`.
+///
+/// Automatically deregisters itself from the [`PyroSocket`] when dropped.
+pub struct PyroStream {
+    mux_id: u32,
+    socket: PyroSocket,
+    rx: mpsc::UnboundedReceiver<PyroView>,
+}
+
+impl PyroStream {
+    pub fn mux_id(&self) -> u32 {
+        self.mux_id
+    }
+
+    pub async fn recv(&mut self) -> Option<PyroView> {
+        self.rx.recv().await
+    }
+}
+
+impl Drop for PyroStream {
+    fn drop(&mut self) {
+        self.socket.close_stream(self.mux_id);
     }
 }
 

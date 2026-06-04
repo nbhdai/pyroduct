@@ -19,7 +19,7 @@ pub enum ServerPipeline {
     SessionDiff(SessionDiffPipeline),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ServerExecutionRecord {
     Normal(crate::pipeline::ExecutionRecord),
     Session(crate::pipeline::session::SessionExecutionRecord),

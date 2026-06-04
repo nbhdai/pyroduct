@@ -18,7 +18,7 @@ use super::data::DataManager;
 // Pipeline
 // =============================================================================
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SessionDiffExecutionRecord {
     Success {
         row_index: usize,
@@ -554,7 +554,9 @@ impl SessionDiffPipeline {
         let status = self
             .output_manager
             .get_session_status(session_id as usize)?
-            .ok_or_else(|| PyroError::not_found(format!("Session {} status not found", session_id)))?;
+            .ok_or_else(|| {
+                PyroError::not_found(format!("Session {} status not found", session_id))
+            })?;
 
         // 2. Retrieve all steps (input, output) for the closed session
         let rolled_up_row = self.output_manager.get_record(session_id as usize)?;
@@ -590,7 +592,13 @@ impl SessionDiffPipeline {
 
         // 4. Reconstruct prior_input, prior_output, input, success/failure
         let is_failed = status == "failed";
-        Ok(Self::into_record(session_id, steps, is_failed, logs, log_failure))
+        Ok(Self::into_record(
+            session_id,
+            steps,
+            is_failed,
+            logs,
+            log_failure,
+        ))
     }
 
     pub async fn close_session(&mut self, session_id: u32) -> Result<(), PyroFailure> {
@@ -624,7 +632,10 @@ impl SessionDiffPipeline {
         self.step.session_lengths(session_id)
     }
 
-    pub async fn get_session(&self, session_id: u32) -> Result<SessionDiffExecutionRecord, PyroError> {
+    pub async fn get_session(
+        &self,
+        session_id: u32,
+    ) -> Result<SessionDiffExecutionRecord, PyroError> {
         if let Some(active) = self.active_sessions.get(&session_id) {
             let mut wal_rows = Vec::with_capacity(active.data_wal.prebatch.len());
             for i in 0..active.data_wal.prebatch.len() {
@@ -634,9 +645,15 @@ impl SessionDiffPipeline {
             }
             let mut steps = Vec::with_capacity(wal_rows.len());
             for row in wal_rows {
-                let in_val = row.get("input").cloned().unwrap_or(crate::format::value::PyroValue::Null);
-                let out_val = row.get("output").cloned().unwrap_or(crate::format::value::PyroValue::Null);
-                
+                let in_val = row
+                    .get("input")
+                    .cloned()
+                    .unwrap_or(crate::format::value::PyroValue::Null);
+                let out_val = row
+                    .get("output")
+                    .cloned()
+                    .unwrap_or(crate::format::value::PyroValue::Null);
+
                 let in_row = match in_val {
                     crate::format::value::PyroValue::Group(g) => g,
                     _ => PyroRow::empty(),

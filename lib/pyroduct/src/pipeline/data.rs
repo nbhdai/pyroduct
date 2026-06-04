@@ -40,7 +40,7 @@ pub struct DataManager {
     ipc_capacity: usize,
 
     /// SQLite connection for indexing
-    pub sqlite_conn: rusqlite::Connection,
+    pub sqlite_conn: Mutex<rusqlite::Connection>,
     /// Optional metadata prefix for row data injection
     pub metadata_prefix: Option<String>,
 
@@ -112,7 +112,7 @@ impl DataManager {
             parquet_row_counts: HashMap::new(),
             wal_capacity: 10_000,
             ipc_capacity: 10,
-            sqlite_conn: conn,
+            sqlite_conn: Mutex::new(conn),
             metadata_prefix: None,
             ipc_file_paths: Vec::new(),
             parquet_file_paths: Vec::new(),
@@ -177,7 +177,7 @@ impl DataManager {
                     self.ipc_file_paths.push(path.clone());
 
                     // Backfill SQLite ipc_index
-                    let _ = self.sqlite_conn.execute(
+                    let _ = self.sqlite_conn.lock().unwrap().execute(
                         "INSERT OR IGNORE INTO ipc_index (wal_id) VALUES (?1)",
                         rusqlite::params![id as i64],
                     );
@@ -211,7 +211,7 @@ impl DataManager {
                     self.parquet_file_paths.push(path.clone());
 
                     // Backfill SQLite parquet_index
-                    let _ = self.sqlite_conn.execute(
+                    let _ = self.sqlite_conn.lock().unwrap().execute(
                         "INSERT OR IGNORE INTO parquet_index (parquet_id) VALUES (?1)",
                         rusqlite::params![id as i64],
                     );
@@ -725,7 +725,8 @@ impl DataManager {
 
         // 4. Batch insert of the mapping old_rows (HashMap<usize, usize>) into SQLite
         let tx_res: Result<(), PyroError> = {
-            let tx = self.sqlite_conn.transaction().map_err(|e| {
+            let mut conn = self.sqlite_conn.lock().unwrap();
+            let tx = conn.transaction().map_err(|e| {
                 PyroError::validation(
                     CapturedError::new("Failed to start transaction").with_source(e),
                 )
@@ -782,7 +783,7 @@ impl DataManager {
         let path = self.output_dir.join(format!("batch_{}.arrow", wal_id));
         self.ipc_file_paths.push(path);
 
-        let _ = self.sqlite_conn.execute(
+        let _ = self.sqlite_conn.lock().unwrap().execute(
             "INSERT OR IGNORE INTO ipc_index (wal_id) VALUES (?1)",
             rusqlite::params![wal_id as i64],
         );
@@ -881,16 +882,16 @@ impl DataManager {
             self.total_parquet_rows += rows_rolled_out;
             self.parquet_row_counts
                 .insert(parquet_path.clone(), rows_rolled_out);
-
             self.parquet_file_paths.push(parquet_path.clone());
 
-            let _ = self.sqlite_conn.execute(
+            let conn = self.sqlite_conn.lock().unwrap();
+            let _ = conn.execute(
                 "INSERT OR IGNORE INTO parquet_index (parquet_id) VALUES (?1)",
                 rusqlite::params![rollout_id as i64],
             );
 
             for wal_id in &files_to_process {
-                let _ = self.sqlite_conn.execute(
+                let _ = conn.execute(
                     "INSERT OR REPLACE INTO wal_to_parquet (wal_id, parquet_id) VALUES (?1, ?2)",
                     rusqlite::params![*wal_id as i64, rollout_id as i64],
                 );
@@ -910,6 +911,8 @@ impl DataManager {
 
     pub fn set_session_status(&self, session_id: usize, status: &str) -> Result<(), PyroError> {
         self.sqlite_conn
+            .lock()
+            .unwrap()
             .execute(
                 "INSERT OR REPLACE INTO session_status (session_id, status) VALUES (?1, ?2)",
                 rusqlite::params![session_id as i64, status],
@@ -923,8 +926,8 @@ impl DataManager {
     }
 
     pub fn get_session_status(&self, session_id: usize) -> Result<Option<String>, PyroError> {
-        let mut stmt = self
-            .sqlite_conn
+        let conn = self.sqlite_conn.lock().unwrap();
+        let mut stmt = conn
             .prepare("SELECT status FROM session_status WHERE session_id = ?")
             .map_err(|e| {
                 PyroError::validation(
@@ -966,8 +969,8 @@ impl DataManager {
 
         // 2. Query sqlite by row_index (global)
         debug!(index, "get_record: querying SQLite wal_index");
-        let mut stmt_global = self
-            .sqlite_conn
+        let conn = self.sqlite_conn.lock().unwrap();
+        let mut stmt_global = conn
             .prepare("SELECT wal_id, wal_index FROM wal_index WHERE row_index = ?")
             .map_err(|e| {
                 PyroError::validation(
@@ -996,8 +999,7 @@ impl DataManager {
                         )
                     })?;
 
-                    let mut stmt_min = self
-                        .sqlite_conn
+                    let mut stmt_min = conn
                         .prepare("SELECT MIN(wal_index) FROM wal_index WHERE wal_id = ?")
                         .map_err(|e| {
                             PyroError::validation(
@@ -1024,8 +1026,7 @@ impl DataManager {
                 }
 
                 // If the IPC file is missing, then it was rolled up into a parquet file
-                let mut stmt_parquet = self
-                    .sqlite_conn
+                let mut stmt_parquet = conn
                     .prepare("SELECT parquet_id FROM wal_to_parquet WHERE wal_id = ?")
                     .map_err(|e| {
                         PyroError::validation(
@@ -1077,7 +1078,7 @@ impl DataManager {
                         )
                     })?;
 
-                let mut stmt_min_parquet = self.sqlite_conn
+                let mut stmt_min_parquet = conn
                     .prepare("SELECT MIN(wal_index) FROM wal_index WHERE wal_id IN (SELECT wal_id FROM wal_to_parquet WHERE parquet_id = ?)")
                     .map_err(|e| PyroError::validation(CapturedError::new("Failed to prepare statement for MIN(wal_index) in Parquet").with_source(e)))?;
                 let min_parquet_index: usize = stmt_min_parquet
@@ -1344,8 +1345,8 @@ mod tests {
         manager.flush_wal().await.unwrap();
 
         // Verify SQLite contents
-        let mut stmt = manager
-            .sqlite_conn
+        let conn = manager.sqlite_conn.lock().unwrap();
+        let mut stmt = conn
             .prepare("SELECT row_index, wal_id, wal_index FROM wal_index WHERE row_index = ?")
             .unwrap();
         let mut rows = stmt

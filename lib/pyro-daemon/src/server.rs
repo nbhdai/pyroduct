@@ -100,7 +100,7 @@ async fn handle_client(
                 DaemonResponse::Capability(capability_manager.handle_request(capability_req).await)
             }
             DaemonRequest::Data(data_req) => {
-                DaemonResponse::Data(data_manager.handle_request(data_req).await)
+                DaemonResponse::Data(data_manager.handle_request(data_req, &socket, Some(mux_id)).await)
             }
             DaemonRequest::Status => {
                 let count = playbooks_manager.active_workers_count().await;

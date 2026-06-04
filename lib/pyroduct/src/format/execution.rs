@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{CapturedError, PyroRow};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PyroLogs {
     pub module_logs: Vec<String>,
     pub capability_logs: HashMap<(String, String), Vec<String>>,

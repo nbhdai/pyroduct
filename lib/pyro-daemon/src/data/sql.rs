@@ -1,64 +1,13 @@
-use crate::playbook::PlaybooksManager;
-use pyroduct::Capture;
+use super::DaemonDataManager;
 use crate::Result;
+use pyroduct::Capture;
 use datafusion::prelude::SessionContext;
 use pyro_artifacts::cache::CacheManager;
 use pyroduct::pipeline::data::DataManager;
 use pyroduct::pipeline::factory::PipelineConfig;
-use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "action", rename_all = "snake_case")]
-pub enum DataRequest {
-    GetBaseDir,
-    QueryPlaybook {
-        playbook_name: String,
-        sql_query: String,
-    },
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum DataResponse {
-    BaseDir { path: String },
-    QueryResult { ipc_bytes: Vec<u8> },
-    Error { message: String },
-}
-
-/// Manages data access for the PyroDaemon.
-#[derive(Clone)]
-pub struct DaemonDataManager {
-    base_dir: PathBuf,
-    playbooks_manager: std::sync::Arc<PlaybooksManager>,
-}
 
 impl DaemonDataManager {
-    pub fn new(base_dir: PathBuf, playbooks_manager: std::sync::Arc<PlaybooksManager>) -> Self {
-        Self {
-            base_dir,
-            playbooks_manager,
-        }
-    }
-
-    pub async fn handle_request(&self, req: DataRequest) -> DataResponse {
-        match req {
-            DataRequest::GetBaseDir => DataResponse::BaseDir {
-                path: self.base_dir().to_string_lossy().to_string(),
-            },
-            DataRequest::QueryPlaybook {
-                playbook_name,
-                sql_query,
-            } => match self.query_playbook_data(&playbook_name, &sql_query).await {
-                Ok(ipc_bytes) => DataResponse::QueryResult { ipc_bytes },
-                Err(e) => DataResponse::Error {
-                    message: format!("SQL query failed: {:?}", e),
-                },
-            },
-        }
-    }
-
-    async fn query_playbook_data(&self, playbook_name: &str, sql_query: &str) -> Result<Vec<u8>> {
+    pub async fn query_playbook_data(&self, playbook_name: &str, sql_query: &str) -> Result<Vec<u8>> {
         // 1. Locate the playbook configuration in ROOT/playbooks/{playbook_name}/config.toml
         let config_path = self
             .playbooks_manager
@@ -136,9 +85,5 @@ impl DaemonDataManager {
         }
 
         Ok(buffer)
-    }
-
-    pub fn base_dir(&self) -> &Path {
-        &self.base_dir
     }
 }

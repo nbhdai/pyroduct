@@ -18,7 +18,7 @@ use super::data::DataManager;
 // Pipeline
 // =============================================================================
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SessionExecutionRecord {
     Success {
         row_index: usize,
@@ -505,7 +505,9 @@ impl SessionPipeline {
         let status = self
             .output_manager
             .get_session_status(session_id as usize)?
-            .ok_or_else(|| PyroError::not_found(format!("Session {} status not found", session_id)))?;
+            .ok_or_else(|| {
+                PyroError::not_found(format!("Session {} status not found", session_id))
+            })?;
 
         // 2. Retrieve all rows for the closed session from output_manager
         let rolled_up_row = self.output_manager.get_record(session_id as usize)?;
@@ -541,7 +543,13 @@ impl SessionPipeline {
 
         // 4. Reconstruct prior, input, success, failure
         let is_failed = status == "failed";
-        Ok(Self::into_record(session_id, wal_rows, is_failed, logs, log_failure))
+        Ok(Self::into_record(
+            session_id,
+            wal_rows,
+            is_failed,
+            logs,
+            log_failure,
+        ))
     }
 
     pub async fn close_session(&mut self, session_id: u32) -> Result<(), PyroFailure> {

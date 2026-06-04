@@ -1,5 +1,6 @@
 mod interconnect;
 mod manager;
 mod worker;
-pub use manager::{PlaybookRequest, PlaybookResponse, PlaybookStatus, PlaybooksManager};
+pub mod client;
+pub use manager::{PlaybookRequest, PlaybookResponse, PlaybookStatus, PlaybooksManager, CallbackMapping};
 pub use worker::PlaybookWorker;

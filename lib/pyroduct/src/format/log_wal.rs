@@ -334,6 +334,11 @@ impl LogWal {
         &self.dir
     }
 
+    /// Returns the capacity of the log segment.
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
     /// Returns the underlying file.
     pub fn total_entries(&self) -> usize {
         self.total_entries

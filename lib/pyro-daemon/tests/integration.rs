@@ -105,7 +105,10 @@ async fn test_daemon_control_protocol() {
         if let Ok(content) = std::fs::read_to_string(&base_config_path) {
             if let Ok(mut value) = toml::from_str::<toml::Value>(&content) {
                 if let Some(table) = value.as_table_mut() {
-                    table.insert("author".to_string(), toml::Value::String("anon".to_string()));
+                    table.insert(
+                        "author".to_string(),
+                        toml::Value::String("anon".to_string()),
+                    );
                     table.insert("build_slots".to_string(), toml::Value::Integer(4));
                     if let Some(pyroduct) = table.get_mut("pyroduct") {
                         if let Some(pyro_table) = pyroduct.as_table_mut() {
@@ -113,7 +116,11 @@ async fn test_daemon_control_protocol() {
                                 let p = std::path::Path::new(path);
                                 if p.is_relative() {
                                     let abs = std::path::Path::new(&base_pyroduct).join(p);
-                                    *path = abs.canonicalize().unwrap_or(abs).to_string_lossy().into_owned();
+                                    *path = abs
+                                        .canonicalize()
+                                        .unwrap_or(abs)
+                                        .to_string_lossy()
+                                        .into_owned();
                                 }
                             }
                         }
@@ -134,13 +141,21 @@ async fn test_daemon_control_protocol() {
         config_toml = toml::to_string(&cache_config).unwrap();
     }
 
-    tokio::fs::write(working_dir.join("config.toml"), config_toml).await.unwrap();
+    tokio::fs::write(working_dir.join("config.toml"), config_toml)
+        .await
+        .unwrap();
     unsafe {
         std::env::set_var("PYRODUCT", &working_dir);
     }
 
-    let cache = std::sync::Arc::new(pyro_artifacts::cache::CacheManager::from_env().await.unwrap());
-    let builder = pyro_artifacts::build::Builder::from_env(cache.clone()).await.unwrap();
+    let cache = std::sync::Arc::new(
+        pyro_artifacts::cache::CacheManager::from_env()
+            .await
+            .unwrap(),
+    );
+    let builder = pyro_artifacts::build::Builder::from_env(cache.clone())
+        .await
+        .unwrap();
 
     let playbook_code = r#"
 use pyroduct;
@@ -180,7 +195,12 @@ pub fn call(input: String) -> Result<String> {
         output_dir: working_dir.join("output_a"),
         log_dir: working_dir.join("log_a"),
     };
-    tokio::fs::write(&config_a_path, toml::to_string_pretty(&pipeline_config_a).unwrap()).await.unwrap();
+    tokio::fs::write(
+        &config_a_path,
+        toml::to_string_pretty(&pipeline_config_a).unwrap(),
+    )
+    .await
+    .unwrap();
 
     let config_b_path = working_dir.join("config_b.toml");
     let pipeline_config_b = pyroduct::pipeline::factory::PipelineConfig {
@@ -193,7 +213,12 @@ pub fn call(input: String) -> Result<String> {
         output_dir: working_dir.join("output_b"),
         log_dir: working_dir.join("log_b"),
     };
-    tokio::fs::write(&config_b_path, toml::to_string_pretty(&pipeline_config_b).unwrap()).await.unwrap();
+    tokio::fs::write(
+        &config_b_path,
+        toml::to_string_pretty(&pipeline_config_b).unwrap(),
+    )
+    .await
+    .unwrap();
 
     // Start playbook A
     let req = DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Start {
@@ -238,7 +263,10 @@ pub fn call(input: String) -> Result<String> {
             assert!(running_playbooks.iter().any(|pb| pb.name == "playbook_a"));
             assert!(running_playbooks.iter().any(|pb| pb.name == "playbook_b"));
         }
-        other => panic!("Unexpected response for Status request after starting playbooks: {:?}", other),
+        other => panic!(
+            "Unexpected response for Status request after starting playbooks: {:?}",
+            other
+        ),
     }
 
     // Clean up playbooks by stopping them

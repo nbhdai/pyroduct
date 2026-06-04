@@ -6,8 +6,9 @@ use pyroduct::format::Bridgeable;
 
 use crate::{DaemonRequest, DaemonResponse};
 
+#[derive(Clone)]
 pub struct DaemonClient {
-    socket: PyroSocket,
+    pub(crate) socket: PyroSocket,
 }
 
 impl DaemonClient {
@@ -32,5 +33,12 @@ impl DaemonClient {
             .capture("Failed to expose daemon response")?;
 
         Ok((*resp_exposed).clone())
+    }
+
+    /// Receive the next unsolicited response/event from the daemon
+    pub async fn recv(&self) -> Result<DaemonResponse> {
+        let view = self.socket.recv().await.capture("Failed to receive from daemon socket")?;
+        let exposed = DaemonResponse::expose(view).capture("Failed to expose daemon response")?;
+        Ok((*exposed).clone())
     }
 }
