@@ -699,6 +699,8 @@ body {
 
 .modal-body {
     padding: 24px;
+    max-height: 70vh;
+    overflow-y: auto;
 }
 
 /* Forms */
@@ -949,6 +951,113 @@ body {
     color: var(--text-muted);
     font-style: italic;
     opacity: 0.85;
+}
+
+/* Responsive adjustments for Playbook Spec View */
+@media (max-width: 800px) {
+    .responsive-playbook-grid {
+        display: flex !important;
+        flex-direction: column-reverse !important;
+    }
+}
+
+.form-group select,
+.form-group input[type="number"] {
+    width: 100%;
+    padding: 12px 14px;
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--bg-card-border);
+    border-radius: 8px;
+    color: var(--text-main);
+    font-family: inherit;
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+.form-group select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg fill='white' height='24' viewBox='0 0 24 24' width='24' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/><path d='M0 0h24v24H0z' fill='none'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    background-size: 20px;
+    padding-right: 40px;
+    cursor: pointer;
+}
+
+.form-group select:focus,
+.form-group input[type="number"]:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px var(--color-primary-glow);
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.advanced-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    background: none;
+    border: none;
+    color: var(--color-primary);
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 10px 0;
+    margin-top: 15px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--bg-card-border);
+    transition: color 0.15s ease;
+}
+
+.advanced-toggle:hover {
+    color: #ff7b00;
+}
+
+.advanced-toggle::after {
+    content: '▼';
+    font-size: 10px;
+    margin-left: 8px;
+    transition: transform 0.2s ease;
+}
+
+.advanced-toggle.expanded::after {
+    transform: rotate(180deg);
+}
+
+.advanced-section {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    margin-top: 10px;
+    animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.capability-config-group {
+    background-color: rgba(255, 255, 255, 0.015);
+    border: 1px solid var(--bg-card-border);
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 15px;
+}
+
+.capability-config-header {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-main);
+    margin-bottom: 10px;
+}
+
+.capability-config-fields {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 10px;
 }
 
 

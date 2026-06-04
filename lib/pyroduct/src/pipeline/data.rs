@@ -31,6 +31,8 @@ pub struct DataManager {
     ipc_row_counts: HashMap<usize, usize>,
     /// Total row count of all rolled-out Parquet files.
     total_parquet_rows: usize,
+    /// Row counts for rolled-out Parquet files.
+    pub parquet_row_counts: HashMap<PathBuf, usize>,
 
     /// How many rows get rolled up into an IPC file
     wal_capacity: usize,
@@ -107,6 +109,7 @@ impl DataManager {
             ipc_files: Vec::new(),
             ipc_row_counts: HashMap::new(),
             total_parquet_rows: 0,
+            parquet_row_counts: HashMap::new(),
             wal_capacity: 10_000,
             ipc_capacity: 10,
             sqlite_conn: conn,
@@ -202,7 +205,9 @@ impl DataManager {
                                 .with_source(e),
                             )
                         })?;
-                    total_parquet += batches.iter().map(|b| b.num_rows()).sum::<usize>();
+                    let count = batches.iter().map(|b| b.num_rows()).sum::<usize>();
+                    total_parquet += count;
+                    self.parquet_row_counts.insert(path.clone(), count);
                     self.parquet_file_paths.push(path.clone());
 
                     // Backfill SQLite parquet_index
@@ -319,6 +324,244 @@ impl DataManager {
         }
     }
 
+    pub fn get_batches(&self) -> Result<Vec<RecordBatch>, PyroError> {
+        let mut batches = Vec::new();
+
+        // 1. Eagerly load Parquet files
+        for path in &self.parquet_file_paths {
+            let bytes = std::fs::read(path).map_err(|e| {
+                PyroError::local_io(
+                    CapturedError::new("Failed to read Parquet file").with_source(e),
+                )
+            })?;
+            let filename = path.file_name().unwrap().to_string_lossy().into_owned();
+            let parsed_batches =
+                pyro_file::parse_data_to_batch_sync(bytes, &filename).map_err(|e| {
+                    PyroError::validation(
+                        CapturedError::new("Failed to parse Parquet file").with_source(e),
+                    )
+                })?;
+            for b in parsed_batches {
+                batches.push(b.to_batch());
+            }
+        }
+
+        // 2. Eagerly load IPC files
+        for path in &self.ipc_file_paths {
+            let bytes = std::fs::read(path).map_err(|e| {
+                PyroError::local_io(
+                    CapturedError::new("Failed to read Arrow IPC file").with_source(e),
+                )
+            })?;
+            let filename = path.file_name().unwrap().to_string_lossy().into_owned();
+            let parsed_batches =
+                pyro_file::parse_data_to_batch_sync(bytes, &filename).map_err(|e| {
+                    PyroError::validation(
+                        CapturedError::new("Failed to parse Arrow IPC file").with_source(e),
+                    )
+                })?;
+            for b in parsed_batches {
+                batches.push(b.to_batch());
+            }
+        }
+
+        // 3. Eagerly load active WAL record batch
+        if let Some(active_batch) = self.get_active_batch()? {
+            batches.push(active_batch);
+        }
+
+        Ok(batches)
+    }
+
+    pub fn get_batch_slice(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Option<RecordBatch>, PyroError> {
+        if limit == 0 {
+            return Ok(None);
+        }
+
+        enum DataSource {
+            Parquet(PathBuf),
+            Ipc(PathBuf),
+            Active,
+        }
+
+        let mut sources = Vec::new();
+
+        // 1. Gather Parquet sources
+        for path in &self.parquet_file_paths {
+            let row_count = self.parquet_row_counts.get(path).copied().unwrap_or(0);
+            sources.push((DataSource::Parquet(path.clone()), row_count));
+        }
+
+        // 2. Gather IPC sources
+        for path in &self.ipc_file_paths {
+            let mut row_count = 0;
+            let filename = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default();
+            if let Some(id_str) = filename
+                .strip_prefix("batch_")
+                .and_then(|s| s.split('.').next())
+                && let Ok(wal_id) = id_str.parse::<usize>()
+            {
+                row_count = self.ipc_row_counts.get(&wal_id).copied().unwrap_or(0);
+            }
+            sources.push((DataSource::Ipc(path.clone()), row_count));
+        }
+
+        // 3. Gather Active source
+        let active_len = if let Some(wm) = &self.wal_manager {
+            let data = loop {
+                if let Ok(g) = wm.data.try_lock() {
+                    break g;
+                }
+                std::thread::yield_now();
+            };
+            data.prebatch.len()
+        } else {
+            0
+        };
+        if active_len > 0 {
+            sources.push((DataSource::Active, active_len));
+        }
+
+        let schema = std::sync::Arc::new(self._schema.to_arrow());
+        let mut sliced_batches = Vec::new();
+        let mut current_offset = 0;
+        let end_limit = offset + limit;
+
+        for (source, row_count) in sources {
+            if row_count == 0 {
+                continue;
+            }
+
+            let start_idx = current_offset;
+            let end_idx = current_offset + row_count;
+
+            // Check if this source overlaps with [offset, end_limit)
+            if start_idx < end_limit && end_idx > offset {
+                // Determine slice offset relative to this source
+                let local_offset = if offset > start_idx {
+                    offset - start_idx
+                } else {
+                    0
+                };
+
+                // Determine slice limit relative to this source
+                let local_limit = std::cmp::min(
+                    row_count - local_offset,
+                    end_limit - (start_idx + local_offset),
+                );
+
+                if local_limit > 0 {
+                    // Eagerly load ONLY this source
+                    let batch = match &source {
+                        DataSource::Parquet(path) => {
+                            let bytes = std::fs::read(path).map_err(|e| {
+                                PyroError::local_io(
+                                    CapturedError::new("Failed to read Parquet file")
+                                        .with_source(e),
+                                )
+                            })?;
+                            let filename = path.file_name().unwrap().to_string_lossy().into_owned();
+                            let parsed_batches = pyro_file::parse_data_to_batch_sync(
+                                bytes, &filename,
+                            )
+                            .map_err(|e| {
+                                PyroError::validation(
+                                    CapturedError::new("Failed to parse Parquet file")
+                                        .with_source(e),
+                                )
+                            })?;
+                            if parsed_batches.is_empty() {
+                                return Err(PyroError::validation(CapturedError::new(
+                                    "Empty Parquet file",
+                                )));
+                            }
+                            let arrow_batches: Vec<RecordBatch> =
+                                parsed_batches.into_iter().map(|b| b.to_batch()).collect();
+                            arrow::compute::concat_batches(&schema, &arrow_batches).map_err(
+                                |e| {
+                                    PyroError::validation(
+                                        CapturedError::new(
+                                            "Failed to concatenate Parquet record batches",
+                                        )
+                                        .with_source(e),
+                                    )
+                                },
+                            )?
+                        }
+                        DataSource::Ipc(path) => {
+                            let bytes = std::fs::read(path).map_err(|e| {
+                                PyroError::local_io(
+                                    CapturedError::new("Failed to read Arrow IPC file")
+                                        .with_source(e),
+                                )
+                            })?;
+                            let filename = path.file_name().unwrap().to_string_lossy().into_owned();
+                            let parsed_batches = pyro_file::parse_data_to_batch_sync(
+                                bytes, &filename,
+                            )
+                            .map_err(|e| {
+                                PyroError::validation(
+                                    CapturedError::new("Failed to parse Arrow IPC file")
+                                        .with_source(e),
+                                )
+                            })?;
+                            if parsed_batches.is_empty() {
+                                return Err(PyroError::validation(CapturedError::new(
+                                    "Empty IPC file",
+                                )));
+                            }
+                            let arrow_batches: Vec<RecordBatch> =
+                                parsed_batches.into_iter().map(|b| b.to_batch()).collect();
+                            arrow::compute::concat_batches(&schema, &arrow_batches).map_err(
+                                |e| {
+                                    PyroError::validation(
+                                        CapturedError::new(
+                                            "Failed to concatenate IPC record batches",
+                                        )
+                                        .with_source(e),
+                                    )
+                                },
+                            )?
+                        }
+                        DataSource::Active => {
+                            if let Some(active_batch) = self.get_active_batch()? {
+                                active_batch
+                            } else {
+                                return Err(PyroError::validation(CapturedError::new(
+                                    "Active batch empty during retrieval",
+                                )));
+                            }
+                        }
+                    };
+
+                    let sliced = batch.slice(local_offset, local_limit);
+                    sliced_batches.push(sliced);
+                }
+            }
+
+            current_offset += row_count;
+        }
+
+        if sliced_batches.is_empty() {
+            return Ok(None);
+        }
+
+        let concat = arrow::compute::concat_batches(&schema, &sliced_batches).map_err(|e| {
+            PyroError::validation(
+                CapturedError::new("Failed to concatenate record batches").with_source(e),
+            )
+        })?;
+
+        Ok(Some(concat))
+    }
+
     #[cfg(all(feature = "host", feature = "sql"))]
     pub fn sql_provider(
         &self,
@@ -397,7 +640,7 @@ impl DataManager {
         if self.wal_manager.is_none() {
             self.current_wal_id += 1;
             let base_path = self.output_dir.join(format!("wal_{}", self.current_wal_id));
-            let writer = WalWriter::open(&base_path)?;
+            let writer = WalWriter::open(&base_path, self._schema.clone())?;
             let wm = WalManager::new(writer, self.wal_capacity, self._schema.clone());
             self.wal_manager = Some(wm);
         }
@@ -466,7 +709,7 @@ impl DataManager {
         // 1. Prepare next WAL ID and writer
         let next_wal_id = wal_id + 1;
         let base_path = self.output_dir.join(format!("wal_{}", next_wal_id));
-        let next_writer = WalWriter::open(&base_path)?;
+        let next_writer = WalWriter::open(&base_path, self._schema.clone())?;
 
         // 2. Rotate the WAL manager
         let (batch, old_rows) = {
@@ -636,6 +879,8 @@ impl DataManager {
             })?;
             info!("Converted Arrow IPCs to Parquet: {:?}", parquet_path);
             self.total_parquet_rows += rows_rolled_out;
+            self.parquet_row_counts
+                .insert(parquet_path.clone(), rows_rolled_out);
 
             self.parquet_file_paths.push(parquet_path.clone());
 
@@ -1163,5 +1408,116 @@ mod tests {
         // 5 -> NotFound
         let r5 = manager.get_record(5);
         assert!(matches!(r5, Err(PyroError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn test_get_batch_slice() {
+        let dir = TempDir::new().unwrap();
+        let schema = setup_schema();
+        let mut manager = DataManager::new(dir.path(), schema);
+
+        // Set small capacities to trigger flush and rollout
+        // wal_capacity = 2, ipc_capacity = 2
+        manager.set_capacities(2, 2);
+
+        // Put 5 records
+        // 0, 1 -> goes to first WAL, capacity 2 reached -> flushes to IPC file (wal_id=1, size=2)
+        // 2, 3 -> goes to second WAL, capacity 2 reached -> flushes to IPC file (wal_id=2, size=2)
+        // Since ipc_capacity = 2, this triggers rollout of wal_id=1 and wal_id=2 to Parquet rollout_3.parquet (size=4)
+        // 4 -> goes to third WAL (active WAL, size=1)
+        for i in 0..5 {
+            manager
+                .push_record(i, &make_success_record(i, (i * 10) as i32, "test"))
+                .await
+                .unwrap();
+        }
+
+        // Verify counts
+        assert_eq!(manager.parquet_file_paths.len(), 1);
+        assert_eq!(manager.ipc_files.len(), 0);
+        assert_eq!(manager.ipc_file_paths.len(), 0);
+        assert_eq!(
+            manager
+                .parquet_row_counts
+                .get(&manager.parquet_file_paths[0]),
+            Some(&4)
+        );
+        assert_eq!(manager.total_parquet_rows, 4);
+
+        // Let's add 2 more records so we have some IPC files
+        // 5, 6 -> goes to fourth WAL, capacity 2 reached -> flushes to IPC file (wal_id=4, size=2)
+        // 7 -> goes to fifth WAL (active WAL, size=1)
+        manager
+            .push_record(5, &make_success_record(5, 50, "test"))
+            .await
+            .unwrap();
+        manager
+            .push_record(6, &make_success_record(6, 60, "test"))
+            .await
+            .unwrap();
+        manager
+            .push_record(7, &make_success_record(7, 70, "test"))
+            .await
+            .unwrap();
+
+        // Total 7 records:
+        // Parquet rollout_3.parquet: [0, 10, 20, 30] (rows 0..4)
+        // IPC batch_4.arrow: [50, 60] (rows 4..6)
+        // Active WAL: [70] (row 6)
+
+        // 1. Slice offset=0, limit=2: should read only Parquet
+        let batch = manager.get_batch_slice(0, 2).unwrap().unwrap();
+        assert_eq!(batch.num_rows(), 2);
+        let ids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::Int32Array>()
+            .unwrap();
+        assert_eq!(ids.value(0), 0);
+        assert_eq!(ids.value(1), 10);
+
+        // 2. Slice offset=2, limit=3: should read Parquet and IPC
+        let batch = manager.get_batch_slice(2, 3).unwrap().unwrap();
+        assert_eq!(batch.num_rows(), 3);
+        let ids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::Int32Array>()
+            .unwrap();
+        assert_eq!(ids.value(0), 20);
+        assert_eq!(ids.value(1), 30);
+        assert_eq!(ids.value(2), 40);
+
+        // 3. Slice offset=5, limit=2: should read IPC and Active
+        let batch = manager.get_batch_slice(5, 2).unwrap().unwrap();
+        assert_eq!(batch.num_rows(), 2);
+        let ids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::Int32Array>()
+            .unwrap();
+        assert_eq!(ids.value(0), 50);
+        assert_eq!(ids.value(1), 60);
+
+        // 4. Slice offset=0, limit=10: should read all three
+        let batch = manager.get_batch_slice(0, 10).unwrap().unwrap();
+        assert_eq!(batch.num_rows(), 8);
+        let ids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::Int32Array>()
+            .unwrap();
+        assert_eq!(ids.value(0), 0);
+        assert_eq!(ids.value(1), 10);
+        assert_eq!(ids.value(2), 20);
+        assert_eq!(ids.value(3), 30);
+        assert_eq!(ids.value(4), 40);
+        assert_eq!(ids.value(5), 50);
+        assert_eq!(ids.value(6), 60);
+        assert_eq!(ids.value(7), 70);
+
+        // 5. Slice offset=7, limit=1: should be None
+        let batch = manager.get_batch_slice(9, 1).unwrap();
+        assert!(batch.is_none());
     }
 }

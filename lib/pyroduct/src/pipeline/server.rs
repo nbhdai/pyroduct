@@ -19,6 +19,13 @@ pub enum ServerPipeline {
     SessionDiff(SessionDiffPipeline),
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum ServerExecutionRecord {
+    Normal(crate::pipeline::ExecutionRecord),
+    Session(crate::pipeline::session::SessionExecutionRecord),
+    SessionDiff(crate::pipeline::session_diff::SessionDiffExecutionRecord),
+}
+
 /// A reusable server pipeline that routes incoming rows to the correct underlying
 /// execution engine based on the playbook type (Normal, Session, SessionDiff).
 #[derive(Clone)]
@@ -159,6 +166,63 @@ impl PipelineServer {
     /// Get the `ModuleSpec` for the playbook.
     pub fn spec(&self) -> Arc<PlaybookSpec> {
         self.spec.clone()
+    }
+
+    /// Get the current number of samples.
+    pub async fn len(&self) -> usize {
+        let pipeline = self.pipeline.lock().await;
+        match &*pipeline {
+            ServerPipeline::Normal(p) => p.input_manager.len(),
+            ServerPipeline::Session(p) => p.output_manager.len(),
+            ServerPipeline::SessionDiff(p) => p.output_manager.len(),
+        }
+    }
+
+    /// Get a chunk of input data with pagination, returning up to limit elements.
+    pub async fn get_input_batch(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Option<arrow::array::RecordBatch>, PyroError> {
+        let pipeline = self.pipeline.lock().await;
+        match &*pipeline {
+            ServerPipeline::Normal(p) => p.input_manager.get_batch_slice(offset, limit),
+            ServerPipeline::Session(_) => Ok(None),
+            ServerPipeline::SessionDiff(_) => Ok(None),
+        }
+    }
+
+    /// Get a chunk of output data with pagination, returning up to limit elements.
+    pub async fn get_output_batch(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Option<arrow::array::RecordBatch>, PyroError> {
+        let pipeline = self.pipeline.lock().await;
+        match &*pipeline {
+            ServerPipeline::Normal(p) => p.output_manager.get_batch_slice(offset, limit),
+            ServerPipeline::Session(p) => p.output_manager.get_batch_slice(offset, limit),
+            ServerPipeline::SessionDiff(p) => p.output_manager.get_batch_slice(offset, limit),
+        }
+    }
+
+    /// Retrieve a single execution record by its global ID.
+    pub async fn get(&self, id: u32) -> Result<ServerExecutionRecord, PyroError> {
+        let pipeline = self.pipeline.lock().await;
+        match &*pipeline {
+            ServerPipeline::Normal(p) => {
+                let rec = p.get_record(id as usize).await?;
+                Ok(ServerExecutionRecord::Normal(rec))
+            }
+            ServerPipeline::Session(p) => {
+                let rec = p.get(id).await?;
+                Ok(ServerExecutionRecord::Session(rec))
+            }
+            ServerPipeline::SessionDiff(p) => {
+                let rec = p.get(id).await?;
+                Ok(ServerExecutionRecord::SessionDiff(rec))
+            }
+        }
     }
 
     /// Call the pipeline without a specific session ID.

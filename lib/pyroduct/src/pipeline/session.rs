@@ -84,6 +84,15 @@ impl SessionPipeline {
         session_id: u32,
     ) -> Result<&mut ActiveSession, PyroError> {
         if !self.active_sessions.contains_key(&session_id) {
+            if let Ok(Some(status)) = self.output_manager.get_session_status(session_id as usize) {
+                if status == "succeeded" || status == "failed" {
+                    return Err(PyroError::validation(format!(
+                        "Cannot resume closed session {}",
+                        session_id
+                    )));
+                }
+            }
+
             let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
             let data_path = self.output_dir.join(format!("session_val_{}", session_id));
 
@@ -94,12 +103,15 @@ impl SessionPipeline {
                         CapturedError::new("Unable to open individual log wal").with_source(io),
                     )
                 })?;
-            let data_wal =
-                crate::format::value::arrow::wal::WalWriter::open(data_path).map_err(|io| {
-                    PyroError::local_io(
-                        CapturedError::new("Unable to open individual data wal").with_source(io),
-                    )
-                })?;
+            let data_wal = crate::format::value::arrow::wal::WalWriter::open(
+                data_path,
+                self.step.spec().func.input.clone(),
+            )
+            .map_err(|io| {
+                PyroError::local_io(
+                    CapturedError::new("Unable to open individual data wal").with_source(io),
+                )
+            })?;
 
             self.active_sessions
                 .insert(session_id, ActiveSession { log_wal, data_wal });
@@ -418,6 +430,74 @@ impl SessionPipeline {
         res
     }
 
+    fn unpack_session(row: PyroRow<'static>) -> Vec<PyroRow<'static>> {
+        let mut session_rows = Vec::new();
+        for item in row.0 {
+            if item.key == "session" {
+                if let crate::format::value::PyroValue::List(list_vals) = item.value {
+                    for val in list_vals {
+                        if let crate::format::value::PyroValue::Group(r) = val {
+                            session_rows.push(r);
+                        }
+                    }
+                }
+                break;
+            }
+        }
+        session_rows
+    }
+
+    fn into_record(
+        session_id: u32,
+        wal_rows: Vec<PyroRow<'static>>,
+        is_failed: bool,
+        logs: PyroLogs,
+        log_failure: Option<Result<CapturedError, String>>,
+    ) -> SessionExecutionRecord {
+        if is_failed {
+            let (prior, input) = if wal_rows.is_empty() {
+                (Vec::new(), PyroRow::empty())
+            } else if wal_rows.len() % 2 == 1 {
+                let mut wal_rows = wal_rows;
+                let input = wal_rows.pop().unwrap();
+                (wal_rows, input)
+            } else {
+                (wal_rows, PyroRow::empty())
+            };
+
+            let failure = log_failure.unwrap_or_else(|| Err("Session failed".to_string()));
+
+            SessionExecutionRecord::Failure {
+                row_index: session_id as usize,
+                prior,
+                input,
+                failure,
+                logs,
+            }
+        } else {
+            let (prior, input, success) = if wal_rows.is_empty() {
+                (Vec::new(), PyroRow::empty(), PyroRow::empty())
+            } else if wal_rows.len() % 2 == 0 {
+                let mut wal_rows = wal_rows;
+                let success = wal_rows.pop().unwrap();
+                let input = wal_rows.pop().unwrap();
+                (wal_rows, input, success)
+            } else {
+                let mut wal_rows = wal_rows;
+                let input = wal_rows.pop().unwrap();
+                (wal_rows, input, PyroRow::empty())
+            };
+
+            SessionExecutionRecord::Success {
+                row_index: session_id as usize,
+                prior,
+                input,
+                success,
+                logs,
+            }
+        }
+    }
+
     pub async fn get_record(&self, session_id: u32) -> Result<SessionExecutionRecord, PyroError> {
         tracing::debug!(session_id, "get_record: starting lookup");
 
@@ -425,28 +505,11 @@ impl SessionPipeline {
         let status = self
             .output_manager
             .get_session_status(session_id as usize)?
-            .unwrap_or_else(|| "active".to_string());
+            .ok_or_else(|| PyroError::not_found(format!("Session {} status not found", session_id)))?;
 
-        // 2. Retrieve all rows for the session
-        let mut wal_rows = Vec::new();
-        let data_path = self.output_dir.join(format!("session_val_{}", session_id));
-        let data_wal_file = data_path.with_extension("pyrowal");
-
-        if data_wal_file.exists() {
-            wal_rows = crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
-        } else {
-            // Check rolled up rows in output_manager
-            if let Ok(rolled_up_row) = self.output_manager.get_record(session_id as usize)
-                && let Some(crate::format::value::PyroValue::List(list_vals)) =
-                    rolled_up_row.get("session")
-            {
-                for val in list_vals {
-                    if let crate::format::value::PyroValue::Group(r) = val {
-                        wal_rows.push(r.clone());
-                    }
-                }
-            }
-        }
+        // 2. Retrieve all rows for the closed session from output_manager
+        let rolled_up_row = self.output_manager.get_record(session_id as usize)?;
+        let wal_rows = Self::unpack_session(rolled_up_row);
 
         // 3. Retrieve logs
         let mut logs = PyroLogs::empty();
@@ -478,69 +541,19 @@ impl SessionPipeline {
 
         // 4. Reconstruct prior, input, success, failure
         let is_failed = status == "failed";
-
-        if is_failed {
-            let (prior, input) = if wal_rows.is_empty() {
-                let input_row = self
-                    .output_manager
-                    .get_record(session_id as usize)
-                    .unwrap_or_else(|_| PyroRow::empty());
-                (Vec::new(), input_row)
-            } else if wal_rows.len() % 2 == 1 {
-                let prior = wal_rows[..wal_rows.len() - 1].to_vec();
-                let input = wal_rows.last().unwrap().clone();
-                (prior, input)
-            } else {
-                let prior = wal_rows.clone();
-                let input_row = self
-                    .output_manager
-                    .get_record(session_id as usize)
-                    .unwrap_or_else(|_| PyroRow::empty());
-                (prior, input_row)
-            };
-
-            let failure_err = if let Some(err_res) = log_failure {
-                err_res
-            } else {
-                Err("Session failed".to_string())
-            };
-
-            Ok(SessionExecutionRecord::Failure {
-                row_index: session_id as usize,
-                prior,
-                input,
-                failure: failure_err,
-                logs,
-            })
-        } else {
-            let (prior, input, success) = if wal_rows.is_empty() {
-                let input_row = self
-                    .output_manager
-                    .get_record(session_id as usize)
-                    .unwrap_or_else(|_| PyroRow::empty());
-                (Vec::new(), input_row, PyroRow::empty())
-            } else if wal_rows.len() % 2 == 0 {
-                let prior = wal_rows[..wal_rows.len() - 2].to_vec();
-                let input = wal_rows[wal_rows.len() - 2].clone();
-                let success = wal_rows[wal_rows.len() - 1].clone();
-                (prior, input, success)
-            } else {
-                let prior = wal_rows[..wal_rows.len() - 1].to_vec();
-                let input = wal_rows.last().unwrap().clone();
-                (prior, input, PyroRow::empty())
-            };
-
-            Ok(SessionExecutionRecord::Success {
-                row_index: session_id as usize,
-                prior,
-                input,
-                success,
-                logs,
-            })
-        }
+        Ok(Self::into_record(session_id, wal_rows, is_failed, logs, log_failure))
     }
 
     pub async fn close_session(&mut self, session_id: u32) -> Result<(), PyroFailure> {
+        if self.active_sessions.contains_key(&session_id) {
+            if let Err(e) = self.rollup_and_cleanup_session(session_id).await {
+                tracing::error!(
+                    "Failed to rollup and cleanup active session {} on close: {:?}",
+                    session_id,
+                    e
+                );
+            }
+        }
         self.step.close_session(session_id).await
     }
 
@@ -550,6 +563,50 @@ impl SessionPipeline {
 
     pub fn session_lengths(&self, session_id: u32) -> Option<u32> {
         self.step.session_lengths(session_id).map(|o| o.0 + o.1)
+    }
+
+    pub async fn get_session(&self, session_id: u32) -> Result<SessionExecutionRecord, PyroError> {
+        if let Some(active) = self.active_sessions.get(&session_id) {
+            let mut wal_rows = Vec::with_capacity(active.data_wal.prebatch.len());
+            for i in 0..active.data_wal.prebatch.len() {
+                if let Some(row) = active.data_wal.prebatch.get(i) {
+                    wal_rows.push(row.clone());
+                }
+            }
+            let mut logs = PyroLogs::empty();
+            let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
+            if log_dir.exists() {
+                if let Ok(mut reader) = crate::format::log_wal::LogWalReader::open(&log_dir).await
+                    && let Ok(entries) = reader.read_all().await
+                    && let Some(last_entry) = entries.last()
+                {
+                    logs = PyroLogs {
+                        module_logs: last_entry.module_logs.clone(),
+                        capability_logs: last_entry.capability_logs.clone(),
+                    };
+                }
+            }
+            Ok(Self::into_record(session_id, wal_rows, false, logs, None))
+        } else {
+            Err(PyroError::not_found(format!(
+                "Session {} not found",
+                session_id
+            )))
+        }
+    }
+
+    pub async fn get(&self, session_id: u32) -> Result<SessionExecutionRecord, PyroError> {
+        if self.active_sessions.contains_key(&session_id) {
+            self.get_session(session_id).await
+        } else {
+            self.get_record(session_id).await
+        }
+    }
+
+    pub fn active_sessions(&self) -> Vec<u32> {
+        let mut keys: Vec<u32> = self.active_sessions.keys().copied().collect();
+        keys.sort();
+        keys
     }
 }
 

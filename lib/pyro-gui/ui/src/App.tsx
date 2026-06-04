@@ -21,11 +21,9 @@ export function App() {
       type: "system",
     },
   ]);
-
   const [startModalOpen, setStartModalOpen] = useState(false);
   const [callModalOpen, setCallModalOpen] = useState(false);
   const [callPlaybookName, setCallPlaybookName] = useState("");
-
   // Helper to add log entries
   const addLog = useCallback((message: string, type: LogEntry["type"] = "system") => {
     setLogs((prev) => [
@@ -150,23 +148,43 @@ export function App() {
   const startPlaybook = useCallback(
     async (params: {
       name: string;
-      configPath: string;
-      socketPath: string | null;
-      inputDir: string | null;
-      outputDir: string | null;
+      configPath?: string;
+      playbookIdent?: { author: string; package: string; version: string };
+      remote?: Array<{
+        capability: { author: string; package: string; version: string };
+        address: { tcp: string } | { unix: string };
+      }>;
+      walCapacity?: number;
+      successLogRetentionSecs?: number;
+      errorLogRetentionSecs?: number;
+      socketPath?: string | null;
+      inputDir?: string | null;
+      outputDir?: string | null;
     }) => {
       try {
-        addLog(`Launching playbook "${params.name}" from config "${params.configPath}"...`, "command");
+        setStartModalOpen(false);
+        if (params.configPath) {
+          addLog(`Launching playbook "${params.name}" from config "${params.configPath}"...`, "command");
+        } else if (params.playbookIdent) {
+          addLog(
+            `Launching playbook "${params.name}" (${params.playbookIdent.author}/${params.playbookIdent.package}@${params.playbookIdent.version})...`,
+            "command"
+          );
+        }
         const msg = (await invoke("start_playbook", {
           name: params.name,
-          configPath: params.configPath,
-          playbookSocket: params.socketPath,
-          inputDir: params.inputDir,
-          outputDir: params.outputDir,
+          configPath: params.configPath || null,
+          playbookIdent: params.playbookIdent || null,
+          remote: params.remote || null,
+          walCapacity: params.walCapacity ?? null,
+          successLogRetentionSecs: params.successLogRetentionSecs ?? null,
+          errorLogRetentionSecs: params.errorLogRetentionSecs ?? null,
+          playbookSocket: params.socketPath || null,
+          inputDir: params.inputDir || null,
+          outputDir: params.outputDir || null,
         })) as string;
 
         addLog(msg, "success");
-        setStartModalOpen(false);
         await loadPlaybooks();
         await queryDaemonStatus();
       } catch (err) {
@@ -196,9 +214,8 @@ export function App() {
   // Initial and tab-change loads
   useEffect(() => {
     queryDaemonStatus();
-    if (activeTab === "repository") {
-      loadCache();
-    } else if (activeTab === "playbooks") {
+    loadCache();
+    if (activeTab === "dashboard" || activeTab === "playbooks") {
       loadPlaybooks();
     }
   }, [activeTab, queryDaemonStatus, loadCache, loadPlaybooks]);
@@ -212,8 +229,8 @@ export function App() {
   // Global refresh
   const handleGlobalRefresh = () => {
     queryDaemonStatus();
+    if (activeTab === "dashboard" || activeTab === "playbooks") loadPlaybooks();
     if (activeTab === "repository") loadCache();
-    if (activeTab === "playbooks") loadPlaybooks();
   };
 
   const getPageTitle = () => {
@@ -251,9 +268,7 @@ export function App() {
 
         {activeTab === "dashboard" && (
           <DashboardTab
-            daemonStatus={daemonStatus}
-            onQueryStatus={queryDaemonStatus}
-            logs={logs}
+            playbooks={playbooks}
           />
         )}
 
@@ -278,6 +293,9 @@ export function App() {
             onPurgeAll={purgeCache}
             onPurgeCapabilities={purgeCapabilities}
             onPurgePlaybooks={purgePlaybooks}
+            daemonStatus={daemonStatus}
+            onQueryStatus={queryDaemonStatus}
+            logs={logs}
           />
         )}
       </main>
@@ -285,6 +303,7 @@ export function App() {
       {/* Start Playbook Modal */}
       <StartPlaybookModal
         isOpen={startModalOpen}
+        availablePlaybooks={cacheStatus?.playbooks ?? []}
         onClose={() => setStartModalOpen(false)}
         onSubmit={startPlaybook}
       />

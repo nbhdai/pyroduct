@@ -41,11 +41,13 @@ async fn get_daemon_status() -> Result<Value, String> {
             Ok(pyro_daemon::DaemonResponse::StatusInfo {
                 active_workers,
                 version,
+                running_playbooks,
             }) => Ok(serde_json::json!({
                 "status": "online",
                 "socket_path": control_socket_path.to_string_lossy(),
                 "active_workers": active_workers,
-                "version": version
+                "version": version,
+                "running_playbooks": running_playbooks,
             })),
             Ok(resp) => Ok(serde_json::json!({
                 "status": "online",
@@ -126,10 +128,21 @@ async fn list_active_playbooks() -> Result<Value, String> {
     }
 }
 
+#[derive(serde::Deserialize)]
+struct RemoteCapabilityConfig {
+    capability: pyro_artifacts::cargo::CapabilityIdent,
+    address: pyro_artifacts::cache::RemoteAddress,
+}
+
 #[tauri::command]
 async fn start_playbook(
     name: String,
-    config_path: String,
+    config_path: Option<String>,
+    playbook_ident: Option<pyro_artifacts::artifacts::PlaybookIdent>,
+    remote: Option<Vec<RemoteCapabilityConfig>>,
+    wal_capacity: Option<usize>,
+    success_log_retention_secs: Option<u64>,
+    error_log_retention_secs: Option<u64>,
     playbook_socket: Option<String>,
     input_dir: Option<String>,
     output_dir: Option<String>,
@@ -141,9 +154,50 @@ async fn start_playbook(
         .await
         .map_err(|e| format!("Failed to connect to daemon: {:?}", e))?;
 
+    let path_to_use = if let Some(path) = config_path.filter(|p| !p.trim().is_empty()) {
+        std::path::PathBuf::from(path)
+    } else {
+        let ident = playbook_ident
+            .ok_or_else(|| "Must provide either config_path or playbook_ident".to_string())?;
+
+        let playbook_dir = working_dir.join("playbooks").join(&name);
+        tokio::fs::create_dir_all(&playbook_dir)
+            .await
+            .map_err(|e| format!("Failed to create playbook directory: {:?}", e))?;
+
+        let config_file_path = playbook_dir.join("config.toml");
+
+        let mut remote_map = std::collections::HashMap::new();
+        if let Some(remotes) = remote {
+            for entry in remotes {
+                remote_map.insert(entry.capability, entry.address);
+            }
+        }
+
+        let pipeline_config = pyroduct::pipeline::factory::PipelineConfig {
+            playbook: ident,
+            remote: remote_map,
+            wal_capacity: wal_capacity.unwrap_or(1000),
+            success_log_retention_secs: success_log_retention_secs.unwrap_or(3600),
+            error_log_retention_secs: error_log_retention_secs.unwrap_or(86400 * 7),
+            log_dir: std::path::PathBuf::from(""),
+            input_dir: std::path::PathBuf::from(""),
+            output_dir: std::path::PathBuf::from(""),
+        };
+
+        let toml_string = toml::to_string_pretty(&pipeline_config)
+            .map_err(|e| format!("Failed to serialize PipelineConfig: {:?}", e))?;
+
+        tokio::fs::write(&config_file_path, toml_string)
+            .await
+            .map_err(|e| format!("Failed to write PipelineConfig: {:?}", e))?;
+
+        config_file_path
+    };
+
     let req = pyro_daemon::DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Start {
         name,
-        playbook_config_path: std::path::PathBuf::from(config_path),
+        playbook_config_path: path_to_use,
         playbook_socket,
         input_dir: input_dir.map(std::path::PathBuf::from),
         output_dir: output_dir.map(std::path::PathBuf::from),
@@ -266,7 +320,11 @@ async fn get_playbook_spec(author: String, name: String, version: String) -> Res
 }
 
 #[tauri::command]
-async fn get_playbook_source(author: String, name: String, version: String) -> Result<String, String> {
+async fn get_playbook_source(
+    author: String,
+    name: String,
+    version: String,
+) -> Result<String, String> {
     let mgr = get_cache_manager().await?;
     let path = mgr.module_dir(&author, &name, &version).join("source.rs");
     if !path.exists() {

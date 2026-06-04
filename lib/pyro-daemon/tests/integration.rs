@@ -36,9 +36,11 @@ async fn test_daemon_control_protocol() {
         DaemonResponse::StatusInfo {
             active_workers,
             version,
+            running_playbooks,
         } => {
             assert_eq!(active_workers, 0);
             assert_eq!(version, env!("CARGO_PKG_VERSION"));
+            assert!(running_playbooks.is_empty());
         }
         other => panic!("Unexpected response for Status request: {:?}", other),
     }
@@ -93,6 +95,162 @@ async fn test_daemon_control_protocol() {
         }
         other => panic!("Unexpected response for Delete request: {:?}", other),
     }
+
+    // 9c. Compile and start two playbooks, then check Status command
+    // First, configure CacheManager to use the temp test directory, inheriting the local pyroduct path
+    let base_pyroduct = std::env::var("PYRODUCT").unwrap_or_default();
+    let mut config_toml = String::new();
+    if !base_pyroduct.is_empty() {
+        let base_config_path = std::path::Path::new(&base_pyroduct).join("config.toml");
+        if let Ok(content) = std::fs::read_to_string(&base_config_path) {
+            if let Ok(mut value) = toml::from_str::<toml::Value>(&content) {
+                if let Some(table) = value.as_table_mut() {
+                    table.insert("author".to_string(), toml::Value::String("anon".to_string()));
+                    table.insert("build_slots".to_string(), toml::Value::Integer(4));
+                    if let Some(pyroduct) = table.get_mut("pyroduct") {
+                        if let Some(pyro_table) = pyroduct.as_table_mut() {
+                            if let Some(toml::Value::String(path)) = pyro_table.get_mut("path") {
+                                let p = std::path::Path::new(path);
+                                if p.is_relative() {
+                                    let abs = std::path::Path::new(&base_pyroduct).join(p);
+                                    *path = abs.canonicalize().unwrap_or(abs).to_string_lossy().into_owned();
+                                }
+                            }
+                        }
+                    }
+                    config_toml = toml::to_string(&value).unwrap();
+                }
+            }
+        }
+    }
+
+    if config_toml.is_empty() {
+        let cache_config = pyro_artifacts::cache::PyroductConfig {
+            author: "anon".to_string(),
+            target: None,
+            pyroduct: None,
+            build_slots: Some(4),
+        };
+        config_toml = toml::to_string(&cache_config).unwrap();
+    }
+
+    tokio::fs::write(working_dir.join("config.toml"), config_toml).await.unwrap();
+    unsafe {
+        std::env::set_var("PYRODUCT", &working_dir);
+    }
+
+    let cache = std::sync::Arc::new(pyro_artifacts::cache::CacheManager::from_env().await.unwrap());
+    let builder = pyro_artifacts::build::Builder::from_env(cache.clone()).await.unwrap();
+
+    let playbook_code = r#"
+use pyroduct;
+
+#[pyroduct::module(output = message)]
+pub fn call(input: String) -> Result<String> {
+    Ok(format!("Hello: {}", input))
+}
+"#;
+
+    let playbook_a = pyro_artifacts::build::AnonPlaybook {
+        package: "playbook_a".to_string(),
+        dependencies: std::collections::BTreeMap::new(),
+        configurations: Vec::new(),
+        source: playbook_code.to_string(),
+        interconnect: std::collections::BTreeMap::new(),
+    };
+    let playbook_b = pyro_artifacts::build::AnonPlaybook {
+        package: "playbook_b".to_string(),
+        dependencies: std::collections::BTreeMap::new(),
+        configurations: Vec::new(),
+        source: playbook_code.to_string(),
+        interconnect: std::collections::BTreeMap::new(),
+    };
+
+    let binary_a = builder.compile_anon(&playbook_a).await.unwrap();
+    let binary_b = builder.compile_anon(&playbook_b).await.unwrap();
+
+    let config_a_path = working_dir.join("config_a.toml");
+    let pipeline_config_a = pyroduct::pipeline::factory::PipelineConfig {
+        playbook: binary_a.spec.ident.clone(),
+        remote: std::collections::HashMap::new(),
+        wal_capacity: 10,
+        success_log_retention_secs: 3600,
+        error_log_retention_secs: 86400 * 7,
+        input_dir: working_dir.join("input_a"),
+        output_dir: working_dir.join("output_a"),
+        log_dir: working_dir.join("log_a"),
+    };
+    tokio::fs::write(&config_a_path, toml::to_string_pretty(&pipeline_config_a).unwrap()).await.unwrap();
+
+    let config_b_path = working_dir.join("config_b.toml");
+    let pipeline_config_b = pyroduct::pipeline::factory::PipelineConfig {
+        playbook: binary_b.spec.ident.clone(),
+        remote: std::collections::HashMap::new(),
+        wal_capacity: 10,
+        success_log_retention_secs: 3600,
+        error_log_retention_secs: 86400 * 7,
+        input_dir: working_dir.join("input_b"),
+        output_dir: working_dir.join("output_b"),
+        log_dir: working_dir.join("log_b"),
+    };
+    tokio::fs::write(&config_b_path, toml::to_string_pretty(&pipeline_config_b).unwrap()).await.unwrap();
+
+    // Start playbook A
+    let req = DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Start {
+        name: "playbook_a".to_string(),
+        playbook_config_path: config_a_path,
+        playbook_socket: None,
+        input_dir: None,
+        output_dir: None,
+    });
+    let resp = client.request(req).await.unwrap();
+    match resp {
+        DaemonResponse::Playbook(pyro_daemon::playbook::PlaybookResponse::Success { .. }) => {}
+        other => panic!("Unexpected response for starting playbook A: {:?}", other),
+    }
+
+    // Start playbook B
+    let req = DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Start {
+        name: "playbook_b".to_string(),
+        playbook_config_path: config_b_path,
+        playbook_socket: None,
+        input_dir: None,
+        output_dir: None,
+    });
+    let resp = client.request(req).await.unwrap();
+    match resp {
+        DaemonResponse::Playbook(pyro_daemon::playbook::PlaybookResponse::Success { .. }) => {}
+        other => panic!("Unexpected response for starting playbook B: {:?}", other),
+    }
+
+    // Check Status info shows both running playbooks
+    let req = DaemonRequest::Status;
+    let resp = client.request(req).await.unwrap();
+    match resp {
+        DaemonResponse::StatusInfo {
+            active_workers,
+            version,
+            running_playbooks,
+        } => {
+            assert_eq!(active_workers, 2);
+            assert_eq!(version, env!("CARGO_PKG_VERSION"));
+            assert_eq!(running_playbooks.len(), 2);
+            assert!(running_playbooks.iter().any(|pb| pb.name == "playbook_a"));
+            assert!(running_playbooks.iter().any(|pb| pb.name == "playbook_b"));
+        }
+        other => panic!("Unexpected response for Status request after starting playbooks: {:?}", other),
+    }
+
+    // Clean up playbooks by stopping them
+    let req = DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Stop {
+        name: "playbook_a".to_string(),
+    });
+    let _ = client.request(req).await.unwrap();
+
+    let req = DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Stop {
+        name: "playbook_b".to_string(),
+    });
+    let _ = client.request(req).await.unwrap();
 
     // 10. Shutdown the daemon
     daemon_handle.abort();

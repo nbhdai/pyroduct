@@ -23,6 +23,7 @@ pub enum DaemonResponse {
     StatusInfo {
         active_workers: usize,
         version: String,
+        running_playbooks: Vec<playbook::PlaybookStatus>,
     },
     Error {
         message: String,

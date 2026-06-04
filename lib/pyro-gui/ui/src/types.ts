@@ -4,6 +4,7 @@ export interface DaemonStatus {
   active_workers?: number;
   version?: string;
   message?: string;
+  running_playbooks?: Playbook[];
 }
 
 export interface Capability {
@@ -12,7 +13,7 @@ export interface Capability {
   version: string;
 }
 
-export interface Playbook {
+export interface RepoPlaybook {
   author: string;
   name: string;
   version: string;
@@ -21,7 +22,7 @@ export interface Playbook {
 export interface CacheStatus {
   cache_root: string;
   capabilities: Capability[];
-  playbooks: Playbook[];
+  playbooks: RepoPlaybook[];
 }
 
 export interface PlaybookCapability {

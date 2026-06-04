@@ -1,81 +1,56 @@
-import { useEffect, useRef } from "react";
-import { DaemonStatus, LogEntry } from "../types";
+import { Playbook } from "../types";
 
 interface DashboardTabProps {
-  daemonStatus: DaemonStatus;
-  onQueryStatus: () => void;
-  logs: LogEntry[];
+  playbooks: Playbook[];
 }
 
-export function DashboardTab({ daemonStatus, onQueryStatus, logs }: DashboardTabProps) {
-  const consoleEndRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (consoleEndRef.current) {
-      consoleEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [logs]);
-
-  const getStatusBadgeClass = () => {
-    if (daemonStatus.status === "online") return "value badge badge-online";
-    if (daemonStatus.status === "offline") return "value badge badge-offline";
-    return "value badge badge-offline";
-  };
-
-  const getStatusText = () => {
-    if (daemonStatus.status === "online") return "Online";
-    if (daemonStatus.status === "offline") return "Offline";
-    return "Error";
-  };
-
+export function DashboardTab({ playbooks }: DashboardTabProps) {
   return (
     <div className="tab-content active">
-      <div className="grid-layout">
-        {/* Status Card */}
-        <div className="card status-card">
-          <h2>Daemon Information</h2>
-          <div className="info-list">
-            <div className="info-row">
-              <span className="label">Daemon Status</span>
-              <span className={getStatusBadgeClass()}>{getStatusText()}</span>
-            </div>
-            <div className="info-row">
-              <span className="label">Active Workers</span>
-              <span className="value">{daemonStatus.active_workers ?? "0"}</span>
-            </div>
-            <div className="info-row">
-              <span className="label">Daemon Version</span>
-              <span className="value">{daemonStatus.version ?? "-"}</span>
-            </div>
-            <div className="info-row">
-              <span className="label">Control Socket</span>
-              <span className="value code-text">{daemonStatus.socket_path ?? "-"}</span>
-            </div>
+      {/* Running Workers Card */}
+      <div className="card">
+        <h2>Active Workers ({playbooks.length})</h2>
+        {playbooks.length === 0 ? (
+          <div className="empty-state" style={{ padding: "30px 20px" }}>
+            <span className="empty-icon" style={{ fontSize: "36px" }}>⚙</span>
+            <p>No active playbook workers running.</p>
           </div>
-        </div>
-
-        {/* Actions Card */}
-        <div className="card actions-card">
-          <h2>Quick Actions</h2>
-          <div className="action-buttons">
-            <button onClick={onQueryStatus} className="btn btn-primary btn-block">
-              Query Status
-            </button>
+        ) : (
+          <div className="table-container mt-10">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Worker Name</th>
+                  <th>Config Path</th>
+                  <th>Socket Path</th>
+                  <th>Capabilities</th>
+                </tr>
+              </thead>
+              <tbody>
+                {playbooks.map((pb, idx) => (
+                  <tr key={idx}>
+                    <td className="font-semibold text-primary">{pb.name}</td>
+                    <td><span className="code-text">{pb.config_path}</span></td>
+                    <td><span className="code-text">{pb.socket_path || "None"}</span></td>
+                    <td>
+                      <div className="capability-pills">
+                        {(pb.active_capabilities ?? []).length === 0 ? (
+                          <span className="text-muted text-xs">None</span>
+                        ) : (
+                          (pb.active_capabilities ?? []).map((cap, cIdx) => (
+                            <span key={cIdx} className="cap-pill" style={{ padding: "3px 6px", fontSize: "10px" }}>
+                              {cap.package}
+                            </span>
+                          ))
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
-      </div>
-
-      {/* Console / Logs */}
-      <div className="card log-card mt-20">
-        <h2>Event Console</h2>
-        <div className="console-box" style={{ maxHeight: "300px", overflowY: "auto" }}>
-          {logs.map((log, index) => (
-            <div key={index} className={`log-line ${log.type}`}>
-              [{log.time}] [{log.type}] {log.message}
-            </div>
-          ))}
-          <div ref={consoleEndRef} />
-        </div>
+        )}
       </div>
     </div>
   );

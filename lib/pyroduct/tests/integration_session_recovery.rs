@@ -143,7 +143,7 @@ async fn test_session_recovery_lifecycle() {
     assert_eq!(status_active, Some("active".to_string()));
 
     // Verify get_record returns Success
-    let rec_active = pipeline.get_record(session_id_1).await.unwrap();
+    let rec_active = pipeline.get(session_id_1).await.unwrap();
     match rec_active {
         SessionExecutionRecord::Success {
             row_index,
@@ -360,7 +360,7 @@ async fn test_session_diff_recovery_lifecycle() {
     assert_eq!(status_active, Some("active".to_string()));
 
     // Verify get_record returns Success
-    let rec_active = pipeline.get_record(session_id_1).await.unwrap();
+    let rec_active = pipeline.get(session_id_1).await.unwrap();
     match rec_active {
         SessionDiffExecutionRecord::Success {
             row_index,

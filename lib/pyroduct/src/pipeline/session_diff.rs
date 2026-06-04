@@ -86,6 +86,15 @@ impl SessionDiffPipeline {
         session_id: u32,
     ) -> Result<&mut ActiveSession, PyroError> {
         if !self.active_sessions.contains_key(&session_id) {
+            if let Ok(Some(status)) = self.output_manager.get_session_status(session_id as usize) {
+                if status == "succeeded" || status == "failed" {
+                    return Err(PyroError::validation(format!(
+                        "Cannot resume closed session {}",
+                        session_id
+                    )));
+                }
+            }
+
             let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
             let data_path = self.output_dir.join(format!("session_val_{}", session_id));
 
@@ -96,8 +105,26 @@ impl SessionDiffPipeline {
                         CapturedError::new("Unable to open individual log wal").with_source(io),
                     )
                 })?;
-            let data_wal =
-                crate::format::value::arrow::wal::WalWriter::open(data_path).map_err(|io| {
+            let input_schema = self.step.spec().func.input.clone();
+            let output_schema = self.step.spec().func.output.clone();
+            let wal_schema = crate::format::value::PyroSchema::new(vec![
+                crate::format::value::PyroField::new(
+                    "input",
+                    crate::format::value::PyroType::Group(std::borrow::Cow::Owned(
+                        input_schema.fields.into_owned(),
+                    )),
+                    true,
+                ),
+                crate::format::value::PyroField::new(
+                    "output",
+                    crate::format::value::PyroType::Group(std::borrow::Cow::Owned(
+                        output_schema.fields.into_owned(),
+                    )),
+                    true,
+                ),
+            ]);
+            let data_wal = crate::format::value::arrow::wal::WalWriter::open(data_path, wal_schema)
+                .map_err(|io| {
                     PyroError::local_io(
                         CapturedError::new("Unable to open individual data wal").with_source(io),
                     )
@@ -434,6 +461,89 @@ impl SessionDiffPipeline {
         res
     }
 
+    fn unpack_session_diff(row: PyroRow<'static>) -> Vec<(PyroRow<'static>, PyroRow<'static>)> {
+        let mut inputs = Vec::new();
+        let mut outputs = Vec::new();
+        for item in row.0 {
+            if item.key == "inputs" {
+                if let crate::format::value::PyroValue::List(list_vals) = item.value {
+                    for val in list_vals {
+                        if let crate::format::value::PyroValue::Group(r) = val {
+                            inputs.push(r);
+                        }
+                    }
+                }
+            } else if item.key == "outputs" {
+                if let crate::format::value::PyroValue::List(list_vals) = item.value {
+                    for val in list_vals {
+                        if let crate::format::value::PyroValue::Group(r) = val {
+                            outputs.push(r);
+                        }
+                    }
+                }
+            }
+        }
+
+        let max_len = inputs.len().max(outputs.len());
+        let mut steps = Vec::with_capacity(max_len);
+
+        let mut inputs_iter = inputs.into_iter();
+        let mut outputs_iter = outputs.into_iter();
+        for _ in 0..max_len {
+            let input = inputs_iter.next().unwrap_or_else(PyroRow::empty);
+            let output = outputs_iter.next().unwrap_or_else(PyroRow::empty);
+            steps.push((input, output));
+        }
+        steps
+    }
+
+    fn into_record(
+        session_id: u32,
+        steps: Vec<(PyroRow<'static>, PyroRow<'static>)>,
+        is_failed: bool,
+        logs: PyroLogs,
+        log_failure: Option<Result<CapturedError, String>>,
+    ) -> SessionDiffExecutionRecord {
+        let (prior_input, prior_output, input, success) = if steps.is_empty() {
+            (Vec::new(), Vec::new(), PyroRow::empty(), PyroRow::empty())
+        } else {
+            let len = steps.len();
+            let mut prior_in = Vec::with_capacity(len - 1);
+            let mut prior_out = Vec::with_capacity(len - 1);
+
+            let mut steps = steps;
+            for _ in 0..len - 1 {
+                let (i, o) = steps.remove(0);
+                prior_in.push(i);
+                prior_out.push(o);
+            }
+            let (input, success) = steps.pop().unwrap();
+            (prior_in, prior_out, input, success)
+        };
+
+        if is_failed {
+            let failure = log_failure.unwrap_or_else(|| Err("Session failed".to_string()));
+
+            SessionDiffExecutionRecord::Failure {
+                row_index: session_id as usize,
+                prior_input,
+                prior_output,
+                input,
+                failure,
+                logs,
+            }
+        } else {
+            SessionDiffExecutionRecord::Success {
+                row_index: session_id as usize,
+                prior_input,
+                prior_output,
+                input,
+                success,
+                logs,
+            }
+        }
+    }
+
     pub async fn get_record(
         &self,
         session_id: u32,
@@ -444,58 +554,11 @@ impl SessionDiffPipeline {
         let status = self
             .output_manager
             .get_session_status(session_id as usize)?
-            .unwrap_or_else(|| "active".to_string());
+            .ok_or_else(|| PyroError::not_found(format!("Session {} status not found", session_id)))?;
 
-        // 2. Retrieve all steps (input, output) for the session
-        let mut steps = Vec::new();
-        let data_path = self.output_dir.join(format!("session_val_{}", session_id));
-        let data_wal_file = data_path.with_extension("pyrowal");
-
-        if data_wal_file.exists() {
-            let wal_rows =
-                crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
-            for row in wal_rows {
-                let input = match row.get("input") {
-                    Some(crate::format::value::PyroValue::Group(g)) => g.clone(),
-                    _ => PyroRow::empty(),
-                };
-                let output = match row.get("output") {
-                    Some(crate::format::value::PyroValue::Group(g)) => g.clone(),
-                    _ => PyroRow::empty(),
-                };
-                steps.push((input, output));
-            }
-        } else {
-            // Check rolled up rows in output_manager
-            if let Ok(rolled_up_row) = self.output_manager.get_record(session_id as usize) {
-                let mut inputs = Vec::new();
-                let mut outputs = Vec::new();
-                if let Some(crate::format::value::PyroValue::List(list_vals)) =
-                    rolled_up_row.get("inputs")
-                {
-                    for val in list_vals {
-                        if let crate::format::value::PyroValue::Group(r) = val {
-                            inputs.push(r.clone());
-                        }
-                    }
-                }
-                if let Some(crate::format::value::PyroValue::List(list_vals)) =
-                    rolled_up_row.get("outputs")
-                {
-                    for val in list_vals {
-                        if let crate::format::value::PyroValue::Group(r) = val {
-                            outputs.push(r.clone());
-                        }
-                    }
-                }
-                let max_len = inputs.len().max(outputs.len());
-                for i in 0..max_len {
-                    let input = inputs.get(i).cloned().unwrap_or_else(PyroRow::empty);
-                    let output = outputs.get(i).cloned().unwrap_or_else(PyroRow::empty);
-                    steps.push((input, output));
-                }
-            }
-        }
+        // 2. Retrieve all steps (input, output) for the closed session
+        let rolled_up_row = self.output_manager.get_record(session_id as usize)?;
+        let steps = Self::unpack_session_diff(rolled_up_row);
 
         // 3. Retrieve logs
         let mut logs = PyroLogs::empty();
@@ -527,54 +590,19 @@ impl SessionDiffPipeline {
 
         // 4. Reconstruct prior_input, prior_output, input, success/failure
         let is_failed = status == "failed";
-
-        let (prior_input, prior_output, input, success) = if steps.is_empty() {
-            let input_row = self
-                .output_manager
-                .get_record(session_id as usize)
-                .unwrap_or_else(|_| PyroRow::empty());
-            (Vec::new(), Vec::new(), input_row, PyroRow::empty())
-        } else {
-            let len = steps.len();
-            let mut prior_in = Vec::with_capacity(len - 1);
-            let mut prior_out = Vec::with_capacity(len - 1);
-            for step in steps.iter().take(len - 1) {
-                prior_in.push(step.0.clone());
-                prior_out.push(step.1.clone());
-            }
-            let input = steps[len - 1].0.clone();
-            let success = steps[len - 1].1.clone();
-            (prior_in, prior_out, input, success)
-        };
-
-        if is_failed {
-            let failure_err = if let Some(err_res) = log_failure {
-                err_res
-            } else {
-                Err("Session failed".to_string())
-            };
-
-            Ok(SessionDiffExecutionRecord::Failure {
-                row_index: session_id as usize,
-                prior_input,
-                prior_output,
-                input,
-                failure: failure_err,
-                logs,
-            })
-        } else {
-            Ok(SessionDiffExecutionRecord::Success {
-                row_index: session_id as usize,
-                prior_input,
-                prior_output,
-                input,
-                success,
-                logs,
-            })
-        }
+        Ok(Self::into_record(session_id, steps, is_failed, logs, log_failure))
     }
 
     pub async fn close_session(&mut self, session_id: u32) -> Result<(), PyroFailure> {
+        if self.active_sessions.contains_key(&session_id) {
+            if let Err(e) = self.rollup_and_cleanup_session(session_id).await {
+                tracing::error!(
+                    "Failed to rollup and cleanup active session {} on close: {:?}",
+                    session_id,
+                    e
+                );
+            }
+        }
         self.step.close_session(session_id).await
     }
 
@@ -594,6 +622,66 @@ impl SessionDiffPipeline {
 
     pub fn session_lengths(&self, session_id: u32) -> Option<(u32, u32)> {
         self.step.session_lengths(session_id)
+    }
+
+    pub async fn get_session(&self, session_id: u32) -> Result<SessionDiffExecutionRecord, PyroError> {
+        if let Some(active) = self.active_sessions.get(&session_id) {
+            let mut wal_rows = Vec::with_capacity(active.data_wal.prebatch.len());
+            for i in 0..active.data_wal.prebatch.len() {
+                if let Some(row) = active.data_wal.prebatch.get(i) {
+                    wal_rows.push(row.clone());
+                }
+            }
+            let mut steps = Vec::with_capacity(wal_rows.len());
+            for row in wal_rows {
+                let in_val = row.get("input").cloned().unwrap_or(crate::format::value::PyroValue::Null);
+                let out_val = row.get("output").cloned().unwrap_or(crate::format::value::PyroValue::Null);
+                
+                let in_row = match in_val {
+                    crate::format::value::PyroValue::Group(g) => g,
+                    _ => PyroRow::empty(),
+                };
+                let out_row = match out_val {
+                    crate::format::value::PyroValue::Group(g) => g,
+                    _ => PyroRow::empty(),
+                };
+                steps.push((in_row, out_row));
+            }
+
+            let mut logs = PyroLogs::empty();
+            let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
+            if log_dir.exists() {
+                if let Ok(mut reader) = crate::format::log_wal::LogWalReader::open(&log_dir).await
+                    && let Ok(entries) = reader.read_all().await
+                    && let Some(last_entry) = entries.last()
+                {
+                    logs = PyroLogs {
+                        module_logs: last_entry.module_logs.clone(),
+                        capability_logs: last_entry.capability_logs.clone(),
+                    };
+                }
+            }
+            Ok(Self::into_record(session_id, steps, false, logs, None))
+        } else {
+            Err(PyroError::not_found(format!(
+                "Session {} not found",
+                session_id
+            )))
+        }
+    }
+
+    pub async fn get(&self, session_id: u32) -> Result<SessionDiffExecutionRecord, PyroError> {
+        if self.active_sessions.contains_key(&session_id) {
+            self.get_session(session_id).await
+        } else {
+            self.get_record(session_id).await
+        }
+    }
+
+    pub fn active_sessions(&self) -> Vec<u32> {
+        let mut keys: Vec<u32> = self.active_sessions.keys().copied().collect();
+        keys.sort();
+        keys
     }
 }
 

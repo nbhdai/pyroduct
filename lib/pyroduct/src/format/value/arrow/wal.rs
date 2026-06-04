@@ -16,14 +16,30 @@ use arrow::record_batch::RecordBatch;
 /// A high-level WAL writer wrapper that handles serialization of `PyroRow` values.
 pub struct WalWriter {
     inner: RawWalWriter<File>,
+    pub prebatch: PreBatch,
 }
 
 impl WalWriter {
     /// Opens the high-level WAL writer for appending.
-    pub fn open(base_path: impl Into<PathBuf>) -> Result<Self, PyroError> {
-        let inner = RawWalWriter::open(base_path)
+    pub fn open(
+        base_path: impl Into<PathBuf>,
+        schema: crate::format::value::PyroSchema<'static>,
+    ) -> Result<Self, PyroError> {
+        let path = base_path.into();
+        let inner = RawWalWriter::open(&path)
             .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
-        Ok(Self { inner })
+
+        let mut prebatch = PreBatch::new(schema);
+        let wal_file_path = path.with_extension("pyrowal");
+        if wal_file_path.exists() {
+            if let Ok(recovered_rows) = recover(&path) {
+                for row in recovered_rows {
+                    prebatch.push_unchecked(row);
+                }
+            }
+        }
+
+        Ok(Self { inner, prebatch })
     }
 
     /// Appends a `PyroRow` to the WAL by shipping/serializing it zero-copy.
@@ -40,6 +56,8 @@ impl WalWriter {
             .append(record_index, vec.py_ref())
             .await
             .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
+
+        self.prebatch.push_unchecked(owned_row);
         Ok(())
     }
 
@@ -48,6 +66,9 @@ impl WalWriter {
         &mut self,
         records: &[(usize, PyroRow<'_>)],
     ) -> Result<(), PyroError> {
+        if records.is_empty() {
+            return Ok(());
+        }
         let mut shipped = Vec::with_capacity(records.len());
         let mut vecs = Vec::with_capacity(records.len());
         for (_, row) in records {
@@ -56,6 +77,8 @@ impl WalWriter {
                 .ship()
                 .map_err(|e| PyroError::validation(CapturedError::new(e)))?;
             vecs.push(vec);
+
+            self.prebatch.push_unchecked(owned_row);
         }
         for (i, &(record_index, _)) in records.iter().enumerate() {
             shipped.push((record_index, vecs[i].py_ref()));
@@ -192,7 +215,7 @@ impl WalManager {
         schema: crate::format::value::PyroSchema<'static>,
     ) -> Result<Self, PyroError> {
         let path: PathBuf = base_path.into();
-        let writer = WalWriter::open(&path)?;
+        let writer = WalWriter::open(&path, schema.clone())?;
 
         // If the WAL file exists and contains frames, we recover them.
         let wal_file_path = path.with_extension("pyrowal");
@@ -332,7 +355,7 @@ mod tests {
         // Create WAL 1
         let tmp_file1 = NamedTempFile::new().unwrap();
         let base_path1 = tmp_file1.path().with_extension("");
-        let writer1 = WalWriter::open(&base_path1).unwrap();
+        let writer1 = WalWriter::open(&base_path1, pyro_schema.clone()).unwrap();
 
         let manager = WalManager::new(writer1, 10, pyro_schema.clone());
 
@@ -343,7 +366,7 @@ mod tests {
         // Create WAL 2
         let tmp_file2 = NamedTempFile::new().unwrap();
         let base_path2 = tmp_file2.path().with_extension("");
-        let writer2 = WalWriter::open(&base_path2).unwrap();
+        let writer2 = WalWriter::open(&base_path2, pyro_schema.clone()).unwrap();
 
         // Rotate
         let (batch, rows_map) = manager.rotate(writer2, pyro_schema.clone()).await.unwrap();
@@ -382,14 +405,14 @@ mod tests {
         // Create WAL 1
         let tmp_file1 = NamedTempFile::new().unwrap();
         let base_path1 = tmp_file1.path().with_extension("");
-        let writer1 = WalWriter::open(&base_path1).unwrap();
+        let writer1 = WalWriter::open(&base_path1, pyro_schema.clone()).unwrap();
 
         let manager = WalManager::new(writer1, 10, pyro_schema.clone());
 
         // Create WAL 2
         let tmp_file2 = NamedTempFile::new().unwrap();
         let base_path2 = tmp_file2.path().with_extension("");
-        let writer2 = WalWriter::open(&base_path2).unwrap();
+        let writer2 = WalWriter::open(&base_path2, pyro_schema.clone()).unwrap();
 
         // Rotate empty WAL
         let (batch, rows_map) = manager.rotate(writer2, pyro_schema.clone()).await.unwrap();

@@ -233,7 +233,8 @@ impl PlaybooksManager {
         // Playbook working directory: ROOT/playbooks/{playbook_name}/
         let playbook_dir = self.working_dir.join("playbooks").join(&name);
 
-        if playbook_dir.exists() {
+        let db_entry = self.db.get_playbook(&name).await?;
+        if db_entry.is_some() || self.workers.lock().await.contains_key(&name) {
             pyroduct::bail!(
                 "Name conflict: playbook with name '{}' already exists",
                 name

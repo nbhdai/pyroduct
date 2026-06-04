@@ -104,9 +104,11 @@ async fn handle_client(
             }
             DaemonRequest::Status => {
                 let count = playbooks_manager.active_workers_count().await;
+                let playbooks = playbooks_manager.list_playbooks().await;
                 DaemonResponse::StatusInfo {
                     active_workers: count,
                     version: env!("CARGO_PKG_VERSION").to_string(),
+                    running_playbooks: playbooks,
                 }
             }
         };

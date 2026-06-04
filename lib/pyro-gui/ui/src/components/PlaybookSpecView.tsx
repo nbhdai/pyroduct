@@ -170,23 +170,6 @@ export function PlaybookSpecView({ author, name, version, onBack }: PlaybookSpec
                 </div>
               )}
 
-              {/* Metadata Card */}
-              <div className="card p-20 mb-20">
-                <h3 className="section-title">Playbook Metadata</h3>
-                <div className="info-list mt-10">
-                  <div className="info-row">
-                    <span className="label">Spec Hash</span>
-                    <span className="value code-text">{specHash}</span>
-                  </div>
-                  {funcKind && (
-                    <div className="info-row">
-                      <span className="label">Execution Model</span>
-                      <span className="value badge badge-online">{String(funcKind).toUpperCase()}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
               {/* Main Function spec */}
               <div className="card p-24 mb-20">
                 <div className="class-header mb-15">
@@ -204,7 +187,7 @@ export function PlaybookSpecView({ author, name, version, onBack }: PlaybookSpec
                 </div>
               </div>
 
-              <div className="grid-layout mt-20">
+              <div className="grid-layout mt-20 responsive-playbook-grid">
                 {/* Required Capabilities */}
                 <div className="card p-20">
                   <h3 className="section-title mb-15">Capabilities Required</h3>
@@ -256,6 +239,24 @@ export function PlaybookSpecView({ author, name, version, onBack }: PlaybookSpec
                           })}
                         </tbody>
                       </table>
+                    </div>
+                  )}
+                </div>
+
+              </div>
+
+              {/* Metadata Card */}
+              <div className="card p-20 mt-20 mb-20">
+                <h3 className="section-title">Playbook Metadata</h3>
+                <div className="info-list mt-10">
+                  <div className="info-row">
+                    <span className="label">Spec Hash</span>
+                    <span className="value code-text">{specHash}</span>
+                  </div>
+                  {funcKind && (
+                    <div className="info-row">
+                      <span className="label">Execution Model</span>
+                      <span className="value badge badge-online">{String(funcKind).toUpperCase()}</span>
                     </div>
                   )}
                 </div>
