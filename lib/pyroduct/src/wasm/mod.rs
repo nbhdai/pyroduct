@@ -915,9 +915,3 @@ pub extern "C" fn free_error() {
     let mut registry = ERROR_REGISTRY.lock().unwrap();
     *registry = None;
 }
-
-impl From<String> for CapturedError {
-    fn from(err: String) -> Self {
-        CapturedError::new(err)
-    }
-}

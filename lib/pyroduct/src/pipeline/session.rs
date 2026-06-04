@@ -86,7 +86,7 @@ impl SessionPipeline {
         if !self.active_sessions.contains_key(&session_id) {
             if let Ok(Some(status)) = self.output_manager.get_session_status(session_id as usize) {
                 if status == "succeeded" || status == "failed" {
-                    return Err(PyroError::validation(format!(
+                    return Err(PyroError::validation(crate::capture!(
                         "Cannot resume closed session {}",
                         session_id
                     )));

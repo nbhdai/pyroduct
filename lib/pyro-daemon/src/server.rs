@@ -74,51 +74,56 @@ async fn handle_client(
             }
         };
 
-        let typed = match DaemonRequest::expose(view) {
-            Ok(t) => t,
-            Err(e) => {
-                let err_resp = DaemonResponse::Error {
-                    message: format!("Invalid JSON request: {}", e),
-                };
-                let resp_vec = err_resp.ship().capture("Failed to ship error response")?;
-                socket
-                    .send(resp_vec.into())
-                    .await
-                    .capture("Failed to send error response")?;
-                continue;
-            }
-        };
+        let playbooks_manager = playbooks_manager.clone();
+        let capability_manager = capability_manager.clone();
+        let data_manager = data_manager.clone();
+        let socket = socket.clone();
 
-        let req = (*typed).clone();
-        let mux_id = typed.data().mux_id();
+        tokio::spawn(async move {
+            let typed = match DaemonRequest::expose(view) {
+                Ok(t) => t,
+                Err(e) => {
+                    let err_resp = DaemonResponse::Error {
+                        message: format!("Invalid JSON request: {}", e),
+                    };
+                    if let Ok(resp_vec) = err_resp.ship() {
+                        let _ = socket.send(resp_vec.into()).await;
+                    }
+                    return;
+                }
+            };
 
-        let response = match req {
-            DaemonRequest::Playbook(playbook_req) => {
-                DaemonResponse::Playbook(playbooks_manager.handle_request(playbook_req).await)
-            }
-            DaemonRequest::Capability(capability_req) => {
-                DaemonResponse::Capability(capability_manager.handle_request(capability_req).await)
-            }
-            DaemonRequest::Data(data_req) => {
-                DaemonResponse::Data(data_manager.handle_request(data_req, &socket, Some(mux_id)).await)
-            }
-            DaemonRequest::Status => {
-                let count = playbooks_manager.active_workers_count().await;
-                let playbooks = playbooks_manager.list_playbooks().await;
-                DaemonResponse::StatusInfo {
-                    active_workers: count,
-                    version: env!("CARGO_PKG_VERSION").to_string(),
-                    running_playbooks: playbooks,
+            let req = (*typed).clone();
+            let mux_id = typed.data().mux_id();
+
+            let response = match req {
+                DaemonRequest::Playbook(playbook_req) => {
+                    DaemonResponse::Playbook(playbooks_manager.handle_request(playbook_req).await)
+                }
+                DaemonRequest::Capability(capability_req) => {
+                    DaemonResponse::Capability(capability_manager.handle_request(capability_req).await)
+                }
+                DaemonRequest::Data(data_req) => {
+                    DaemonResponse::Data(data_manager.handle_request(data_req, &socket, Some(mux_id)).await)
+                }
+                DaemonRequest::Status => {
+                    let count = playbooks_manager.active_workers_count().await;
+                    let playbooks = playbooks_manager.list_playbooks().await;
+                    DaemonResponse::StatusInfo {
+                        active_workers: count,
+                        version: env!("CARGO_PKG_VERSION").to_string(),
+                        running_playbooks: playbooks,
+                    }
+                }
+            };
+
+            if let Ok(mut resp_vec) = response.ship() {
+                resp_vec.set_mux_id(mux_id);
+                if let Err(e) = socket.send(resp_vec.into()).await {
+                    tracing::error!("Failed to send response for mux_id {}: {:?}", mux_id, e);
                 }
             }
-        };
-
-        let mut resp_vec = response.ship().capture("Failed to ship response")?;
-        resp_vec.set_mux_id(mux_id);
-        socket
-            .send(resp_vec.into())
-            .await
-            .capture("Failed to send response")?;
+        });
     }
 
     Ok(())

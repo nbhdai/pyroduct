@@ -3,6 +3,7 @@ use std::time::Duration;
 use pyro_daemon::client::DaemonClient;
 use pyro_daemon::{DaemonRequest, DaemonResponse, PyroDaemon};
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_daemon_control_protocol() {
     let test_dir = tempfile::tempdir().unwrap();
@@ -97,56 +98,7 @@ async fn test_daemon_control_protocol() {
     }
 
     // 9c. Compile and start two playbooks, then check Status command
-    // First, configure CacheManager to use the temp test directory, inheriting the local pyroduct path
-    let base_pyroduct = std::env::var("PYRODUCT").unwrap_or_default();
-    let mut config_toml = String::new();
-    if !base_pyroduct.is_empty() {
-        let base_config_path = std::path::Path::new(&base_pyroduct).join("config.toml");
-        if let Ok(content) = std::fs::read_to_string(&base_config_path) {
-            if let Ok(mut value) = toml::from_str::<toml::Value>(&content) {
-                if let Some(table) = value.as_table_mut() {
-                    table.insert(
-                        "author".to_string(),
-                        toml::Value::String("anon".to_string()),
-                    );
-                    table.insert("build_slots".to_string(), toml::Value::Integer(4));
-                    if let Some(pyroduct) = table.get_mut("pyroduct") {
-                        if let Some(pyro_table) = pyroduct.as_table_mut() {
-                            if let Some(toml::Value::String(path)) = pyro_table.get_mut("path") {
-                                let p = std::path::Path::new(path);
-                                if p.is_relative() {
-                                    let abs = std::path::Path::new(&base_pyroduct).join(p);
-                                    *path = abs
-                                        .canonicalize()
-                                        .unwrap_or(abs)
-                                        .to_string_lossy()
-                                        .into_owned();
-                                }
-                            }
-                        }
-                    }
-                    config_toml = toml::to_string(&value).unwrap();
-                }
-            }
-        }
-    }
-
-    if config_toml.is_empty() {
-        let cache_config = pyro_artifacts::cache::PyroductConfig {
-            author: "anon".to_string(),
-            target: None,
-            pyroduct: None,
-            build_slots: Some(4),
-        };
-        config_toml = toml::to_string(&cache_config).unwrap();
-    }
-
-    tokio::fs::write(working_dir.join("config.toml"), config_toml)
-        .await
-        .unwrap();
-    unsafe {
-        std::env::set_var("PYRODUCT", &working_dir);
-    }
+    // First, configure CacheManager to inherit from the environment
 
     let cache = std::sync::Arc::new(
         pyro_artifacts::cache::CacheManager::from_env()
@@ -284,6 +236,7 @@ pub fn call(input: String) -> Result<String> {
     daemon_handle.abort();
 }
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_daemon_callback_persistence_and_restore() {
     let test_dir = tempfile::tempdir().unwrap();
@@ -342,6 +295,7 @@ async fn test_daemon_callback_persistence_and_restore() {
     assert_eq!(callbacks_after_delete.len(), 0);
 }
 
+#[tracing_test::traced_test]
 #[tokio::test]
 async fn test_daemon_callback_rpc_commands() {
     let test_dir = tempfile::tempdir().unwrap();
@@ -458,5 +412,126 @@ async fn test_daemon_callback_rpc_commands() {
         other => panic!("Unexpected response: {:?}", other),
     }
 
+    daemon_handle.abort();
+}
+
+#[tracing_test::traced_test]
+#[tokio::test]
+async fn test_daemon_data_streaming() {
+    let test_dir = tempfile::tempdir().unwrap();
+    let working_dir = test_dir.path().to_path_buf();
+    let control_socket = working_dir.join("control");
+
+    // Spawn Daemon
+    let daemon = PyroDaemon::new(working_dir.clone());
+    let daemon_handle = tokio::spawn(async move {
+        daemon.run().await.unwrap();
+    });
+
+    // Wait for control socket to bind
+    let mut retries = 0;
+    while !control_socket.exists() {
+        if retries > 50 {
+            panic!("Daemon failed to bind control socket in time");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        retries += 1;
+    }
+
+    // Connect
+    let client = DaemonClient::connect(&control_socket).await.unwrap();
+
+    // Compile and configure a playbook using the environment's cache
+
+    let cache = std::sync::Arc::new(
+        pyro_artifacts::cache::CacheManager::from_env()
+            .await
+            .unwrap(),
+    );
+    let builder = pyro_artifacts::build::Builder::from_env(cache.clone())
+        .await
+        .unwrap();
+
+    let playbook_code = r#"
+use pyroduct;
+
+#[pyroduct::module(output = message)]
+pub fn call(input: String) -> Result<String> {
+    Ok(format!("Hello: {}", input))
+}
+"#;
+
+    let playbook_stream_test = pyro_artifacts::build::AnonPlaybook {
+        package: "playbook_stream_test".to_string(),
+        dependencies: std::collections::BTreeMap::new(),
+        configurations: Vec::new(),
+        source: playbook_code.to_string(),
+        interconnect: std::collections::BTreeMap::new(),
+    };
+
+    let binary_a = builder.compile_anon(&playbook_stream_test).await.unwrap();
+
+    let config_a_path = working_dir.join("config_a.toml");
+    let pipeline_config_a = pyroduct::pipeline::factory::PipelineConfig {
+        playbook: binary_a.spec.ident.clone(),
+        remote: std::collections::HashMap::new(),
+        wal_capacity: 10,
+        success_log_retention_secs: 3600,
+        error_log_retention_secs: 86400 * 7,
+        input_dir: working_dir.join("input_a"),
+        output_dir: working_dir.join("output_a"),
+        log_dir: working_dir.join("log_a"),
+    };
+    tokio::fs::write(
+        &config_a_path,
+        toml::to_string_pretty(&pipeline_config_a).unwrap(),
+    )
+    .await
+    .unwrap();
+
+    // Start playbook
+    let req = DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Start {
+        name: "playbook_stream_test".to_string(),
+        playbook_config_path: config_a_path,
+        playbook_socket: None,
+        input_dir: None,
+        output_dir: None,
+    });
+    let resp = client.request(req).await.unwrap();
+    match resp {
+        DaemonResponse::Playbook(pyro_daemon::playbook::PlaybookResponse::Success { .. }) => {}
+        other => panic!("Unexpected response for starting playbook: {:?}", other),
+    }
+
+    // Now start streaming playbook
+    let mut rx = client
+        .stream_playbook("playbook_stream_test".to_string())
+        .await
+        .unwrap();
+
+    // Let's invoke/call the playbook in the background
+    let client_clone = client.clone();
+    let call_handle = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let payload = serde_json::json!({ "input": "streaming" });
+        client_clone
+            .call_playbook("playbook_stream_test".to_string(), payload)
+            .await
+            .unwrap();
+    });
+
+    // Receive the streamed row
+    let row = rx.recv().await.unwrap().unwrap();
+
+    // Verify the contents of the row
+    let msg_val = row.get("message").unwrap();
+    match msg_val {
+        pyroduct::PyroValue::Str(s) => {
+            assert_eq!(s.as_ref(), "Hello: streaming");
+        }
+        other => panic!("Unexpected value type for message: {:?}", other),
+    }
+
+    call_handle.await.unwrap();
     daemon_handle.abort();
 }

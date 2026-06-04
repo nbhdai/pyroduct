@@ -55,6 +55,7 @@ impl PyroSocket {
 
     /// Connect to a TCP address (e.g. `"127.0.0.1:9000"`).
     pub async fn connect_tcp(addr: impl tokio::net::ToSocketAddrs) -> std::io::Result<Self> {
+        tracing::debug!("PyroSocket: connecting TCP");
         let stream = TcpStream::connect(addr).await?;
         stream.set_nodelay(true)?;
         let settings = PyroStreamSettings::default();
@@ -64,6 +65,7 @@ impl PyroSocket {
 
     /// Connect to a Unix domain socket path.
     pub async fn connect_unix(path: impl AsRef<Path>) -> std::io::Result<Self> {
+        tracing::debug!("PyroSocket: connecting Unix path={}", path.as_ref().display());
         let stream = UnixStream::connect(path).await?;
         let settings = PyroStreamSettings::default();
         let (rh, wh) = stream.into_split();
@@ -138,17 +140,19 @@ impl PyroSocket {
         // Background Write Task
         let settings_write = settings;
         tokio::spawn(async move {
+            tracing::debug!("WRITE TASK: started");
             while let Some(rec) = rx.recv().await {
-                if write_to_stream(&mut writer, &rec, Some(&settings_write))
-                    .await
-                    .is_err()
-                {
+                tracing::trace!("WRITE TASK: writing request, client_id={:?}, class_id={:?}, fn_id={:?}, mux_id={:?}, len={}", rec.client_id, rec.class_id, rec.fn_id, rec.mux_id, rec.inner.len());
+                if let Err(e) = write_to_stream(&mut writer, &rec, Some(&settings_write)).await {
+                    tracing::debug!("WRITE TASK: write error: {:?}", e);
                     break;
                 }
-                if tokio::io::AsyncWriteExt::flush(&mut writer).await.is_err() {
+                if let Err(e) = tokio::io::AsyncWriteExt::flush(&mut writer).await {
+                    tracing::debug!("WRITE TASK: flush error: {:?}", e);
                     break;
                 }
             }
+            tracing::debug!("WRITE TASK: exited");
         });
 
         Self {
@@ -174,6 +178,7 @@ impl PyroSocket {
     ///
     /// This sends the message without waiting for a response.
     pub async fn send(&self, rec: Request) -> std::io::Result<()> {
+        tracing::trace!("PyroSocket::send: client_id={:?}, class_id={:?}, fn_id={:?}, mux_id={:?}, len={}", rec.client_id, rec.class_id, rec.fn_id, rec.mux_id, rec.inner.len());
         self.inner.tx.send(rec).map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::BrokenPipe, "socket write task closed")
         })
@@ -184,13 +189,16 @@ impl PyroSocket {
     /// This returns messages that were not part of a [`request`](Self::request)
     /// flow (e.g. notifications or incoming requests).
     pub async fn recv(&self) -> std::io::Result<PyroView> {
+        tracing::trace!("PyroSocket::recv: waiting for unmatched message");
         let mut rx = self.unmatched_rx.lock().await;
-        rx.recv().await.ok_or_else(|| {
+        let res = rx.recv().await.ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
                 "socket read task closed",
             )
-        })
+        })?;
+        tracing::trace!("PyroSocket::recv: returned message with mux_id={}", res.mux_id());
+        Ok(res)
     }
 
     /// Perform a multiplexed RPC request with explicit fields.
@@ -205,6 +213,7 @@ impl PyroSocket {
         inner: PyroView,
     ) -> std::io::Result<PyroView> {
         let mux_id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);
+        tracing::trace!("PyroSocket::request: client_id={:?}, class_id={:?}, fn_id={:?}, mux_id={}, len={}", client_id, class_id, fn_id, mux_id, inner.len());
         let request = Request {
             client_id,
             class_id,
@@ -220,13 +229,15 @@ impl PyroSocket {
             std::io::Error::new(std::io::ErrorKind::BrokenPipe, "socket write task closed")
         })?;
 
-        rx.await.map_err(|_| {
+        let res = rx.await.map_err(|_| {
             self.inner.pending.remove(&mux_id);
             std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
                 "socket read task closed or request timed out",
             )
-        })
+        })?;
+        tracing::trace!("PyroSocket::request: received response for mux_id={}", mux_id);
+        Ok(res)
     }
 
     /// Start a multiplexed stream request.
@@ -241,6 +252,7 @@ impl PyroSocket {
         inner: PyroView,
     ) -> std::io::Result<PyroStream> {
         let mux_id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);
+        tracing::trace!("PyroSocket::request_stream: client_id={:?}, class_id={:?}, fn_id={:?}, mux_id={}, len={}", client_id, class_id, fn_id, mux_id, inner.len());
         let request = Request {
             client_id,
             class_id,
@@ -268,6 +280,7 @@ impl PyroSocket {
 
     /// Close / deregister a stream by its `mux_id`.
     pub fn close_stream(&self, mux_id: u32) {
+        tracing::trace!("PyroSocket::close_stream: closing stream for mux_id={}", mux_id);
         self.inner.streams.remove(&mux_id);
     }
 
@@ -302,13 +315,45 @@ impl PyroStream {
     }
 
     pub async fn recv(&mut self) -> Option<PyroView> {
-        self.rx.recv().await
+        tracing::trace!("PyroStream::recv: waiting for message on stream mux_id={}", self.mux_id);
+        let res = self.rx.recv().await;
+        if res.is_some() {
+            tracing::trace!("PyroStream::recv: message received on stream mux_id={}", self.mux_id);
+        } else {
+            tracing::trace!("PyroStream::recv: stream closed for mux_id={}", self.mux_id);
+        }
+        res
     }
 }
 
 impl Drop for PyroStream {
     fn drop(&mut self) {
+        tracing::trace!("PyroStream::drop: dropping stream for mux_id={}", self.mux_id);
         self.socket.close_stream(self.mux_id);
+    }
+}
+
+/// A sender handle for a multiplexed stream of [`PyroView`] responses.
+#[derive(Clone)]
+pub struct PyroStreamSender {
+    mux_id: u32,
+    socket: PyroSocket,
+}
+
+impl PyroStreamSender {
+    pub fn new(socket: PyroSocket, mux_id: u32) -> Self {
+        Self { mux_id, socket }
+    }
+
+    pub fn mux_id(&self) -> u32 {
+        self.mux_id
+    }
+
+    pub async fn send(&self, inner: PyroView) -> std::io::Result<()> {
+        tracing::trace!("PyroStreamSender::send: sending message on stream mux_id={}, len={}", self.mux_id, inner.len());
+        let mut request = Request::from(inner);
+        request.mux_id = Some(self.mux_id);
+        self.socket.send(request).await
     }
 }
 

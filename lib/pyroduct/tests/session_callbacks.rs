@@ -139,7 +139,7 @@ async fn test_session_callbacks() {
 
         DIFF_CALLBACK_COUNTER.store(0, Ordering::SeqCst);
 
-        let session_id = 42;
+        let session_id = 48;
         pipeline
             .prep_session(session_id, &[], &[])
             .await

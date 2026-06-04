@@ -1,4 +1,5 @@
 // Async capability - HTTP client with URL allowlist
+use pyroduct::CapturedError;
 
 /// Defines a specific URL pattern and the HTTP methods permitted for that pattern.
 #[pyroduct::config]
@@ -32,7 +33,7 @@ pub struct HttpServer {
 impl HttpServer {
     type Client = HttpClient;
     type Config = HttpConfig;
-    type Error = String;
+    type Error = CapturedError;
     
     /// Initializes a new HttpServer instance. 
     /// If no config is provided, defaults to a 30-second timeout and an empty allowlist.
@@ -51,38 +52,38 @@ impl HttpServer {
     async fn reset(&mut self) {}
     
     /// Validates and prepares a new client instance.
-    fn register(&self, _client: &HttpClient) -> Result<(), String> {
+    fn register(&self, _client: &HttpClient) -> Result<(), CapturedError> {
         Ok(())
     }
     
     /// Performs an asynchronous GET request if the URL and method are allowed.
-    async fn get(&self, _client: &HttpClient, url: String) -> Result<String, String> {
+    async fn get(&self, _client: &HttpClient, url: String) -> Result<String, CapturedError> {
         self.check_allowed(&url, "GET")?;
         // Simulated async HTTP request
         Ok(format!("GET response from {}", url))
     }
     
     /// Performs an asynchronous POST request with a body if the URL and method are allowed.
-    async fn post(&self, _client: &HttpClient, url: String, body: String) -> Result<String, String> {
+    async fn post(&self, _client: &HttpClient, url: String, body: String) -> Result<String, CapturedError> {
         self.check_allowed(&url, "POST")?;
         Ok(format!("POST {} bytes to {}", body.len(), url))
     }
     
     /// Performs an asynchronous PUT request with a body if the URL and method are allowed.
-    async fn put(&self, _client: &HttpClient, url: String, body: String) -> Result<String, String> {
+    async fn put(&self, _client: &HttpClient, url: String, body: String) -> Result<String, CapturedError> {
         self.check_allowed(&url, "PUT")?;
         Ok(format!("PUT {} bytes to {}", body.len(), url))
     }
     
     /// Performs an asynchronous DELETE request if the URL and method are allowed.
-    async fn delete(&self, _client: &HttpClient, url: String) -> Result<String, String> {
+    async fn delete(&self, _client: &HttpClient, url: String) -> Result<String, CapturedError> {
         self.check_allowed(&url, "DELETE")?;
         Ok(format!("DELETE {}", url))
     }
 }
 
 impl HttpServer {
-    fn check_allowed(&self, url: &str, method: &str) -> Result<(), String> {
+    fn check_allowed(&self, url: &str, method: &str) -> Result<(), CapturedError> {
         for endpoint in &self.allowed_endpoints {
             if url_matches(url, &endpoint.url) {
                 if endpoint.methods.iter().any(|m| m.eq_ignore_ascii_case(method)) {

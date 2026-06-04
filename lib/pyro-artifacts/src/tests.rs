@@ -30,8 +30,8 @@ const HTTPC_MODULE: &str = r#"
 use httpc::{HttpClient, HttpClientMethods};
 
 #[pyroduct::module(output = response)]
-fn call(url: &str) -> Result<String, String> {
-    let client = HttpClient.register().map_err(|e| e.to_string())?;
+fn call(url: &str) -> Result<String> {
+    let client = HttpClient.register()?;
     let response = client.get(url.to_string())?;
     Ok(response)
 }
