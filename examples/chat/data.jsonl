@@ -1,4 +1,0 @@
-{"input": [{"role": "user", "content": "What is the capital of France?"}]}
-{"input": [{"role": "user", "content": "Explain quantum entanglement briefly."}, {"role": "assistant", "content": "Quantum entanglement is a phenomenon where two or more particles become correlated in such a way that the state of one cannot be described independently of the others, even when separated by large distances."}, {"role": "user", "content": "Then how does information travel faster in light? Relativity says it shouldn't..."}]}
-{"input": [{"role": "user", "content": "How do I print to the console in Rust?"}]}
-{"input": [{"role": "user", "content": "Knock knock."}, {"role": "assistant", "content": "Who's there?"}, {"role": "user", "content": "Tank."}]}

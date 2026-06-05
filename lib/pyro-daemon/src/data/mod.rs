@@ -20,6 +20,11 @@ pub enum DataRequest {
     StreamPlaybook {
         playbook_name: String,
     },
+    GetPlaybookData {
+        playbook_name: String,
+        offset: usize,
+        limit: usize,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -30,6 +35,7 @@ pub enum DataResponse {
     StreamStarted,
     StreamRow { row: PyroRow<'static> },
     StreamFinished,
+    PlaybookData { ipc_bytes: Vec<u8> },
     Error { message: String },
 }
 
@@ -77,6 +83,16 @@ impl DaemonDataManager {
                     },
                 }
             }
+            DataRequest::GetPlaybookData {
+                playbook_name,
+                offset,
+                limit,
+            } => match self.get_playbook_data(&playbook_name, offset, limit).await {
+                Ok(ipc_bytes) => DataResponse::PlaybookData { ipc_bytes },
+                Err(e) => DataResponse::Error {
+                    message: format!("Failed to get playbook data: {:?}", e),
+                },
+            },
         }
     }
 

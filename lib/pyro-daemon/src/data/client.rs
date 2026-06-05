@@ -31,6 +31,24 @@ impl DaemonClient {
         }
     }
 
+    pub async fn get_playbook_data(
+        &self,
+        playbook_name: String,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<u8>> {
+        let req = DaemonRequest::Data(DataRequest::GetPlaybookData {
+            playbook_name,
+            offset,
+            limit,
+        });
+        match self.request(req).await? {
+            DaemonResponse::Data(DataResponse::PlaybookData { ipc_bytes }) => Ok(ipc_bytes),
+            DaemonResponse::Data(DataResponse::Error { message }) => pyroduct::bail!("{}", message),
+            _ => pyroduct::bail!("Unexpected response from daemon"),
+        }
+    }
+
     pub async fn stream_playbook(
         &self,
         playbook_name: String,
