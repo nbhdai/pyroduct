@@ -1060,4 +1060,37 @@ body {
     gap: 10px;
 }
 
+/* Data Explorer Styles */
+select {
+    appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg fill='orange' height='24' viewBox='0 0 24 24' width='24' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/><path d='M0 0h24v24H0z' fill='none'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    background-size: 16px;
+    padding-right: 40px !important;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+select:focus {
+    border-color: var(--color-primary) !important;
+    box-shadow: 0 0 0 3px var(--color-primary-glow) !important;
+    background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+textarea::placeholder {
+    color: rgba(255, 255, 255, 0.2);
+}
+
+.table th {
+    background-color: #111115 !important;
+    color: var(--text-main) !important;
+    font-weight: 600;
+}
+
+.table td {
+    vertical-align: middle;
+}
+
+
 

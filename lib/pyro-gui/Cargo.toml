@@ -16,6 +16,7 @@ toml = { workspace = true }
 pyro-daemon = { path = "../pyro-daemon" }
 pyro-artifacts = { path = "../pyro-artifacts" }
 pyroduct = { path = "../pyroduct", features = ["host", "transport", "cli", "sql"] }
+arrow = { workspace = true }
 
 [build-dependencies]
 tauri-build = { version = "2.1", features = [] }

@@ -64,6 +64,9 @@ pub struct InterfaceSpec<'a> {
     pub description: Option<Cow<'a, str>>,
 
     pub classes: Vec<ClassSpec<'a>>,
+
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub structs: BTreeMap<Cow<'a, str>, PyroSchema<'a>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -342,7 +345,7 @@ impl<'a> PyroSchema<'a> {
     /// Convert to an fully owned schema (useful for inference results).
     pub fn into_owned(self) -> PyroSchema<'static> {
         PyroSchema {
-            documentation: None,
+            documentation: self.documentation.map(|d| Cow::Owned(d.into_owned())),
             fields: self.fields.iter().map(|f| f.clone().into_owned()).collect(),
         }
     }

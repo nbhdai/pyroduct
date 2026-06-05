@@ -381,7 +381,20 @@ name = "mod_slot"
 
         drop(slot);
 
-        let func = generate_module_spec(&source.source)
+        let mut dep_interfaces = Vec::new();
+        for cap in source.dependencies().capabilities.iter() {
+            if let Ok(spec_str) = self
+                .cache_manager
+                .capability_interface_spec(&cap.author, &cap.package, &cap.version)
+                .await
+            {
+                if let Ok(spec) = serde_json::from_str::<pyro_spec::InterfaceSpec>(&spec_str) {
+                    dep_interfaces.push(spec);
+                }
+            }
+        }
+
+        let func = generate_module_spec(&source.source, &dep_interfaces)
             .map_err(|s| {
                 let err = BuildError::Documentation(format_syn_error("Cannot generate docstring", s));
                 tracing::error!(error = ?err, "Failed to generate module spec from source docstrings");

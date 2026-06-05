@@ -5,12 +5,13 @@ import { DashboardTab } from "./components/DashboardTab";
 import { RepositoryTab } from "./components/RepositoryTab";
 import { PlaybooksTab } from "./components/PlaybooksTab";
 import { OptionsTab } from "./components/OptionsTab";
+import { DataExplorerTab } from "./components/DataExplorerTab";
 import { StartPlaybookModal } from "./components/StartPlaybookModal";
 import { CallPlaybookModal } from "./components/CallPlaybookModal";
 import { DaemonStatus, CacheStatus, Playbook, LogEntry } from "./types";
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<"dashboard" | "repository" | "playbooks" | "options">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "repository" | "playbooks" | "options" | "data">("dashboard");
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus>({ status: "offline" });
   const [cacheStatus, setCacheStatus] = useState<CacheStatus | null>(null);
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
@@ -215,7 +216,7 @@ export function App() {
   useEffect(() => {
     queryDaemonStatus();
     loadCache();
-    if (activeTab === "dashboard" || activeTab === "playbooks") {
+    if (activeTab === "dashboard" || activeTab === "playbooks" || activeTab === "data") {
       loadPlaybooks();
     }
   }, [activeTab, queryDaemonStatus, loadCache, loadPlaybooks]);
@@ -229,7 +230,7 @@ export function App() {
   // Global refresh
   const handleGlobalRefresh = () => {
     queryDaemonStatus();
-    if (activeTab === "dashboard" || activeTab === "playbooks") loadPlaybooks();
+    if (activeTab === "dashboard" || activeTab === "playbooks" || activeTab === "data") loadPlaybooks();
     if (activeTab === "repository") loadCache();
   };
 
@@ -241,6 +242,8 @@ export function App() {
         return "Repository";
       case "playbooks":
         return "Playbooks";
+      case "data":
+        return "Data Explorer";
       case "options":
         return "Options";
     }
@@ -286,6 +289,10 @@ export function App() {
             }}
             onStopPlaybookClick={stopPlaybook}
           />
+        )}
+
+        {activeTab === "data" && (
+          <DataExplorerTab playbooks={playbooks} />
         )}
 
         {activeTab === "options" && (

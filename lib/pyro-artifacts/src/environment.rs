@@ -352,7 +352,20 @@ impl Environment {
                     )];
 
                     if let Some(path) = wasm_path {
-                        let spec = pyro_macro::module::generate_module_spec(&src_lib_rs)
+                        let mut dep_interfaces = Vec::new();
+                        for cap in source.dependencies().capabilities.iter() {
+                            if let Ok(spec_str) = self
+                                .cache_manager
+                                .capability_interface_spec(&cap.author, &cap.package, &cap.version)
+                                .await
+                            {
+                                if let Ok(spec) = serde_json::from_str::<pyro_spec::InterfaceSpec>(&spec_str) {
+                                    dep_interfaces.push(spec);
+                                }
+                            }
+                        }
+
+                        let spec = pyro_macro::module::generate_module_spec(&src_lib_rs, &dep_interfaces)
                             .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
                             .map(|func| crate::artifacts::PlaybookSpec {
                                 ident: source.ident(),
@@ -483,7 +496,20 @@ impl Environment {
                     };
                     let hash = source.hash();
 
-                    let spec = pyro_macro::module::generate_module_spec(&src_lib_rs)
+                    let mut dep_interfaces = Vec::new();
+                    for cap in source.dependencies().capabilities.iter() {
+                        if let Ok(spec_str) = self
+                            .cache_manager
+                            .capability_interface_spec(&cap.author, &cap.package, &cap.version)
+                            .await
+                        {
+                            if let Ok(spec) = serde_json::from_str::<pyro_spec::InterfaceSpec>(&spec_str) {
+                                dep_interfaces.push(spec);
+                            }
+                        }
+                    }
+
+                    let spec = pyro_macro::module::generate_module_spec(&src_lib_rs, &dep_interfaces)
                         .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
                         .map(|func| crate::artifacts::PlaybookSpec {
                             ident: source.ident(),
@@ -577,22 +603,33 @@ impl Environment {
                         .await
                         .map_err(|_| EnvironmentError::SourceNotFound(src_path))?;
 
-                    let spec = pyro_macro::module::generate_module_spec(&src_lib_rs)
+                    let mut resolved_capabilities = Vec::new();
+                    let mut dep_interfaces = Vec::new();
+                    for cap in module_manifest.capabilities.values() {
+                        let cap_ident = CapabilityIdent {
+                            author: cap.author.clone(),
+                            package: cap.package.clone(),
+                            version: cap.version.clone(),
+                        };
+                        if let Ok(spec_str) = self
+                            .cache_manager
+                            .capability_interface_spec(&cap_ident.author, &cap_ident.package, &cap_ident.version)
+                            .await
+                        {
+                            if let Ok(spec) = serde_json::from_str::<pyro_spec::InterfaceSpec>(&spec_str) {
+                                dep_interfaces.push(spec);
+                            }
+                        }
+                        resolved_capabilities.push(cap_ident);
+                    }
+
+                    let spec = pyro_macro::module::generate_module_spec(&src_lib_rs, &dep_interfaces)
                         .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
                         .ok_or_else(|| {
                             EnvironmentError::InterfaceGeneration(
                                 "Module main function missing".to_string(),
                             )
                         })?;
-
-                    let mut resolved_capabilities = Vec::new();
-                    for cap in module_manifest.capabilities.values() {
-                        resolved_capabilities.push(CapabilityIdent {
-                            author: cap.author.clone(),
-                            package: cap.package.clone(),
-                            version: cap.version.clone(),
-                        });
-                    }
 
                     let dummy_ident = crate::artifacts::PlaybookIdent {
                         author: "dummy".to_string(),
@@ -703,12 +740,23 @@ impl Environment {
         let res = match &self.manifest {
             crate::cargo::ProjectManifest::Module(module_manifest) => {
                 let mut resolved_capabilities = Vec::new();
+                let mut dep_interfaces = Vec::new();
                 for cap in module_manifest.capabilities.values() {
-                    resolved_capabilities.push(CapabilityIdent {
+                    let cap_ident = CapabilityIdent {
                         author: cap.author.clone(),
                         package: cap.package.clone(),
                         version: cap.version.clone(),
-                    });
+                    };
+                    if let Ok(spec_str) = self
+                        .cache_manager
+                        .capability_interface_spec(&cap_ident.author, &cap_ident.package, &cap_ident.version)
+                        .await
+                    {
+                        if let Ok(spec) = serde_json::from_str::<pyro_spec::InterfaceSpec>(&spec_str) {
+                            dep_interfaces.push(spec);
+                        }
+                    }
+                    resolved_capabilities.push(cap_ident);
                 }
 
                 let ident = crate::artifacts::PlaybookIdent {
@@ -728,7 +776,7 @@ impl Environment {
                 );
                 let hash = source.hash();
 
-                pyro_macro::module::generate_module_spec(&src_lib_rs)
+                pyro_macro::module::generate_module_spec(&src_lib_rs, &dep_interfaces)
                     .map_err(|e| {
                         let err = EnvironmentError::InterfaceGeneration(e.to_string());
                         tracing::error!(error = ?err, "Failed to generate playbook spec");

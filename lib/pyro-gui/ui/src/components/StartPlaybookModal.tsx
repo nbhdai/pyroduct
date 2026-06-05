@@ -48,7 +48,7 @@ export function StartPlaybookModal({
   
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [requiredCapabilities, setRequiredCapabilities] = useState<any[]>([]);
-  const [remoteConfig, setRemoteConfig] = useState<Record<string, { type: "tcp" | "unix"; address: string }>>({});
+  const [remoteConfig, setRemoteConfig] = useState<Record<string, { type: "disabled" | "tcp" | "unix"; address: string }>>({});
 
   // Reset form when modal opens
   useEffect(() => {

@@ -38,9 +38,12 @@ use super::parse::{ModuleAttrs, OutputSpec};
 /// function, and return a pretty-printed JSON string describing it.
 ///
 /// Returns `None` when no `#[module(...)]` function is found.
-pub fn generate_module_spec(content: &str) -> syn::Result<Option<ModuleFunc<'static>>> {
+pub fn generate_module_spec(
+    content: &str,
+    dep_interfaces: &[pyro_spec::InterfaceSpec<'static>],
+) -> syn::Result<Option<ModuleFunc<'static>>> {
     let file = syn::parse_file(content)?;
-    let builder = SchemaBuilder::from_file(&file);
+    let builder = SchemaBuilder::from_file(&file).with_foreign_specs(dep_interfaces);
 
     for item in &file.items {
         if let syn::Item::Fn(item_fn) = item {
@@ -109,6 +112,20 @@ impl ModuleSpecBuilder {
 
         // ── Output schema ────────────────────────────────────────────────────
         let ok_type = extract_result_ok_type(&item_fn.sig.output)?;
+        let ok_type = if attrs.session {
+            if let Type::Path(inner_path) = ok_type
+                && let Some(seg) = inner_path.path.segments.last()
+                && seg.ident == "SessionResponse"
+                && let syn::PathArguments::AngleBracketed(inner_args) = &seg.arguments
+                && let Some(syn::GenericArgument::Type(output_ty)) = inner_args.args.first()
+            {
+                output_ty
+            } else {
+                ok_type
+            }
+        } else {
+            ok_type
+        };
         let output = build_output_schema(&attrs.output, ok_type, builder)?;
 
         let kind = if attrs.session {
@@ -293,7 +310,7 @@ mod tests {
             }
         "#;
 
-        let v = generate_module_spec(src).unwrap().unwrap();
+        let v = generate_module_spec(src, &[]).unwrap().unwrap();
 
         assert_eq!(v.name, "call");
         assert!(v.description.is_none());
@@ -318,7 +335,7 @@ mod tests {
             }
         "#;
 
-        let v = generate_module_spec(src).unwrap().unwrap();
+        let v = generate_module_spec(src, &[]).unwrap().unwrap();
 
         let out_fields = &v.output.fields;
         assert_eq!(out_fields[0].name, "score");
@@ -343,11 +360,12 @@ mod tests {
             }
         "#;
 
-        let v = generate_module_spec(src).unwrap().unwrap();
+        let v = generate_module_spec(src, &[]).unwrap().unwrap();
 
         assert_eq!(v.name, "embed");
         assert_eq!(v.description.unwrap(), "Embed a piece of text.");
 
+        // input: text and model
         let in_fields = &v.input.fields;
         assert_eq!(in_fields.len(), 2);
         assert_eq!(in_fields[0].name, "text");
@@ -358,6 +376,88 @@ mod tests {
         assert_eq!(out_fields[1].name, "tokens");
     }
 
+    // ── Session module with foreign struct output ────────────────────────────
+
+    #[test]
+    fn test_session_foreign_struct() {
+        use std::collections::BTreeMap;
+        use pyro_spec::{InterfaceSpec, PyroField, PyroSchema, PyroType};
+
+        let src = r#"
+            #[module(session, output = ChatMessage)]
+            fn process(
+                prior: Vec<ChatMessage>,
+                input: ChatMessageRef<'_>,
+            ) -> Result<SessionResponse<ChatMessage>> {
+                todo!()
+            }
+        "#;
+
+        // Create a mock dependency interface that declares ChatMessage struct
+        let mut structs = BTreeMap::new();
+        structs.insert(
+            Cow::Borrowed("ChatMessage"),
+            PyroSchema::new(vec![
+                PyroField::new("role", PyroType::Str, false),
+                PyroField::new("content", PyroType::Str, false),
+            ]),
+        );
+
+        let dep = InterfaceSpec {
+            capability: Cow::Borrowed("llm"),
+            description: None,
+            classes: vec![],
+            structs,
+        };
+
+        let v = generate_module_spec(src, &[dep]).unwrap().unwrap();
+
+        assert_eq!(v.name, "process");
+        assert_eq!(v.kind, pyro_spec::ModuleKind::Session);
+
+        // Check input fields
+        let in_fields = &v.input.fields;
+        assert_eq!(in_fields.len(), 2);
+        assert_eq!(in_fields[0].name, "prior");
+        
+        // prior should be Vec<ChatMessage> which resolves to List(Group([role, content]), false)
+        if let PyroType::List(inner, nullable) = &in_fields[0].data_type {
+            assert!(!nullable);
+            if let PyroType::Group(fields) = inner.as_ref() {
+                assert_eq!(fields.len(), 2);
+                assert_eq!(fields[0].name, "role");
+                assert_eq!(fields[1].name, "content");
+            } else {
+                panic!("Expected Group inner type for prior list");
+            }
+        } else {
+            panic!("Expected List type for prior field");
+        }
+
+        // input should be ChatMessageRef which resolves to Group([role, content])
+        assert_eq!(in_fields[1].name, "input");
+        if let PyroType::Group(fields) = &in_fields[1].data_type {
+            assert_eq!(fields.len(), 2);
+            assert_eq!(fields[0].name, "role");
+            assert_eq!(fields[1].name, "content");
+        } else {
+            panic!("Expected Group type for input field");
+        }
+
+        // Check output field (which was output = ChatMessage)
+        // Since it returns SessionResponse<ChatMessage>, we extract ChatMessage and fallback to a single field "output"
+        let out_fields = &v.output.fields;
+        assert_eq!(out_fields.len(), 1);
+        assert_eq!(out_fields[0].name, "output");
+        if let PyroType::Group(fields) = &out_fields[0].data_type {
+            assert_eq!(fields.len(), 2);
+            assert_eq!(fields[0].name, "role");
+            assert_eq!(fields[1].name, "content");
+        } else {
+            panic!("Expected Group type for output field");
+        }
+    }
+
     // ── No module function ───────────────────────────────────────────────────
 
     #[test]
@@ -365,7 +465,7 @@ mod tests {
         let src = r#"
             fn plain(x: u32) -> u32 { x }
         "#;
-        let result = generate_module_spec(src).unwrap();
+        let result = generate_module_spec(src, &[]).unwrap();
         assert!(result.is_none());
     }
 }

@@ -98,10 +98,18 @@ pub fn build_spec(name: &str, file: &syn::File) -> InterfaceSpec<'static> {
 
     let description = extract_doc_string(&file.attrs);
 
+    let mut structs = std::collections::BTreeMap::new();
+    for struct_name in builder.struct_names() {
+        if let Some(schema) = builder.schema_for(&struct_name) {
+            structs.insert(Cow::Owned(struct_name), schema.into_owned());
+        }
+    }
+
     InterfaceSpec {
         capability: name.to_string().into(),
         description: description.map(|s| s.into()),
         classes,
+        structs,
     }
 }
 
@@ -249,7 +257,37 @@ mod tests {
                         }
                     ]
                 }
-            ]
+            ],
+            "structs": {
+                "InputStruct": {
+                    "documentation": null,
+                    "fields": [
+                        {
+                            "name": "foo",
+                            "documentation": null,
+                            "data_type": { "PrimitiveList": "U8" },
+                            "nullable": false
+                        }
+                    ]
+                },
+                "MyClient": {
+                    "documentation": "The Client State",
+                    "fields": [
+                        {
+                            "name": "id",
+                            "documentation": "The id",
+                            "data_type": { "PrimitiveScalar": "U32" },
+                            "nullable": false
+                        },
+                        {
+                            "name": "name",
+                            "documentation": null,
+                            "data_type": "Str",
+                            "nullable": false
+                        }
+                    ]
+                }
+            }
         }"#,
         )
         .unwrap();
