@@ -12,7 +12,7 @@ pub async fn list_active_playbooks() -> Result<Value, String> {
     let control_socket_path = working_dir.join("control");
 
     if !control_socket_path.exists() {
-        return Ok(serde_json::json!([]));
+        return Err("Daemon control socket does not exist (offline)".to_string());
     }
 
     let client = pyro_daemon::client::DaemonClient::connect(&control_socket_path)

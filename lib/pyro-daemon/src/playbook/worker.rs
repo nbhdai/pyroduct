@@ -149,39 +149,19 @@ impl PlaybookWorker {
 mod tests {
     use super::super::PlaybooksManager;
     use super::*;
-    use pyro_artifacts::build::Builder;
     use pyroduct::PyroRow;
     use pyroduct::transport::socket::playbook::PlaybookClient;
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::HashMap;
     use tempfile::tempdir;
-
-    const TEST_CODE: &str = r#"
-use pyroduct;
-
-#[pyroduct::module(output = message)]
-pub fn call(input: String) -> Result<String> {
-    Ok(format!("Hello: {}", input))
-}
-"#;
 
     #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_playbook_worker_without_capabilities() {
         let cache = std::sync::Arc::new(CacheManager::from_env().await.unwrap());
-        let builder = Builder::from_env(cache.clone()).await.unwrap();
-
-        let playbook = pyro_artifacts::build::AnonPlaybook {
-            package: "test_playbook".to_string(),
-            dependencies: BTreeMap::new(),
-            configurations: std::vec::Vec::new(),
-            source: TEST_CODE.to_string(),
-            interconnect: BTreeMap::new(),
-        };
-
-        let binary = builder
-            .compile_anon(&playbook)
+        let binary = cache
+            .get_named_binary("nbhdai", "integration_error", "0.1.0")
             .await
-            .expect("Valid module should compile");
+            .unwrap();
 
         let tmp_dir = tempdir().unwrap();
         let socket_path = tmp_dir.path().join("playbook.sock");
@@ -220,7 +200,7 @@ pub fn call(input: String) -> Result<String> {
             .await
             .expect("Failed to call playbook client");
 
-        assert_eq!(res.row.get_str("message").unwrap(), "Hello: World");
+        assert_eq!(res.row.get_str("message").unwrap(), "Success: World");
 
         worker.shutdown().await.expect("Failed to shutdown worker");
     }
@@ -229,20 +209,10 @@ pub fn call(input: String) -> Result<String> {
     #[tokio::test]
     async fn test_playbook_worker_plain_call() {
         let cache = std::sync::Arc::new(CacheManager::from_env().await.unwrap());
-        let builder = Builder::from_env(cache.clone()).await.unwrap();
-
-        let playbook = pyro_artifacts::build::AnonPlaybook {
-            package: "test_playbook_plain".to_string(),
-            dependencies: BTreeMap::new(),
-            configurations: std::vec::Vec::new(),
-            source: TEST_CODE.to_string(),
-            interconnect: BTreeMap::new(),
-        };
-
-        let binary = builder
-            .compile_anon(&playbook)
+        let binary = cache
+            .get_named_binary("nbhdai", "integration_error", "0.1.0")
             .await
-            .expect("Valid module should compile");
+            .unwrap();
 
         let tmp_dir = tempdir().unwrap();
         let ident = &binary.spec.ident;
@@ -268,7 +238,7 @@ pub fn call(input: String) -> Result<String> {
             .await
             .expect("Failed to call playbook worker directly");
 
-        assert_eq!(res.get_str("message").unwrap(), "Hello: World");
+        assert_eq!(res.get_str("message").unwrap(), "Success: World");
 
         worker.shutdown().await.expect("Failed to shutdown worker");
     }
@@ -285,20 +255,10 @@ pub fn call(input: String) -> Result<String> {
     #[tokio::test]
     async fn test_playbook_worker_with_callback() {
         let cache = std::sync::Arc::new(CacheManager::from_env().await.unwrap());
-        let builder = Builder::from_env(cache.clone()).await.unwrap();
-
-        let playbook = pyro_artifacts::build::AnonPlaybook {
-            package: "test_playbook_cb".to_string(),
-            dependencies: BTreeMap::new(),
-            configurations: std::vec::Vec::new(),
-            source: TEST_CODE.to_string(),
-            interconnect: BTreeMap::new(),
-        };
-
-        let binary = builder
-            .compile_anon(&playbook)
+        let binary = cache
+            .get_named_binary("nbhdai", "integration_error", "0.1.0")
             .await
-            .expect("Valid module should compile");
+            .unwrap();
 
         let tmp_dir = tempdir().unwrap();
         let socket_path = tmp_dir.path().join("playbook_cb.sock");
@@ -349,7 +309,7 @@ pub fn call(input: String) -> Result<String> {
             .await
             .expect("Failed to call playbook client");
 
-        assert_eq!(res.row.get_str("message").unwrap(), "Hello: World");
+        assert_eq!(res.row.get_str("message").unwrap(), "Success: World");
 
         // Check if callback was successfully called (row_index = 0, so should add 1)
         assert_eq!(CALLBACK_CALL_COUNT.load(Ordering::SeqCst), 1);
@@ -362,57 +322,14 @@ pub fn call(input: String) -> Result<String> {
     async fn test_playbook_worker_with_interconnect() {
         tracing::info!("Starting test_playbook_worker_with_interconnect");
         let cache = std::sync::Arc::new(CacheManager::from_env().await.unwrap());
-        let builder = Builder::from_env(cache.clone()).await.unwrap();
-
-        let target_playbook = pyro_artifacts::build::AnonPlaybook {
-            package: "test_interconnect_target".to_string(),
-            dependencies: BTreeMap::new(),
-            configurations: std::vec::Vec::new(),
-            source: r#"
-use pyroduct;
-
-#[pyroduct::module(output = message)]
-pub fn call(input: String) -> Result<String> {
-    Ok(format!("Hello: {}", input))
-}
-"#
-            .to_string(),
-            interconnect: BTreeMap::new(),
-        };
-
-        let target_binary = builder
-            .compile_anon(&target_playbook)
+        let target_binary = cache
+            .get_named_binary("nbhdai", "interconnect_target", "0.1.0")
             .await
-            .expect("Target module should compile");
-
-        let mut interconnect_map = BTreeMap::new();
-        interconnect_map.insert("target".to_string(), target_binary.spec.ident.clone());
-
-        let caller_playbook = pyro_artifacts::build::AnonPlaybook {
-            package: "test_interconnect_caller".to_string(),
-            dependencies: BTreeMap::new(),
-            configurations: std::vec::Vec::new(),
-            source: r#"
-use pyroduct;
-use pyroduct::call_playbook;
-use pyroduct::format::PyroRow;
-
-#[pyroduct::module(output = message)]
-pub fn call(input: String) -> Result<String> {
-    let target_input = PyroRow::from([("input", input.into())]);
-    let (_session_id, target_output) = call_playbook("target", &target_input);
-    let msg = target_output.get_str("message").unwrap();
-    Ok(format!("Caller received: {}", msg))
-}
-"#
-            .to_string(),
-            interconnect: interconnect_map,
-        };
-
-        let caller_binary = builder
-            .compile_anon(&caller_playbook)
+            .unwrap();
+        let caller_binary = cache
+            .get_named_binary("nbhdai", "interconnect_caller", "0.1.0")
             .await
-            .expect("Caller module should compile");
+            .unwrap();
 
         let tmp_dir = tempdir().unwrap();
         let manager_dir = tmp_dir.path().join("manager_dir");
@@ -475,5 +392,72 @@ pub fn call(input: String) -> Result<String> {
         // 4. Shutdown workers
         manager.stop_playbook("caller").await.unwrap();
         manager.stop_playbook("target").await.unwrap();
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_daemon_auto_resume() {
+        let test_dir = tempdir().unwrap();
+        let working_dir = test_dir.path().to_path_buf();
+
+        let cache = std::sync::Arc::new(CacheManager::from_env().await.unwrap());
+        let binary = cache
+            .get_named_binary("nbhdai", "integration_error", "0.1.0")
+            .await
+            .unwrap();
+
+        let config_path = working_dir.join("config.toml");
+        let pipeline_config = PipelineConfig {
+            playbook: binary.spec.ident.clone(),
+            remote: HashMap::new(),
+            wal_capacity: 10,
+            success_log_retention_secs: 3600,
+            error_log_retention_secs: 86400 * 7,
+            input_dir: working_dir.join("input"),
+            output_dir: working_dir.join("output"),
+            log_dir: working_dir.join("log"),
+        };
+        std::fs::write(
+            &config_path,
+            toml::to_string_pretty(&pipeline_config).unwrap(),
+        )
+        .unwrap();
+
+        let pm1 = Arc::new(PlaybooksManager::new(working_dir.clone()));
+        pm1.start_playbook(
+            "integration_error".to_string(),
+            config_path,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(pm1.active_workers_count().await, 1);
+
+        // Stop pm1 worker to release file and WAL locks
+        let worker = pm1
+            .workers
+            .lock()
+            .await
+            .remove("integration_error")
+            .unwrap();
+        worker.shutdown().await.unwrap();
+
+        // Give background tasks a brief moment to completely drop the database connections and locks
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        drop(pm1);
+
+        let pm2 = Arc::new(PlaybooksManager::new(working_dir.clone()));
+        assert_eq!(pm2.active_workers_count().await, 0);
+
+        pm2.resume_active_playbooks().await.unwrap();
+
+        assert_eq!(pm2.active_workers_count().await, 1);
+        let active = pm2.list_playbooks().await;
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].name, "integration_error");
     }
 }

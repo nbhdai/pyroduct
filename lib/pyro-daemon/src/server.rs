@@ -26,6 +26,11 @@ impl PyroDaemon {
                 .capture("Failed to clean up existing control socket file")?;
         }
 
+        // Auto-resume active playbooks on startup
+        if let Err(e) = self.playbooks_manager.resume_active_playbooks().await {
+            tracing::error!("Failed to resume active playbooks on startup: {:?}", e);
+        }
+
         let listener = PyroListener::bind_unix(&self.control_socket_path)
             .await
             .capture("Failed to bind PyroListener Unix control listener")?;

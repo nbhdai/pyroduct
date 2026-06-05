@@ -97,7 +97,7 @@ async fn test_daemon_control_protocol() {
         other => panic!("Unexpected response for Delete request: {:?}", other),
     }
 
-    // 9c. Compile and start two playbooks, then check Status command
+    // 9c. Load and start two playbooks, then check Status command
     // First, configure CacheManager to inherit from the environment
 
     let cache = std::sync::Arc::new(
@@ -105,36 +105,15 @@ async fn test_daemon_control_protocol() {
             .await
             .unwrap(),
     );
-    let builder = pyro_artifacts::build::Builder::from_env(cache.clone())
+
+    let binary_a = cache
+        .get_named_binary("nbhdai", "counter", "0.1.0")
         .await
         .unwrap();
-
-    let playbook_code = r#"
-use pyroduct;
-
-#[pyroduct::module(output = message)]
-pub fn call(input: String) -> Result<String> {
-    Ok(format!("Hello: {}", input))
-}
-"#;
-
-    let playbook_a = pyro_artifacts::build::AnonPlaybook {
-        package: "playbook_a".to_string(),
-        dependencies: std::collections::BTreeMap::new(),
-        configurations: Vec::new(),
-        source: playbook_code.to_string(),
-        interconnect: std::collections::BTreeMap::new(),
-    };
-    let playbook_b = pyro_artifacts::build::AnonPlaybook {
-        package: "playbook_b".to_string(),
-        dependencies: std::collections::BTreeMap::new(),
-        configurations: Vec::new(),
-        source: playbook_code.to_string(),
-        interconnect: std::collections::BTreeMap::new(),
-    };
-
-    let binary_a = builder.compile_anon(&playbook_a).await.unwrap();
-    let binary_b = builder.compile_anon(&playbook_b).await.unwrap();
+    let binary_b = cache
+        .get_named_binary("nbhdai", "integration_error", "0.1.0")
+        .await
+        .unwrap();
 
     let config_a_path = working_dir.join("config_a.toml");
     let pipeline_config_a = pyroduct::pipeline::factory::PipelineConfig {
@@ -174,7 +153,7 @@ pub fn call(input: String) -> Result<String> {
 
     // Start playbook A
     let req = DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Start {
-        name: "playbook_a".to_string(),
+        name: "counter".to_string(),
         playbook_config_path: config_a_path,
         playbook_socket: None,
         input_dir: None,
@@ -188,7 +167,7 @@ pub fn call(input: String) -> Result<String> {
 
     // Start playbook B
     let req = DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Start {
-        name: "playbook_b".to_string(),
+        name: "integration_error".to_string(),
         playbook_config_path: config_b_path,
         playbook_socket: None,
         input_dir: None,
@@ -212,8 +191,12 @@ pub fn call(input: String) -> Result<String> {
             assert_eq!(active_workers, 2);
             assert_eq!(version, env!("CARGO_PKG_VERSION"));
             assert_eq!(running_playbooks.len(), 2);
-            assert!(running_playbooks.iter().any(|pb| pb.name == "playbook_a"));
-            assert!(running_playbooks.iter().any(|pb| pb.name == "playbook_b"));
+            assert!(running_playbooks.iter().any(|pb| pb.name == "counter"));
+            assert!(
+                running_playbooks
+                    .iter()
+                    .any(|pb| pb.name == "integration_error")
+            );
         }
         other => panic!(
             "Unexpected response for Status request after starting playbooks: {:?}",
@@ -223,12 +206,12 @@ pub fn call(input: String) -> Result<String> {
 
     // Clean up playbooks by stopping them
     let req = DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Stop {
-        name: "playbook_a".to_string(),
+        name: "counter".to_string(),
     });
     let _ = client.request(req).await.unwrap();
 
     let req = DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Stop {
-        name: "playbook_b".to_string(),
+        name: "integration_error".to_string(),
     });
     let _ = client.request(req).await.unwrap();
 
@@ -441,35 +424,18 @@ async fn test_daemon_data_streaming() {
     // Connect
     let client = DaemonClient::connect(&control_socket).await.unwrap();
 
-    // Compile and configure a playbook using the environment's cache
+    // Load and configure a playbook using the environment's cache
 
     let cache = std::sync::Arc::new(
         pyro_artifacts::cache::CacheManager::from_env()
             .await
             .unwrap(),
     );
-    let builder = pyro_artifacts::build::Builder::from_env(cache.clone())
+
+    let binary_a = cache
+        .get_named_binary("nbhdai", "integration_error", "0.1.0")
         .await
         .unwrap();
-
-    let playbook_code = r#"
-use pyroduct;
-
-#[pyroduct::module(output = message)]
-pub fn call(input: String) -> Result<String> {
-    Ok(format!("Hello: {}", input))
-}
-"#;
-
-    let playbook_stream_test = pyro_artifacts::build::AnonPlaybook {
-        package: "playbook_stream_test".to_string(),
-        dependencies: std::collections::BTreeMap::new(),
-        configurations: Vec::new(),
-        source: playbook_code.to_string(),
-        interconnect: std::collections::BTreeMap::new(),
-    };
-
-    let binary_a = builder.compile_anon(&playbook_stream_test).await.unwrap();
 
     let config_a_path = working_dir.join("config_a.toml");
     let pipeline_config_a = pyroduct::pipeline::factory::PipelineConfig {
@@ -491,7 +457,7 @@ pub fn call(input: String) -> Result<String> {
 
     // Start playbook
     let req = DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Start {
-        name: "playbook_stream_test".to_string(),
+        name: "integration_error".to_string(),
         playbook_config_path: config_a_path,
         playbook_socket: None,
         input_dir: None,
@@ -505,7 +471,7 @@ pub fn call(input: String) -> Result<String> {
 
     // Now start streaming playbook
     let mut rx = client
-        .stream_playbook("playbook_stream_test".to_string())
+        .stream_playbook("integration_error".to_string())
         .await
         .unwrap();
 
@@ -515,7 +481,7 @@ pub fn call(input: String) -> Result<String> {
         tokio::time::sleep(Duration::from_millis(100)).await;
         let payload = serde_json::json!({ "input": "streaming" });
         client_clone
-            .call_playbook("playbook_stream_test".to_string(), payload)
+            .call_playbook("integration_error".to_string(), payload)
             .await
             .unwrap();
     });
@@ -527,7 +493,7 @@ pub fn call(input: String) -> Result<String> {
     let msg_val = row.get("message").unwrap();
     match msg_val {
         pyroduct::PyroValue::Str(s) => {
-            assert_eq!(s.as_ref(), "Hello: streaming");
+            assert_eq!(s.as_ref(), "Success: streaming");
         }
         other => panic!("Unexpected value type for message: {:?}", other),
     }
@@ -562,34 +528,17 @@ async fn test_daemon_paginated_get_request() {
     // Connect
     let client = DaemonClient::connect(&control_socket).await.unwrap();
 
-    // Compile and configure a playbook
+    // Load and configure a playbook
     let cache = std::sync::Arc::new(
         pyro_artifacts::cache::CacheManager::from_env()
             .await
             .unwrap(),
     );
-    let builder = pyro_artifacts::build::Builder::from_env(cache.clone())
+
+    let binary = cache
+        .get_named_binary("nbhdai", "integration_error", "0.1.0")
         .await
         .unwrap();
-
-    let playbook_code = r#"
-use pyroduct;
-
-#[pyroduct::module(output = message)]
-pub fn call(input: String) -> Result<String> {
-    Ok(format!("Hello: {}", input))
-}
-"#;
-
-    let playbook = pyro_artifacts::build::AnonPlaybook {
-        package: "playbook_get_data_test".to_string(),
-        dependencies: std::collections::BTreeMap::new(),
-        configurations: Vec::new(),
-        source: playbook_code.to_string(),
-        interconnect: std::collections::BTreeMap::new(),
-    };
-
-    let binary = builder.compile_anon(&playbook).await.unwrap();
 
     let config_path = working_dir.join("config.toml");
     let pipeline_config = pyroduct::pipeline::factory::PipelineConfig {
@@ -611,7 +560,7 @@ pub fn call(input: String) -> Result<String> {
 
     // Start playbook
     let req = DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Start {
-        name: "playbook_get_data_test".to_string(),
+        name: "integration_error".to_string(),
         playbook_config_path: config_path,
         playbook_socket: None,
         input_dir: None,
@@ -622,7 +571,10 @@ pub fn call(input: String) -> Result<String> {
     // Call playbook multiple times to produce data
     for i in 0..5 {
         let payload = serde_json::json!({ "input": format!("call-{}", i) });
-        client.call_playbook("playbook_get_data_test".to_string(), payload).await.unwrap();
+        client
+            .call_playbook("integration_error".to_string(), payload)
+            .await
+            .unwrap();
     }
 
     // Give some time for the records to settle/flush if needed
@@ -630,12 +582,13 @@ pub fn call(input: String) -> Result<String> {
 
     // Call paginated get request on running playbook: offset=1, limit=3
     let ipc_bytes = client
-        .get_playbook_data("playbook_get_data_test".to_string(), 1, 3)
+        .get_playbook_data("integration_error".to_string(), 1, 3)
         .await
         .unwrap();
 
     // Parse the IPC bytes back to RecordBatch
-    let mut reader = arrow::ipc::reader::FileReader::try_new(std::io::Cursor::new(ipc_bytes), None).unwrap();
+    let mut reader =
+        arrow::ipc::reader::FileReader::try_new(std::io::Cursor::new(ipc_bytes), None).unwrap();
     let batch = reader.next().unwrap().unwrap();
     assert_eq!(batch.num_rows(), 3);
 
@@ -647,11 +600,10 @@ pub fn call(input: String) -> Result<String> {
         .downcast_ref::<arrow::array::StringArray>()
         .unwrap();
 
-    assert_eq!(message_col.value(0), "Hello: call-1");
-    assert_eq!(message_col.value(1), "Hello: call-2");
-    assert_eq!(message_col.value(2), "Hello: call-3");
+    assert_eq!(message_col.value(0), "Success: call-1");
+    assert_eq!(message_col.value(1), "Success: call-2");
+    assert_eq!(message_col.value(2), "Success: call-3");
 
     // Clean up
     daemon_handle.abort();
 }
-

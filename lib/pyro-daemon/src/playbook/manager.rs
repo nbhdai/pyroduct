@@ -453,6 +453,53 @@ impl PlaybooksManager {
         guard.len()
     }
 
+    pub async fn resume_active_playbooks(self: &Arc<Self>) -> Result<()> {
+        let playbooks = self.db.list_playbooks().await?;
+        let mut to_resume: Vec<String> = playbooks
+            .into_iter()
+            .filter(|(_name, status, _config, _socket)| status == "running")
+            .map(|(name, _, _, _)| name)
+            .collect();
+
+        let mut attempts = 0;
+        let max_attempts = to_resume.len() + 1;
+
+        while !to_resume.is_empty() && attempts < max_attempts {
+            let mut failed = Vec::new();
+            let mut succeeded_any = false;
+
+            for name in to_resume {
+                match self.resume_playbook(name.clone()).await {
+                    Ok(()) => {
+                        tracing::info!(name, "Successfully resumed running playbook on daemon startup");
+                        succeeded_any = true;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            name,
+                            error = ?e,
+                            "Failed to resume playbook, will retry if dependencies are resolved"
+                        );
+                        failed.push(name);
+                    }
+                }
+            }
+
+            to_resume = failed;
+            attempts += 1;
+
+            if !succeeded_any && !to_resume.is_empty() {
+                tracing::error!(
+                    remaining = ?to_resume,
+                    "Circular or unresolved dependencies preventing resumption of remaining playbooks"
+                );
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn add_http_callback(&self, source: String, url: String) -> Result<uuid::Uuid> {
         let uuid = uuid::Uuid::new_v4();
         self.db
