@@ -35,7 +35,7 @@ async fn my_session_callback(session_id: usize, row: &PyroRow<'_>) {
 static DIFF_CALLBACK_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 async fn my_session_diff_callback(session_id: usize, row: &PyroRow<'_>) {
-    assert_eq!(session_id, 42);
+    assert_eq!(session_id, 48);
     // In SessionDiffPipeline, rolled_up_row has "inputs" and "outputs" fields
     assert!(row.get("inputs").is_some());
     assert!(row.get("outputs").is_some());

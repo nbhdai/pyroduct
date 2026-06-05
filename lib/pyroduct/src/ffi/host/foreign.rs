@@ -47,9 +47,9 @@ struct ForeignMethod {
 impl ForeignMethod {
     fn new(method: &MethodExport) -> Result<Self, CapturedError> {
         if method.name.is_null() {
-            return Err(
-                CapturedError::new("Found a method with an empty name (null pointer)"),
-            );
+            return Err(CapturedError::new(
+                "Found a method with an empty name (null pointer)",
+            ));
         }
         if method.name_len == 0 {
             return Err(CapturedError::new("Found a method with an empty name"));

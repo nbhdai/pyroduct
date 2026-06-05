@@ -108,7 +108,6 @@ pub struct {0}Server;
 impl {0}Server {{
     type Config = {0}Config;
     type Client = {0}Client;
-    type Error = String;
 
     fn new(_config: Option<{0}Config>) -> Self {{
         Self
@@ -116,11 +115,11 @@ impl {0}Server {{
 
     fn reset(&mut self) {{}}
 
-    fn new_client(&self, _client: &{0}Client) -> Result<(), String> {{
+    fn register(&self, _client: &{0}Client) -> Result<(), ::pyroduct::CapturedError> {{
         Ok(())
     }}
 
-    fn example_method(&self, _client: &{0}Client) -> Result<String, String> {{
+    fn example_method(&self, _client: &{0}Client) -> Result<String, ::pyroduct::CapturedError> {{
         Ok("Hello from capability".to_string())
     }}
 }}

@@ -107,7 +107,7 @@ impl Pipeline {
 
                 // Execute callbacks
                 for (_, cb) in &mut self.callbacks {
-                    cb.execute(row_index, input).await;
+                    cb.execute(row_index, &output.row).await;
                 }
 
                 self.output_manager

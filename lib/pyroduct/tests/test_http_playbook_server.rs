@@ -3,17 +3,23 @@ use pyro_artifacts::{
     build::{AnonPlaybook, Builder},
     cache::CacheManager,
 };
-use pyroduct::{pipeline::{PipelineConfig, PipelineServer}, transport::http::run as run_http};
+use pyroduct::{
+    pipeline::{PipelineConfig, PipelineServer},
+    transport::http::run as run_http,
+};
 use std::collections::{BTreeMap, HashMap};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 const CODE: &str = r#"
-//! Test module: Uses state counter capability and receives string input.
+//! Test module 1: Uses test_cap1 counter capability
+//!
+//! Simple module that increments a counter and returns the result.
+use pyroduct::Capture;
 use state::{CounterClient, CounterClientMethods};
 
 #[pyroduct::module(output = (count, incremented))]
 pub fn call(input: &str) -> Result<(u64, u64)> {
-    let start: u64 = input.parse().map_err(|e| format!("Parse error: {}", e))?;
+    let start: u64 = input.parse().capture("Parse error")?;
 
     let client = CounterClient { start_value: start }.register()?;
 

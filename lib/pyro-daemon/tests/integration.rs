@@ -522,7 +522,7 @@ pub fn call(input: String) -> Result<String> {
 
     // Receive the streamed row
     let row = rx.recv().await.unwrap().unwrap();
-
+    println!("{:?}", row);
     // Verify the contents of the row
     let msg_val = row.get("message").unwrap();
     match msg_val {

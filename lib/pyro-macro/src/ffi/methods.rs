@@ -142,7 +142,7 @@ impl ImplMethod {
         };
 
         // 4. Validate return type
-        let output = FnOutput::parse(&sig.output, class.error_tn.as_ref())?;
+        let output = FnOutput::parse(&sig.output)?;
 
         Ok(Self {
             name: FnName(name),
@@ -241,8 +241,8 @@ impl ImplMethod {
         let method_call = quote!(state.#fn_name(#(#call_args),*));
 
         // Return type and body wrapper
-        let (ffi_ret, body) = match (self.is_async, &self.class.error_tn) {
-            (true, Some(_)) => (
+        let (ffi_ret, body) = if self.is_async {
+            (
                 quote!(::pyroduct::ffi::FuturePyroView),
                 quote! {
                     ::pyroduct::ffi::guest::execute_safe_async(|| async move {
@@ -252,8 +252,9 @@ impl ImplMethod {
                         ::pyroduct::ffi::guest::serialize_result(#method_call.await)
                     }, capability_state_ptr.object_id, mux_id)
                 },
-            ),
-            (false, Some(_)) => (
+            )
+        } else {
+            (
                 quote!(::pyroduct::format::PyroViewPtr),
                 quote! {
                     ::pyroduct::ffi::guest::execute_safe(|| {
@@ -263,29 +264,7 @@ impl ImplMethod {
                         ::pyroduct::ffi::guest::serialize_result(#method_call)
                     }, capability_state_ptr.object_id, mux_id)
                 },
-            ),
-            (true, None) => (
-                quote!(::pyroduct::ffi::FuturePyroView),
-                quote! {
-                    ::pyroduct::ffi::guest::execute_safe_async(|| async move {
-                        #state_retrieval
-                        #client_retrieval
-                        #input_retrieval
-                        ::pyroduct::ffi::guest::serialize_output(#method_call.await)
-                    }, capability_state_ptr.object_id, mux_id)
-                },
-            ),
-            (false, None) => (
-                quote!(::pyroduct::format::PyroViewPtr),
-                quote! {
-                    ::pyroduct::ffi::guest::execute_safe(|| {
-                        #state_retrieval
-                        #client_retrieval
-                        #input_retrieval
-                        ::pyroduct::ffi::guest::serialize_output(#method_call)
-                    }, capability_state_ptr.object_id, mux_id)
-                },
-            ),
+            )
         };
 
         quote! {
@@ -356,47 +335,15 @@ impl ImplMethod {
         let i_fill = self
             .inputs
             .input_serialization(&self.name, Some(&self.class));
-        match &self.class.error_tn {
-            Some(err_tn) => {
-                let output_type = match &self.output {
-                    FnOutput::Result(output_type, _) => output_type,
-                    _ => unreachable!(),
-                };
-                let output_return = &self.output.to_return_type();
-                quote! {
-                    #(#attrs)*
-                    fn #name(#(#args),*) #output_return {
-                        #i_struct
+        let output_type = &self.output.ty();
+        let output_return = &self.output.to_return_type();
 
-                        self.__call_result_from_wasm::<#i_name, #output_type, #err_tn, _>(#i_fill, #wasm_call)
-                    }
-                }
-            }
-            None => {
-                let output_type = &self.output.ty();
-                let output_return = &self.output.to_return_type();
-                match self.output.err() {
-                    Some(err) => {
-                        quote! {
-                            #(#attrs)*
-                            fn #name(#(#args),*) #output_return {
-                                #i_struct
+        quote! {
+            #(#attrs)*
+            fn #name(#(#args),*) #output_return {
+                #i_struct
 
-                                self.__call_result_from_wasm::<#i_name, #output_type, #err, _>(#i_fill, #wasm_call)
-                            }
-                        }
-                    }
-                    None => {
-                        quote! {
-                            #(#attrs)*
-                            fn #name(#(#args),*) #output_return {
-                                #i_struct
-
-                                self.__call_from_wasm::<#i_name, #output_type, _>(#i_fill, #wasm_call)
-                            }
-                        }
-                    }
-                }
+                self.__call_result_from_wasm::<#i_name, #output_type, _>(#i_fill, #wasm_call)
             }
         }
     }
@@ -427,25 +374,25 @@ mod tests {
     use quote::format_ident;
     use syn::parse_quote;
 
-    fn mock_class(error: Option<&str>) -> Rc<CapabilityIdent> {
+    fn mock_class() -> Rc<CapabilityIdent> {
         Rc::new(CapabilityIdent {
             pkg_name: "cap_name".to_string(),
             pkg_version: "0.1.0".to_string(),
             config_tn: None,
             state_tn: format_ident!("MyServer"),
             client_tn: format_ident!("MyClient"),
-            error_tn: error.map(|s| syn::parse_str(s).unwrap()),
         })
     }
 
     #[test]
     fn test_server_method_preserves_mutability() {
-        let class = mock_class(None);
+        let class = mock_class();
 
         // 1. Define Input: Function with &mut self
         let f: ImplItemFn = parse_quote! {
-            fn update(&mut self, ctx: &MyClient, val: u32) {
+            fn update(&mut self, ctx: &MyClient, val: u32) -> Result<(), CapturedError> {
                 self.val = val;
+                Ok(())
             }
         };
 
@@ -456,8 +403,9 @@ mod tests {
         // 3. Define Expected Output
         // The server method MUST preserve &mut self
         let expected = quote! {
-            pub fn update(&mut self, ctx: &MyClient, val: u32) {
+            pub fn update(&mut self, ctx: &MyClient, val: u32) -> Result<(), ::pyroduct::CapturedError> {
                 self.val = val;
+                Ok(())
             }
         };
 
@@ -466,12 +414,12 @@ mod tests {
 
     #[test]
     fn test_client_method_forces_immutability() {
-        let class = mock_class(None);
+        let class = mock_class();
         let module = format_ident!("wasm_bridge");
 
         // 1. Define Input: Function with &mut self
         let f: ImplItemFn = parse_quote! {
-            fn update(&mut self, ctx: &MyClient, val: u32) { }
+            fn update(&mut self, ctx: &MyClient, val: u32) -> Result<(), CapturedError> { }
         };
 
         // 2. Parse and Generate Output
@@ -485,11 +433,11 @@ mod tests {
 
     #[test]
     fn test_parse_validates_client_arg_name_capture() {
-        let class = mock_class(None);
+        let class = mock_class();
 
         // 1. Define Input: Custom client name 'c'
         let f: ImplItemFn = parse_quote! {
-            fn get(&self, c: &MyClient) -> u32 { 10 }
+            fn get(&self, c: &MyClient) -> Result<u32, CapturedError> { Ok(10) }
         };
 
         // 2. Parse and Generate
@@ -498,7 +446,7 @@ mod tests {
 
         // 3. Expected: parameter name 'c' is preserved in signature
         let expected = quote! {
-            pub fn get(&self, c: &MyClient) -> u32 { 10 }
+            pub fn get(&self, c: &MyClient) -> Result<u32, ::pyroduct::CapturedError> { Ok(10) }
         };
 
         assert_code_eq_token(&output, &expected);
@@ -506,11 +454,11 @@ mod tests {
 
     #[test]
     fn test_reject_value_self() {
-        let class = mock_class(None);
+        let class = mock_class();
 
         // 1. Define Input: self by value
         let f: ImplItemFn = parse_quote! {
-            fn consume(self, _c: &MyClient) {}
+            fn consume(self, _c: &MyClient) -> Result<(), CapturedError> {}
         };
 
         // 2. Assert Error
@@ -518,14 +466,10 @@ mod tests {
         assert!(err.to_string().contains("not value self"));
     }
 
-    fn mock_method_base(name: &str, is_async: bool, has_err: bool) -> ImplMethod {
-        let (error_tn, output) = if has_err {
-            (
-                Some(parse_quote!(MockError)),
-                FnOutput::Result(parse_quote!(u32), parse_quote!(MockError)),
-            )
-        } else {
-            (None, FnOutput::Single(parse_quote!(u32)))
+    fn mock_method_base(name: &str, is_async: bool) -> ImplMethod {
+        let output = FnOutput {
+            ok_type: parse_quote!(u32),
+            err_type: parse_quote!(::pyroduct::CapturedError),
         };
         let class = Rc::new(CapabilityIdent {
             pkg_name: "cap_name".to_string(),
@@ -533,7 +477,6 @@ mod tests {
             config_tn: None,
             state_tn: format_ident!("MockServer"),
             client_tn: format_ident!("MockClient"),
-            error_tn,
         });
 
         ImplMethod {
@@ -541,7 +484,6 @@ mod tests {
             class,
             client_param: format_ident!("client"),
             inputs: InputParams::None,
-            // Default to u32 as seen in test expectations
             output,
             is_async,
             is_mutable_self: false,
@@ -555,7 +497,7 @@ mod tests {
     // ========================================================================
     #[test]
     fn test_case_4_async_no_input_with_client() {
-        let ffi = mock_method_base("test_async_client", true, false);
+        let ffi = mock_method_base("test_async_client", true);
 
         let capability_tokens = ffi.generate_server_ffi();
         let module_tokens = ffi.generate_client_method(None);
@@ -584,7 +526,7 @@ mod tests {
                         Ok(buf) => buf,
                         Err(err) => return err.encode().view(),
                     };
-                    ::pyroduct::ffi::guest::serialize_output(state.test_async_client(&client).await)
+                    ::pyroduct::ffi::guest::serialize_result(state.test_async_client(&client).await)
                 }, capability_state_ptr.object_id, mux_id)
             }
         };
@@ -593,8 +535,8 @@ mod tests {
 
         let output_module = quote! {
             impl Mod {
-                fn test_async_client(&self) -> u32 {
-                    self.__call_from_wasm::<
+                fn test_async_client(&self) -> Result<u32, ::pyroduct::CapturedError> {
+                    self.__call_result_from_wasm::<
                             (),
                             u32,
                             _,
@@ -623,7 +565,7 @@ mod tests {
     // ========================================================================
     #[test]
     fn test_case_5_sync_single_input_with_client() {
-        let mut ffi = mock_method_base("test_sync_client_input", false, true);
+        let mut ffi = mock_method_base("test_sync_client_input", false);
         ffi.inputs = InputParams::One(format_ident!("x"), parse_quote!(i32));
         let capability_tokens = ffi.generate_server_ffi();
         let module_tokens = ffi.generate_client_method(None);
@@ -666,11 +608,10 @@ mod tests {
 
         let output_module = quote! {
             impl Mod {
-                fn test_sync_client_input(&self, x: i32) -> Result<u32, MockError> {
+                fn test_sync_client_input(&self, x: i32) -> Result<u32, ::pyroduct::CapturedError> {
                     self.__call_result_from_wasm::<
                             i32,
                             u32,
-                            MockError,
                             _,
                         >(
                         Some(&x),
@@ -696,7 +637,7 @@ mod tests {
     // ========================================================================
     #[test]
     fn test_case_full_sci() {
-        let mut ffi = mock_method_base("test_sci_multi", true, false);
+        let mut ffi = mock_method_base("test_sci_multi", true);
         ffi.inputs = InputParams::Many(vec![
             (format_ident!("a"), parse_quote!(i32)),
             (format_ident!("b"), parse_quote!(i32)),
@@ -740,7 +681,7 @@ mod tests {
                         Ok(buf) => buf,
                         Err(err) => return err.encode().view(),
                     };
-                    ::pyroduct::ffi::guest::serialize_output(state.test_sci_multi(&client, input.a, input.b).await)
+                    ::pyroduct::ffi::guest::serialize_result(state.test_sci_multi(&client, input.a, input.b).await)
                 }, capability_state_ptr.object_id, mux_id)
             }
         };
@@ -750,13 +691,13 @@ mod tests {
 
         let output_module = quote! {
             impl Mod {
-                fn test_sci_multi(&self, a: i32, b: i32) -> u32 {
+                fn test_sci_multi(&self, a: i32, b: i32) -> Result<u32, ::pyroduct::CapturedError> {
                     #[::pyroduct::magma]
                     struct p__MockServer__TestSciMulti__Input {
                         pub a: i32,
                         pub b: i32,
                     }
-                    self.__call_from_wasm::<
+                    self.__call_result_from_wasm::<
                             p__MockServer__TestSciMulti__Input,
                             u32,
                             _,

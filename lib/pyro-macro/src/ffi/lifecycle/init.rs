@@ -2,7 +2,7 @@
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Error, FnArg, GenericArgument, Ident, ImplItemFn, Pat, PathArguments, ReturnType, Type};
+use syn::{Error, FnArg, GenericArgument, Ident, ImplItemFn, Pat, PathArguments, Type};
 
 use heck::AsSnakeCase;
 
@@ -28,17 +28,14 @@ impl InitFn {
             ));
         }
 
-        // 2. Validate return type is Self
-        match &sig.output {
-            ReturnType::Type(_, ty) => {
-                let ty_str = quote!(#ty).to_string().replace(" ", "");
-                if ty_str != "Self" {
-                    return Err(Error::new_spanned(&sig.output, "fn new must return Self"));
-                }
-            }
-            ReturnType::Default => {
-                return Err(Error::new_spanned(sig, "fn new must return Self"));
-            }
+        // 2. Validate return type is Result<Self, CapturedError> or Result<Self>
+        let (ok_ty, _err_ty) = crate::ffi::paths::verify_result_return_type(&sig.output)?;
+        let ok_str = quote!(#ok_ty).to_string().replace(" ", "");
+        if ok_str != "Self" {
+            return Err(Error::new_spanned(
+                &sig.output,
+                "fn new must return Result<Self, CapturedError> or Result<Self>",
+            ));
         }
 
         // 3. Validate no &self receiver
@@ -164,13 +161,19 @@ impl InitFn {
                         Ok(config) => config,
                         Err(err) => return ::pyroduct::ffi::InitResult::init_err(err, object_id),
                     };
-                    ::pyroduct::ffi::InitResult::init_ok(#server::new(config), object_id)
+                    match #server::new(config) {
+                        Ok(state) => ::pyroduct::ffi::InitResult::init_ok(state, object_id),
+                        Err(err) => ::pyroduct::ffi::InitResult::init_err(::pyroduct::PyroError::CodePanic(err), object_id),
+                    }
                 }, object_id)},
             ),
             (None, false) => (
                 quote!(::pyroduct::ffi::InitResult),
                 quote! {::pyroduct::ffi::guest::safe_lifecycle::execute_safe_init(|object_id| {
-                    ::pyroduct::ffi::InitResult::init_ok(#server::new(), object_id)
+                    match #server::new() {
+                        Ok(state) => ::pyroduct::ffi::InitResult::init_ok(state, object_id),
+                        Err(err) => ::pyroduct::ffi::InitResult::init_err(::pyroduct::PyroError::CodePanic(err), object_id),
+                    }
                 }, object_id)},
             ),
             (Some(c), true) => (
@@ -180,13 +183,19 @@ impl InitFn {
                         Ok(config) => config,
                         Err(err) => return ::pyroduct::ffi::InitResult::init_err(err, object_id),
                     };
-                    ::pyroduct::ffi::InitResult::init_ok(#server::new(config).await, object_id)
+                    match #server::new(config).await {
+                        Ok(state) => ::pyroduct::ffi::InitResult::init_ok(state, object_id),
+                        Err(err) => ::pyroduct::ffi::InitResult::init_err(::pyroduct::PyroError::CodePanic(err), object_id),
+                    }
                 }, object_id)},
             ),
             (None, true) => (
                 quote!(::pyroduct::ffi::FutureInitResult),
                 quote! { ::pyroduct::ffi::guest::safe_lifecycle::execute_safe_async_init(|object_id| async move {
-                    ::pyroduct::ffi::InitResult::init_ok(#server::new().await, object_id)
+                    match #server::new().await {
+                        Ok(state) => ::pyroduct::ffi::InitResult::init_ok(state, object_id),
+                        Err(err) => ::pyroduct::ffi::InitResult::init_err(::pyroduct::PyroError::CodePanic(err), object_id),
+                    }
                 }, object_id)},
             ),
         };
@@ -234,7 +243,7 @@ impl InitFn {
 
         quote! {
             #(#attrs)*
-            pub #async_kw fn new(#params) -> Self #body
+            pub #async_kw fn new(#params) -> Result<Self, ::pyroduct::CapturedError> #body
         }
     }
 }
@@ -254,8 +263,8 @@ mod tests {
 
         // 2. Simulate the user's implementation (Using Option, and variable name 'cfg')
         let item: ImplItemFn = parse_quote! {
-            fn new(cfg: Option<GreeterConfig>) -> Self {
-                Self { count: 0 }
+            fn new(cfg: Option<GreeterConfig>) -> Result<Self, CapturedError> {
+                Ok(Self { count: 0 })
             }
         };
 
@@ -277,7 +286,10 @@ mod tests {
                         Ok(config) => config,
                         Err(err) => return ::pyroduct::ffi::InitResult::init_err(err, object_id),
                     };
-                    ::pyroduct::ffi::InitResult::init_ok(GreeterServer::new(config), object_id)
+                    match GreeterServer::new(config) {
+                        Ok(state) => ::pyroduct::ffi::InitResult::init_ok(state, object_id),
+                        Err(err) => ::pyroduct::ffi::InitResult::init_err(::pyroduct::PyroError::CodePanic(err), object_id),
+                    }
                 }, object_id)
             }
         };
@@ -292,8 +304,8 @@ mod tests {
 
         // 2. User implementation
         let item: ImplItemFn = parse_quote! {
-            async fn new(val: Option<GreeterConfig>) -> Self {
-                Self { count: 0 }
+            async fn new(val: Option<GreeterConfig>) -> Result<Self, CapturedError> {
+                Ok(Self { count: 0 })
             }
         };
 
@@ -314,7 +326,10 @@ mod tests {
                         Ok(config) => config,
                         Err(err) => return ::pyroduct::ffi::InitResult::init_err(err, object_id),
                     };
-                    ::pyroduct::ffi::InitResult::init_ok(GreeterServer::new(config).await, object_id)
+                    match GreeterServer::new(config).await {
+                        Ok(state) => ::pyroduct::ffi::InitResult::init_ok(state, object_id),
+                        Err(err) => ::pyroduct::ffi::InitResult::init_err(::pyroduct::PyroError::CodePanic(err), object_id),
+                    }
                 }, object_id)
             }
         };
@@ -327,7 +342,7 @@ mod tests {
         let config_type: Type = parse_quote!(MyConfig);
         // User uses 'settings' instead of 'config'
         let item: ImplItemFn = parse_quote! {
-            fn new(settings: Option<MyConfig>) -> Self { Self }
+            fn new(settings: Option<MyConfig>) -> Result<Self, CapturedError> { Ok(Self) }
         };
 
         let init_fn =
@@ -344,15 +359,17 @@ mod tests {
         let config_type: Type = parse_quote!(MyConfig);
 
         // Case: Not Option<T>
-        let item: ImplItemFn = parse_quote! { fn new(c: MyConfig) -> Self { Self } };
+        let item: ImplItemFn =
+            parse_quote! { fn new(c: MyConfig) -> Result<Self, CapturedError> { Ok(Self) } };
         assert!(InitFn::parse(Some(config_type.clone()), &item).is_err());
 
         // Case: Not Option<T> (Reference)
-        let item: ImplItemFn = parse_quote! { fn new(c: &MyConfig) -> Self { Self } };
+        let item: ImplItemFn =
+            parse_quote! { fn new(c: &MyConfig) -> Result<Self, CapturedError> { Ok(Self) } };
         assert!(InitFn::parse(Some(config_type.clone()), &item).is_err());
 
         // Case: Option<WrongType>
-        let item: ImplItemFn = parse_quote! { fn new(c: Option<WrongConfig>) -> Self { Self } };
+        let item: ImplItemFn = parse_quote! { fn new(c: Option<WrongConfig>) -> Result<Self, CapturedError> { Ok(Self) } };
         assert!(InitFn::parse(Some(config_type.clone()), &item).is_err());
     }
 }

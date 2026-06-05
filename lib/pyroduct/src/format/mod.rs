@@ -88,21 +88,20 @@
 //!
 //! ## Results
 //!
-//! `Result<T, E>` is handled natively through the wire format's **Status** header field.
+//! `Result<T, CapturedError>` is handled natively through the wire format's **Status** header field.
 //! Instead of serializing the `Result` enum wrapper, the variant discriminant is lifted into
 //! the header so the receiver can distinguish success from failure before parsing the payload.
 //!
-//! Use the [`BridgeableResult`] trait (automatically implemented for `Result<T, E>` where
-//! both `T` and `E` are `Bridgeable`):
+//! `Result<T, CapturedError>` implements `Bridgeable` directly where `T` is `Bridgeable`:
 //!
-//! - `result.ship()` — serializes `Ok(T)` with Status `ValidData` (0) or `Err(E)` with
-//!   Status `UserError` (1).
-//! - `Result::<T, E>::expose(vec)` — returns `Result<Result<TypedBuf<T>, TypedBuf<E>>, PyroError>`.
+//! - `result.ship()` — serializes `Ok(T)` with the status of `T`'s format or `Err(CapturedError)` with
+//!   Status `CodeError` (1).
+//! - `Result::<T, CapturedError>::expose(vec)` — returns `Result<ResultWrapper<T>, PyroError>`.
 //!
 //! ### Example: Result transport
 //!
 //! ```rust,ignore
-//! use pyroduct::{magma, format::{Bridgeable, BridgeableResult}};
+//! use pyroduct::{magma, format::Bridgeable};
 //!
 //! #[magma]
 //! #[derive(Debug, PartialEq)]
@@ -111,23 +110,16 @@
 //!     payload: String,
 //! }
 //!
-//! #[magma]
-//! #[derive(Debug, PartialEq)]
-//! struct ApiError {
-//!     code: u16,
-//!     reason: String,
-//! }
-//!
-//! let success: Result<Response, ApiError> = Ok(Response {
+//! let success: Result<Response, pyroduct::CapturedError> = Ok(Response {
 //!     id: 101,
 //!     payload: "Data retrieved".to_string(),
 //! });
 //!
-//! // Ship the Result — Status = 0 (ValidData)
+//! // Ship the Result
 //! let vec = success.ship()?;
 //!
-//! // Expose — discriminate via the header, then zero-copy access
-//! match <Result<Response, ApiError>>::expose(vec)? {
+//! // Expose — discriminate via the header, then access
+//! match &*<Result<Response, pyroduct::CapturedError>>::expose(vec)? {
 //!     Ok(typed_ok)  => assert_eq!(typed_ok.id, 101),
 //!     Err(typed_err) => panic!("expected success"),
 //! }

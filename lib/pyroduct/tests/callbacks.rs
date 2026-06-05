@@ -28,7 +28,7 @@ static CALLBACK_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 async fn my_callback(row_index: usize, row: &PyroRow<'_>) {
     assert_eq!(row_index, 0);
-    assert_eq!(row.get_str("input").unwrap(), "hello");
+    assert_eq!(row.get_str("message").unwrap(), "Success: hello");
     CALLBACK_COUNTER.fetch_add(1, Ordering::SeqCst);
 }
 
@@ -36,7 +36,7 @@ static ENUM_CALLBACK_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 async fn my_enum_callback(row_index: usize, row: &PyroRow<'_>) {
     assert_eq!(row_index, 0);
-    assert_eq!(row.get_str("input").unwrap(), "hello");
+    assert_eq!(row.get_str("message").unwrap(), "Success: hello");
     ENUM_CALLBACK_COUNTER.fetch_add(1, Ordering::SeqCst);
 }
 

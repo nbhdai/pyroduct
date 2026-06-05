@@ -2,10 +2,10 @@
 
 use tracing::{debug, trace, warn};
 
-use crate::PyroError;
 use crate::format::format::{Parser, PyroFormat, PyroHeaderValues, PyroZeroCopyFormat};
 use crate::format::header::{PyroData, PyroHeader, PyroHeaderMut};
 use crate::format::{ParseError, PyroRef, PyroVec, PyroView};
+use crate::{CapturedError, PyroError};
 // =============================================================================
 // Bridgeable — default-format convenience (every format)
 // =============================================================================
@@ -130,10 +130,9 @@ where
 // BridgeableResult — Result<T, E> transport (unchanged, uses PyroFormat only)
 // =============================================================================
 
-pub trait BridgeableResult<T, E>
+pub trait BridgeableResult<T>
 where
     T: Bridgeable,
-    E: Bridgeable,
 {
     fn ship(&self) -> Result<PyroVec, PyroError>;
 
@@ -142,16 +141,15 @@ where
     ) -> Result<
         Result<
             <<T::Format as PyroFormat<T>>::Parser as Parser<PyroView, T>>::TypedWrapper,
-            <<E::Format as PyroFormat<E>>::Parser as Parser<PyroView, E>>::TypedWrapper,
+            CapturedError,
         >,
         PyroError,
     >;
 }
 
-impl<T, E> BridgeableResult<T, E> for Result<T, E>
+impl<T> BridgeableResult<T> for Result<T, CapturedError>
 where
     T: Bridgeable,
-    E: Bridgeable,
 {
     fn ship(&self) -> Result<PyroVec, PyroError> {
         match self {
@@ -167,14 +165,9 @@ where
                 Ok(vec)
             }
             Err(error) => {
-                trace!(
-                    err_type = std::any::type_name::<E>(),
-                    variant = "Err",
-                    "shipping Result::Err"
-                );
-                let mut vec = E::ship(error)?;
+                let mut vec = error.encode();
                 vec.set_status(
-                    <<E as Bridgeable>::Format as PyroFormat<E>>::HeaderValues::ERR_CODE,
+                    <<T as Bridgeable>::Format as PyroFormat<T>>::HeaderValues::ERR_CODE,
                 );
                 Ok(vec)
             }
@@ -186,7 +179,7 @@ where
     ) -> Result<
         Result<
             <<T::Format as PyroFormat<T>>::Parser as Parser<PyroView, T>>::TypedWrapper,
-            <<E::Format as PyroFormat<E>>::Parser as Parser<PyroView, E>>::TypedWrapper,
+            CapturedError,
         >,
         PyroError,
     > {
@@ -194,12 +187,11 @@ where
 
         trace!(
             ok_type = std::any::type_name::<T>(),
-            err_type = std::any::type_name::<E>(),
             status = ?status,
             "exposing Result from PyroVec"
         );
         let ok_code = <<T as Bridgeable>::Format as PyroFormat<T>>::HeaderValues::OK_CODE;
-        let err_code = <<E as Bridgeable>::Format as PyroFormat<E>>::HeaderValues::ERR_CODE;
+        let err_code = <<T as Bridgeable>::Format as PyroFormat<T>>::HeaderValues::ERR_CODE;
 
         match status {
             Ok(s) if s == ok_code => {
@@ -210,9 +202,7 @@ where
             }
             Ok(s) if s == err_code => {
                 trace!("Parser::parse_result matched ERR_CODE, parsing as error type");
-                let parser = <E as Bridgeable>::Format::parser(vec);
-                let buf = parser.unchecked_parse()?;
-                Ok(Err(buf))
+                Ok(Err(vec.extract_captured_error()))
             }
             status => {
                 let s = match status {

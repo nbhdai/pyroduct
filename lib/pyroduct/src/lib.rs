@@ -106,9 +106,6 @@ pub use pyro_derive::config;
 /// - **`type Config = ...`** (optional): The configuration struct marked with `#[pyroduct::config]`.
 ///   If specified, `fn new` must accept `Option<Self::Config>` as its parameter.
 ///
-/// - **`type Error = ...`** (optional): The error type for fallible operations.
-///   If specified, `new_client` and all other methods must return `Result<T, Self::Error>`.
-///
 /// # Lifecycle Methods
 ///
 /// Three lifecycle methods are required:
@@ -126,18 +123,18 @@ pub use pyro_derive::config;
 /// Use this to clear per-request caches, reset counters, or release temporary resources
 /// while preserving expensive-to-create resources like connections. May be `async`.
 ///
-/// ## `fn new_client(&self, client: &Client)` or `fn new_client(&self, client: &Client) -> Result<(), Error>`
+/// ## `fn register(&self, client: &Client)` or `fn register(&self, client: &Client) -> Result<()>`
 ///
 /// Called when a WASM module registers a new client instance. Use this to validate
 /// client configuration, allocate per-client resources, or perform authentication.
-/// If `type Error` is defined, this must return `Result<(), Error>`.
+/// Fallible implementations must return `Result<()>`.
 ///
 /// # Capability Methods
 ///
 /// Additional methods define the capability's API. All methods must:
 /// - Take `&self` as the first parameter (not `&mut self`)
 /// - Take `client: &Client` (or `_client: &Client`) as the second parameter
-/// - Return `Result<T, Error>` if `type Error` is defined
+/// - Return `Result<T>` if they are fallible
 ///
 /// Methods may be `async` and may take additional parameters which will be
 /// automatically serialized across the FFI boundary.
@@ -164,31 +161,31 @@ pub use pyro_derive::config;
 /// impl SerialServer {
 ///     type Config = SerialConfig;
 ///     type Client = SerialHandle;
-///     type Error = String;
 ///
-///     fn new(config: Option<SerialConfig>) -> Self {
-///         Self {
+///     fn new(config: Option<SerialConfig>) -> Result<Self> {
+///         Ok(Self {
 ///             ports: config.map(|c| c.ports).unwrap_or_default(),
 ///             next_id: 0,
-///         }
+///         })
 ///     }
 ///
-///     fn reset(&mut self) {
+///     fn reset(&mut self) -> Result<()> {
 ///         self.next_id = 0;
+///         Ok(())
 ///     }
 ///
-///     fn register(&self, client: &SerialHandle) -> Result<(), String> {
+///     fn register(&self, client: &SerialHandle) -> Result<()> {
 ///         if client.id > 100 {
-///             return Err("Invalid client ID".to_string());
+///             pyroduct::bail!("Invalid client ID");
 ///         }
 ///         Ok(())
 ///     }
 ///
-///     fn write(&self, _client: &SerialHandle, data: Vec<u8>) -> Result<usize, String> {
+///     fn write(&self, _client: &SerialHandle, data: Vec<u8>) -> Result<usize> {
 ///         Ok(data.len())
 ///     }
 ///
-///     async fn read(&self, _client: &SerialHandle, count: usize) -> Result<Vec<u8>, String> {
+///     async fn read(&self, _client: &SerialHandle, count: usize) -> Result<Vec<u8>> {
 ///         Ok(vec![0u8; count])
 ///     }
 /// }

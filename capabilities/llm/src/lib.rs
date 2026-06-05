@@ -1,5 +1,7 @@
 pyroduct::library!();
 
+use pyroduct::CapturedError;
+
 // =============================================================================
 // Config
 // =============================================================================
@@ -90,9 +92,8 @@ pub struct LlmServer {
 impl LlmServer {
     type Client = LlmClient;
     type Config = LlmConfig;
-    type Error = String;
 
-    async fn new(config: Option<LlmConfig>) -> Self {
+    async fn new(config: Option<LlmConfig>) -> Result<Self> {
         let config = config.unwrap_or(LlmConfig {
             base_url: "http://localhost:11434".to_string(),
             permitted_models: Vec::new(),
@@ -103,21 +104,23 @@ impl LlmServer {
             .expect("failed to build reqwest client");
         let permitted_models = config.permitted_models.clone();
         let system_prompt = config.system_prompt.clone();
-        Self {
+        Ok(Self {
             base_url: config.base_url,
             http,
             permitted_models,
             system_prompt,
-        }
+        })
     }
 
-    async fn reset(&mut self) {}
+    async fn reset(&mut self) -> Result<(), CapturedError> {
+        Ok(())
+    }
 
-    fn register(&self, client: &LlmClient) -> Result<(), String> {
+    fn register(&self, client: &LlmClient) -> Result<(), CapturedError> {
         if self.permitted_models.contains(&client.model) || self.permitted_models.is_empty() {
             Ok(())
         } else {
-            Err(format!("Not Permitted, try: {:?}", self.permitted_models))
+            pyroduct::bail!("Not Permitted, try: {:?}", self.permitted_models)
         }
     }
 
@@ -126,7 +129,7 @@ impl LlmServer {
         &self,
         client: &LlmClient,
         prompt: String,
-    ) -> Result<String, String> {
+    ) -> Result<String, CapturedError> {
         let system = if self.system_prompt.is_empty() {
             None
         } else {
@@ -148,18 +151,18 @@ impl LlmServer {
             .json(&body)
             .send()
             .await
-            .map_err(|e| format!("Llm request failed: {e}"))?;
+            .map_err(|e| pyroduct::capture!("Llm request failed: {}", e))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            return Err(format!("Llm returned {status}: {text}"));
+            pyroduct::bail!("Llm returned {}: {}", status, text);
         }
 
         let parsed: GenerateResponse = resp
             .json()
             .await
-            .map_err(|e| format!("Failed to parse Llm response: {e}"))?;
+            .map_err(|e| pyroduct::capture!("Failed to parse Llm response: {}", e))?;
 
         Ok(parsed.response)
     }
@@ -170,7 +173,7 @@ impl LlmServer {
         &self,
         client: &LlmClient,
         messages: Vec<ChatMessage>,
-    ) -> Result<ChatMessage, String> {
+    ) -> Result<ChatMessage, CapturedError> {
         let mut messages = messages;
 
         // Prepend system prompt if configured and not already present
@@ -201,18 +204,18 @@ impl LlmServer {
             .json(&body)
             .send()
             .await
-            .map_err(|e| format!("Llm chat request failed: {e}"))?;
+            .map_err(|e| pyroduct::capture!("Llm chat request failed: {}", e))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            return Err(format!("Llm returned {status}: {text}"));
+            pyroduct::bail!("Llm returned {}: {}", status, text);
         }
 
         let parsed: ChatResponse = resp
             .json()
             .await
-            .map_err(|e| format!("Failed to parse Llm chat response: {e}"))?;
+            .map_err(|e| pyroduct::capture!("Failed to parse Llm chat response: {}", e))?;
 
         Ok(parsed.message)
     }

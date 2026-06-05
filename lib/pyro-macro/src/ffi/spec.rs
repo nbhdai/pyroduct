@@ -131,11 +131,7 @@ fn fn_output_to_pyro_type(
     output: &super::paths::FnOutput,
     builder: &SchemaBuilder,
 ) -> PyroType<'static> {
-    match output {
-        super::paths::FnOutput::None => PyroType::Null,
-        super::paths::FnOutput::Single(ty) => builder.resolve_type(ty),
-        super::paths::FnOutput::Result(ok_ty, _err_ty) => builder.resolve_type(ok_ty),
-    }
+    builder.resolve_type(&output.ok_type)
 }
 
 #[cfg(test)]
@@ -164,17 +160,17 @@ mod tests {
         impl MyServer {
             type Client = MyClient;
 
-            fn new() -> Self { Self }
-            fn reset(&mut self) {}
-            fn register(&self, c: &MyClient) {}
+            fn new() -> Result<Self, CapturedError> { Ok(Self) }
+            fn reset(&mut self) -> Result<(), CapturedError> { Ok(()) }
+            fn register(&self, c: &MyClient) -> Result<(), CapturedError> { Ok(()) }
 
             /// Calculates a value
-            fn calculate(&self, c: &MyClient, input: f32) -> f32 {
-                input * 2.0
+            fn calculate(&self, c: &MyClient, input: f32) -> Result<f32, CapturedError> {
+                Ok(input * 2.0)
             }
 
             /// Processes the data
-            fn process(&self, c: &MyClient, data: Option<Vec<u8>>) -> Result<InputStruct, MyError> {
+            fn process(&self, c: &MyClient, data: Option<Vec<u8>>) -> Result<InputStruct, CapturedError> {
                 todo!()
             }
         }

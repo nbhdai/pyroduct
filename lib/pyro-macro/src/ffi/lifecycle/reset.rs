@@ -6,7 +6,7 @@
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Error, FnArg, Ident, ImplItemFn, ReturnType};
+use syn::{Error, FnArg, Ident, ImplItemFn};
 
 use heck::AsSnakeCase;
 
@@ -29,18 +29,14 @@ impl ResetFn {
             ));
         }
 
-        // 2. Validate return type is () or default
-        match &sig.output {
-            ReturnType::Default => {}
-            ReturnType::Type(_, ty) => {
-                let ty_str = quote!(#ty).to_string().replace(" ", "");
-                if ty_str != "()" {
-                    return Err(Error::new_spanned(
-                        &sig.output,
-                        "fn reset must return () or have no return type",
-                    ));
-                }
-            }
+        // 2. Validate return type is Result<(), CapturedError> or Result<()>
+        let (ok_ty, _err_ty) = crate::ffi::paths::verify_result_return_type(&sig.output)?;
+        let ok_str = quote!(#ok_ty).to_string().replace(" ", "");
+        if ok_str != "()" {
+            return Err(Error::new_spanned(
+                &sig.output,
+                "fn reset must return Result<(), CapturedError> or Result<()>",
+            ));
         }
 
         // 3. Validate &mut self as first and only parameter
@@ -101,8 +97,10 @@ impl ResetFn {
                             Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode().view(),
                         };
                         let state = state_ptr.as_ref::<#server>();
-                        state.reset().await;
-                        ::pyroduct::format::PyroVec::ok().view()
+                        match state.reset().await {
+                            Ok(()) => ::pyroduct::format::PyroVec::ok().view(),
+                            Err(err) => err.encode().view(),
+                        }
                     }, capability_state_ptr.object_id, 0)
                 }
             }
@@ -118,8 +116,10 @@ impl ResetFn {
                             Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode().view(),
                         };
                         let state = state_ptr.as_ref::<#server>();
-                        state.reset();
-                        ::pyroduct::format::PyroVec::ok().view()
+                        match state.reset() {
+                            Ok(()) => ::pyroduct::format::PyroVec::ok().view(),
+                            Err(err) => err.encode().view(),
+                        }
                     }, capability_state_ptr.object_id, 0)
                 }
             }
@@ -150,7 +150,7 @@ impl ResetFn {
 
         quote! {
             #(#attrs)*
-            pub #async_kw fn reset(&mut self) #body
+            pub #async_kw fn reset(&mut self) -> Result<(), ::pyroduct::CapturedError> #body
         }
     }
 }
@@ -165,8 +165,9 @@ mod tests {
     fn test_sync_server_reset_fn() {
         let server_ident = format_ident!("GreeterServer");
         let item: ImplItemFn = parse_quote! {
-            fn reset(&mut self) {
+            fn reset(&mut self) -> Result<(), CapturedError> {
                 self.count = 0;
+                Ok(())
             }
         };
         let reset_fn = ResetFn::parse(&item).expect("Failed to parse reset fn");
@@ -184,8 +185,10 @@ mod tests {
                         Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode().view(),
                     };
                     let state = state_ptr.as_ref::<GreeterServer>();
-                    state.reset();
-                    ::pyroduct::format::PyroVec::ok().view()
+                    match state.reset() {
+                        Ok(()) => ::pyroduct::format::PyroVec::ok().view(),
+                        Err(err) => err.encode().view(),
+                    }
                 }, capability_state_ptr.object_id, 0)
             }
         };
@@ -197,8 +200,9 @@ mod tests {
     fn test_async_server_reset_fn() {
         let server_ident = format_ident!("GreeterServer");
         let item: ImplItemFn = parse_quote! {
-            async fn reset(&mut self) {
+            async fn reset(&mut self) -> Result<(), CapturedError> {
                 self.count = 0;
+                Ok(())
             }
         };
 
@@ -217,8 +221,10 @@ mod tests {
                         Err(error) => return ::pyroduct::PyroError::CodePanic(error.into()).encode().view(),
                     };
                     let state = state_ptr.as_ref::<GreeterServer>();
-                    state.reset().await;
-                    ::pyroduct::format::PyroVec::ok().view()
+                    match state.reset().await {
+                        Ok(()) => ::pyroduct::format::PyroVec::ok().view(),
+                        Err(err) => err.encode().view(),
+                    }
                 }, capability_state_ptr.object_id, 0)
             }
         };

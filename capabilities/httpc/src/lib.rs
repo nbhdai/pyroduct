@@ -33,23 +33,24 @@ pub struct HttpServer {
 impl HttpServer {
     type Client = HttpClient;
     type Config = HttpConfig;
-    type Error = CapturedError;
     
     /// Initializes a new HttpServer instance. 
     /// If no config is provided, defaults to a 30-second timeout and an empty allowlist.
-    async fn new(config: Option<HttpConfig>) -> Self {
+    async fn new(config: Option<HttpConfig>) -> Result<Self> {
         let config = config.unwrap_or(HttpConfig {
             timeout_ms: 30000,
             allowed_endpoints: Vec::new(),
         });
-        Self {
+        Ok(Self {
             _timeout: std::time::Duration::from_millis(config.timeout_ms),
             allowed_endpoints: config.allowed_endpoints,
-        }
+        })
     }
     
     /// Resets the capability state.
-    async fn reset(&mut self) {}
+    async fn reset(&mut self) -> Result<(), CapturedError> {
+        Ok(())
+    }
     
     /// Validates and prepares a new client instance.
     fn register(&self, _client: &HttpClient) -> Result<(), CapturedError> {
@@ -89,19 +90,19 @@ impl HttpServer {
                 if endpoint.methods.iter().any(|m| m.eq_ignore_ascii_case(method)) {
                     return Ok(());
                 } else {
-                    return Err(format!(
+                    pyroduct::bail!(
                         "Method {} not allowed for {}. Allowed methods: {:?}",
                         method, endpoint.url, endpoint.methods
-                    ));
+                    );
                 }
             }
         }
         
-        Err(format!(
+        pyroduct::bail!(
             "URL {} is not in the allowlist. Allowed endpoints: {:?}",
             url,
             self.allowed_endpoints.iter().map(|e| &e.url).collect::<Vec<_>>()
-        ))
+        )
     }
 }
 

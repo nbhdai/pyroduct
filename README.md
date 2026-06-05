@@ -96,7 +96,6 @@ pub struct TransformServer { ... }
 impl TransformServer {
     type Client = TransformClient;
     type Config = TransformConfig;
-    type Error = String;
 
     // Lifecycle: initialize (sync or async)
     async fn new(config: Option<TransformConfig>) -> Self { ... }
@@ -105,10 +104,10 @@ impl TransformServer {
     async fn reset(&mut self) {}
 
     // Lifecycle: validate a new client instance
-    fn register(&self, client: &TransformClient) -> Result<(), String> { ... }
+    fn register(&self, client: &TransformClient) -> Result<(), pyroduct::CapturedError> { ... }
 
     // Methods: exposed to WASM, must take &self and &Client
-    async fn transform(&self, client: &TransformClient, input: String) -> Result<String, String> { ... }
+    async fn transform(&self, client: &TransformClient, input: String) -> Result<String, pyroduct::CapturedError> { ... }
 }
 ```
 

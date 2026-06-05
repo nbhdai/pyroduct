@@ -759,10 +759,9 @@ impl<T> Client<T> {
         Self { data, config_buf }
     }
 
-    pub fn __register_result<E, F>(data: T, register_func: F) -> Result<Self, E>
+    pub fn __register_result<F>(data: T, register_func: F) -> Result<Self, CapturedError>
     where
         T: Bridgeable,
-        E: Bridgeable,
         F: FnOnce(*const u8) -> *mut u8,
     {
         // Serialize the data (client state) to get the config buffer
@@ -845,13 +844,15 @@ impl<T> Client<T> {
         }
     }
 
-    pub fn __call_result_from_wasm<I, O, E, F>(&self, input: Option<&I>, func: F) -> Result<O, E>
+    pub fn __call_result_from_wasm<I, O, F>(
+        &self,
+        input: Option<&I>,
+        func: F,
+    ) -> Result<O, CapturedError>
     where
         I: Bridgeable,
         O: Bridgeable + BridgeableZeroCopy,
         <O as Bridgeable>::Format: PyroZeroCopyFormat<O>,
-        E: Bridgeable + BridgeableZeroCopy,
-        <E as Bridgeable>::Format: PyroZeroCopyFormat<E>,
         F: FnOnce(*const u8, *const u8) -> *mut u8,
     {
         let input = match input {
@@ -876,10 +877,10 @@ impl<T> Client<T> {
                 panic!("Host registration failed with no returned");
             }
         };
-        let result = Result::<O, E>::expose(result_vec.view()).and_then(|r| {
+        let result = Result::<O, CapturedError>::expose(result_vec.view()).and_then(|r| {
             let res = match r {
                 Ok(o) => Ok(O::receiver().receive(&o)?),
-                Err(e) => Err(E::receiver().receive(&e)?),
+                Err(e) => Err(e),
             };
             Ok(res)
         });

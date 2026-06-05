@@ -133,7 +133,6 @@ pub struct HttpServer {
 impl HttpServer {
     type Config = HttpConfig;
     type Client = HttpClient;
-    type Error = String;
 
     // 1. Lifecycle: Instantiated at daemon/worker startup with optional config
     async fn new(config: Option<HttpConfig>) -> Self {
@@ -153,15 +152,15 @@ impl HttpServer {
     }
 
     // 3. Lifecycle: Validates and registers a new client instance
-    fn register(&self, client: &HttpClient) -> Result<(), String> {
+    fn register(&self, client: &HttpClient) -> Result<(), pyroduct::CapturedError> {
         if client.auth_token.is_empty() {
-            return Err("Authorization token cannot be empty".to_string());
+            pyroduct::bail!("Authorization token cannot be empty");
         }
         Ok(())
     }
 
-    // 4. Exposed Methods: MUST take &self, &Client, and return Result<T, Error>
-    async fn fetch_data(&self, client: &HttpClient, path: String) -> Result<String, String> {
+    // 4. Exposed Methods: MUST take &self, &Client, and return Result<T, pyroduct::CapturedError>
+    async fn fetch_data(&self, client: &HttpClient, path: String) -> Result<String, pyroduct::CapturedError> {
         let full_url = format!("{}/{}", self.base_url, path);
         // Make actual native HTTP request using token from client and base_url
         Ok(format!("Mock Response from {} using token {}", full_url, client.auth_token))
@@ -231,7 +230,6 @@ pub struct KvServer {
 impl KvServer {
     type Config = KvConfig;
     type Client = KvClient;
-    type Error = String;
 
     async fn new(config: Option<KvConfig>) -> Self {
         let cap = config.map(|c| c.initial_capacity).unwrap_or(128);
@@ -246,22 +244,22 @@ impl KvServer {
         }
     }
 
-    fn register(&self, client: &KvClient) -> Result<(), String> {
+    fn register(&self, client: &KvClient) -> Result<(), pyroduct::CapturedError> {
         if client.namespace.is_empty() {
-            return Err("Namespace must be specified".to_string());
+            pyroduct::bail!("Namespace must be specified");
         }
         Ok(())
     }
 
     // Capability storage methods
-    fn get(&self, client: &KvClient, key: String) -> Result<Option<String>, String> {
-        let store = self.db.lock().map_err(|_| "Poisoned lock")?;
+    fn get(&self, client: &KvClient, key: String) -> Result<Option<String>, pyroduct::CapturedError> {
+        let store = self.db.lock().map_err(|_| pyroduct::capture!("Poisoned lock"))?;
         let namespaced_key = format!("{}:{}", client.namespace, key);
         Ok(store.get(&namespaced_key).cloned())
     }
 
-    fn set(&self, client: &KvClient, key: String, value: String) -> Result<(), String> {
-        let mut store = self.db.lock().map_err(|_| "Poisoned lock")?;
+    fn set(&self, client: &KvClient, key: String, value: String) -> Result<(), pyroduct::CapturedError> {
+        let mut store = self.db.lock().map_err(|_| pyroduct::capture!("Poisoned lock"))?;
         let namespaced_key = format!("{}:{}", client.namespace, key);
         store.insert(namespaced_key, value);
         Ok(())

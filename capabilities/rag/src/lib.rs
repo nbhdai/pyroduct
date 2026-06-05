@@ -1,4 +1,5 @@
 // Simple RAG capability with linear search
+use pyroduct::CapturedError;
 
 /// Configuration for the RAG system, defining the initial knowledge base.
 #[pyroduct::config]
@@ -40,11 +41,10 @@ pub struct RagServer {
 impl RagServer {
     type Client = RagClient;
     type Config = RagConfig;
-    type Error = String;
     
     /// Initializes the RAG server by embedding all documents provided in the config.
     /// Note: This performs a linear pass and generates embeddings for every document.
-    async fn new(config: Option<RagConfig>) -> Self {
+    async fn new(config: Option<RagConfig>) -> Result<Self> {
         let config = config.unwrap_or(RagConfig {
             documents: Vec::new(),
             top_k: 5,
@@ -61,23 +61,25 @@ impl RagServer {
             });
         }
         
-        Self {
+        Ok(Self {
             documents,
             top_k: config.top_k,
-        }
+        })
     }
     
     /// Resets the internal state.
-    async fn reset(&mut self) {}
+    async fn reset(&mut self) -> Result<()> {
+        Ok(())
+    }
     
     /// Validates and prepares a new RAG client.
-    fn register(&self, _client: &RagClient) -> Result<(), String> {
+    fn register(&self, _client: &RagClient) -> Result<(), CapturedError> {
         Ok(())
     }
     
     /// Searches the document store using cosine similarity and returns the top_k results.
     /// The query is embedded in real-time before comparison.
-    async fn search(&self, _client: &RagClient, query: String) -> Result<Vec<SearchResult>, String> {
+    async fn search(&self, _client: &RagClient, query: String) -> Result<Vec<SearchResult>, CapturedError> {
         let query_embedding = embed_text(&query).await;
         
         let mut scored: Vec<(f32, &EmbeddedDocument)> = self.documents
@@ -101,7 +103,7 @@ impl RagServer {
     }
     
     /// Searches the document store and allows the caller to override the default `k` value.
-    async fn search_with_k(&self, _client: &RagClient, query: String, k: usize) -> Result<Vec<SearchResult>, String> {
+    async fn search_with_k(&self, _client: &RagClient, query: String, k: usize) -> Result<Vec<SearchResult>, CapturedError> {
         let query_embedding = embed_text(&query).await;
         
         let mut scored: Vec<(f32, &EmbeddedDocument)> = self.documents
