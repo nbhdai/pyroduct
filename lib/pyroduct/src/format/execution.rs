@@ -1,10 +1,16 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{CapturedError, PyroRow};
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PyroLogs {
     pub module_logs: Vec<String>,
+    #[serde(
+        serialize_with = "serialize_cap_logs",
+        deserialize_with = "deserialize_cap_logs"
+    )]
     pub capability_logs: HashMap<(String, String), Vec<String>>,
 }
 
@@ -17,18 +23,39 @@ impl PyroLogs {
     }
 }
 
+pub fn serialize_cap_logs<S>(
+    logs: &HashMap<(String, String), Vec<String>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let list: Vec<(&(String, String), &Vec<String>)> = logs.iter().collect();
+    list.serialize(serializer)
+}
+
+pub fn deserialize_cap_logs<'de, D>(
+    deserializer: D,
+) -> Result<HashMap<(String, String), Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let list = Vec::<((String, String), Vec<String>)>::deserialize(deserializer)?;
+    Ok(list.into_iter().collect())
+}
+
 // =============================================================================
 // ExecutionRecord
 // =============================================================================
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PyroSuccess {
     pub row_index: u32,
     pub row: PyroRow<'static>,
     pub logs: PyroLogs,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PyroFailure {
     pub row_index: u32,
     pub result: Result<CapturedError, String>,
@@ -36,7 +63,7 @@ pub struct PyroFailure {
 }
 
 /// The type of session response returned by `PyroInstance::call_session()`.
-#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum SessionResult {
     /// The session should continue. Contains the output row.
     Continue {

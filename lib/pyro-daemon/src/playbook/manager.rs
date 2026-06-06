@@ -1,5 +1,6 @@
 use crate::Result;
 use crate::playbook::PlaybookWorker;
+use pyro_artifacts::artifacts::PlaybookIdent;
 use pyro_artifacts::cache::CacheManager;
 use pyro_artifacts::cargo::CapabilityIdent;
 use pyroduct::Capture;
@@ -37,7 +38,7 @@ pub struct CallbackMapping {
 pub enum PlaybookRequest {
     Start {
         name: String,
-        pipeline_config: pyroduct::pipeline::factory::PipelineConfig,
+        pipeline_config: PlaybookIdent,
         #[serde(default)]
         playbook_socket: Option<String>,
         #[serde(default)]
@@ -82,11 +83,21 @@ pub enum PlaybookRequest {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum PlaybookResponse {
-    Success { message: String },
-    Playbooks { playbooks: Vec<PlaybookStatus> },
-    Callbacks { callbacks: Vec<CallbackMapping> },
-    CallResult { result: pyroduct::pipeline::ServerExecutionRecord },
-    Error { message: String },
+    Success {
+        message: String,
+    },
+    Playbooks {
+        playbooks: Vec<PlaybookStatus>,
+    },
+    Callbacks {
+        callbacks: Vec<CallbackMapping>,
+    },
+    CallResult {
+        result: pyroduct::pipeline::ServerExecutionRecord,
+    },
+    Error {
+        message: String,
+    },
 }
 
 #[derive(Clone)]
@@ -118,7 +129,7 @@ impl PlaybooksManager {
                 input_dir,
                 output_dir,
             } => {
-                tracing::info!(playbook = %name, playbook = ?pipeline_config.playbook, "Received Start request for playbook");
+                tracing::info!(playbook = %name, playbook = ?pipeline_config, "Received Start request for playbook");
                 match self
                     .start_playbook(
                         name.clone(),
@@ -329,7 +340,7 @@ impl PlaybooksManager {
     pub async fn start_playbook(
         self: &Arc<Self>,
         name: String,
-        mut pipeline_config: pyroduct::pipeline::factory::PipelineConfig,
+        pipeline_config: PlaybookIdent,
         playbook_socket: Option<String>,
         input_dir_override: Option<PathBuf>,
         output_dir_override: Option<PathBuf>,
@@ -366,9 +377,16 @@ impl PlaybooksManager {
             .await
             .capture("Failed to create log directory")?;
 
-        pipeline_config.input_dir = input_dir;
-        pipeline_config.output_dir = output_dir;
-        pipeline_config.log_dir = log_dir;
+        let pipeline_config = pyroduct::pipeline::factory::PipelineConfig {
+            playbook: pipeline_config,
+            remote: HashMap::new(),
+            wal_capacity: 1000,
+            success_log_retention_secs: 3600,
+            error_log_retention_secs: 86400 * 7,
+            log_dir,
+            input_dir,
+            output_dir,
+        };
 
         // Store references to input and output directories if they are not self-contained
         if pipeline_config.input_dir != playbook_dir.join("input") {
@@ -419,7 +437,7 @@ impl PlaybooksManager {
 
         tracing::info!(spec = ?loaded_pipeline.playbook.binary.spec, "start_playbook: loaded playbook spec");
         let interconnect = self
-            .build_interconnect(&loaded_pipeline.playbook.binary.spec)
+            .build_interconnect(&name, &loaded_pipeline.playbook.binary.spec)
             .await?;
 
         tracing::info!(playbook = %name, "Starting PlaybookWorker process");
@@ -493,7 +511,7 @@ impl PlaybooksManager {
             .capture("Failed to load playbook binary")?;
 
         let interconnect = self
-            .build_interconnect(&loaded_pipeline.playbook.binary.spec)
+            .build_interconnect(&name, &loaded_pipeline.playbook.binary.spec)
             .await?;
 
         tracing::info!(playbook = %name, "Starting worker for resumed playbook");
@@ -813,33 +831,51 @@ impl PlaybooksManager {
     ) -> Result<serde_json::Value> {
         let rec = self.call_playbook_record(name, payload).await?;
         match rec {
-            pyroduct::pipeline::ServerExecutionRecord::Normal(pyroduct::pipeline::ExecutionRecord::Success { success, .. }) => {
+            pyroduct::pipeline::ServerExecutionRecord::Normal(
+                pyroduct::pipeline::ExecutionRecord::Success { success, .. },
+            ) => {
                 let val = serde_json::to_value(&success).capture("Failed to serialize row")?;
                 Ok(val)
             }
-            pyroduct::pipeline::ServerExecutionRecord::Session(pyroduct::pipeline::session::SessionExecutionRecord::Success { success, .. }) => {
+            pyroduct::pipeline::ServerExecutionRecord::Session(
+                pyroduct::pipeline::session::SessionExecutionRecord::Success { success, .. },
+            ) => {
                 let val = serde_json::to_value(&success).capture("Failed to serialize row")?;
                 Ok(val)
             }
-            pyroduct::pipeline::ServerExecutionRecord::SessionDiff(pyroduct::pipeline::session_diff::SessionDiffExecutionRecord::Success { success, .. }) => {
+            pyroduct::pipeline::ServerExecutionRecord::SessionDiff(
+                pyroduct::pipeline::session_diff::SessionDiffExecutionRecord::Success {
+                    success,
+                    ..
+                },
+            ) => {
                 let val = serde_json::to_value(&success).capture("Failed to serialize row")?;
                 Ok(val)
             }
-            pyroduct::pipeline::ServerExecutionRecord::Normal(pyroduct::pipeline::ExecutionRecord::Failure { failure, .. }) => {
+            pyroduct::pipeline::ServerExecutionRecord::Normal(
+                pyroduct::pipeline::ExecutionRecord::Failure { failure, .. },
+            ) => {
                 let msg = match failure {
                     Ok(captured) => captured.to_string(),
                     Err(s) => s,
                 };
                 Err(pyroduct::capture!("{}", msg))
             }
-            pyroduct::pipeline::ServerExecutionRecord::Session(pyroduct::pipeline::session::SessionExecutionRecord::Failure { failure, .. }) => {
+            pyroduct::pipeline::ServerExecutionRecord::Session(
+                pyroduct::pipeline::session::SessionExecutionRecord::Failure { failure, .. },
+            ) => {
                 let msg = match failure {
                     Ok(captured) => captured.to_string(),
                     Err(s) => s,
                 };
                 Err(pyroduct::capture!("{}", msg))
             }
-            pyroduct::pipeline::ServerExecutionRecord::SessionDiff(pyroduct::pipeline::session_diff::SessionDiffExecutionRecord::Failure { failure, .. }) => {
+            pyroduct::pipeline::ServerExecutionRecord::SessionDiff(
+                pyroduct::pipeline::session_diff::SessionDiffExecutionRecord::Failure {
+                    failure,
+                    ..
+                },
+            ) => {
                 let msg = match failure {
                     Ok(captured) => captured.to_string(),
                     Err(s) => s,
@@ -857,10 +893,14 @@ impl PlaybooksManager {
         tracing::debug!(playbook = %name, "Executing call_playbook_record");
         let worker = {
             let workers = self.workers.lock().await;
-            workers.get(name).ok_or_else(|| {
-                tracing::error!(playbook = %name, "Playbook is not running");
-                pyroduct::capture!("Playbook '{}' is not running", name)
-            })?.server.clone()
+            workers
+                .get(name)
+                .ok_or_else(|| {
+                    tracing::error!(playbook = %name, "Playbook is not running");
+                    pyroduct::capture!("Playbook '{}' is not running", name)
+                })?
+                .server
+                .clone()
         };
         let spec = worker.spec();
 

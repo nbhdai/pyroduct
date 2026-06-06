@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
     // 1. Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            "trace,cranelift_frontend=off,mio=off,cranelift_codegen=off,wasmtime=off,pyroduct=info".into()
+            "trace,cranelift_frontend=off,mio=off,cranelift_codegen=off,wasmtime=off,pyroduct=debug".into()
         }))
         .init();
 

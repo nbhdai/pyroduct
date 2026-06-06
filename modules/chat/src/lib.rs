@@ -1,4 +1,4 @@
-use llm::{LlmClient, ChatMessage, LlmClientMethods};
+use llm::{ChatMessage, LlmClient, LlmClientMethods};
 use pyroduct::session::SessionResponse;
 
 /// Takes an array of chat messages, sends them to the HF LLM capability,
@@ -8,12 +8,12 @@ fn process<'a>(
     mut prior: Vec<ChatMessage>,
     input: ChatMessage,
 ) -> Result<SessionResponse<ChatMessage>> {
-
     // 1. Register a client with the HF LLM capability
     let llm = LlmClient {
-        model: "gemma3:270m".to_string(),
+        model: "gemma-4-31B-it-Q8_0".to_string(),
         temperature: 0.7,
-    }.register()?;
+    }
+    .register()?;
 
     prior.push(input);
 

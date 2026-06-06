@@ -12,6 +12,8 @@ use tracing::{debug, error, info};
 
 use crate::CapturedError;
 
+use super::execution::{deserialize_cap_logs, serialize_cap_logs};
+
 /// Computes the CRC-32C checksum of the given data.
 fn crc32c(data: &[u8]) -> u32 {
     let mut crc: u32 = 0xFFFF_FFFF;
@@ -38,27 +40,6 @@ pub struct LogEntry {
     )]
     pub capability_logs: HashMap<(String, String), Vec<String>>,
     pub failure: Option<Result<CapturedError, String>>,
-}
-
-fn serialize_cap_logs<S>(
-    logs: &HashMap<(String, String), Vec<String>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    let list: Vec<(&(String, String), &Vec<String>)> = logs.iter().collect();
-    list.serialize(serializer)
-}
-
-fn deserialize_cap_logs<'de, D>(
-    deserializer: D,
-) -> Result<HashMap<(String, String), Vec<String>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let list = Vec::<((String, String), Vec<String>)>::deserialize(deserializer)?;
-    Ok(list.into_iter().collect())
 }
 
 /// Ensure the index file for a given log file index exists and is up to date.

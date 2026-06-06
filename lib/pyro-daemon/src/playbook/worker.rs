@@ -335,37 +335,30 @@ mod tests {
         let manager_dir = tmp_dir.path().join("manager_dir");
         let manager = Arc::new(PlaybooksManager::new(manager_dir));
 
-        let pipeline_config_a = PipelineConfig {
-            playbook: target_binary.spec.ident.clone(),
-            remote: HashMap::new(),
-            wal_capacity: 10,
-            success_log_retention_secs: 3600,
-            error_log_retention_secs: 86400 * 7,
-            input_dir: tmp_dir.path().to_path_buf(),
-            output_dir: tmp_dir.path().to_path_buf(),
-            log_dir: tmp_dir.path().to_path_buf(),
-        };
-
-        let pipeline_config_b = PipelineConfig {
-            playbook: caller_binary.spec.ident.clone(),
-            remote: HashMap::new(),
-            wal_capacity: 10,
-            success_log_retention_secs: 3600,
-            error_log_retention_secs: 86400 * 7,
-            input_dir: tmp_dir.path().to_path_buf(),
-            output_dir: tmp_dir.path().to_path_buf(),
-            log_dir: tmp_dir.path().to_path_buf(),
-        };
+        let pipeline_config_a = target_binary.spec.ident.clone();
+        let pipeline_config_b = caller_binary.spec.ident.clone();
 
         // 1. Start target playbook first
         manager
-            .start_playbook("target".to_string(), pipeline_config_a, None, None, None)
+            .start_playbook(
+                "target".to_string(),
+                pipeline_config_a,
+                None,
+                Some(tmp_dir.path().to_path_buf()),
+                Some(tmp_dir.path().to_path_buf()),
+            )
             .await
             .expect("Failed to start target playbook");
 
         // 2. Start caller playbook, which requires the target playbook in its interconnect
         manager
-            .start_playbook("caller".to_string(), pipeline_config_b, None, None, None)
+            .start_playbook(
+                "caller".to_string(),
+                pipeline_config_b,
+                None,
+                Some(tmp_dir.path().to_path_buf()),
+                Some(tmp_dir.path().to_path_buf()),
+            )
             .await
             .expect("Failed to start caller playbook");
 

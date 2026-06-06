@@ -50,24 +50,13 @@ async fn test_daemon_paginated_get_request() {
         .await
         .unwrap();
 
-    let pipeline_config = pyroduct::pipeline::factory::PipelineConfig {
-        playbook: binary.spec.ident.clone(),
-        remote: std::collections::HashMap::new(),
-        wal_capacity: 10,
-        success_log_retention_secs: 3600,
-        error_log_retention_secs: 86400 * 7,
-        input_dir: working_dir.join("input"),
-        output_dir: working_dir.join("output"),
-        log_dir: working_dir.join("log"),
-    };
-
     // Start playbook
     let req = DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Start {
         name: "integration_error".to_string(),
-        pipeline_config,
+        pipeline_config: binary.spec.ident.clone(),
         playbook_socket: None,
-        input_dir: None,
-        output_dir: None,
+        input_dir: Some(working_dir.join("input")),
+        output_dir: Some(working_dir.join("output")),
     });
     client.request(req).await.unwrap();
 

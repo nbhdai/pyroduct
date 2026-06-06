@@ -1,10 +1,8 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use pyro_artifacts::cache::CacheManager;
 use pyro_daemon::playbook::PlaybooksManager;
-use pyroduct::pipeline::factory::PipelineConfig;
 use tempfile::tempdir;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -28,24 +26,15 @@ async fn test_daemon_auto_resume() {
         .await
         .unwrap();
 
-    let pipeline_config = PipelineConfig {
-        playbook: binary.spec.ident.clone(),
-        remote: HashMap::new(),
-        wal_capacity: 10,
-        success_log_retention_secs: 3600,
-        error_log_retention_secs: 86400 * 7,
-        input_dir: working_dir.join("input"),
-        output_dir: working_dir.join("output"),
-        log_dir: working_dir.join("log"),
-    };
+    let playbook_ident = binary.spec.ident.clone();
 
     let pm1 = Arc::new(PlaybooksManager::new(working_dir.clone()));
     pm1.start_playbook(
         "integration_error".to_string(),
-        pipeline_config,
+        playbook_ident,
         None,
-        None,
-        None,
+        Some(working_dir.join("input")),
+        Some(working_dir.join("output")),
     )
     .await
     .unwrap();

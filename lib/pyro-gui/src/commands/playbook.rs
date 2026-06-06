@@ -2,6 +2,7 @@ use serde_json::Value;
 use tracing::{debug, error, info, trace};
 
 #[derive(serde::Deserialize)]
+#[allow(dead_code)]
 pub struct RemoteCapabilityConfig {
     capability: pyro_artifacts::cargo::CapabilityIdent,
     address: pyro_artifacts::cache::RemoteAddress,
@@ -60,10 +61,10 @@ pub async fn list_active_playbooks() -> Result<Value, String> {
 pub async fn start_playbook(
     name: String,
     playbook_ident: pyro_artifacts::artifacts::PlaybookIdent,
-    remote: Option<Vec<RemoteCapabilityConfig>>,
-    wal_capacity: Option<usize>,
-    success_log_retention_secs: Option<u64>,
-    error_log_retention_secs: Option<u64>,
+    _remote: Option<Vec<RemoteCapabilityConfig>>,
+    _wal_capacity: Option<usize>,
+    _success_log_retention_secs: Option<u64>,
+    _error_log_retention_secs: Option<u64>,
     playbook_socket: Option<String>,
     input_dir: Option<String>,
     output_dir: Option<String>,
@@ -79,27 +80,9 @@ pub async fn start_playbook(
             format!("Failed to connect to daemon: {:?}", e)
         })?;
 
-    let mut remote_map = std::collections::HashMap::new();
-    if let Some(remotes) = remote {
-        for entry in remotes {
-            remote_map.insert(entry.capability, entry.address);
-        }
-    }
-
-    let pipeline_config = pyroduct::pipeline::factory::PipelineConfig {
-        playbook: playbook_ident,
-        remote: remote_map,
-        wal_capacity: wal_capacity.unwrap_or(1000),
-        success_log_retention_secs: success_log_retention_secs.unwrap_or(3600),
-        error_log_retention_secs: error_log_retention_secs.unwrap_or(86400 * 7),
-        log_dir: std::path::PathBuf::from(""),
-        input_dir: std::path::PathBuf::from(""),
-        output_dir: std::path::PathBuf::from(""),
-    };
-
     let req = pyro_daemon::DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Start {
         name: name.clone(),
-        pipeline_config,
+        pipeline_config: playbook_ident,
         playbook_socket: playbook_socket.clone(),
         input_dir: input_dir.clone().map(std::path::PathBuf::from),
         output_dir: output_dir.clone().map(std::path::PathBuf::from),

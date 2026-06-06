@@ -8,6 +8,6 @@ author = "nbhdai"
 path = "../../lib/pyroduct/"
 
 [capabilities]
-llm = { package = "llm", author = "nbhdai", version = "0.1.0", configuration = { type = "capabilityconfig", classes = { llmserver = { base_url = "http://localhost:11434", system_prompt = "", permitted_models = ["gemma3:270m"] } } } }
+llm = { package = "llm", author = "nbhdai", version = "0.1.0", configuration = { type = "capabilityconfig", classes = { llm_server = { base_url = "http://itx/v1", system_prompt = "", permitted_models = ["gemma-4-31B-it-Q8_0"] } } } }
 
 [dependencies]

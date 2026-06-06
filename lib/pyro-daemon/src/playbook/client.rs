@@ -9,7 +9,7 @@ impl DaemonClient {
     pub async fn start_playbook(
         &self,
         name: String,
-        pipeline_config: pyroduct::pipeline::factory::PipelineConfig,
+        pipeline_config: pyro_artifacts::artifacts::PlaybookIdent,
         playbook_socket: Option<String>,
         input_dir: Option<PathBuf>,
         output_dir: Option<PathBuf>,

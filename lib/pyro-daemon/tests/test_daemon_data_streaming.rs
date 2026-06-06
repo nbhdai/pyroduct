@@ -51,24 +51,13 @@ async fn test_daemon_data_streaming() {
         .await
         .unwrap();
 
-    let pipeline_config_a = pyroduct::pipeline::factory::PipelineConfig {
-        playbook: binary_a.spec.ident.clone(),
-        remote: std::collections::HashMap::new(),
-        wal_capacity: 10,
-        success_log_retention_secs: 3600,
-        error_log_retention_secs: 86400 * 7,
-        input_dir: working_dir.join("input_a"),
-        output_dir: working_dir.join("output_a"),
-        log_dir: working_dir.join("log_a"),
-    };
-
     // Start playbook
     let req = DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Start {
         name: "integration_error".to_string(),
-        pipeline_config: pipeline_config_a,
+        pipeline_config: binary_a.spec.ident.clone(),
         playbook_socket: None,
-        input_dir: None,
-        output_dir: None,
+        input_dir: Some(working_dir.join("input_a")),
+        output_dir: Some(working_dir.join("output_a")),
     });
     let resp = client.request(req).await.unwrap();
     match resp {

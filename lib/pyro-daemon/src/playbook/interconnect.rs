@@ -55,38 +55,58 @@ impl PlaybookInterconnect for DaemonInterconnect {
 }
 
 impl PlaybooksManager {
-    pub async fn build_interconnect(
-        &self,
+    pub fn build_interconnect(
+        self: &Arc<Self>,
+        main_name: &str,
         spec: &PlaybookSpec,
-    ) -> crate::Result<Arc<dyn PlaybookInterconnect>> {
-        tracing::debug!(interconnect = ?spec.interconnect, "build_interconnect: starting");
-        let workers = self.workers.lock().await;
-        let mut playbooks = HashMap::new();
-        let mut servers = HashMap::new();
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = crate::Result<Arc<dyn PlaybookInterconnect>>> + Send>> {
+        let this = self.clone();
+        let main_name = main_name.to_string();
+        let spec = spec.clone();
+        Box::pin(async move {
+            tracing::debug!(interconnect = ?spec.interconnect, "build_interconnect: starting");
+            let mut playbooks = HashMap::new();
+            let mut servers = HashMap::new();
 
-        for (name, expected_ident) in &spec.interconnect {
-            tracing::debug!(name = %name, expected_ident = ?expected_ident, "build_interconnect: looking up interconnect playbook");
-            let mut found_worker = None;
-            for (wkey, worker) in &*workers {
-                tracing::debug!(worker_key = %wkey, worker_ident = ?worker.server.spec().ident, "build_interconnect: checking active worker");
-                if &worker.server.spec().ident == expected_ident {
-                    found_worker = Some(worker);
-                    break;
+            for (name, expected_ident) in &spec.interconnect {
+                tracing::debug!(name = %name, expected_ident = ?expected_ident, "build_interconnect: looking up interconnect playbook");
+                let mut found_info = None;
+                {
+                    let workers = this.workers.lock().await;
+                    for worker in workers.values() {
+                        tracing::debug!(worker_ident = ?worker.server.spec().ident, "build_interconnect: checking active worker");
+                        if &worker.server.spec().ident == expected_ident {
+                            found_info = Some((worker.server.spec().func.clone(), worker.server.clone()));
+                            break;
+                        }
+                    }
                 }
+
+                let (func, server) = match found_info {
+                    Some(info) => info,
+                    None => {
+                        let sub_name = format!("{}_{}", main_name, expected_ident.package);
+                        tracing::info!(%sub_name, ?expected_ident, "build_interconnect: interconnect playbook not running, launching it");
+                        this.start_playbook(sub_name.clone(), expected_ident.clone(), None, None, None).await?;
+
+                        let workers = this.workers.lock().await;
+                        workers.get(&sub_name)
+                            .map(|w| (w.server.spec().func.clone(), w.server.clone()))
+                            .ok_or_else(|| {
+                                pyroduct::CapturedError::new(format!(
+                                    "Failed to retrieve launched interconnect playbook '{}'",
+                                    sub_name
+                                ))
+                            })?
+                    }
+                };
+
+                playbooks.insert(name.clone(), func);
+                servers.insert(name.clone(), server);
             }
 
-            if let Some(worker) = found_worker {
-                tracing::debug!(name = %name, "build_interconnect: found matching worker for interconnect");
-                playbooks.insert(name.clone(), worker.server.spec().func.clone());
-                servers.insert(name.clone(), worker.server.clone());
-            } else {
-                return Err(pyroduct::CapturedError::new(format!(
-                    "Required interconnect playbook '{}' ({}:{}:{}) is not running",
-                    name, expected_ident.author, expected_ident.package, expected_ident.version
-                )));
-            }
-        }
-
-        Ok(Arc::new(DaemonInterconnect { playbooks, servers }))
+            let interconnect: Arc<dyn PlaybookInterconnect> = Arc::new(DaemonInterconnect { playbooks, servers });
+            Ok(interconnect)
+        })
     }
 }
