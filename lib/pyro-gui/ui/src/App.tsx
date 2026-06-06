@@ -5,14 +5,12 @@ import { DashboardTab } from "./components/DashboardTab";
 import { RepositoryTab } from "./components/RepositoryTab";
 import { PlaybooksTab } from "./components/PlaybooksTab";
 import { OptionsTab } from "./components/OptionsTab";
-import { DataExplorerTab } from "./components/DataExplorerTab";
 import { LogsTab } from "./components/LogsTab";
 import { StartPlaybookModal } from "./components/StartPlaybookModal";
-import { CallPlaybookModal } from "./components/CallPlaybookModal";
 import { DaemonStatus, CacheStatus, Playbook, LogEntry } from "./types";
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<"dashboard" | "repository" | "playbooks" | "options" | "data" | "logs">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "repository" | "playbooks" | "options" | "logs">("dashboard");
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus>({ status: "offline" });
   const [cacheStatus, setCacheStatus] = useState<CacheStatus | null>(null);
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
@@ -24,8 +22,7 @@ export function App() {
     },
   ]);
   const [startModalOpen, setStartModalOpen] = useState(false);
-  const [callModalOpen, setCallModalOpen] = useState(false);
-  const [callPlaybookName, setCallPlaybookName] = useState("");
+  const [selectedPlaybookName, setSelectedPlaybookName] = useState<string | null>(null);
   const [errorNotification, setErrorNotification] = useState<{ title: string; message: string } | null>(null);
 
   const showError = useCallback((title: string, message: string) => {
@@ -239,7 +236,7 @@ export function App() {
   useEffect(() => {
     queryDaemonStatus();
     loadCache();
-    if (activeTab === "dashboard" || activeTab === "playbooks" || activeTab === "data") {
+    if (activeTab === "dashboard" || activeTab === "playbooks") {
       loadPlaybooks();
     }
   }, [activeTab, queryDaemonStatus, loadCache, loadPlaybooks]);
@@ -253,7 +250,7 @@ export function App() {
   // Global refresh
   const handleGlobalRefresh = () => {
     queryDaemonStatus();
-    if (activeTab === "dashboard" || activeTab === "playbooks" || activeTab === "data") loadPlaybooks();
+    if (activeTab === "dashboard" || activeTab === "playbooks") loadPlaybooks();
     if (activeTab === "repository") loadCache();
   };
 
@@ -265,8 +262,6 @@ export function App() {
         return "Repository";
       case "playbooks":
         return "Playbooks";
-      case "data":
-        return "Data Explorer";
       case "options":
         return "Options";
       case "logs":
@@ -297,6 +292,10 @@ export function App() {
         {activeTab === "dashboard" && (
           <DashboardTab
             playbooks={playbooks}
+            onViewPlaybook={(name) => {
+              setSelectedPlaybookName(name);
+              setActiveTab("playbooks");
+            }}
           />
         )}
 
@@ -308,16 +307,11 @@ export function App() {
           <PlaybooksTab
             playbooks={playbooks}
             onStartPlaybookClick={() => setStartModalOpen(true)}
-            onCallPlaybookClick={(name) => {
-              setCallPlaybookName(name);
-              setCallModalOpen(true);
-            }}
             onStopPlaybookClick={stopPlaybook}
+            onSubmitCall={callPlaybook}
+            selectedPlaybookName={selectedPlaybookName}
+            setSelectedPlaybookName={setSelectedPlaybookName}
           />
-        )}
-
-        {activeTab === "data" && (
-          <DataExplorerTab playbooks={playbooks} />
         )}
 
         {activeTab === "logs" && (
@@ -344,13 +338,7 @@ export function App() {
         onSubmit={startPlaybook}
       />
 
-      {/* Call Playbook Modal */}
-      <CallPlaybookModal
-        isOpen={callModalOpen}
-        playbookName={callPlaybookName}
-        onClose={() => setCallModalOpen(false)}
-        onSubmit={callPlaybook}
-      />
+
 
       {/* Error Notification Toast */}
       {errorNotification && (

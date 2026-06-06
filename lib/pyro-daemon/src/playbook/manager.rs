@@ -18,7 +18,10 @@ pub struct PlaybookStatus {
     pub config_path: PathBuf,
     pub socket_path: String,
     pub active_capabilities: Vec<CapabilityIdent>,
+    pub local_capabilities: Vec<CapabilityIdent>,
+    pub remote_capabilities: Vec<CapabilityIdent>,
     pub spec: ModuleSpec,
+    pub processed_rows: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -225,7 +228,10 @@ impl PlaybooksManager {
                     Ok(uuid) => {
                         tracing::info!(playbook = %source, uuid = %uuid, "HTTP callback added successfully");
                         PlaybookResponse::Success {
-                            message: format!("HTTP callback added successfully with UUID: {}", uuid),
+                            message: format!(
+                                "HTTP callback added successfully with UUID: {}",
+                                uuid
+                            ),
                         }
                     }
                     Err(e) => {
@@ -245,7 +251,10 @@ impl PlaybooksManager {
                     Ok(uuid) => {
                         tracing::info!(playbook = %source, uuid = %uuid, "Socket callback added successfully");
                         PlaybookResponse::Success {
-                            message: format!("Socket callback added successfully with UUID: {}", uuid),
+                            message: format!(
+                                "Socket callback added successfully with UUID: {}",
+                                uuid
+                            ),
                         }
                     }
                     Err(e) => {
@@ -261,11 +270,17 @@ impl PlaybooksManager {
                 target_playbook,
             } => {
                 tracing::info!(playbook = %source, target = %target_playbook, "Received AddPlaybookCallback request");
-                match self.add_playbook_callback(source.clone(), target_playbook).await {
+                match self
+                    .add_playbook_callback(source.clone(), target_playbook)
+                    .await
+                {
                     Ok(uuid) => {
                         tracing::info!(playbook = %source, uuid = %uuid, "Playbook callback added successfully");
                         PlaybookResponse::Success {
-                            message: format!("Playbook callback added successfully with UUID: {}", uuid),
+                            message: format!(
+                                "Playbook callback added successfully with UUID: {}",
+                                uuid
+                            ),
                         }
                     }
                     Err(e) => {
@@ -319,17 +334,21 @@ impl PlaybooksManager {
         input_dir_override: Option<PathBuf>,
         output_dir_override: Option<PathBuf>,
     ) -> Result<()> {
-        let playbook_dir = self.working_dir.join("playbooks").join(&name);
-        tracing::debug!(playbook = %name, playbook_dir = ?playbook_dir, "Starting playbook workflow - checking name conflict");
-
-        let db_entry = self.db.get_playbook(&name).await?;
-        if db_entry.is_some() || self.workers.lock().await.contains_key(&name) {
-            tracing::warn!(playbook = %name, "Name conflict detected: playbook already exists in DB or active workers");
+        if self.workers.lock().await.contains_key(&name) {
+            tracing::warn!(playbook = %name, "Name conflict detected: playbook is already running");
             pyroduct::bail!(
-                "Name conflict: playbook with name '{}' already exists",
+                "Name conflict: playbook with name '{}' is already running",
                 name
             );
         }
+
+        let db_entry = self.db.get_playbook(&name).await?;
+        if db_entry.is_some() {
+            tracing::info!(playbook = %name, "Playbook exists in DB but is not running. Cleaning up before restart.");
+            self.delete_playbook(name.clone()).await?;
+        }
+        let playbook_dir = self.working_dir.join("playbooks").join(&name);
+        tracing::debug!(playbook = %name, playbook_dir = ?playbook_dir, "Starting playbook workflow - checking name conflict");
 
         // Update dirs (supporting custom paths elsewhere on the system if overridden)
         let input_dir = input_dir_override.unwrap_or_else(|| playbook_dir.join("input"));
@@ -388,17 +407,6 @@ impl PlaybooksManager {
                 .capture("Failed to write socket_path reference file")?;
         }
 
-        // Save state and config in SQLite database
-        tracing::debug!(playbook = %name, "Saving state to database");
-        self.db
-            .save_playbook(
-                &name,
-                "running",
-                &pipeline_config,
-                playbook_socket.as_deref(),
-            )
-            .await?;
-
         tracing::debug!(playbook = %name, "Loading cache manager and playbook binary");
         let cache = CacheManager::from_env()
             .await
@@ -416,12 +424,25 @@ impl PlaybooksManager {
 
         tracing::info!(playbook = %name, "Starting PlaybookWorker process");
         let mut worker =
-            PlaybookWorker::start(name.clone(), pipeline_config, Some(interconnect)).await?;
+            PlaybookWorker::start(name.clone(), pipeline_config.clone(), Some(interconnect))
+                .await?;
         if let Some(ref socket) = playbook_socket {
             tracing::debug!(playbook = %name, socket = %socket, "Worker listening to custom socket");
             worker.listen_socket(socket).await?;
         }
         let _ = self.register_callbacks_from_db(&name, &worker).await;
+
+        // Save state and config in SQLite database
+        tracing::debug!(playbook = %name, "Saving state to database");
+        self.db
+            .save_playbook(
+                &name,
+                "running",
+                &pipeline_config,
+                playbook_socket.as_deref(),
+            )
+            .await?;
+
         let mut guard = self.workers.lock().await;
         guard.insert(name, worker);
         Ok(())
@@ -485,7 +506,7 @@ impl PlaybooksManager {
         let _ = self.register_callbacks_from_db(&name, &worker).await;
         tracing::debug!(playbook = %name, "Updating status to running in DB");
         self.db.update_status(&name, "running").await?;
-        
+
         let mut guard = self.workers.lock().await;
         if guard.contains_key(&name) {
             let _ = worker.shutdown().await;
@@ -528,11 +549,24 @@ impl PlaybooksManager {
                 .map(|p| p.join("config.toml"))
                 .unwrap_or_default();
 
-            let active_capabilities = worker
+            let active_capabilities = worker.server.spec().capabilities.clone();
+
+            let remote_capabilities: Vec<CapabilityIdent> = worker
                 .capability_processes
                 .iter()
-                .map(|c| c.cap.clone())
+                .map(|proc| proc.cap.clone())
                 .collect();
+
+            let local_capabilities: Vec<CapabilityIdent> = worker
+                .server
+                .spec()
+                .capabilities
+                .iter()
+                .filter(|cap| !remote_capabilities.contains(cap))
+                .cloned()
+                .collect();
+
+            let processed_rows = worker.server.len().await;
 
             results.push(PlaybookStatus {
                 name: worker.name.clone(),
@@ -544,7 +578,10 @@ impl PlaybooksManager {
                     .to_string_lossy()
                     .to_string(),
                 active_capabilities,
+                local_capabilities,
+                remote_capabilities,
                 spec: worker.server.spec(),
+                processed_rows,
             });
         }
         results
@@ -573,7 +610,10 @@ impl PlaybooksManager {
             for name in to_resume {
                 match self.resume_playbook(name.clone()).await {
                     Ok(()) => {
-                        tracing::info!(name, "Successfully resumed running playbook on daemon startup");
+                        tracing::info!(
+                            name,
+                            "Successfully resumed running playbook on daemon startup"
+                        );
                         succeeded_any = true;
                     }
                     Err(e) => {
@@ -774,12 +814,10 @@ impl PlaybooksManager {
         tracing::debug!(playbook = %name, "Executing call_playbook");
         let (worker, spec) = {
             let workers = self.workers.lock().await;
-            let worker = workers
-                .get(name)
-                .ok_or_else(|| {
-                    tracing::error!(playbook = %name, "Playbook is not running");
-                    pyroduct::capture!("Playbook '{}' is not running", name)
-                })?;
+            let worker = workers.get(name).ok_or_else(|| {
+                tracing::error!(playbook = %name, "Playbook is not running");
+                pyroduct::capture!("Playbook '{}' is not running", name)
+            })?;
             (worker.server.clone(), worker.server.spec())
         };
 
@@ -793,13 +831,10 @@ impl PlaybooksManager {
             .capture("Failed to repair input JSON according to module spec")?;
 
         tracing::debug!(playbook = %name, "Sending call to worker");
-        let (_session_id, res) = worker
-            .call(repaired_row)
-            .await
-            .map_err(|e| {
-                tracing::error!(playbook = %name, error = ?e, "Failed to call playbook worker");
-                pyroduct::capture!("Failed to call playbook: {:?}", e)
-            })?;
+        let (_session_id, res) = worker.call(repaired_row).await.map_err(|e| {
+            tracing::error!(playbook = %name, error = ?e, "Failed to call playbook worker");
+            pyroduct::capture!("Failed to call playbook: {:?}", e)
+        })?;
 
         tracing::debug!(playbook = %name, "Serializing result row to JSON");
         let result_val =

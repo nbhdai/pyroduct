@@ -2,9 +2,10 @@ import { Playbook } from "../types";
 
 interface DashboardTabProps {
   playbooks: Playbook[];
+  onViewPlaybook: (name: string) => void;
 }
 
-export function DashboardTab({ playbooks }: DashboardTabProps) {
+export function DashboardTab({ playbooks, onViewPlaybook }: DashboardTabProps) {
   return (
     <div className="tab-content active">
       {/* Running Workers Card */}
@@ -21,7 +22,7 @@ export function DashboardTab({ playbooks }: DashboardTabProps) {
               <thead>
                 <tr>
                   <th>Worker Name</th>
-                  <th>Config Path</th>
+                  <th>Rows Processed</th>
                   <th>Socket Path</th>
                   <th>Capabilities</th>
                 </tr>
@@ -29,8 +30,30 @@ export function DashboardTab({ playbooks }: DashboardTabProps) {
               <tbody>
                 {playbooks.map((pb, idx) => (
                   <tr key={idx}>
-                    <td className="font-semibold text-primary">{pb.name}</td>
-                    <td><span className="code-text">{pb.config_path}</span></td>
+                    <td className="font-semibold text-primary">
+                      <button
+                        onClick={() => onViewPlaybook(pb.name)}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          color: "var(--color-primary)",
+                          fontFamily: "inherit",
+                          fontSize: "inherit",
+                          fontWeight: "inherit",
+                          cursor: "pointer",
+                          padding: 0,
+                          textAlign: "left",
+                          display: "inline-block",
+                        }}
+                        onMouseOver={(e) => (e.currentTarget.style.textDecoration = "underline")}
+                        onMouseOut={(e) => (e.currentTarget.style.textDecoration = "none")}
+                      >
+                        {pb.name}
+                      </button>
+                    </td>
+                    <td style={{ fontWeight: 600, color: "var(--color-success)" }}>
+                      {pb.processed_rows ?? 0}
+                    </td>
                     <td><span className="code-text">{pb.socket_path || "None"}</span></td>
                     <td>
                       <div className="capability-pills">

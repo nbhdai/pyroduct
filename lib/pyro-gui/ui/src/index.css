@@ -618,6 +618,15 @@ body {
     border: 1px solid rgba(255, 92, 0, 0.2);
 }
 
+.cap-pill-local {
+    font-size: 11px;
+    background-color: rgba(46, 204, 113, 0.12);
+    color: #58d68d;
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(46, 204, 113, 0.2);
+}
+
 .playbook-actions {
     display: flex;
     gap: 10px;
@@ -741,6 +750,7 @@ body {
 }
 
 .form-group input[type="text"],
+.form-group input[type="number"],
 .form-group textarea {
     width: 100%;
     padding: 12px 14px;

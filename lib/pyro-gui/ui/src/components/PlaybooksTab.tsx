@@ -1,18 +1,39 @@
 import { Playbook } from "../types";
+import { PlaybookDetailView } from "./PlaybookDetailView";
 
 interface PlaybooksTabProps {
   playbooks: Playbook[];
   onStartPlaybookClick: () => void;
-  onCallPlaybookClick: (name: string) => void;
   onStopPlaybookClick: (name: string) => void;
+  onSubmitCall: (name: string, payload: any) => Promise<any>;
+  selectedPlaybookName: string | null;
+  setSelectedPlaybookName: (name: string | null) => void;
 }
 
 export function PlaybooksTab({
   playbooks,
   onStartPlaybookClick,
-  onCallPlaybookClick,
   onStopPlaybookClick,
+  onSubmitCall,
+  selectedPlaybookName,
+  setSelectedPlaybookName,
 }: PlaybooksTabProps) {
+  // If a playbook is selected, render the detail view inline instead of the list grid
+  if (selectedPlaybookName !== null) {
+    const selectedPlaybook = playbooks.find((pb) => pb.name === selectedPlaybookName);
+    if (selectedPlaybook) {
+      return (
+        <div className="tab-content active">
+          <PlaybookDetailView
+            playbook={selectedPlaybook}
+            onBack={() => setSelectedPlaybookName(null)}
+            onSubmitCall={onSubmitCall}
+          />
+        </div>
+      );
+    }
+  }
+
   return (
     <div className="tab-content active">
       <div className="playbooks-header">
@@ -65,7 +86,7 @@ export function PlaybooksTab({
                 </div>
                 <div className="playbook-actions">
                   <button
-                    onClick={() => onCallPlaybookClick(pb.name)}
+                    onClick={() => setSelectedPlaybookName(pb.name)}
                     className="btn btn-secondary call-pb-btn"
                   >
                     Call

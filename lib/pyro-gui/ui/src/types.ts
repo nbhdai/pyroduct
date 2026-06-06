@@ -26,6 +26,7 @@ export interface CacheStatus {
 }
 
 export interface PlaybookCapability {
+  author?: string;
   package: string;
   version: string;
 }
@@ -35,6 +36,10 @@ export interface Playbook {
   config_path: string;
   socket_path?: string;
   active_capabilities?: PlaybookCapability[];
+  local_capabilities?: PlaybookCapability[];
+  remote_capabilities?: PlaybookCapability[];
+  spec?: PlaybookSpec;
+  processed_rows?: number;
 }
 
 export interface LogEntry {
