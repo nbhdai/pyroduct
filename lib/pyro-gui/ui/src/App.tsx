@@ -149,8 +149,7 @@ export function App() {
   const startPlaybook = useCallback(
     async (params: {
       name: string;
-      configPath?: string;
-      playbookIdent?: { author: string; package: string; version: string };
+      playbookIdent: { author: string; package: string; version: string };
       remote?: Array<{
         capability: { author: string; package: string; version: string };
         address: { tcp: string } | { unix: string };
@@ -164,18 +163,13 @@ export function App() {
     }) => {
       try {
         setStartModalOpen(false);
-        if (params.configPath) {
-          addLog(`Launching playbook "${params.name}" from config "${params.configPath}"...`, "command");
-        } else if (params.playbookIdent) {
-          addLog(
-            `Launching playbook "${params.name}" (${params.playbookIdent.author}/${params.playbookIdent.package}@${params.playbookIdent.version})...`,
-            "command"
-          );
-        }
+        addLog(
+          `Launching playbook "${params.name}" (${params.playbookIdent.author}/${params.playbookIdent.package}@${params.playbookIdent.version})...`,
+          "command"
+        );
         const msg = (await invoke("start_playbook", {
           name: params.name,
-          configPath: params.configPath || null,
-          playbookIdent: params.playbookIdent || null,
+          playbookIdent: params.playbookIdent,
           remote: params.remote || null,
           walCapacity: params.walCapacity ?? null,
           successLogRetentionSecs: params.successLogRetentionSecs ?? null,

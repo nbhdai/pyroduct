@@ -13,8 +13,7 @@ interface StartPlaybookModalProps {
   onClose: () => void;
   onSubmit: (params: {
     name: string;
-    configPath?: string;
-    playbookIdent?: { author: string; package: string; version: string };
+    playbookIdent: { author: string; package: string; version: string };
     remote?: Array<{
       capability: { author: string; package: string; version: string };
       address: { tcp: string } | { unix: string };
@@ -35,7 +34,6 @@ export function StartPlaybookModal({
   onSubmit,
 }: StartPlaybookModalProps) {
   const [selectedPlaybookKey, setSelectedPlaybookKey] = useState("");
-  const [customConfigPath, setCustomConfigPath] = useState("");
   const [name, setName] = useState("");
   const [socketPath, setSocketPath] = useState("");
   const [inputDir, setInputDir] = useState("");
@@ -54,7 +52,6 @@ export function StartPlaybookModal({
   useEffect(() => {
     if (isOpen) {
       setName("");
-      setCustomConfigPath("");
       setSocketPath("");
       setInputDir("");
       setOutputDir("");
@@ -65,7 +62,7 @@ export function StartPlaybookModal({
       setRequiredCapabilities([]);
       setRemoteConfig({});
       
-      // Default to first available playbook, or custom config if empty
+      // Default to first available playbook
       if (availablePlaybooks.length > 0) {
         const pb = availablePlaybooks[0];
         const key = `${pb.author}/${pb.name}@${pb.version}`;
@@ -73,7 +70,7 @@ export function StartPlaybookModal({
         setName(pb.name);
         fetchPlaybookCapabilities(pb.author, pb.name, pb.version);
       } else {
-        setSelectedPlaybookKey("__custom__");
+        setSelectedPlaybookKey("");
       }
     }
   }, [isOpen, availablePlaybooks]);
@@ -103,17 +100,12 @@ export function StartPlaybookModal({
     const key = e.target.value;
     setSelectedPlaybookKey(key);
     
-    if (key === "__custom__") {
-      setRequiredCapabilities([]);
-      setName("");
-    } else {
-      const selected = availablePlaybooks.find(
-        (pb) => `${pb.author}/${pb.name}@${pb.version}` === key
-      );
-      if (selected) {
-        setName(selected.name);
-        fetchPlaybookCapabilities(selected.author, selected.name, selected.version);
-      }
+    const selected = availablePlaybooks.find(
+      (pb) => `${pb.author}/${pb.name}@${pb.version}` === key
+    );
+    if (selected) {
+      setName(selected.name);
+      fetchPlaybookCapabilities(selected.author, selected.name, selected.version);
     }
   };
 
@@ -122,12 +114,14 @@ export function StartPlaybookModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    const isCustom = selectedPlaybookKey === "__custom__";
-    const selected = isCustom
-      ? null
-      : availablePlaybooks.find(
-          (pb) => `${pb.author}/${pb.name}@${pb.version}` === selectedPlaybookKey
-        );
+    const selected = availablePlaybooks.find(
+      (pb) => `${pb.author}/${pb.name}@${pb.version}` === selectedPlaybookKey
+    );
+
+    if (!selected) {
+      alert("Please select a playbook.");
+      return;
+    }
 
     // Format remotes list
     const formattedRemotes = Object.entries(remoteConfig)
@@ -146,15 +140,12 @@ export function StartPlaybookModal({
       });
 
     onSubmit({
-      name: name.trim() || (selected ? selected.name : "playbook-run"),
-      configPath: isCustom ? customConfigPath.trim() : undefined,
-      playbookIdent: selected
-        ? {
-            author: selected.author,
-            package: selected.name,
-            version: selected.version,
-          }
-        : undefined,
+      name: name.trim() || selected.name,
+      playbookIdent: {
+        author: selected.author,
+        package: selected.name,
+        version: selected.version,
+      },
       remote: formattedRemotes.length > 0 ? formattedRemotes : undefined,
       walCapacity,
       successLogRetentionSecs,
@@ -218,23 +209,8 @@ export function StartPlaybookModal({
                     </option>
                   );
                 })}
-                <option value="__custom__">Custom Config File Path...</option>
               </select>
             </div>
-
-            {selectedPlaybookKey === "__custom__" && (
-              <div className="form-group">
-                <label htmlFor="playbook-config-path">Config File Path (.toml / .yaml) *</label>
-                <input
-                  type="text"
-                  id="playbook-config-path"
-                  value={customConfigPath}
-                  onChange={(e) => setCustomConfigPath(e.target.value)}
-                  required
-                  placeholder="e.g. /path/to/playbook.toml"
-                />
-              </div>
-            )}
 
             <button
               type="button"
