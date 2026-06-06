@@ -28,7 +28,6 @@ async fn test_daemon_auto_resume() {
         .await
         .unwrap();
 
-    let config_path = working_dir.join("config.toml");
     let pipeline_config = PipelineConfig {
         playbook: binary.spec.ident.clone(),
         remote: HashMap::new(),
@@ -39,16 +38,11 @@ async fn test_daemon_auto_resume() {
         output_dir: working_dir.join("output"),
         log_dir: working_dir.join("log"),
     };
-    std::fs::write(
-        &config_path,
-        toml::to_string_pretty(&pipeline_config).unwrap(),
-    )
-    .unwrap();
 
     let pm1 = Arc::new(PlaybooksManager::new(working_dir.clone()));
     pm1.start_playbook(
         "integration_error".to_string(),
-        config_path,
+        pipeline_config,
         None,
         None,
         None,

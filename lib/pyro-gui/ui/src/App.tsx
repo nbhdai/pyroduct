@@ -6,12 +6,13 @@ import { RepositoryTab } from "./components/RepositoryTab";
 import { PlaybooksTab } from "./components/PlaybooksTab";
 import { OptionsTab } from "./components/OptionsTab";
 import { DataExplorerTab } from "./components/DataExplorerTab";
+import { LogsTab } from "./components/LogsTab";
 import { StartPlaybookModal } from "./components/StartPlaybookModal";
 import { CallPlaybookModal } from "./components/CallPlaybookModal";
 import { DaemonStatus, CacheStatus, Playbook, LogEntry } from "./types";
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<"dashboard" | "repository" | "playbooks" | "options" | "data">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "repository" | "playbooks" | "options" | "data" | "logs">("dashboard");
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus>({ status: "offline" });
   const [cacheStatus, setCacheStatus] = useState<CacheStatus | null>(null);
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
@@ -25,6 +26,22 @@ export function App() {
   const [startModalOpen, setStartModalOpen] = useState(false);
   const [callModalOpen, setCallModalOpen] = useState(false);
   const [callPlaybookName, setCallPlaybookName] = useState("");
+  const [errorNotification, setErrorNotification] = useState<{ title: string; message: string } | null>(null);
+
+  const showError = useCallback((title: string, message: string) => {
+    setErrorNotification({ title, message });
+  }, []);
+
+  useEffect(() => {
+    if (errorNotification) {
+      const timer = setTimeout(() => {
+        setErrorNotification(null);
+      }, 7000);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+  }, [errorNotification]);
+
   // Helper to add log entries
   const addLog = useCallback((message: string, type: LogEntry["type"] = "system") => {
     setLogs((prev) => [
@@ -35,6 +52,10 @@ export function App() {
         type,
       },
     ]);
+  }, []);
+
+  const clearLogs = useCallback(() => {
+    setLogs([]);
   }, []);
 
   // 1. Query Daemon Status
@@ -55,8 +76,9 @@ export function App() {
     } catch (err) {
       setDaemonStatus({ status: "error", message: String(err) });
       addLog(`Failed to query daemon: ${err}`, "error");
+      showError("Daemon Connection Error", `Failed to query daemon: ${err}`);
     }
-  }, [addLog]);
+  }, [addLog, showError]);
 
   // 2. Load Cache Status
   const loadCache = useCallback(async () => {
@@ -70,8 +92,9 @@ export function App() {
       );
     } catch (err) {
       addLog(`Failed to load cache info: ${err}`, "error");
+      showError("Cache Query Failed", String(err));
     }
-  }, [addLog]);
+  }, [addLog, showError]);
 
   // 3. Load Playbooks
   const loadPlaybooks = useCallback(async () => {
@@ -82,8 +105,9 @@ export function App() {
       addLog(`Retrieved ${res.length} active playbook workers.`, "success");
     } catch (err) {
       addLog(`Failed to list playbooks: ${err}`, "error");
+      showError("Failed to List Playbooks", String(err));
     }
-  }, [addLog]);
+  }, [addLog, showError]);
 
   // 4. Purge Cache
   const purgeCache = useCallback(async () => {
@@ -94,9 +118,10 @@ export function App() {
       await loadCache();
     } catch (err) {
       addLog(`Failed to purge cache: ${err}`, "error");
+      showError("Purge Cache Failed", String(err));
       throw err;
     }
-  }, [addLog, loadCache]);
+  }, [addLog, loadCache, showError]);
 
   const purgeCapabilities = useCallback(async () => {
     try {
@@ -106,9 +131,10 @@ export function App() {
       await loadCache();
     } catch (err) {
       addLog(`Failed to purge capabilities: ${err}`, "error");
+      showError("Purge Capabilities Failed", String(err));
       throw err;
     }
-  }, [addLog, loadCache]);
+  }, [addLog, loadCache, showError]);
 
   const purgePlaybooks = useCallback(async () => {
     try {
@@ -118,9 +144,10 @@ export function App() {
       await loadCache();
     } catch (err) {
       addLog(`Failed to purge playbooks: ${err}`, "error");
+      showError("Purge Playbooks Failed", String(err));
       throw err;
     }
-  }, [addLog, loadCache]);
+  }, [addLog, loadCache, showError]);
 
   // 5. Stop Playbook
   const stopPlaybook = useCallback(
@@ -140,9 +167,10 @@ export function App() {
         await queryDaemonStatus();
       } catch (err) {
         addLog(`Failed to stop playbook: ${err}`, "error");
+        showError("Failed to Stop Playbook", String(err));
       }
     },
-    [addLog, loadPlaybooks, queryDaemonStatus]
+    [addLog, loadPlaybooks, queryDaemonStatus, showError]
   );
 
   // 6. Start Playbook
@@ -184,10 +212,10 @@ export function App() {
         await queryDaemonStatus();
       } catch (err) {
         addLog(`Failed to launch playbook: ${err}`, "error");
-        alert(`Failed to launch playbook: ${err}`);
+        showError("Failed to Start Playbook", String(err));
       }
     },
-    [addLog, loadPlaybooks, queryDaemonStatus]
+    [addLog, loadPlaybooks, queryDaemonStatus, showError]
   );
 
   // 7. Call Playbook
@@ -200,10 +228,11 @@ export function App() {
         return res;
       } catch (err) {
         addLog(`Playbook "${name}" call failed: ${err}`, "error");
+        showError(`Call to Playbook "${name}" Failed`, String(err));
         throw err;
       }
     },
-    [addLog]
+    [addLog, showError]
   );
 
   // Initial and tab-change loads
@@ -240,6 +269,8 @@ export function App() {
         return "Data Explorer";
       case "options":
         return "Options";
+      case "logs":
+        return "Console Logs";
     }
   };
 
@@ -289,6 +320,10 @@ export function App() {
           <DataExplorerTab playbooks={playbooks} />
         )}
 
+        {activeTab === "logs" && (
+          <LogsTab logs={logs} onClearLogs={clearLogs} />
+        )}
+
         {activeTab === "options" && (
           <OptionsTab
             onPurgeAll={purgeCache}
@@ -316,6 +351,20 @@ export function App() {
         onClose={() => setCallModalOpen(false)}
         onSubmit={callPlaybook}
       />
+
+      {/* Error Notification Toast */}
+      {errorNotification && (
+        <div className="error-toast">
+          <span className="error-toast-icon">⚠️</span>
+          <div className="error-toast-content">
+            <div className="error-toast-title">{errorNotification.title}</div>
+            <div className="error-toast-message">{errorNotification.message}</div>
+          </div>
+          <button className="error-toast-close" onClick={() => setErrorNotification(null)}>
+            &times;
+          </button>
+        </div>
+      )}
     </div>
   );
 }

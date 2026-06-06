@@ -335,7 +335,6 @@ mod tests {
         let manager_dir = tmp_dir.path().join("manager_dir");
         let manager = Arc::new(PlaybooksManager::new(manager_dir));
 
-        let config_a_path = tmp_dir.path().join("config_a.toml");
         let pipeline_config_a = PipelineConfig {
             playbook: target_binary.spec.ident.clone(),
             remote: HashMap::new(),
@@ -346,10 +345,7 @@ mod tests {
             output_dir: tmp_dir.path().to_path_buf(),
             log_dir: tmp_dir.path().to_path_buf(),
         };
-        let toml_a = toml::to_string_pretty(&pipeline_config_a).unwrap();
-        std::fs::write(&config_a_path, toml_a).unwrap();
 
-        let config_b_path = tmp_dir.path().join("config_b.toml");
         let pipeline_config_b = PipelineConfig {
             playbook: caller_binary.spec.ident.clone(),
             remote: HashMap::new(),
@@ -360,18 +356,16 @@ mod tests {
             output_dir: tmp_dir.path().to_path_buf(),
             log_dir: tmp_dir.path().to_path_buf(),
         };
-        let toml_b = toml::to_string_pretty(&pipeline_config_b).unwrap();
-        std::fs::write(&config_b_path, toml_b).unwrap();
 
         // 1. Start target playbook first
         manager
-            .start_playbook("target".to_string(), config_a_path, None, None, None)
+            .start_playbook("target".to_string(), pipeline_config_a, None, None, None)
             .await
             .expect("Failed to start target playbook");
 
         // 2. Start caller playbook, which requires the target playbook in its interconnect
         manager
-            .start_playbook("caller".to_string(), config_b_path, None, None, None)
+            .start_playbook("caller".to_string(), pipeline_config_b, None, None, None)
             .await
             .expect("Failed to start caller playbook");
 

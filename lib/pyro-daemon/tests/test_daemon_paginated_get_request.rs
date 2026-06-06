@@ -50,7 +50,6 @@ async fn test_daemon_paginated_get_request() {
         .await
         .unwrap();
 
-    let config_path = working_dir.join("config.toml");
     let pipeline_config = pyroduct::pipeline::factory::PipelineConfig {
         playbook: binary.spec.ident.clone(),
         remote: std::collections::HashMap::new(),
@@ -61,17 +60,11 @@ async fn test_daemon_paginated_get_request() {
         output_dir: working_dir.join("output"),
         log_dir: working_dir.join("log"),
     };
-    tokio::fs::write(
-        &config_path,
-        toml::to_string_pretty(&pipeline_config).unwrap(),
-    )
-    .await
-    .unwrap();
 
     // Start playbook
     let req = DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Start {
         name: "integration_error".to_string(),
-        playbook_config_path: config_path,
+        pipeline_config,
         playbook_socket: None,
         input_dir: None,
         output_dir: None,

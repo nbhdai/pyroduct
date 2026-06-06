@@ -10,13 +10,9 @@ mod commands;
 fn main() {
     // Initialize tracing subscriber
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        "trace,cranelift_frontend=off,cranelift_codegen=off,wasmtime=off,pyroduct=info".into()
-    })
-            }),
-        )
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            "trace,cranelift_frontend=off,cranelift_codegen=off,wasmtime=off,pyroduct=info".into()
+        }))
         .init();
 
     tracing::info!("Starting pyro-gui application");

@@ -1,8 +1,8 @@
 import { DaemonStatus } from "../types";
 
 interface SidebarProps {
-  activeTab: "dashboard" | "repository" | "playbooks" | "options" | "data";
-  onTabChange: (tab: "dashboard" | "repository" | "playbooks" | "options" | "data") => void;
+  activeTab: "dashboard" | "repository" | "playbooks" | "options" | "data" | "logs";
+  onTabChange: (tab: "dashboard" | "repository" | "playbooks" | "options" | "data" | "logs") => void;
   daemonStatus: DaemonStatus;
 }
 
@@ -63,6 +63,12 @@ export function Sidebar({ activeTab, onTabChange, daemonStatus }: SidebarProps) 
           onClick={() => onTabChange("options")}
         >
           Options
+        </button>
+        <button
+          className={`nav-btn ${activeTab === "logs" ? "active" : ""}`}
+          onClick={() => onTabChange("logs")}
+        >
+          Console Logs
         </button>
       </nav>
 

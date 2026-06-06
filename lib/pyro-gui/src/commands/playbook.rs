@@ -73,17 +73,6 @@ pub async fn start_playbook(
             format!("Failed to connect to daemon: {:?}", e)
         })?;
 
-    let playbook_dir = working_dir.join("playbooks").join(&name);
-    debug!("Creating playbook directory at {:?}", playbook_dir);
-    tokio::fs::create_dir_all(&playbook_dir)
-        .await
-        .map_err(|e| {
-            error!("Failed to create playbook directory at {:?}: {:?}", playbook_dir, e);
-            format!("Failed to create playbook directory: {:?}", e)
-        })?;
-
-    let config_file_path = playbook_dir.join("config.toml");
-
     let mut remote_map = std::collections::HashMap::new();
     if let Some(remotes) = remote {
         for entry in remotes {
@@ -102,30 +91,15 @@ pub async fn start_playbook(
         output_dir: std::path::PathBuf::from(""),
     };
 
-    trace!("PipelineConfig to write: {:?}", pipeline_config);
-    let toml_string = toml::to_string_pretty(&pipeline_config)
-        .map_err(|e| {
-            error!("Failed to serialize PipelineConfig to TOML: {:?}", e);
-            format!("Failed to serialize PipelineConfig: {:?}", e)
-        })?;
-
-    debug!("Writing configuration TOML to path: {:?}", config_file_path);
-    tokio::fs::write(&config_file_path, toml_string)
-        .await
-        .map_err(|e| {
-            error!("Failed to write PipelineConfig to file: {:?}", e);
-            format!("Failed to write PipelineConfig: {:?}", e)
-        })?;
-
     let req = pyro_daemon::DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Start {
         name: name.clone(),
-        playbook_config_path: config_file_path.clone(),
+        pipeline_config,
         playbook_socket: playbook_socket.clone(),
         input_dir: input_dir.clone().map(std::path::PathBuf::from),
         output_dir: output_dir.clone().map(std::path::PathBuf::from),
     });
-    debug!("Sending PlaybookRequest::Start to daemon: name='{}', config_path={:?}, socket={:?}, input={:?}, output={:?}",
-        name, config_file_path, playbook_socket, input_dir, output_dir);
+    debug!("Sending PlaybookRequest::Start to daemon: name='{}', socket={:?}, input={:?}, output={:?}",
+        name, playbook_socket, input_dir, output_dir);
 
     match client.request(req).await {
         Ok(pyro_daemon::DaemonResponse::Playbook(

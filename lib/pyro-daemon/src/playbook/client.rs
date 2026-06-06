@@ -8,14 +8,14 @@ impl DaemonClient {
     pub async fn start_playbook(
         &self,
         name: String,
-        playbook_config_path: PathBuf,
+        pipeline_config: pyroduct::pipeline::factory::PipelineConfig,
         playbook_socket: Option<String>,
         input_dir: Option<PathBuf>,
         output_dir: Option<PathBuf>,
     ) -> Result<String> {
         let req = DaemonRequest::Playbook(PlaybookRequest::Start {
             name,
-            playbook_config_path,
+            pipeline_config,
             playbook_socket,
             input_dir,
             output_dir,

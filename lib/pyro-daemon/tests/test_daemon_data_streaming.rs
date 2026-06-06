@@ -51,7 +51,6 @@ async fn test_daemon_data_streaming() {
         .await
         .unwrap();
 
-    let config_a_path = working_dir.join("config_a.toml");
     let pipeline_config_a = pyroduct::pipeline::factory::PipelineConfig {
         playbook: binary_a.spec.ident.clone(),
         remote: std::collections::HashMap::new(),
@@ -62,17 +61,11 @@ async fn test_daemon_data_streaming() {
         output_dir: working_dir.join("output_a"),
         log_dir: working_dir.join("log_a"),
     };
-    tokio::fs::write(
-        &config_a_path,
-        toml::to_string_pretty(&pipeline_config_a).unwrap(),
-    )
-    .await
-    .unwrap();
 
     // Start playbook
     let req = DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Start {
         name: "integration_error".to_string(),
-        playbook_config_path: config_a_path,
+        pipeline_config: pipeline_config_a,
         playbook_socket: None,
         input_dir: None,
         output_dir: None,

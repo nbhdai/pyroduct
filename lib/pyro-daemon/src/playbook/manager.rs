@@ -34,7 +34,7 @@ pub struct CallbackMapping {
 pub enum PlaybookRequest {
     Start {
         name: String,
-        playbook_config_path: PathBuf,
+        pipeline_config: pyroduct::pipeline::factory::PipelineConfig,
         #[serde(default)]
         playbook_socket: Option<String>,
         #[serde(default)]
@@ -110,165 +110,233 @@ impl PlaybooksManager {
         match req {
             PlaybookRequest::Start {
                 name,
-                playbook_config_path,
+                pipeline_config,
                 playbook_socket,
                 input_dir,
                 output_dir,
             } => {
+                tracing::info!(playbook = %name, playbook = ?pipeline_config.playbook, "Received Start request for playbook");
                 match self
                     .start_playbook(
-                        name,
-                        playbook_config_path,
+                        name.clone(),
+                        pipeline_config,
                         playbook_socket,
                         input_dir,
                         output_dir,
                     )
                     .await
                 {
-                    Ok(()) => PlaybookResponse::Success {
-                        message: "Playbook worker and capability servers started successfully"
-                            .to_string(),
-                    },
-                    Err(e) => PlaybookResponse::Error {
-                        message: format!("Failed to start playbook worker: {:?}", e),
-                    },
+                    Ok(()) => {
+                        tracing::info!(playbook = %name, "Playbook started successfully");
+                        PlaybookResponse::Success {
+                            message: "Playbook worker and capability servers started successfully"
+                                .to_string(),
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(playbook = %name, error = ?e, "Failed to start playbook");
+                        PlaybookResponse::Error {
+                            message: format!("Failed to start playbook worker: {:?}", e),
+                        }
+                    }
                 }
             }
-            PlaybookRequest::Stop { name } => match self.stop_playbook(&name).await {
-                Ok(true) => PlaybookResponse::Success {
-                    message: "Playbook worker shut down successfully".to_string(),
-                },
-                Ok(false) => PlaybookResponse::Error {
-                    message: format!("No active playbook worker found with ID: {}", name),
-                },
-                Err(e) => PlaybookResponse::Error {
-                    message: format!("Error during playbook shutdown: {:?}", e),
-                },
-            },
-            PlaybookRequest::Resume { name } => match self.resume_playbook(name).await {
-                Ok(()) => PlaybookResponse::Success {
-                    message: "Playbook worker resumed successfully".to_string(),
-                },
-                Err(e) => PlaybookResponse::Error {
-                    message: format!("Failed to resume playbook: {:?}", e),
-                },
-            },
-            PlaybookRequest::Delete { name } => match self.delete_playbook(name).await {
-                Ok(()) => PlaybookResponse::Success {
-                    message: "Playbook deleted successfully".to_string(),
-                },
-                Err(e) => PlaybookResponse::Error {
-                    message: format!("Failed to delete playbook: {:?}", e),
-                },
-            },
+            PlaybookRequest::Stop { name } => {
+                tracing::info!(playbook = %name, "Received Stop request for playbook");
+                match self.stop_playbook(&name).await {
+                    Ok(true) => {
+                        tracing::info!(playbook = %name, "Playbook worker shut down successfully");
+                        PlaybookResponse::Success {
+                            message: "Playbook worker shut down successfully".to_string(),
+                        }
+                    }
+                    Ok(false) => {
+                        tracing::warn!(playbook = %name, "No active playbook worker found to stop");
+                        PlaybookResponse::Error {
+                            message: format!("No active playbook worker found with ID: {}", name),
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(playbook = %name, error = ?e, "Error during playbook shutdown");
+                        PlaybookResponse::Error {
+                            message: format!("Error during playbook shutdown: {:?}", e),
+                        }
+                    }
+                }
+            }
+            PlaybookRequest::Resume { name } => {
+                tracing::info!(playbook = %name, "Received Resume request for playbook");
+                match self.resume_playbook(name.clone()).await {
+                    Ok(()) => {
+                        tracing::info!(playbook = %name, "Playbook worker resumed successfully");
+                        PlaybookResponse::Success {
+                            message: "Playbook worker resumed successfully".to_string(),
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(playbook = %name, error = ?e, "Failed to resume playbook");
+                        PlaybookResponse::Error {
+                            message: format!("Failed to resume playbook: {:?}", e),
+                        }
+                    }
+                }
+            }
+            PlaybookRequest::Delete { name } => {
+                tracing::info!(playbook = %name, "Received Delete request for playbook");
+                match self.delete_playbook(name.clone()).await {
+                    Ok(()) => {
+                        tracing::info!(playbook = %name, "Playbook deleted successfully");
+                        PlaybookResponse::Success {
+                            message: "Playbook deleted successfully".to_string(),
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(playbook = %name, error = ?e, "Failed to delete playbook");
+                        PlaybookResponse::Error {
+                            message: format!("Failed to delete playbook: {:?}", e),
+                        }
+                    }
+                }
+            }
             PlaybookRequest::List => {
+                tracing::info!("Received List playbooks request");
                 let playbooks = self.list_playbooks().await;
+                tracing::debug!(count = playbooks.len(), "Retrieved active playbooks list");
                 PlaybookResponse::Playbooks { playbooks }
             }
             PlaybookRequest::Call { name, payload } => {
+                tracing::info!(playbook = %name, "Received Call request for playbook");
                 match self.call_playbook(&name, payload).await {
-                    Ok(result) => PlaybookResponse::CallResult { result },
-                    Err(e) => PlaybookResponse::Error {
-                        message: format!("Failed to call playbook: {:?}", e),
-                    },
+                    Ok(result) => {
+                        tracing::info!(playbook = %name, "Playbook call completed successfully");
+                        PlaybookResponse::CallResult { result }
+                    }
+                    Err(e) => {
+                        tracing::error!(playbook = %name, error = ?e, "Failed to call playbook");
+                        PlaybookResponse::Error {
+                            message: format!("Failed to call playbook: {:?}", e),
+                        }
+                    }
                 }
             }
             PlaybookRequest::AddHttpCallback { source, url } => {
-                match self.add_http_callback(source, url).await {
-                    Ok(uuid) => PlaybookResponse::Success {
-                        message: format!("HTTP callback added successfully with UUID: {}", uuid),
-                    },
-                    Err(e) => PlaybookResponse::Error {
-                        message: format!("Failed to add HTTP callback: {:?}", e),
-                    },
+                tracing::info!(playbook = %source, url = %url, "Received AddHttpCallback request");
+                match self.add_http_callback(source.clone(), url).await {
+                    Ok(uuid) => {
+                        tracing::info!(playbook = %source, uuid = %uuid, "HTTP callback added successfully");
+                        PlaybookResponse::Success {
+                            message: format!("HTTP callback added successfully with UUID: {}", uuid),
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(playbook = %source, error = ?e, "Failed to add HTTP callback");
+                        PlaybookResponse::Error {
+                            message: format!("Failed to add HTTP callback: {:?}", e),
+                        }
+                    }
                 }
             }
             PlaybookRequest::AddSocketCallback {
                 source,
                 socket_path,
-            } => match self.add_socket_callback(source, socket_path).await {
-                Ok(uuid) => PlaybookResponse::Success {
-                    message: format!("Socket callback added successfully with UUID: {}", uuid),
-                },
-                Err(e) => PlaybookResponse::Error {
-                    message: format!("Failed to add Socket callback: {:?}", e),
-                },
-            },
+            } => {
+                tracing::info!(playbook = %source, socket_path = %socket_path, "Received AddSocketCallback request");
+                match self.add_socket_callback(source.clone(), socket_path).await {
+                    Ok(uuid) => {
+                        tracing::info!(playbook = %source, uuid = %uuid, "Socket callback added successfully");
+                        PlaybookResponse::Success {
+                            message: format!("Socket callback added successfully with UUID: {}", uuid),
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(playbook = %source, error = ?e, "Failed to add Socket callback");
+                        PlaybookResponse::Error {
+                            message: format!("Failed to add Socket callback: {:?}", e),
+                        }
+                    }
+                }
+            }
             PlaybookRequest::AddPlaybookCallback {
                 source,
                 target_playbook,
-            } => match self.add_playbook_callback(source, target_playbook).await {
-                Ok(uuid) => PlaybookResponse::Success {
-                    message: format!("Playbook callback added successfully with UUID: {}", uuid),
-                },
-                Err(e) => PlaybookResponse::Error {
-                    message: format!("Failed to add Playbook callback: {:?}", e),
-                },
-            },
-            PlaybookRequest::ListCallbacks { source } => match self.list_callbacks(source).await {
-                Ok(callbacks) => PlaybookResponse::Callbacks { callbacks },
-                Err(e) => PlaybookResponse::Error {
-                    message: format!("Failed to list callbacks: {:?}", e),
-                },
-            },
-            PlaybookRequest::DeleteCallback { uuid } => match self.delete_callback(uuid).await {
-                Ok(()) => PlaybookResponse::Success {
-                    message: "Callback deleted successfully".to_string(),
-                },
-                Err(e) => PlaybookResponse::Error {
-                    message: format!("Failed to delete callback: {:?}", e),
-                },
-            },
+            } => {
+                tracing::info!(playbook = %source, target = %target_playbook, "Received AddPlaybookCallback request");
+                match self.add_playbook_callback(source.clone(), target_playbook).await {
+                    Ok(uuid) => {
+                        tracing::info!(playbook = %source, uuid = %uuid, "Playbook callback added successfully");
+                        PlaybookResponse::Success {
+                            message: format!("Playbook callback added successfully with UUID: {}", uuid),
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(playbook = %source, error = ?e, "Failed to add Playbook callback");
+                        PlaybookResponse::Error {
+                            message: format!("Failed to add Playbook callback: {:?}", e),
+                        }
+                    }
+                }
+            }
+            PlaybookRequest::ListCallbacks { source } => {
+                tracing::info!(playbook = %source, "Received ListCallbacks request");
+                match self.list_callbacks(source.clone()).await {
+                    Ok(callbacks) => {
+                        tracing::debug!(playbook = %source, count = callbacks.len(), "Retrieved callbacks list");
+                        PlaybookResponse::Callbacks { callbacks }
+                    }
+                    Err(e) => {
+                        tracing::error!(playbook = %source, error = ?e, "Failed to list callbacks");
+                        PlaybookResponse::Error {
+                            message: format!("Failed to list callbacks: {:?}", e),
+                        }
+                    }
+                }
+            }
+            PlaybookRequest::DeleteCallback { uuid } => {
+                tracing::info!(uuid = %uuid, "Received DeleteCallback request");
+                match self.delete_callback(uuid).await {
+                    Ok(()) => {
+                        tracing::info!(uuid = %uuid, "Callback deleted successfully");
+                        PlaybookResponse::Success {
+                            message: "Callback deleted successfully".to_string(),
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(uuid = %uuid, error = ?e, "Failed to delete callback");
+                        PlaybookResponse::Error {
+                            message: format!("Failed to delete callback: {:?}", e),
+                        }
+                    }
+                }
+            }
         }
     }
 
     pub async fn start_playbook(
         self: &Arc<Self>,
         name: String,
-        playbook_config_path: PathBuf,
+        mut pipeline_config: pyroduct::pipeline::factory::PipelineConfig,
         playbook_socket: Option<String>,
         input_dir_override: Option<PathBuf>,
         output_dir_override: Option<PathBuf>,
     ) -> Result<()> {
-        // Playbook working directory: ROOT/playbooks/{playbook_name}/
         let playbook_dir = self.working_dir.join("playbooks").join(&name);
+        tracing::debug!(playbook = %name, playbook_dir = ?playbook_dir, "Starting playbook workflow - checking name conflict");
 
         let db_entry = self.db.get_playbook(&name).await?;
         if db_entry.is_some() || self.workers.lock().await.contains_key(&name) {
+            tracing::warn!(playbook = %name, "Name conflict detected: playbook already exists in DB or active workers");
             pyroduct::bail!(
                 "Name conflict: playbook with name '{}' already exists",
                 name
             );
         }
 
-        let config_str = tokio::fs::read_to_string(&playbook_config_path)
-            .await
-            .capture("Failed to read playbook config file")?;
-
-        let mut pipeline_config: pyroduct::pipeline::factory::PipelineConfig =
-            match playbook_config_path.extension().and_then(|s| s.to_str()) {
-                Some("toml") => {
-                    toml::from_str(&config_str).capture("Failed to parse pipeline TOML")?
-                }
-                Some("yaml") | Some("yml") => {
-                    serde_yaml::from_str(&config_str).capture("Failed to parse pipeline YAML")?
-                }
-                Some("json") => {
-                    serde_json::from_str(&config_str).capture("Failed to parse pipeline JSON")?
-                }
-                _ => {
-                    pyroduct::bail!(
-                        "Unknown playbook config extension; supports toml, yaml and json"
-                    )
-                }
-            };
-
         // Update dirs (supporting custom paths elsewhere on the system if overridden)
         let input_dir = input_dir_override.unwrap_or_else(|| playbook_dir.join("input"));
         let output_dir = output_dir_override.unwrap_or_else(|| playbook_dir.join("output"));
         let log_dir = playbook_dir.join("log");
 
-        // Create these directories
+        tracing::debug!(playbook = %name, ?input_dir, ?output_dir, ?log_dir, "Creating playbook directories");
         tokio::fs::create_dir_all(&input_dir)
             .await
             .capture("Failed to create input directory")?;
@@ -285,6 +353,7 @@ impl PlaybooksManager {
 
         // Store references to input and output directories if they are not self-contained
         if pipeline_config.input_dir != playbook_dir.join("input") {
+            tracing::debug!(playbook = %name, custom_input_dir = ?pipeline_config.input_dir, "Writing custom input directory reference");
             tokio::fs::write(
                 playbook_dir.join("input_dir"),
                 pipeline_config.input_dir.to_string_lossy().as_bytes(),
@@ -293,6 +362,7 @@ impl PlaybooksManager {
             .capture("Failed to write custom input directory reference")?;
         }
         if pipeline_config.output_dir != playbook_dir.join("output") {
+            tracing::debug!(playbook = %name, custom_output_dir = ?pipeline_config.output_dir, "Writing custom output directory reference");
             tokio::fs::write(
                 playbook_dir.join("output_dir"),
                 pipeline_config.output_dir.to_string_lossy().as_bytes(),
@@ -303,6 +373,7 @@ impl PlaybooksManager {
 
         // Store PipelineConfig in ROOT/playbooks/{playbook_name}/config.toml
         let new_config_path = playbook_dir.join("config.toml");
+        tracing::debug!(playbook = %name, config_path = ?new_config_path, "Writing PipelineConfig");
         let toml_string = toml::to_string_pretty(&pipeline_config)
             .capture("Failed to serialize modified PipelineConfig to TOML")?;
         tokio::fs::write(&new_config_path, toml_string)
@@ -311,12 +382,14 @@ impl PlaybooksManager {
 
         // Store playbook socket path persistently if provided
         if let Some(ref socket) = playbook_socket {
+            tracing::debug!(playbook = %name, socket_path = %socket, "Writing socket_path reference");
             tokio::fs::write(playbook_dir.join("socket_path"), socket.as_bytes())
                 .await
                 .capture("Failed to write socket_path reference file")?;
         }
 
         // Save state and config in SQLite database
+        tracing::debug!(playbook = %name, "Saving state to database");
         self.db
             .save_playbook(
                 &name,
@@ -326,6 +399,7 @@ impl PlaybooksManager {
             )
             .await?;
 
+        tracing::debug!(playbook = %name, "Loading cache manager and playbook binary");
         let cache = CacheManager::from_env()
             .await
             .capture("Failed to initialize CacheManager")?;
@@ -340,9 +414,11 @@ impl PlaybooksManager {
             .build_interconnect(&loaded_pipeline.playbook.binary.spec)
             .await?;
 
+        tracing::info!(playbook = %name, "Starting PlaybookWorker process");
         let mut worker =
             PlaybookWorker::start(name.clone(), pipeline_config, Some(interconnect)).await?;
         if let Some(ref socket) = playbook_socket {
+            tracing::debug!(playbook = %name, socket = %socket, "Worker listening to custom socket");
             worker.listen_socket(socket).await?;
         }
         let _ = self.register_callbacks_from_db(&name, &worker).await;
@@ -352,20 +428,26 @@ impl PlaybooksManager {
     }
 
     pub async fn stop_playbook(&self, name: &str) -> Result<bool> {
+        tracing::debug!(playbook = %name, "Stopping playbook");
         let mut guard = self.workers.lock().await;
         if let Some(worker) = guard.remove(name) {
+            tracing::debug!(playbook = %name, "Shutting down worker");
             worker.shutdown().await?;
+            tracing::debug!(playbook = %name, "Updating status to stopped in DB");
             self.db.update_status(name, "stopped").await?;
             Ok(true)
         } else {
+            tracing::warn!(playbook = %name, "No active worker found to stop");
             Ok(false)
         }
     }
 
     pub async fn resume_playbook(self: &Arc<Self>, name: String) -> Result<()> {
+        tracing::debug!(playbook = %name, "Resuming playbook");
         {
             let guard = self.workers.lock().await;
             if guard.contains_key(&name) {
+                tracing::warn!(playbook = %name, "Playbook already running");
                 pyroduct::bail!("Playbook '{}' is already running", name);
             }
         }
@@ -373,9 +455,13 @@ impl PlaybooksManager {
         let db_entry = self.db.get_playbook(&name).await?;
         let (_status, pipeline_config, socket_path) = match db_entry {
             Some(entry) => entry,
-            None => pyroduct::bail!("Playbook '{}' does not exist in state store", name),
+            None => {
+                tracing::error!(playbook = %name, "Playbook does not exist in state store");
+                pyroduct::bail!("Playbook '{}' does not exist in state store", name);
+            }
         };
 
+        tracing::debug!(playbook = %name, "Loading cache manager and playbook binary for resume");
         let cache = CacheManager::from_env()
             .await
             .capture("Failed to initialize CacheManager")?;
@@ -389,17 +475,21 @@ impl PlaybooksManager {
             .build_interconnect(&loaded_pipeline.playbook.binary.spec)
             .await?;
 
+        tracing::info!(playbook = %name, "Starting worker for resumed playbook");
         let mut worker =
             PlaybookWorker::start(name.clone(), pipeline_config, Some(interconnect)).await?;
         if let Some(ref socket) = socket_path {
+            tracing::debug!(playbook = %name, socket = %socket, "Resumed worker listening on socket");
             worker.listen_socket(socket).await?;
         }
         let _ = self.register_callbacks_from_db(&name, &worker).await;
+        tracing::debug!(playbook = %name, "Updating status to running in DB");
         self.db.update_status(&name, "running").await?;
         
         let mut guard = self.workers.lock().await;
         if guard.contains_key(&name) {
             let _ = worker.shutdown().await;
+            tracing::warn!(playbook = %name, "Conflict: playbook was started by another task");
             pyroduct::bail!("Playbook '{}' was started by another task", name);
         }
         guard.insert(name, worker);
@@ -407,15 +497,19 @@ impl PlaybooksManager {
     }
 
     pub async fn delete_playbook(&self, name: String) -> Result<()> {
+        tracing::debug!(playbook = %name, "Deleting playbook");
         let mut guard = self.workers.lock().await;
         if let Some(worker) = guard.remove(&name) {
+            tracing::debug!(playbook = %name, "Shutting down worker before delete");
             let _ = worker.shutdown().await;
         }
 
+        tracing::debug!(playbook = %name, "Deleting playbook from database");
         self.db.delete_playbook(&name).await?;
 
         let playbook_dir = self.working_dir.join("playbooks").join(&name);
         if playbook_dir.exists() {
+            tracing::debug!(playbook = %name, playbook_dir = ?playbook_dir, "Removing playbook directory");
             tokio::fs::remove_dir_all(&playbook_dir)
                 .await
                 .capture("Failed to delete playbook directory")?;
@@ -510,11 +604,13 @@ impl PlaybooksManager {
 
     pub async fn add_http_callback(&self, source: String, url: String) -> Result<uuid::Uuid> {
         let uuid = uuid::Uuid::new_v4();
+        tracing::debug!(playbook = %source, url = %url, uuid = %uuid, "Saving HTTP callback to database");
         self.db
             .add_callback_mapping(uuid, &source, "http", &url)
             .await?;
         let workers = self.workers.lock().await;
         if let Some(worker) = workers.get(&source) {
+            tracing::debug!(playbook = %source, uuid = %uuid, "Adding HTTP callback to active worker");
             let cb = pyroduct::pipeline::Callback::http(url);
             worker.add_callback(uuid, cb).await?;
         }
@@ -527,11 +623,13 @@ impl PlaybooksManager {
         socket_path: String,
     ) -> Result<uuid::Uuid> {
         let uuid = uuid::Uuid::new_v4();
+        tracing::debug!(playbook = %source, socket_path = %socket_path, uuid = %uuid, "Saving socket callback to database");
         self.db
             .add_callback_mapping(uuid, &source, "socket", &socket_path)
             .await?;
         let workers = self.workers.lock().await;
         if let Some(worker) = workers.get(&source) {
+            tracing::debug!(playbook = %source, uuid = %uuid, "Adding socket callback to active worker");
             let cb = Self::construct_socket_callback(&socket_path).await?;
             worker.add_callback(uuid, cb).await?;
         }
@@ -544,11 +642,13 @@ impl PlaybooksManager {
         target_playbook: String,
     ) -> Result<uuid::Uuid> {
         let uuid = uuid::Uuid::new_v4();
+        tracing::debug!(playbook = %source, target = %target_playbook, uuid = %uuid, "Saving playbook callback to database");
         self.db
             .add_callback_mapping(uuid, &source, "playbook", &target_playbook)
             .await?;
         let workers = self.workers.lock().await;
         if let Some(worker) = workers.get(&source) {
+            tracing::debug!(playbook = %source, uuid = %uuid, "Adding playbook callback to active worker");
             let manager = self.clone();
             let target = target_playbook.clone();
             let cb = pyroduct::pipeline::Callback::function(move |row_index, row| {
@@ -565,6 +665,7 @@ impl PlaybooksManager {
     }
 
     pub async fn list_callbacks(&self, source: String) -> Result<Vec<CallbackMapping>> {
+        tracing::debug!(playbook = %source, "Retrieving callback mappings from database");
         let db_list = self.db.get_callbacks_for_source(&source).await?;
         Ok(db_list
             .into_iter()
@@ -578,8 +679,10 @@ impl PlaybooksManager {
     }
 
     pub async fn delete_callback(&self, uuid: uuid::Uuid) -> Result<()> {
+        tracing::debug!(uuid = %uuid, "Deleting callback mapping from database");
         self.db.delete_callback_mapping(uuid).await?;
         let workers = self.workers.lock().await;
+        tracing::debug!(uuid = %uuid, "Removing callback from active workers");
         for worker in workers.values() {
             let _ = worker.delete_callback(uuid).await;
         }
@@ -616,8 +719,10 @@ impl PlaybooksManager {
         source: &str,
         worker: &PlaybookWorker,
     ) -> Result<()> {
+        tracing::debug!(playbook = %source, "Loading registered callbacks from database");
         let db_list = self.db.get_callbacks_for_source(source).await?;
         for (uuid, _src, cb_type, target) in db_list {
+            tracing::debug!(playbook = %source, uuid = %uuid, cb_type = %cb_type, "Registering loaded callback to worker");
             match cb_type.as_str() {
                 "http" => {
                     let cb = pyroduct::pipeline::Callback::http(target);
@@ -653,6 +758,7 @@ impl PlaybooksManager {
         _row_index: usize,
         row: pyroduct::PyroRow<'static>,
     ) -> Result<()> {
+        tracing::debug!(playbook = %playbook, "Invoking playbook callback with input row");
         let workers = self.workers.lock().await;
         if let Some(worker) = workers.get(playbook) {
             let (_session_id, _res) = worker.call(row).await?;
@@ -665,26 +771,37 @@ impl PlaybooksManager {
         name: &str,
         payload: serde_json::Value,
     ) -> Result<serde_json::Value> {
+        tracing::debug!(playbook = %name, "Executing call_playbook");
         let (worker, spec) = {
             let workers = self.workers.lock().await;
             let worker = workers
                 .get(name)
-                .ok_or_else(|| pyroduct::capture!("Playbook '{}' is not running", name))?;
+                .ok_or_else(|| {
+                    tracing::error!(playbook = %name, "Playbook is not running");
+                    pyroduct::capture!("Playbook '{}' is not running", name)
+                })?;
             (worker.server.clone(), worker.server.spec())
         };
 
+        tracing::debug!(playbook = %name, "Deserializing payload to PyroRow");
         let input_row: PyroRow<'static> = serde_json::from_value(payload)
             .capture("Invalid JSON payload: failed to deserialize into PyroRow")?;
 
+        tracing::debug!(playbook = %name, "Repairing row matching schema");
         let repaired_row = input_row
             .project_repair(spec.func.input.fields())
             .capture("Failed to repair input JSON according to module spec")?;
 
+        tracing::debug!(playbook = %name, "Sending call to worker");
         let (_session_id, res) = worker
             .call(repaired_row)
             .await
-            .map_err(|e| pyroduct::capture!("Failed to call playbook: {:?}", e))?;
+            .map_err(|e| {
+                tracing::error!(playbook = %name, error = ?e, "Failed to call playbook worker");
+                pyroduct::capture!("Failed to call playbook: {:?}", e)
+            })?;
 
+        tracing::debug!(playbook = %name, "Serializing result row to JSON");
         let result_val =
             serde_json::to_value(&res).capture("Failed to serialize returned row to JSON")?;
         Ok(result_val)
