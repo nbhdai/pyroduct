@@ -218,13 +218,33 @@ export function App() {
   // 7. Call Playbook
   const callPlaybook = useCallback(
     async (name: string, payload: any) => {
+      console.log("App: callPlaybook called with:", { name, payload });
       addLog(`Calling playbook "${name}" with payload...`, "command");
       try {
-        const res = await invoke("call_playbook", { name, payload });
-        addLog(`Playbook "${name}" call succeeded.`, "success");
+        const res = (await invoke("call_playbook", { name, payload })) as any;
+        console.log("App: call_playbook invoke success. Result:", res);
+        
+        let isSuccess = true;
+        let errorMsg = "";
+        
+        if (res) {
+          const inner = res.Normal || res.Session || res.SessionDiff;
+          if (inner && inner.Failure) {
+            isSuccess = false;
+            const f = inner.Failure.failure;
+            errorMsg = typeof f === "string" ? f : (f?.Ok?.message || JSON.stringify(f) || "Row execution failed");
+          }
+        }
+        
+        if (!isSuccess) {
+          addLog(`Playbook "${name}" call completed with failure: ${errorMsg}`, "error");
+        } else {
+          addLog(`Playbook "${name}" call completed successfully.`, "success");
+        }
         return res;
       } catch (err) {
-        addLog(`Playbook "${name}" call failed: ${err}`, "error");
+        console.error("App: call_playbook invoke failed. Error:", err);
+        addLog(`Playbook "${name}" connection failed: ${err}`, "error");
         showError(`Call to Playbook "${name}" Failed`, String(err));
         throw err;
       }

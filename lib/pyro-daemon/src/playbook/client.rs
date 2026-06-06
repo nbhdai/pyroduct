@@ -3,6 +3,7 @@ use crate::playbook::{PlaybookRequest, PlaybookResponse, PlaybookStatus, Callbac
 use crate::{DaemonRequest, DaemonResponse};
 use crate::Result;
 use std::path::PathBuf;
+use pyroduct::Capture;
 
 impl DaemonClient {
     pub async fn start_playbook(
@@ -64,6 +65,51 @@ impl DaemonClient {
     }
 
     pub async fn call_playbook(&self, name: String, payload: serde_json::Value) -> Result<serde_json::Value> {
+        let req = DaemonRequest::Playbook(PlaybookRequest::Call { name, payload });
+        match self.request(req).await? {
+            DaemonResponse::Playbook(PlaybookResponse::CallResult { result }) => {
+                match result {
+                    pyroduct::pipeline::ServerExecutionRecord::Normal(pyroduct::pipeline::ExecutionRecord::Success { success, .. }) => {
+                        let val = serde_json::to_value(&success).capture("Failed to serialize row")?;
+                        Ok(val)
+                    }
+                    pyroduct::pipeline::ServerExecutionRecord::Session(pyroduct::pipeline::session::SessionExecutionRecord::Success { success, .. }) => {
+                        let val = serde_json::to_value(&success).capture("Failed to serialize row")?;
+                        Ok(val)
+                    }
+                    pyroduct::pipeline::ServerExecutionRecord::SessionDiff(pyroduct::pipeline::session_diff::SessionDiffExecutionRecord::Success { success, .. }) => {
+                        let val = serde_json::to_value(&success).capture("Failed to serialize row")?;
+                        Ok(val)
+                    }
+                    pyroduct::pipeline::ServerExecutionRecord::Normal(pyroduct::pipeline::ExecutionRecord::Failure { failure, .. }) => {
+                        let msg = match failure {
+                            Ok(captured) => captured.to_string(),
+                            Err(s) => s,
+                        };
+                        pyroduct::bail!("{}", msg);
+                    }
+                    pyroduct::pipeline::ServerExecutionRecord::Session(pyroduct::pipeline::session::SessionExecutionRecord::Failure { failure, .. }) => {
+                        let msg = match failure {
+                            Ok(captured) => captured.to_string(),
+                            Err(s) => s,
+                        };
+                        pyroduct::bail!("{}", msg);
+                    }
+                    pyroduct::pipeline::ServerExecutionRecord::SessionDiff(pyroduct::pipeline::session_diff::SessionDiffExecutionRecord::Failure { failure, .. }) => {
+                        let msg = match failure {
+                            Ok(captured) => captured.to_string(),
+                            Err(s) => s,
+                        };
+                        pyroduct::bail!("{}", msg);
+                    }
+                }
+            }
+            DaemonResponse::Playbook(PlaybookResponse::Error { message }) => pyroduct::bail!("{}", message),
+            _ => pyroduct::bail!("Unexpected response from daemon"),
+        }
+    }
+
+    pub async fn call_playbook_record(&self, name: String, payload: serde_json::Value) -> Result<pyroduct::pipeline::ServerExecutionRecord> {
         let req = DaemonRequest::Playbook(PlaybookRequest::Call { name, payload });
         match self.request(req).await? {
             DaemonResponse::Playbook(PlaybookResponse::CallResult { result }) => Ok(result),

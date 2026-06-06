@@ -1,5 +1,5 @@
 use serde_json::Value;
-use tracing::{trace, debug, info, error};
+use tracing::{debug, error, info, trace};
 
 #[derive(serde::Deserialize)]
 pub struct RemoteCapabilityConfig {
@@ -14,7 +14,10 @@ pub async fn list_active_playbooks() -> Result<Value, String> {
     let control_socket_path = working_dir.join("control");
 
     if !control_socket_path.exists() {
-        error!("Daemon control socket does not exist at {:?}", control_socket_path);
+        error!(
+            "Daemon control socket does not exist at {:?}",
+            control_socket_path
+        );
         return Err("Daemon control socket does not exist (offline)".to_string());
     }
 
@@ -32,7 +35,10 @@ pub async fn list_active_playbooks() -> Result<Value, String> {
         Ok(pyro_daemon::DaemonResponse::Playbook(
             pyro_daemon::playbook::PlaybookResponse::Playbooks { playbooks },
         )) => {
-            info!("Successfully retrieved {} active playbooks", playbooks.len());
+            info!(
+                "Successfully retrieved {} active playbooks",
+                playbooks.len()
+            );
             trace!("Active playbooks list: {:?}", playbooks);
             Ok(serde_json::to_value(playbooks).map_err(|e| {
                 error!("Failed to serialize playbooks list to JSON: {:?}", e);
@@ -98,8 +104,10 @@ pub async fn start_playbook(
         input_dir: input_dir.clone().map(std::path::PathBuf::from),
         output_dir: output_dir.clone().map(std::path::PathBuf::from),
     });
-    debug!("Sending PlaybookRequest::Start to daemon: name='{}', socket={:?}, input={:?}, output={:?}",
-        name, playbook_socket, input_dir, output_dir);
+    debug!(
+        "Sending PlaybookRequest::Start to daemon: name='{}', socket={:?}, input={:?}, output={:?}",
+        name, playbook_socket, input_dir, output_dir
+    );
 
     match client.request(req).await {
         Ok(pyro_daemon::DaemonResponse::Playbook(
@@ -111,7 +119,10 @@ pub async fn start_playbook(
         Ok(pyro_daemon::DaemonResponse::Playbook(
             pyro_daemon::playbook::PlaybookResponse::Error { message },
         )) => {
-            error!("Daemon returned playbook error response for '{}': {}", name, message);
+            error!(
+                "Daemon returned playbook error response for '{}': {}",
+                name, message
+            );
             Err(message)
         }
         Ok(resp) => {
@@ -138,8 +149,9 @@ pub async fn stop_playbook(name: String) -> Result<String, String> {
             format!("Failed to connect to daemon: {:?}", e)
         })?;
 
-    let req =
-        pyro_daemon::DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Stop { name: name.clone() });
+    let req = pyro_daemon::DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Stop {
+        name: name.clone(),
+    });
 
     debug!("Sending PlaybookRequest::Stop to daemon for '{}'", name);
     match client.request(req).await {
@@ -152,11 +164,17 @@ pub async fn stop_playbook(name: String) -> Result<String, String> {
         Ok(pyro_daemon::DaemonResponse::Playbook(
             pyro_daemon::playbook::PlaybookResponse::Error { message },
         )) => {
-            error!("Daemon returned error response on stop playbook '{}': {}", name, message);
+            error!(
+                "Daemon returned error response on stop playbook '{}': {}",
+                name, message
+            );
             Err(message)
         }
         Ok(resp) => {
-            error!("Unexpected response from daemon on stop playbook '{}': {:?}", name, resp);
+            error!(
+                "Unexpected response from daemon on stop playbook '{}': {:?}",
+                name, resp
+            );
             Err(format!("Unexpected response from daemon: {:?}", resp))
         }
         Err(e) => {
@@ -195,11 +213,17 @@ pub async fn delete_playbook(name: String) -> Result<String, String> {
         Ok(pyro_daemon::DaemonResponse::Playbook(
             pyro_daemon::playbook::PlaybookResponse::Error { message },
         )) => {
-            error!("Daemon returned error response on delete playbook '{}': {}", name, message);
+            error!(
+                "Daemon returned error response on delete playbook '{}': {}",
+                name, message
+            );
             Err(message)
         }
         Ok(resp) => {
-            error!("Unexpected response from daemon on delete playbook '{}': {:?}", name, resp);
+            error!(
+                "Unexpected response from daemon on delete playbook '{}': {:?}",
+                name, resp
+            );
             Err(format!("Unexpected response from daemon: {:?}", resp))
         }
         Err(e) => {
@@ -210,7 +234,10 @@ pub async fn delete_playbook(name: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn call_playbook(name: String, payload: Value) -> Result<Value, String> {
+pub async fn call_playbook(
+    name: String,
+    payload: Value,
+) -> Result<pyroduct::pipeline::ServerExecutionRecord, String> {
     info!("Tauri command: call_playbook for '{}'", name);
     trace!("Call playbook payload: {:?}", payload);
     let working_dir = pyro_daemon::PyroDaemon::default_working_dir();
@@ -223,33 +250,12 @@ pub async fn call_playbook(name: String, payload: Value) -> Result<Value, String
             format!("Failed to connect to daemon: {:?}", e)
         })?;
 
-    let req = pyro_daemon::DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Call {
-        name: name.clone(),
-        payload,
-    });
-
-    debug!("Sending PlaybookRequest::Call to daemon for '{}'", name);
-    match client.request(req).await {
-        Ok(pyro_daemon::DaemonResponse::Playbook(
-            pyro_daemon::playbook::PlaybookResponse::CallResult { result },
-        )) => {
-            info!("Playbook '{}' call completed successfully", name);
-            trace!("Call result payload structure: {:?}", result);
-            Ok(result)
-        }
-        Ok(pyro_daemon::DaemonResponse::Playbook(
-            pyro_daemon::playbook::PlaybookResponse::Error { message },
-        )) => {
-            error!("Daemon returned error response on call playbook '{}': {}", name, message);
-            Err(message)
-        }
-        Ok(resp) => {
-            error!("Unexpected response from daemon on call playbook '{}': {:?}", name, resp);
-            Err(format!("Unexpected response from daemon: {:?}", resp))
-        }
-        Err(e) => {
-            error!("Failed to call playbook '{}': {:?}", name, e);
-            Err(format!("Failed to call playbook: {:?}", e))
-        }
-    }
+    debug!("Calling playbook record via daemon for '{}'", name);
+    client
+        .call_playbook_record(name, payload)
+        .await
+        .map_err(|e| {
+            error!("Failed to call playbook: {:?}", e);
+            e.to_string()
+        })
 }

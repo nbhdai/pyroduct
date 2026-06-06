@@ -11,7 +11,7 @@ fn main() {
     // Initialize tracing subscriber
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            "trace,cranelift_frontend=off,cranelift_codegen=off,wasmtime=off,pyroduct=info".into()
+            "trace,cranelift_frontend=off,cranelift_codegen=off,mio=off,tao=off,wasmtime=off,pyroduct=info".into()
         }))
         .init();
 
@@ -35,7 +35,9 @@ fn main() {
             commands::purge_capabilities_cache,
             commands::purge_playbooks_cache,
             commands::get_playbook_data,
-            commands::query_playbook_data
+            commands::query_playbook_data,
+            commands::get_playbook_failures,
+            commands::get_playbook_execution_record
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

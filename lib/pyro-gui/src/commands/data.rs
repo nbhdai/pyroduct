@@ -184,3 +184,61 @@ pub async fn query_playbook_data(playbook_name: String, sql_query: String) -> Re
         "rows": rows,
     }))
 }
+
+#[tauri::command]
+pub async fn get_playbook_failures(playbook_name: String) -> Result<Value, String> {
+    info!("Tauri command: get_playbook_failures for playbook='{}'", playbook_name);
+    let working_dir = pyro_daemon::PyroDaemon::default_working_dir();
+    let control_socket_path = working_dir.join("control");
+
+    if !control_socket_path.exists() {
+        error!("Daemon control socket does not exist at {:?}", control_socket_path);
+        return Err("Daemon control socket does not exist (offline)".to_string());
+    }
+
+    let client = pyro_daemon::client::DaemonClient::connect(&control_socket_path)
+        .await
+        .map_err(|e| {
+            error!("Failed to connect to daemon: {:?}", e);
+            format!("Failed to connect to daemon: {:?}", e)
+        })?;
+
+    match client.get_playbook_failures(playbook_name).await {
+        Ok(failures) => {
+            serde_json::to_value(failures).map_err(|e| e.to_string())
+        }
+        Err(e) => {
+            error!("Failed to get playbook failures: {:?}", e);
+            Err(e.to_string())
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn get_playbook_execution_record(playbook_name: String, id: u32) -> Result<Value, String> {
+    info!("Tauri command: get_playbook_execution_record for playbook='{}' id={}", playbook_name, id);
+    let working_dir = pyro_daemon::PyroDaemon::default_working_dir();
+    let control_socket_path = working_dir.join("control");
+
+    if !control_socket_path.exists() {
+        error!("Daemon control socket does not exist at {:?}", control_socket_path);
+        return Err("Daemon control socket does not exist (offline)".to_string());
+    }
+
+    let client = pyro_daemon::client::DaemonClient::connect(&control_socket_path)
+        .await
+        .map_err(|e| {
+            error!("Failed to connect to daemon: {:?}", e);
+            format!("Failed to connect to daemon: {:?}", e)
+        })?;
+
+    match client.get_playbook_execution_record(playbook_name, id).await {
+        Ok(record) => {
+            serde_json::to_value(record).map_err(|e| e.to_string())
+        }
+        Err(e) => {
+            error!("Failed to get playbook execution record: {:?}", e);
+            Err(e.to_string())
+        }
+    }
+}

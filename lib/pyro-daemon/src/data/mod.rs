@@ -8,6 +8,7 @@ use std::sync::Arc;
 pub mod client;
 pub mod sql;
 pub mod stream;
+pub mod historic;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "action", rename_all = "snake_case")]
@@ -25,6 +26,13 @@ pub enum DataRequest {
         offset: usize,
         limit: usize,
     },
+    GetPlaybookFailures {
+        playbook_name: String,
+    },
+    GetPlaybookExecutionRecord {
+        playbook_name: String,
+        id: u32,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -36,6 +44,8 @@ pub enum DataResponse {
     StreamRow { row: PyroRow<'static> },
     StreamFinished,
     PlaybookData { ipc_bytes: Vec<u8> },
+    PlaybookFailures { failures: Vec<pyroduct::pipeline::ServerExecutionRecord> },
+    PlaybookExecutionRecord { record: pyroduct::pipeline::ServerExecutionRecord },
     Error { message: String },
 }
 
@@ -93,6 +103,22 @@ impl DaemonDataManager {
                     message: format!("Failed to get playbook data: {:?}", e),
                 },
             },
+            DataRequest::GetPlaybookFailures { playbook_name } => {
+                match self.get_playbook_failures(&playbook_name).await {
+                    Ok(failures) => DataResponse::PlaybookFailures { failures },
+                    Err(e) => DataResponse::Error {
+                        message: format!("Failed to get playbook failures: {:?}", e),
+                    },
+                }
+            }
+            DataRequest::GetPlaybookExecutionRecord { playbook_name, id } => {
+                match self.get_playbook_execution_record(&playbook_name, id).await {
+                    Ok(record) => DataResponse::PlaybookExecutionRecord { record },
+                    Err(e) => DataResponse::Error {
+                        message: format!("Failed to get playbook execution record: {:?}", e),
+                    },
+                }
+            }
         }
     }
 

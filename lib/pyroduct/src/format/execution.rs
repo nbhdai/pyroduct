@@ -21,14 +21,14 @@ impl PyroLogs {
 // ExecutionRecord
 // =============================================================================
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PyroSuccess {
     pub row_index: u32,
     pub row: PyroRow<'static>,
     pub logs: PyroLogs,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PyroFailure {
     pub row_index: u32,
     pub result: Result<CapturedError, String>,
@@ -36,7 +36,7 @@ pub struct PyroFailure {
 }
 
 /// The type of session response returned by `PyroInstance::call_session()`.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SessionResult {
     /// The session should continue. Contains the output row.
     Continue {

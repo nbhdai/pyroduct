@@ -85,7 +85,7 @@ pub enum PlaybookResponse {
     Success { message: String },
     Playbooks { playbooks: Vec<PlaybookStatus> },
     Callbacks { callbacks: Vec<CallbackMapping> },
-    CallResult { result: serde_json::Value },
+    CallResult { result: pyroduct::pipeline::ServerExecutionRecord },
     Error { message: String },
 }
 
@@ -209,7 +209,7 @@ impl PlaybooksManager {
             }
             PlaybookRequest::Call { name, payload } => {
                 tracing::info!(playbook = %name, "Received Call request for playbook");
-                match self.call_playbook(&name, payload).await {
+                match self.call_playbook_record(&name, payload).await {
                     Ok(result) => {
                         tracing::info!(playbook = %name, "Playbook call completed successfully");
                         PlaybookResponse::CallResult { result }
@@ -811,15 +811,58 @@ impl PlaybooksManager {
         name: &str,
         payload: serde_json::Value,
     ) -> Result<serde_json::Value> {
-        tracing::debug!(playbook = %name, "Executing call_playbook");
-        let (worker, spec) = {
+        let rec = self.call_playbook_record(name, payload).await?;
+        match rec {
+            pyroduct::pipeline::ServerExecutionRecord::Normal(pyroduct::pipeline::ExecutionRecord::Success { success, .. }) => {
+                let val = serde_json::to_value(&success).capture("Failed to serialize row")?;
+                Ok(val)
+            }
+            pyroduct::pipeline::ServerExecutionRecord::Session(pyroduct::pipeline::session::SessionExecutionRecord::Success { success, .. }) => {
+                let val = serde_json::to_value(&success).capture("Failed to serialize row")?;
+                Ok(val)
+            }
+            pyroduct::pipeline::ServerExecutionRecord::SessionDiff(pyroduct::pipeline::session_diff::SessionDiffExecutionRecord::Success { success, .. }) => {
+                let val = serde_json::to_value(&success).capture("Failed to serialize row")?;
+                Ok(val)
+            }
+            pyroduct::pipeline::ServerExecutionRecord::Normal(pyroduct::pipeline::ExecutionRecord::Failure { failure, .. }) => {
+                let msg = match failure {
+                    Ok(captured) => captured.to_string(),
+                    Err(s) => s,
+                };
+                Err(pyroduct::capture!("{}", msg))
+            }
+            pyroduct::pipeline::ServerExecutionRecord::Session(pyroduct::pipeline::session::SessionExecutionRecord::Failure { failure, .. }) => {
+                let msg = match failure {
+                    Ok(captured) => captured.to_string(),
+                    Err(s) => s,
+                };
+                Err(pyroduct::capture!("{}", msg))
+            }
+            pyroduct::pipeline::ServerExecutionRecord::SessionDiff(pyroduct::pipeline::session_diff::SessionDiffExecutionRecord::Failure { failure, .. }) => {
+                let msg = match failure {
+                    Ok(captured) => captured.to_string(),
+                    Err(s) => s,
+                };
+                Err(pyroduct::capture!("{}", msg))
+            }
+        }
+    }
+
+    pub async fn call_playbook_record(
+        &self,
+        name: &str,
+        payload: serde_json::Value,
+    ) -> Result<pyroduct::pipeline::ServerExecutionRecord> {
+        tracing::debug!(playbook = %name, "Executing call_playbook_record");
+        let worker = {
             let workers = self.workers.lock().await;
-            let worker = workers.get(name).ok_or_else(|| {
+            workers.get(name).ok_or_else(|| {
                 tracing::error!(playbook = %name, "Playbook is not running");
                 pyroduct::capture!("Playbook '{}' is not running", name)
-            })?;
-            (worker.server.clone(), worker.server.spec())
+            })?.server.clone()
         };
+        let spec = worker.spec();
 
         tracing::debug!(playbook = %name, "Deserializing payload to PyroRow");
         let input_row: PyroRow<'static> = serde_json::from_value(payload)
@@ -831,14 +874,16 @@ impl PlaybooksManager {
             .capture("Failed to repair input JSON according to module spec")?;
 
         tracing::debug!(playbook = %name, "Sending call to worker");
-        let (_session_id, res) = worker.call(repaired_row).await.map_err(|e| {
-            tracing::error!(playbook = %name, error = ?e, "Failed to call playbook worker");
-            pyroduct::capture!("Failed to call playbook: {:?}", e)
-        })?;
+        let call_result = worker.call(repaired_row).await;
 
-        tracing::debug!(playbook = %name, "Serializing result row to JSON");
-        let result_val =
-            serde_json::to_value(&res).capture("Failed to serialize returned row to JSON")?;
-        Ok(result_val)
+        let record_id = (worker.len().await as u32).saturating_sub(1);
+        if let Ok(record) = worker.get(record_id).await {
+            Ok(record)
+        } else {
+            match call_result {
+                Ok(_) => pyroduct::bail!("Failed to get execution record after successful call"),
+                Err(e) => Err(pyroduct::capture!("Failed to call playbook: {:?}", e)),
+            }
+        }
     }
 }

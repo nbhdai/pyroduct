@@ -49,6 +49,32 @@ impl DaemonClient {
         }
     }
 
+    pub async fn get_playbook_failures(
+        &self,
+        playbook_name: String,
+    ) -> Result<Vec<pyroduct::pipeline::ServerExecutionRecord>> {
+        let req = DaemonRequest::Data(DataRequest::GetPlaybookFailures { playbook_name });
+        match self.request(req).await? {
+            DaemonResponse::Data(DataResponse::PlaybookFailures { failures }) => Ok(failures),
+            DaemonResponse::Data(DataResponse::Error { message }) => pyroduct::bail!("{}", message),
+            _ => pyroduct::bail!("Unexpected response from daemon"),
+        }
+    }
+
+    pub async fn get_playbook_execution_record(
+        &self,
+        playbook_name: String,
+        id: u32,
+    ) -> Result<pyroduct::pipeline::ServerExecutionRecord> {
+        let req =
+            DaemonRequest::Data(DataRequest::GetPlaybookExecutionRecord { playbook_name, id });
+        match self.request(req).await? {
+            DaemonResponse::Data(DataResponse::PlaybookExecutionRecord { record }) => Ok(record),
+            DaemonResponse::Data(DataResponse::Error { message }) => pyroduct::bail!("{}", message),
+            _ => pyroduct::bail!("Unexpected response from daemon"),
+        }
+    }
+
     pub async fn stream_playbook(
         &self,
         playbook_name: String,
