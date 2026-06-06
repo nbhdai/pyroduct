@@ -89,7 +89,7 @@ pub enum PlaybookResponse {
 #[derive(Clone)]
 pub struct PlaybooksManager {
     pub working_dir: PathBuf,
-    pub(crate) workers: Arc<Mutex<HashMap<String, PlaybookWorker>>>,
+    pub workers: Arc<Mutex<HashMap<String, PlaybookWorker>>>,
     pub db: crate::state::DbStateStore,
 }
 
@@ -363,9 +363,11 @@ impl PlaybooksManager {
     }
 
     pub async fn resume_playbook(self: &Arc<Self>, name: String) -> Result<()> {
-        let mut guard = self.workers.lock().await;
-        if guard.contains_key(&name) {
-            pyroduct::bail!("Playbook '{}' is already running", name);
+        {
+            let guard = self.workers.lock().await;
+            if guard.contains_key(&name) {
+                pyroduct::bail!("Playbook '{}' is already running", name);
+            }
         }
 
         let db_entry = self.db.get_playbook(&name).await?;
@@ -394,6 +396,12 @@ impl PlaybooksManager {
         }
         let _ = self.register_callbacks_from_db(&name, &worker).await;
         self.db.update_status(&name, "running").await?;
+        
+        let mut guard = self.workers.lock().await;
+        if guard.contains_key(&name) {
+            let _ = worker.shutdown().await;
+            pyroduct::bail!("Playbook '{}' was started by another task", name);
+        }
         guard.insert(name, worker);
         Ok(())
     }
