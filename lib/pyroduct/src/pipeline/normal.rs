@@ -12,7 +12,7 @@ use crate::module::PyroInstance;
 use crate::{
     PyroError,
     format::{
-        PyroFailure, PyroLogs, PyroSuccess,
+        PyroLogs,
         value::{
             PyroRow,
             arrow::{PreBatch, Rowable},
@@ -70,25 +70,9 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    pub async fn call(&mut self, input: &PyroRow<'_>) -> Result<PyroSuccess, PyroFailure> {
+    pub async fn call(&mut self, input: &PyroRow<'_>) -> Result<ExecutionRecord, PyroError> {
         let index = self.input_manager.len();
-        match self.process(index, input).await {
-            Ok(ExecutionRecord::Success { success, logs, .. }) => Ok(PyroSuccess {
-                row_index: index as u32,
-                row: success,
-                logs,
-            }),
-            Ok(ExecutionRecord::Failure { failure, logs, .. }) => Err(PyroFailure {
-                row_index: index as u32,
-                result: failure,
-                logs,
-            }),
-            Err(err) => Err(PyroFailure {
-                row_index: index as u32,
-                result: Err(err.to_string()),
-                logs: PyroLogs::empty(),
-            }),
-        }
+        self.process(index, input).await
     }
 
     /// Run the input through the single step.

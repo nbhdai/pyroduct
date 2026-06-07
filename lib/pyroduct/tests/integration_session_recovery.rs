@@ -4,7 +4,6 @@ use pyro_artifacts::{
 };
 use pyroduct::{
     PyroRow,
-    format::SessionResult,
     pipeline::{
         PipelineConfig, session::SessionExecutionRecord, session_diff::SessionDiffExecutionRecord,
     },
@@ -133,7 +132,7 @@ async fn test_session_recovery_lifecycle() {
         .await
         .expect("Call 1 should succeed");
 
-    assert!(matches!(result1, SessionResult::Continue { .. }));
+    assert!(matches!(result1, SessionExecutionRecord::Success { .. }));
 
     // Verify state is "active" in SQLite status
     let status_active = pipeline
@@ -167,7 +166,7 @@ async fn test_session_recovery_lifecycle() {
         .await
         .expect("Call 2 should succeed");
 
-    assert!(matches!(result2, SessionResult::End { .. }));
+    assert!(matches!(result2, SessionExecutionRecord::Success { .. }));
 
     // Verify state is "succeeded" in SQLite status
     let status_success = pipeline
@@ -350,7 +349,10 @@ async fn test_session_diff_recovery_lifecycle() {
         .await
         .expect("Call 1 should succeed");
 
-    assert!(matches!(result1, SessionResult::Continue { .. }));
+    assert!(matches!(
+        result1,
+        SessionDiffExecutionRecord::Success { .. }
+    ));
 
     // Verify state is "active" in SQLite status
     let status_active = pipeline
@@ -386,7 +388,10 @@ async fn test_session_diff_recovery_lifecycle() {
         .await
         .expect("Call 2 should succeed");
 
-    assert!(matches!(result2, SessionResult::End { .. }));
+    assert!(matches!(
+        result2,
+        SessionDiffExecutionRecord::Success { .. }
+    ));
 
     // Verify state is "succeeded" in SQLite status
     let status_success = pipeline

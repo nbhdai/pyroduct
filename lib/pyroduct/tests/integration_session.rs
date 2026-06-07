@@ -4,7 +4,6 @@ use pyro_artifacts::{
 };
 use pyroduct::{
     PyroRow,
-    format::SessionResult,
     pipeline::{PipelineConfig, session::SessionExecutionRecord},
 };
 use std::collections::HashMap;
@@ -101,10 +100,10 @@ async fn test_session_lifecycle() {
         .expect("Session call turn 1 should succeed");
 
     match result1 {
-        SessionResult::Continue { result: row, .. } => {
+        SessionExecutionRecord::Success { success: row, .. } => {
             assert_eq!(row.get_str("message").unwrap(), "Hello! Turn 1");
         }
-        other => panic!("Expected Continue, got {:?}", other),
+        other => panic!("Expected Success, got {:?}", other),
     }
 
     // --- Turn 2 ---
@@ -115,10 +114,10 @@ async fn test_session_lifecycle() {
         .expect("Session call turn 2 should succeed");
 
     match result2 {
-        SessionResult::End { result: row, .. } => {
+        SessionExecutionRecord::Success { success: row, .. } => {
             assert_eq!(row.get_str("message").unwrap(), "Goodbye! Turn 2");
         }
-        other => panic!("Expected End, got {:?}", other),
+        other => panic!("Expected Success, got {:?}", other),
     }
 
     // --- Session ID 43 (Terminate flow) ---
@@ -136,10 +135,10 @@ async fn test_session_lifecycle() {
         .expect("Session call turn 1 should succeed");
 
     match result1_t {
-        SessionResult::Continue { result: row, .. } => {
+        SessionExecutionRecord::Success { success: row, .. } => {
             assert_eq!(row.get_str("message").unwrap(), "Hello! Turn 1");
         }
-        other => panic!("Expected Continue, got {:?}", other),
+        other => panic!("Expected Success, got {:?}", other),
     }
 
     // --- Turn 2 ---
@@ -150,8 +149,10 @@ async fn test_session_lifecycle() {
         .expect("Session call turn 2 should succeed");
 
     match result2_t {
-        SessionResult::Terminate { .. } => {}
-        other => panic!("Expected Terminate, got {:?}", other),
+        SessionExecutionRecord::Success { success: row, .. } => {
+            assert!(row.is_empty());
+        }
+        other => panic!("Expected Success, got {:?}", other),
     }
 
     let len = pipeline

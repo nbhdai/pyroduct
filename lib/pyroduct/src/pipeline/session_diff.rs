@@ -246,27 +246,7 @@ impl SessionDiffPipeline {
         }
 
         match self.call(session_id, input).await {
-            Ok(res) => {
-                let (row, logs) = match res {
-                    SessionResult::Continue { result, logs, .. } => (result, logs),
-                    SessionResult::End { result, logs, .. } => (result, logs),
-                    SessionResult::Terminate { logs, .. } => (PyroRow::empty(), logs),
-                };
-                let record = SessionDiffExecutionRecord::Success {
-                    row_index,
-                    prior_input: prior_inputs
-                        .iter()
-                        .map(|r| r.clone().into_owned())
-                        .collect(),
-                    prior_output: prior_outputs
-                        .iter()
-                        .map(|r| r.clone().into_owned())
-                        .collect(),
-                    input: input.clone().into_owned(),
-                    success: row,
-                    logs: logs.clone(),
-                };
-
+            Ok(record) => {
                 let _ = self.close_session(session_id).await;
                 Ok(record)
             }
@@ -345,7 +325,7 @@ impl SessionDiffPipeline {
         &mut self,
         session_id: u32,
         input: &PyroRow<'_>,
-    ) -> Result<SessionResult, PyroFailure> {
+    ) -> Result<SessionDiffExecutionRecord, PyroFailure> {
         let res = self.step.call_session(session_id, input).await;
 
         // PERSIST STATUS
@@ -419,8 +399,8 @@ impl SessionDiffPipeline {
             Ok(_) => {
                 let log_entry = LogEntry {
                     row_index,
-                    module_logs: logs.module_logs,
-                    capability_logs: logs.capability_logs,
+                    module_logs: logs.module_logs.clone(),
+                    capability_logs: logs.capability_logs.clone(),
                     failure: None,
                 };
                 let _ = active.log_wal.append(&log_entry).await;
@@ -435,6 +415,44 @@ impl SessionDiffPipeline {
                 let _ = active.log_wal.append(&log_entry).await;
             }
         }
+
+        let mut steps = Vec::new();
+        if let Some(active) = self.active_sessions.get(&session_id) {
+            let mut wal_rows = Vec::with_capacity(active.data_wal.prebatch.len());
+            for i in 0..active.data_wal.prebatch.len() {
+                if let Some(row) = active.data_wal.prebatch.get(i) {
+                    wal_rows.push(row.clone());
+                }
+            }
+            for row in wal_rows {
+                let in_val = row
+                    .get("input")
+                    .cloned()
+                    .unwrap_or(crate::format::value::PyroValue::Null);
+                let out_val = row
+                    .get("output")
+                    .cloned()
+                    .unwrap_or(crate::format::value::PyroValue::Null);
+
+                let in_row = match in_val {
+                    crate::format::value::PyroValue::Group(g) => g,
+                    _ => PyroRow::empty(),
+                };
+                let out_row = match out_val {
+                    crate::format::value::PyroValue::Group(g) => g,
+                    _ => PyroRow::empty(),
+                };
+                steps.push((in_row, out_row));
+            }
+        }
+
+        let is_failed = res.is_err();
+        let log_failure = match &res {
+            Err(e) => Some(e.result.clone()),
+            _ => None,
+        };
+
+        let record = Self::into_record(session_id, steps, is_failed, logs.clone(), log_failure);
 
         match &res {
             Ok(SessionResult::End { .. }) | Ok(SessionResult::Terminate { .. }) => {
@@ -458,7 +476,10 @@ impl SessionDiffPipeline {
             _ => {}
         }
 
-        res
+        match res {
+            Ok(_) => Ok(record),
+            Err(e) => Err(e),
+        }
     }
 
     fn unpack_session_diff(row: PyroRow<'static>) -> Vec<(PyroRow<'static>, PyroRow<'static>)> {

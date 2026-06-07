@@ -65,7 +65,7 @@ impl DaemonClient {
     }
 
     pub async fn call_playbook(&self, name: String, payload: serde_json::Value) -> Result<serde_json::Value> {
-        let req = DaemonRequest::Playbook(PlaybookRequest::Call { name, payload });
+        let req = DaemonRequest::Playbook(PlaybookRequest::Call { name, payload, session_id: None });
         match self.request(req).await? {
             DaemonResponse::Playbook(PlaybookResponse::CallResult { result }) => {
                 match result {
@@ -109,8 +109,8 @@ impl DaemonClient {
         }
     }
 
-    pub async fn call_playbook_record(&self, name: String, payload: serde_json::Value) -> Result<pyroduct::pipeline::ServerExecutionRecord> {
-        let req = DaemonRequest::Playbook(PlaybookRequest::Call { name, payload });
+    pub async fn call_playbook_record(&self, name: String, payload: serde_json::Value, session_id: Option<u32>) -> Result<pyroduct::pipeline::ServerExecutionRecord> {
+        let req = DaemonRequest::Playbook(PlaybookRequest::Call { name, payload, session_id });
         match self.request(req).await? {
             DaemonResponse::Playbook(PlaybookResponse::CallResult { result }) => Ok(result),
             DaemonResponse::Playbook(PlaybookResponse::Error { message }) => pyroduct::bail!("{}", message),

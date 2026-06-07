@@ -103,6 +103,11 @@ async fn test_interconnect_session_lifecycle() {
     let tmp_dir = tempfile::tempdir().unwrap();
     let tmp_path = tmp_dir.path().to_path_buf();
 
+    let target_path = tmp_path.join("target");
+    let caller_path = tmp_path.join("caller");
+    std::fs::create_dir_all(&target_path).unwrap();
+    std::fs::create_dir_all(&caller_path).unwrap();
+
     // Load target pipeline config
     let target_config = PipelineConfig {
         playbook: target_binary.spec.ident.clone(),
@@ -110,9 +115,9 @@ async fn test_interconnect_session_lifecycle() {
         wal_capacity: 5,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
-        input_dir: tmp_path.clone(),
-        output_dir: tmp_path.clone(),
-        log_dir: tmp_path.clone(),
+        input_dir: target_path.clone(),
+        output_dir: target_path.clone(),
+        log_dir: target_path.clone(),
     };
     let target_loaded = target_config.load(&cache).await.unwrap();
     let target_server = PipelineServer::new(&target_loaded.playbook).await.unwrap();
@@ -124,9 +129,9 @@ async fn test_interconnect_session_lifecycle() {
         wal_capacity: 5,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
-        input_dir: tmp_path.clone(),
-        output_dir: tmp_path.clone(),
-        log_dir: tmp_path.clone(),
+        input_dir: caller_path.clone(),
+        output_dir: caller_path.clone(),
+        log_dir: caller_path.clone(),
     };
     let caller_loaded = caller_config.load(&cache).await.unwrap();
 
@@ -159,8 +164,8 @@ async fn test_interconnect_session_lifecycle() {
         .await
         .unwrap();
     match result1 {
-        pyroduct::format::SessionResult::Continue {
-            result: turn1_output,
+        pyroduct::pipeline::session::SessionExecutionRecord::Success {
+            success: turn1_output,
             ..
         } => {
             assert_eq!(
@@ -168,7 +173,7 @@ async fn test_interconnect_session_lifecycle() {
                 "Caller turn 1: Hello! Turn 1"
             );
         }
-        other => panic!("Expected Continue, got {:?}", other),
+        other => panic!("Expected Success, got {:?}", other),
     }
 
     let turn2_input = PyroRow::from([("input", "Turn 2".into())]);
@@ -177,8 +182,8 @@ async fn test_interconnect_session_lifecycle() {
         .await
         .unwrap();
     match result2 {
-        pyroduct::format::SessionResult::End {
-            result: turn2_output,
+        pyroduct::pipeline::session::SessionExecutionRecord::Success {
+            success: turn2_output,
             ..
         } => {
             assert_eq!(
@@ -186,6 +191,6 @@ async fn test_interconnect_session_lifecycle() {
                 "Caller turn 2: Goodbye! Turn 2"
             );
         }
-        other => panic!("Expected End, got {:?}", other),
+        other => panic!("Expected Success, got {:?}", other),
     }
 }

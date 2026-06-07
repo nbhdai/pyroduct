@@ -4,12 +4,11 @@ use tokio::sync::Mutex;
 use pyro_artifacts::artifacts::PlaybookSpec;
 use pyro_artifacts::cache::LoadedPlaybook;
 
-use crate::format::{PyroFailure, PyroRow, PyroSuccess, SessionResult, log_wal::LogWal};
+use crate::format::{PyroRow, log_wal::LogWal};
 use crate::module::PyroFactory;
 use crate::module::interconnect::PlaybookInterconnect;
 use crate::pipeline::{
-    ExecutionRecord, Pipeline, PipelineError, session::SessionPipeline,
-    session_diff::SessionDiffPipeline,
+    Pipeline, PipelineError, session::SessionPipeline, session_diff::SessionDiffPipeline,
 };
 use crate::{CapturedError, PyroError};
 
@@ -24,6 +23,42 @@ pub enum ServerExecutionRecord {
     Normal(crate::pipeline::ExecutionRecord),
     Session(crate::pipeline::session::SessionExecutionRecord),
     SessionDiff(crate::pipeline::session_diff::SessionDiffExecutionRecord),
+}
+
+impl ServerExecutionRecord {
+    pub fn into_result(self) -> Result<(u32, PyroRow<'static>), CapturedError> {
+        match self {
+            ServerExecutionRecord::Normal(rec) => match rec {
+                crate::pipeline::ExecutionRecord::Success {
+                    row_index, success, ..
+                } => Ok((row_index as u32, success)),
+                crate::pipeline::ExecutionRecord::Failure { failure, .. } => {
+                    Err(failure.unwrap_or_else(|s| CapturedError::new(s)))
+                }
+            },
+            ServerExecutionRecord::Session(rec) => match rec {
+                crate::pipeline::session::SessionExecutionRecord::Success {
+                    row_index,
+                    success,
+                    ..
+                } => Ok((row_index as u32, success)),
+                crate::pipeline::session::SessionExecutionRecord::Failure { failure, .. } => {
+                    Err(failure.unwrap_or_else(|s| CapturedError::new(s)))
+                }
+            },
+            ServerExecutionRecord::SessionDiff(rec) => match rec {
+                crate::pipeline::session_diff::SessionDiffExecutionRecord::Success {
+                    row_index,
+                    success,
+                    ..
+                } => Ok((row_index as u32, success)),
+                crate::pipeline::session_diff::SessionDiffExecutionRecord::Failure {
+                    failure,
+                    ..
+                } => Err(failure.unwrap_or_else(|s| CapturedError::new(s))),
+            },
+        }
+    }
 }
 
 /// A reusable server pipeline that routes incoming rows to the correct underlying
@@ -228,19 +263,13 @@ impl PipelineServer {
     /// Call the pipeline without a specific session ID.
     /// For session-based pipelines, this will generate a new session ID.
     /// Returns `(session_id, success_row)`.
-    pub async fn call(&self, row: PyroRow<'_>) -> Result<(u32, PyroRow<'static>), CapturedError> {
+    pub async fn call(&self, row: PyroRow<'_>) -> Result<ServerExecutionRecord, CapturedError> {
         let mut pipeline = self.pipeline.lock().await;
         let native_row = row.to_static();
         match &mut *pipeline {
             ServerPipeline::Normal(p) => match p.call(&native_row).await {
-                Ok(PyroSuccess { row, .. }) => Ok((0, row)),
-                Err(PyroFailure { result, .. }) => {
-                    let captured = match result {
-                        Ok(captured) => captured,
-                        Err(s) => CapturedError::new(s),
-                    };
-                    Err(captured)
-                }
+                Ok(r) => Ok(ServerExecutionRecord::Normal(r)),
+                Err(e) => Err(CapturedError::new(e.to_string())),
             },
             ServerPipeline::Session(p) => {
                 let session_id = p.next_session_id();
@@ -253,11 +282,8 @@ impl PipelineServer {
                 }
 
                 match p.call(session_id, &native_row).await {
-                    Ok(res) => match res {
-                        SessionResult::Continue { result, .. }
-                        | SessionResult::End { result, .. } => Ok((session_id, result)),
-                        SessionResult::Terminate { .. } => Ok((session_id, PyroRow::empty())),
-                    },
+                    Ok(r) => Ok(ServerExecutionRecord::Session(r)),
+
                     Err(e) => {
                         let captured = match e.result {
                             Ok(captured) => captured,
@@ -278,11 +304,7 @@ impl PipelineServer {
                 }
 
                 match p.call(session_id, &native_row).await {
-                    Ok(res) => match res {
-                        SessionResult::Continue { result, .. }
-                        | SessionResult::End { result, .. } => Ok((session_id, result)),
-                        SessionResult::Terminate { .. } => Ok((session_id, PyroRow::empty())),
-                    },
+                    Ok(r) => Ok(ServerExecutionRecord::SessionDiff(r)),
                     Err(e) => {
                         let captured = match e.result {
                             Ok(captured) => captured,
@@ -300,18 +322,11 @@ impl PipelineServer {
         &self,
         client_id: u32,
         row: PyroRow<'_>,
-    ) -> Result<PyroRow<'static>, CapturedError> {
+    ) -> Result<ServerExecutionRecord, CapturedError> {
         let mut pipeline = self.pipeline.lock().await;
         match &mut *pipeline {
             ServerPipeline::Normal(p) => match p.process(client_id as usize, &row).await {
-                Ok(ExecutionRecord::Success { success, .. }) => Ok(success),
-                Ok(ExecutionRecord::Failure { failure, .. }) => {
-                    let captured = match failure {
-                        Ok(captured) => captured,
-                        Err(s) => CapturedError::new(s),
-                    };
-                    Err(captured)
-                }
+                Ok(r) => Ok(ServerExecutionRecord::Normal(r)),
                 Err(e) => Err(CapturedError::new(e.to_string())),
             },
             ServerPipeline::Session(p) => {
@@ -326,11 +341,7 @@ impl PipelineServer {
                 }
 
                 match p.call(client_id, &row).await {
-                    Ok(res) => match res {
-                        SessionResult::Continue { result, .. }
-                        | SessionResult::End { result, .. } => Ok(result),
-                        SessionResult::Terminate { .. } => Ok(PyroRow::empty()),
-                    },
+                    Ok(r) => Ok(ServerExecutionRecord::Session(r)),
                     Err(e) => {
                         let captured = match e.result {
                             Ok(captured) => captured,
@@ -352,11 +363,7 @@ impl PipelineServer {
                 }
 
                 match p.call(client_id, &row).await {
-                    Ok(res) => match res {
-                        SessionResult::Continue { result, .. }
-                        | SessionResult::End { result, .. } => Ok(result),
-                        SessionResult::Terminate { .. } => Ok(PyroRow::empty()),
-                    },
+                    Ok(r) => Ok(ServerExecutionRecord::SessionDiff(r)),
                     Err(e) => {
                         let captured = match e.result {
                             Ok(captured) => captured,

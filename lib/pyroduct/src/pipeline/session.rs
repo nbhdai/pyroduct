@@ -213,21 +213,7 @@ impl SessionPipeline {
         }
 
         match self.call(session_id, input).await {
-            Ok(res) => {
-                let (row, logs) = match res {
-                    SessionResult::Continue { result, logs, .. } => (result, logs),
-                    SessionResult::End { result, logs, .. } => (result, logs),
-                    SessionResult::Terminate { logs, .. } => (PyroRow::empty(), logs),
-                };
-
-                let record = SessionExecutionRecord::Success {
-                    row_index,
-                    prior: prior.iter().map(|r| r.clone().into_owned()).collect(),
-                    input: input.clone().into_owned(),
-                    success: row,
-                    logs: logs.clone(),
-                };
-
+            Ok(record) => {
                 let _ = self.close_session(session_id).await;
                 Ok(record)
             }
@@ -295,7 +281,7 @@ impl SessionPipeline {
         &mut self,
         session_id: u32,
         input: &PyroRow<'_>,
-    ) -> Result<SessionResult, PyroFailure> {
+    ) -> Result<SessionExecutionRecord, PyroFailure> {
         {
             let active = match self.get_or_open_session(session_id).await {
                 Ok(act) => act,
@@ -388,8 +374,8 @@ impl SessionPipeline {
             Ok(_) => {
                 let log_entry = LogEntry {
                     row_index,
-                    module_logs: logs.module_logs,
-                    capability_logs: logs.capability_logs,
+                    module_logs: logs.module_logs.clone(),
+                    capability_logs: logs.capability_logs.clone(),
                     failure: None,
                 };
                 let _ = active.log_wal.append(&log_entry).await;
@@ -404,6 +390,24 @@ impl SessionPipeline {
                 let _ = active.log_wal.append(&log_entry).await;
             }
         }
+
+        let mut wal_rows = Vec::new();
+        if let Some(active) = self.active_sessions.get(&session_id) {
+            for i in 0..active.data_wal.prebatch.len() {
+                if let Some(row) = active.data_wal.prebatch.get(i) {
+                    wal_rows.push(row.clone());
+                }
+            }
+        }
+
+        let is_failed = res.is_err();
+        let log_failure = match &res {
+            Err(e) => Some(e.result.clone()),
+            _ => None,
+        };
+
+        let record = Self::into_record(session_id, wal_rows, is_failed, logs.clone(), log_failure);
+        tracing::info!("SessionPipeline::call debug: session_id={}, success_row={:?}", session_id, record.row());
 
         match &res {
             Ok(SessionResult::End { .. }) | Ok(SessionResult::Terminate { .. }) => {
@@ -427,7 +431,10 @@ impl SessionPipeline {
             _ => {}
         }
 
-        res
+        match res {
+            Ok(_) => Ok(record),
+            Err(e) => Err(e),
+        }
     }
 
     fn unpack_session(row: PyroRow<'static>) -> Vec<PyroRow<'static>> {

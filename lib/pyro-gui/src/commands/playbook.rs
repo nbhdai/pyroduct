@@ -1,12 +1,6 @@
 use serde_json::Value;
 use tracing::{debug, error, info, trace};
 
-#[derive(serde::Deserialize)]
-#[allow(dead_code)]
-pub struct RemoteCapabilityConfig {
-    capability: pyro_artifacts::cargo::CapabilityIdent,
-    address: pyro_artifacts::cache::RemoteAddress,
-}
 
 #[tauri::command]
 pub async fn list_active_playbooks() -> Result<Value, String> {
@@ -61,10 +55,6 @@ pub async fn list_active_playbooks() -> Result<Value, String> {
 pub async fn start_playbook(
     name: String,
     playbook_ident: pyro_artifacts::artifacts::PlaybookIdent,
-    _remote: Option<Vec<RemoteCapabilityConfig>>,
-    _wal_capacity: Option<usize>,
-    _success_log_retention_secs: Option<u64>,
-    _error_log_retention_secs: Option<u64>,
     playbook_socket: Option<String>,
     input_dir: Option<String>,
     output_dir: Option<String>,
@@ -220,9 +210,10 @@ pub async fn delete_playbook(name: String) -> Result<String, String> {
 pub async fn call_playbook(
     name: String,
     payload: Value,
+    session_id: Option<u32>,
 ) -> Result<pyroduct::pipeline::ServerExecutionRecord, String> {
     info!("Tauri command: call_playbook for '{}'", name);
-    trace!("Call playbook payload: {:?}", payload);
+    trace!("Call playbook payload: {:?}, session_id: {:?}", payload, session_id);
     let working_dir = pyro_daemon::PyroDaemon::default_working_dir();
     let control_socket_path = working_dir.join("control");
 
@@ -233,9 +224,9 @@ pub async fn call_playbook(
             format!("Failed to connect to daemon: {:?}", e)
         })?;
 
-    debug!("Calling playbook record via daemon for '{}'", name);
+    debug!("Calling playbook record via daemon for '{}' (session: {:?})", name, session_id);
     client
-        .call_playbook_record(name, payload)
+        .call_playbook_record(name, payload, session_id)
         .await
         .map_err(|e| {
             error!("Failed to call playbook: {:?}", e);

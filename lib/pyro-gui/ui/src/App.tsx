@@ -195,10 +195,6 @@ export function App() {
         const msg = (await invoke("start_playbook", {
           name: params.name,
           playbookIdent: params.playbookIdent,
-          remote: params.remote || null,
-          walCapacity: params.walCapacity ?? null,
-          successLogRetentionSecs: params.successLogRetentionSecs ?? null,
-          errorLogRetentionSecs: params.errorLogRetentionSecs ?? null,
           playbookSocket: params.socketPath || null,
           inputDir: params.inputDir || null,
           outputDir: params.outputDir || null,
@@ -217,11 +213,15 @@ export function App() {
 
   // 7. Call Playbook
   const callPlaybook = useCallback(
-    async (name: string, payload: any) => {
-      console.log("App: callPlaybook called with:", { name, payload });
+    async (name: string, payload: any, sessionId?: number) => {
+      console.log("App: callPlaybook called with:", { name, payload, sessionId });
       addLog(`Calling playbook "${name}" with payload...`, "command");
       try {
-        const res = (await invoke("call_playbook", { name, payload })) as any;
+        const res = (await invoke("call_playbook", {
+          name,
+          payload,
+          sessionId: sessionId !== undefined && sessionId !== null ? sessionId : null,
+        })) as any;
         console.log("App: call_playbook invoke success. Result:", res);
         
         let isSuccess = true;
@@ -263,9 +263,10 @@ export function App() {
 
   // Periodic polling for daemon status every 10 seconds
   useEffect(() => {
+    if (activeTab !== "dashboard") return;
     const interval = setInterval(queryDaemonStatus, 10000);
     return () => clearInterval(interval);
-  }, [queryDaemonStatus]);
+  }, [activeTab, queryDaemonStatus]);
 
   // Global refresh
   const handleGlobalRefresh = () => {

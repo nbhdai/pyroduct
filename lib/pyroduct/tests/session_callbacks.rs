@@ -2,7 +2,7 @@ use pyro_artifacts::{
     build::{AnonPlaybook, Builder},
     cache::CacheManager,
 };
-use pyroduct::{PyroRow, format::SessionResult, pipeline::PipelineConfig};
+use pyroduct::{PyroRow, pipeline::PipelineConfig};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -109,7 +109,10 @@ async fn test_session_callbacks() {
             .call(session_id, &turn1_input)
             .await
             .expect("Session call turn 1 should succeed");
-        assert!(matches!(result1, SessionResult::Continue { .. }));
+        assert!(matches!(
+            result1,
+            pyroduct::pipeline::session::SessionExecutionRecord::Success { .. }
+        ));
         assert_eq!(CALLBACK_COUNTER.load(Ordering::SeqCst), 0);
 
         // Turn 2: End (finishes the session and does rollup)
@@ -118,7 +121,10 @@ async fn test_session_callbacks() {
             .call(session_id, &turn2_input)
             .await
             .expect("Session call turn 2 should succeed");
-        assert!(matches!(result2, SessionResult::End { .. }));
+        assert!(matches!(
+            result2,
+            pyroduct::pipeline::session::SessionExecutionRecord::Success { .. }
+        ));
 
         // Callback should have been called exactly once
         assert_eq!(CALLBACK_COUNTER.load(Ordering::SeqCst), 1);
@@ -151,7 +157,10 @@ async fn test_session_callbacks() {
             .call(session_id, &turn1_input)
             .await
             .expect("Session diff call turn 1 should succeed");
-        assert!(matches!(result1, SessionResult::Continue { .. }));
+        assert!(matches!(
+            result1,
+            pyroduct::pipeline::session_diff::SessionDiffExecutionRecord::Success { .. }
+        ));
         assert_eq!(DIFF_CALLBACK_COUNTER.load(Ordering::SeqCst), 0);
 
         // Turn 2: End
@@ -160,7 +169,10 @@ async fn test_session_callbacks() {
             .call(session_id, &turn2_input)
             .await
             .expect("Session diff call turn 2 should succeed");
-        assert!(matches!(result2, SessionResult::End { .. }));
+        assert!(matches!(
+            result2,
+            pyroduct::pipeline::session_diff::SessionDiffExecutionRecord::Success { .. }
+        ));
 
         // Callback should have been called exactly once
         assert_eq!(DIFF_CALLBACK_COUNTER.load(Ordering::SeqCst), 1);

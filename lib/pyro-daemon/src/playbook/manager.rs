@@ -59,6 +59,8 @@ pub enum PlaybookRequest {
     Call {
         name: String,
         payload: serde_json::Value,
+        #[serde(default)]
+        session_id: Option<u32>,
     },
     AddHttpCallback {
         source: String,
@@ -218,9 +220,13 @@ impl PlaybooksManager {
                 tracing::debug!(count = playbooks.len(), "Retrieved active playbooks list");
                 PlaybookResponse::Playbooks { playbooks }
             }
-            PlaybookRequest::Call { name, payload } => {
+            PlaybookRequest::Call {
+                name,
+                payload,
+                session_id,
+            } => {
                 tracing::info!(playbook = %name, "Received Call request for playbook");
-                match self.call_playbook_record(&name, payload).await {
+                match self.call_playbook_record(&name, payload, session_id).await {
                     Ok(result) => {
                         tracing::info!(playbook = %name, "Playbook call completed successfully");
                         PlaybookResponse::CallResult { result }
@@ -829,7 +835,7 @@ impl PlaybooksManager {
         name: &str,
         payload: serde_json::Value,
     ) -> Result<serde_json::Value> {
-        let rec = self.call_playbook_record(name, payload).await?;
+        let rec = self.call_playbook_record(name, payload, None).await?;
         match rec {
             pyroduct::pipeline::ServerExecutionRecord::Normal(
                 pyroduct::pipeline::ExecutionRecord::Success { success, .. },
@@ -889,6 +895,7 @@ impl PlaybooksManager {
         &self,
         name: &str,
         payload: serde_json::Value,
+        session_id: Option<u32>,
     ) -> Result<pyroduct::pipeline::ServerExecutionRecord> {
         tracing::debug!(playbook = %name, "Executing call_playbook_record");
         let worker = {
@@ -904,26 +911,46 @@ impl PlaybooksManager {
         };
         let spec = worker.spec();
 
-        tracing::debug!(playbook = %name, "Deserializing payload to PyroRow");
-        let input_row: PyroRow<'static> = serde_json::from_value(payload)
-            .capture("Invalid JSON payload: failed to deserialize into PyroRow")?;
+        let is_session = spec.func.kind == pyro_spec::ModuleKind::Session
+            || spec.func.kind == pyro_spec::ModuleKind::SessionDiff;
+        let repaired_row = if is_session {
+            let input_field = spec.func.input.field_with_name("input").ok_or_else(|| {
+                pyroduct::capture!("Session input field 'input' not found in playbook spec")
+            })?;
 
-        tracing::debug!(playbook = %name, "Repairing row matching schema");
-        let repaired_row = input_row
-            .project_repair(spec.func.input.fields())
-            .capture("Failed to repair input JSON according to module spec")?;
+            let wrapped_payload = if payload.get("input").is_some() {
+                payload
+            } else {
+                serde_json::json!({
+                    "input": payload
+                })
+            };
+
+            tracing::debug!(playbook = %name, "Deserializing session payload to PyroRow");
+            let input_row: PyroRow<'static> = serde_json::from_value(wrapped_payload).capture(
+                "Invalid JSON payload: failed to deserialize session input into PyroRow",
+            )?;
+
+            tracing::debug!(playbook = %name, "Repairing session input row matching schema");
+            input_row
+                .project_repair(&[input_field.clone()])
+                .capture("Failed to repair session input JSON according to module spec")?
+        } else {
+            tracing::debug!(playbook = %name, "Deserializing payload to PyroRow");
+            let input_row: PyroRow<'static> = serde_json::from_value(payload)
+                .capture("Invalid JSON payload: failed to deserialize into PyroRow")?;
+
+            tracing::debug!(playbook = %name, "Repairing row matching schema");
+            input_row
+                .project_repair(spec.func.input.fields())
+                .capture("Failed to repair input JSON according to module spec")?
+        };
 
         tracing::debug!(playbook = %name, "Sending call to worker");
-        let call_result = worker.call(repaired_row).await;
-
-        let record_id = (worker.len().await as u32).saturating_sub(1);
-        if let Ok(record) = worker.get(record_id).await {
-            Ok(record)
+        if let Some(session_id) = session_id {
+            worker.call_session(session_id, repaired_row).await
         } else {
-            match call_result {
-                Ok(_) => pyroduct::bail!("Failed to get execution record after successful call"),
-                Err(e) => Err(pyroduct::capture!("Failed to call playbook: {:?}", e)),
-            }
+            worker.call(repaired_row).await
         }
     }
 }

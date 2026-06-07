@@ -1,13 +1,13 @@
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
-use async_trait::async_trait;
 
 use pyro_artifacts::artifacts::PlaybookSpec;
+use pyro_spec::ModuleFunc;
 use pyroduct::CapturedError;
 use pyroduct::format::PyroRow;
 use pyroduct::module::interconnect::PlaybookInterconnect;
 use pyroduct::pipeline::PipelineServer;
-use pyro_spec::ModuleFunc;
 
 use super::PlaybooksManager;
 
@@ -28,7 +28,7 @@ impl PlaybookInterconnect for DaemonInterconnect {
         row: PyroRow<'_>,
     ) -> Result<(u32, PyroRow<'static>), CapturedError> {
         if let Some(server) = self.servers.get(name) {
-            server.call(row).await
+            server.call(row).await.and_then(|rec| rec.into_result())
         } else {
             Err(CapturedError::new(format!(
                 "Playbook '{}' not found in interconnect collection",
@@ -44,7 +44,10 @@ impl PlaybookInterconnect for DaemonInterconnect {
         row: PyroRow<'_>,
     ) -> Result<PyroRow<'static>, CapturedError> {
         if let Some(server) = self.servers.get(name) {
-            server.call_session(client_id, row).await
+            server
+                .call_session(client_id, row)
+                .await
+                .and_then(|rec| rec.into_result().map(|(_, r)| r))
         } else {
             Err(CapturedError::new(format!(
                 "Playbook '{}' not found in interconnect collection",
@@ -59,7 +62,9 @@ impl PlaybooksManager {
         self: &Arc<Self>,
         main_name: &str,
         spec: &PlaybookSpec,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = crate::Result<Arc<dyn PlaybookInterconnect>>> + Send>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = crate::Result<Arc<dyn PlaybookInterconnect>>> + Send>,
+    > {
         let this = self.clone();
         let main_name = main_name.to_string();
         let spec = spec.clone();
@@ -76,7 +81,8 @@ impl PlaybooksManager {
                     for worker in workers.values() {
                         tracing::debug!(worker_ident = ?worker.server.spec().ident, "build_interconnect: checking active worker");
                         if &worker.server.spec().ident == expected_ident {
-                            found_info = Some((worker.server.spec().func.clone(), worker.server.clone()));
+                            found_info =
+                                Some((worker.server.spec().func.clone(), worker.server.clone()));
                             break;
                         }
                     }
@@ -87,10 +93,18 @@ impl PlaybooksManager {
                     None => {
                         let sub_name = format!("{}_{}", main_name, expected_ident.package);
                         tracing::info!(%sub_name, ?expected_ident, "build_interconnect: interconnect playbook not running, launching it");
-                        this.start_playbook(sub_name.clone(), expected_ident.clone(), None, None, None).await?;
+                        this.start_playbook(
+                            sub_name.clone(),
+                            expected_ident.clone(),
+                            None,
+                            None,
+                            None,
+                        )
+                        .await?;
 
                         let workers = this.workers.lock().await;
-                        workers.get(&sub_name)
+                        workers
+                            .get(&sub_name)
                             .map(|w| (w.server.spec().func.clone(), w.server.clone()))
                             .ok_or_else(|| {
                                 pyroduct::CapturedError::new(format!(
@@ -105,7 +119,8 @@ impl PlaybooksManager {
                 servers.insert(name.clone(), server);
             }
 
-            let interconnect: Arc<dyn PlaybookInterconnect> = Arc::new(DaemonInterconnect { playbooks, servers });
+            let interconnect: Arc<dyn PlaybookInterconnect> =
+                Arc::new(DaemonInterconnect { playbooks, servers });
             Ok(interconnect)
         })
     }

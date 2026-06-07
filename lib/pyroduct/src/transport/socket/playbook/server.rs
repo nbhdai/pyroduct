@@ -66,6 +66,7 @@ impl PipelineServer {
                                 match pipeline_server
                                     .call_session(client_id, PyroRow::from(&*row))
                                     .await
+                                    .and_then(|rec| rec.into_result().map(|(_, r)| r))
                                 {
                                     Ok(success_row) => success_row
                                         .ship()

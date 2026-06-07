@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
 
 interface PlaybookItem {
   author: string;
@@ -14,13 +13,6 @@ interface StartPlaybookModalProps {
   onSubmit: (params: {
     name: string;
     playbookIdent: { author: string; package: string; version: string };
-    remote?: Array<{
-      capability: { author: string; package: string; version: string };
-      address: { tcp: string } | { unix: string };
-    }>;
-    walCapacity?: number;
-    successLogRetentionSecs?: number;
-    errorLogRetentionSecs?: number;
     socketPath?: string | null;
     inputDir?: string | null;
     outputDir?: string | null;
@@ -39,14 +31,7 @@ export function StartPlaybookModal({
   const [inputDir, setInputDir] = useState("");
   const [outputDir, setOutputDir] = useState("");
   
-  // PipelineConfig advanced options
-  const [walCapacity, setWalCapacity] = useState<number>(1000);
-  const [successLogRetentionSecs, setSuccessLogRetentionSecs] = useState<number>(3600);
-  const [errorLogRetentionSecs, setErrorLogRetentionSecs] = useState<number>(604800);
-  
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [requiredCapabilities, setRequiredCapabilities] = useState<any[]>([]);
-  const [remoteConfig, setRemoteConfig] = useState<Record<string, { type: "disabled" | "tcp" | "unix"; address: string }>>({});
 
   // Reset form when modal opens
   useEffect(() => {
@@ -55,12 +40,7 @@ export function StartPlaybookModal({
       setSocketPath("");
       setInputDir("");
       setOutputDir("");
-      setWalCapacity(1000);
-      setSuccessLogRetentionSecs(3600);
-      setErrorLogRetentionSecs(604800);
       setShowAdvanced(false);
-      setRequiredCapabilities([]);
-      setRemoteConfig({});
       
       // Default to first available playbook
       if (availablePlaybooks.length > 0) {
@@ -68,33 +48,11 @@ export function StartPlaybookModal({
         const key = `${pb.author}/${pb.name}@${pb.version}`;
         setSelectedPlaybookKey(key);
         setName(pb.name);
-        fetchPlaybookCapabilities(pb.author, pb.name, pb.version);
       } else {
         setSelectedPlaybookKey("");
       }
     }
   }, [isOpen, availablePlaybooks]);
-
-  const fetchPlaybookCapabilities = async (author: string, packageName: string, version: string) => {
-    try {
-      const spec: any = await invoke("get_playbook_spec", { author, name: packageName, version });
-      if (spec && spec.capabilities) {
-        setRequiredCapabilities(spec.capabilities);
-        // Initialize empty remote config for each required capability
-        const initialRemotes: Record<string, { type: "disabled" | "tcp" | "unix"; address: string }> = {};
-        spec.capabilities.forEach((cap: any) => {
-          const capKey = `${cap.author}/${cap.package}@${cap.version}`;
-          initialRemotes[capKey] = { type: "disabled", address: "" };
-        });
-        setRemoteConfig(initialRemotes);
-      } else {
-        setRequiredCapabilities([]);
-      }
-    } catch (err) {
-      console.error("Failed to load playbook capabilities spec:", err);
-      setRequiredCapabilities([]);
-    }
-  };
 
   const handlePlaybookChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const key = e.target.value;
@@ -105,7 +63,6 @@ export function StartPlaybookModal({
     );
     if (selected) {
       setName(selected.name);
-      fetchPlaybookCapabilities(selected.author, selected.name, selected.version);
     }
   };
 
@@ -123,22 +80,6 @@ export function StartPlaybookModal({
       return;
     }
 
-    // Format remotes list
-    const formattedRemotes = Object.entries(remoteConfig)
-      .filter(([_, cfg]) => cfg.type !== "disabled" && cfg.address.trim() !== "")
-      .map(([capKey, cfg]) => {
-        const [authorAndPack, version] = capKey.split("@");
-        const [author, packageName] = authorAndPack.split("/");
-        return {
-          capability: {
-            author,
-            package: packageName,
-            version,
-          },
-          address: cfg.type === "tcp" ? { tcp: cfg.address.trim() } : { unix: cfg.address.trim() },
-        };
-      });
-
     onSubmit({
       name: name.trim() || selected.name,
       playbookIdent: {
@@ -146,34 +87,10 @@ export function StartPlaybookModal({
         package: selected.name,
         version: selected.version,
       },
-      remote: formattedRemotes.length > 0 ? formattedRemotes : undefined,
-      walCapacity,
-      successLogRetentionSecs,
-      errorLogRetentionSecs,
       socketPath: socketPath.trim() || null,
       inputDir: inputDir.trim() || null,
       outputDir: outputDir.trim() || null,
     });
-  };
-
-  const handleRemoteTypeChange = (capKey: string, type: "tcp" | "unix") => {
-    setRemoteConfig((prev) => ({
-      ...prev,
-      [capKey]: {
-        ...prev[capKey],
-        type,
-      },
-    }));
-  };
-
-  const handleRemoteAddressChange = (capKey: string, address: string) => {
-    setRemoteConfig((prev) => ({
-      ...prev,
-      [capKey]: {
-        ...prev[capKey],
-        address,
-      },
-    }));
   };
 
   const handleOverlayClick = (e: React.MouseEvent) => {
@@ -262,73 +179,6 @@ export function StartPlaybookModal({
                     placeholder="Defaults to playbook workspace output/"
                   />
                 </div>
-                <div className="form-group">
-                  <label htmlFor="playbook-wal-capacity">WAL Capacity (Default: 1000)</label>
-                  <input
-                    type="number"
-                    id="playbook-wal-capacity"
-                    value={walCapacity}
-                    onChange={(e) => setWalCapacity(parseInt(e.target.value) || 0)}
-                    min={1}
-                  />
-                </div>
-                <div className="form-group">
-                  <label htmlFor="playbook-success-retention">Success Log Retention (Seconds, Default: 3600)</label>
-                  <input
-                    type="number"
-                    id="playbook-success-retention"
-                    value={successLogRetentionSecs}
-                    onChange={(e) => setSuccessLogRetentionSecs(parseInt(e.target.value) || 0)}
-                    min={0}
-                  />
-                </div>
-                <div className="form-group">
-                  <label htmlFor="playbook-error-retention">Error Log Retention (Seconds, Default: 604800)</label>
-                  <input
-                    type="number"
-                    id="playbook-error-retention"
-                    value={errorLogRetentionSecs}
-                    onChange={(e) => setErrorLogRetentionSecs(parseInt(e.target.value) || 0)}
-                    min={0}
-                  />
-                </div>
-
-                {requiredCapabilities.length > 0 && (
-                  <div className="form-group">
-                    <label>Remote Capability Addresses (Optional)</label>
-                    {requiredCapabilities.map((cap, idx) => {
-                      const capKey = `${cap.author}/${cap.package}@${cap.version}`;
-                      const config = remoteConfig[capKey] || { type: "tcp", address: "" };
-                      return (
-                        <div key={idx} className="capability-config-group">
-                          <div className="capability-config-header">
-                            <span>{cap.author}/{cap.package}@{cap.version}</span>
-                          </div>
-                          <div className="capability-config-fields">
-                            <select
-                              style={config.type === "disabled" ? { gridColumn: "span 2" } : undefined}
-                              value={config.type}
-                              onChange={(e) => handleRemoteTypeChange(capKey, e.target.value as any)}
-                            >
-                              <option value="disabled">Disabled (Local Process)</option>
-                              <option value="tcp">TCP</option>
-                              <option value="unix">UNIX Socket</option>
-                            </select>
-                            {config.type !== "disabled" && (
-                              <input
-                                type="text"
-                                value={config.address}
-                                onChange={(e) => handleRemoteAddressChange(capKey, e.target.value)}
-                                placeholder={config.type === "tcp" ? "127.0.0.1:8000" : "/path/to/uds.sock"}
-                                required
-                              />
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
               </div>
             )}
 

@@ -109,6 +109,7 @@ impl PlaybookWorker {
         self.server
             .call(row)
             .await
+            .and_then(|rec| rec.into_result())
             .map_err(|e| pyroduct::capture!("Failed to call playbook: {:?}", e))
     }
 

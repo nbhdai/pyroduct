@@ -1,16 +1,49 @@
 import { useState } from "react";
 import { Playbook } from "../types";
 import { CallPlaybookForm } from "./CallPlaybookForm";
+import { PlaybookChat } from "./PlaybookChat";
 import { DataExplorer } from "./DataExplorer";
+
+function isChatPlaybook(playbook: Playbook): boolean {
+  if (!playbook.spec || !playbook.spec.func) return false;
+  const func = playbook.spec.func;
+  
+  if (func.kind !== "session" && func.kind !== "session_diff") return false;
+  
+  const inputField = func.input?.fields?.find((f: any) => f.name === "input");
+  if (!inputField) return false;
+  
+  const dt = inputField.data_type;
+  if (!dt || typeof dt !== "object" || !dt.Group) return false;
+  
+  const groupFields = dt.Group;
+  if (groupFields.length !== 2) return false;
+  
+  const roleField = groupFields.find((f: any) => f.name === "role");
+  const contentField = groupFields.find((f: any) => f.name === "content");
+  
+  if (!roleField || roleField.data_type !== "Str") return false;
+  if (!contentField || contentField.data_type !== "Str") return false;
+  
+  return true;
+}
 
 interface PlaybookDetailViewProps {
   playbook: Playbook;
   onBack: () => void;
-  onSubmitCall: (name: string, payload: any) => Promise<any>;
+  onSubmitCall: (name: string, payload: any, sessionId?: number) => Promise<any>;
 }
 
 export function PlaybookDetailView({ playbook, onBack, onSubmitCall }: PlaybookDetailViewProps) {
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
+  const [prevPlaybookName, setPrevPlaybookName] = useState<string>(playbook.name);
+  const chatCompatible = isChatPlaybook(playbook);
+  const [activeSubTab, setActiveSubTab] = useState<"chat" | "form">(chatCompatible ? "chat" : "form");
+
+  if (playbook.name !== prevPlaybookName) {
+    setPrevPlaybookName(playbook.name);
+    setActiveSubTab(chatCompatible ? "chat" : "form");
+  }
 
   const handleCallSuccess = () => {
     // Increment refreshTrigger to signal DataExplorer to reload its tables
@@ -82,13 +115,81 @@ export function PlaybookDetailView({ playbook, onBack, onSubmitCall }: PlaybookD
         </div>
       </div>
 
-      {/* Top Section: Call Playbook Form */}
-      <CallPlaybookForm
-        playbookName={playbook.name}
-        playbookSpec={playbook.spec}
-        onSubmit={onSubmitCall}
-        onSuccess={handleCallSuccess}
-      />
+      {/* Sub Tab Switcher if chat compatible */}
+      {chatCompatible && (
+        <div style={{ display: "flex", gap: "10px", borderBottom: "1px solid var(--bg-card-border)", paddingBottom: "4px" }}>
+          <button
+            onClick={() => setActiveSubTab("chat")}
+            className={`sub-tab-btn ${activeSubTab === "chat" ? "active" : ""}`}
+            style={{
+              background: "none",
+              border: "none",
+              color: activeSubTab === "chat" ? "var(--color-primary)" : "var(--text-muted)",
+              fontSize: "14px",
+              fontWeight: 600,
+              padding: "8px 16px 12px 16px",
+              cursor: "pointer",
+              position: "relative"
+            }}
+          >
+            💬 Chat
+            {activeSubTab === "chat" && (
+              <span style={{
+                position: "absolute",
+                bottom: "-5px",
+                left: 0,
+                right: 0,
+                height: "2px",
+                backgroundColor: "var(--color-primary)",
+                boxShadow: "0 0 8px var(--color-primary)"
+              }} />
+            )}
+          </button>
+          <button
+            onClick={() => setActiveSubTab("form")}
+            className={`sub-tab-btn ${activeSubTab === "form" ? "active" : ""}`}
+            style={{
+              background: "none",
+              border: "none",
+              color: activeSubTab === "form" ? "var(--color-primary)" : "var(--text-muted)",
+              fontSize: "14px",
+              fontWeight: 600,
+              padding: "8px 16px 12px 16px",
+              cursor: "pointer",
+              position: "relative"
+            }}
+          >
+            ⚙️ Execute Form
+            {activeSubTab === "form" && (
+              <span style={{
+                position: "absolute",
+                bottom: "-5px",
+                left: 0,
+                right: 0,
+                height: "2px",
+                backgroundColor: "var(--color-primary)",
+                boxShadow: "0 0 8px var(--color-primary)"
+              }} />
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* Top Section: Chat or Form */}
+      {activeSubTab === "chat" ? (
+        <PlaybookChat
+          playbookName={playbook.name}
+          playbookSpec={playbook.spec}
+          onSubmit={onSubmitCall}
+        />
+      ) : (
+        <CallPlaybookForm
+          playbookName={playbook.name}
+          playbookSpec={playbook.spec}
+          onSubmit={onSubmitCall}
+          onSuccess={handleCallSuccess}
+        />
+      )}
 
       {/* Bottom Section: Data Explorer */}
       <div className="card" style={{ padding: "24px" }}>

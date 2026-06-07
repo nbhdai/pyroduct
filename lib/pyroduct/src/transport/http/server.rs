@@ -88,7 +88,7 @@ async fn handle_playbook_query(
 
     // 3. Process the repaired row in the pipeline server
     let kind = server.spec().func.kind;
-    match server.call(repaired_row).await {
+    match server.call(repaired_row).await.and_then(|rec| rec.into_result()) {
         Ok((session_id, success_row)) => match serde_json::to_value(&success_row) {
             Ok(mut val) => {
                 if kind != pyro_spec::ModuleKind::Normal {
@@ -154,7 +154,7 @@ async fn handle_playbook_session_query(
     }
 
     // 4. Process the repaired row in the session pipeline
-    match server.call_session(session_id, repaired_row).await {
+    match server.call_session(session_id, repaired_row).await.and_then(|rec| rec.into_result().map(|(_, r)| r)) {
         Ok(success_row) => match serde_json::to_value(&success_row) {
             Ok(mut val) => {
                 if let Some(obj) = val.as_object_mut() {

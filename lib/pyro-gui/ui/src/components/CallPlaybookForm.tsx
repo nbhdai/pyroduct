@@ -160,13 +160,13 @@ const setValueAtPath = (obj: any, path: string[], value: any): any => {
   return newObj;
 };
 
-const buildPayloadForType = (val: any, type: any, fieldName: string, nullable: boolean): any => {
+const buildPayloadForType = (val: any, type: any, fieldName: string): any => {
   if (isGroupType(type)) {
     const obj: Record<string, any> = {};
     const subFields = type.Group || [];
     for (const subField of subFields) {
       const subVal = val ? val[subField.name] : undefined;
-      obj[subField.name] = buildPayloadForType(subVal, subField.data_type, `${fieldName}.${subField.name}`, subField.nullable);
+      obj[subField.name] = buildPayloadForType(subVal, subField.data_type, `${fieldName}.${subField.name}`);
     }
     return obj;
   }
@@ -605,7 +605,7 @@ export function CallPlaybookForm({ playbookName, playbookSpec, onSubmit, onSucce
     try {
       for (const field of fields) {
         const val = formValues[field.name];
-        payload[field.name] = buildPayloadForType(val, field.data_type, field.name, field.nullable);
+        payload[field.name] = buildPayloadForType(val, field.data_type, field.name);
       }
     } catch (err: any) {
       const errMsg = err.message;

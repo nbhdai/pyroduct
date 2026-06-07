@@ -134,7 +134,7 @@ async fn test_interconnect_lifecycle() {
     let result = caller_pipeline.call(&input).await.unwrap();
 
     assert_eq!(
-        result.row.get_str("message").unwrap(),
+        result.row().unwrap().get_str("message").unwrap(),
         "Caller received: Hello: World"
     );
 }
