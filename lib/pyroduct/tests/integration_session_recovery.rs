@@ -136,7 +136,6 @@ async fn test_session_recovery_lifecycle() {
 
     // Verify state is "active" in SQLite status
     let status_active = pipeline
-        .output_manager
         .get_session_status(session_id_1 as usize)
         .unwrap();
     assert_eq!(status_active, Some("active".to_string()));
@@ -170,7 +169,6 @@ async fn test_session_recovery_lifecycle() {
 
     // Verify state is "succeeded" in SQLite status
     let status_success = pipeline
-        .output_manager
         .get_session_status(session_id_1 as usize)
         .unwrap();
     assert_eq!(status_success, Some("succeeded".to_string()));
@@ -210,7 +208,6 @@ async fn test_session_recovery_lifecycle() {
 
     // Verify state is "failed" in SQLite status
     let status_failed_err = pipeline
-        .output_manager
         .get_session_status(session_id_2 as usize)
         .unwrap();
     assert_eq!(status_failed_err, Some("failed".to_string()));
@@ -252,7 +249,6 @@ async fn test_session_recovery_lifecycle() {
 
     // Verify state is "failed" in SQLite status
     let status_failed_panic = pipeline
-        .output_manager
         .get_session_status(session_id_3 as usize)
         .unwrap();
     assert_eq!(status_failed_panic, Some("failed".to_string()));
@@ -356,7 +352,6 @@ async fn test_session_diff_recovery_lifecycle() {
 
     // Verify state is "active" in SQLite status
     let status_active = pipeline
-        .output_manager
         .get_session_status(session_id_1 as usize)
         .unwrap();
     assert_eq!(status_active, Some("active".to_string()));
@@ -395,7 +390,6 @@ async fn test_session_diff_recovery_lifecycle() {
 
     // Verify state is "succeeded" in SQLite status
     let status_success = pipeline
-        .output_manager
         .get_session_status(session_id_1 as usize)
         .unwrap();
     assert_eq!(status_success, Some("succeeded".to_string()));
@@ -437,7 +431,6 @@ async fn test_session_diff_recovery_lifecycle() {
 
     // Verify state is "failed" in SQLite status
     let status_failed_err = pipeline
-        .output_manager
         .get_session_status(session_id_2 as usize)
         .unwrap();
     assert_eq!(status_failed_err, Some("failed".to_string()));
@@ -481,7 +474,6 @@ async fn test_session_diff_recovery_lifecycle() {
 
     // Verify state is "failed" in SQLite status
     let status_failed_panic = pipeline
-        .output_manager
         .get_session_status(session_id_3 as usize)
         .unwrap();
     assert_eq!(status_failed_panic, Some("failed".to_string()));

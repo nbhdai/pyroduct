@@ -13,7 +13,11 @@ use crate::{
     CapturedError, PyroError,
     format::log_wal::LogWal,
     module::{PyroFactory, WasmError},
-    pipeline::{Pipeline, session::SessionPipeline, session_diff::SessionDiffPipeline},
+    pipeline::{
+        Pipeline,
+        session::{SessionPipeline, SessionStatusManager},
+        session_diff::SessionDiffPipeline,
+    },
 };
 
 use super::PipelineError;
@@ -193,6 +197,8 @@ impl PipelineFactory {
                 false,
             )]);
 
+        let session_status_manager = SessionStatusManager::new(&self.output_dir)?;
+
         Ok(SessionPipeline {
             step: instance,
             success_log_retention_secs: self.success_log_retention_secs,
@@ -210,6 +216,7 @@ impl PipelineFactory {
             wal_capacity: self.wal_capacity,
             active_sessions: std::collections::HashMap::new(),
             callbacks: Vec::new(),
+            session_status_manager,
         })
     }
 
@@ -262,6 +269,8 @@ impl PipelineFactory {
             crate::format::value::PyroField::new("outputs", outputs_type, false),
         ]);
 
+        let session_status_manager = SessionStatusManager::new(&self.output_dir)?;
+
         Ok(SessionDiffPipeline {
             step: instance,
             success_log_retention_secs: self.success_log_retention_secs,
@@ -282,6 +291,7 @@ impl PipelineFactory {
             wal_capacity: self.wal_capacity,
             active_sessions: std::collections::HashMap::new(),
             callbacks: Vec::new(),
+            session_status_manager,
         })
     }
 }

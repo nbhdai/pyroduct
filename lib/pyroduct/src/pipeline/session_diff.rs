@@ -3,6 +3,7 @@ use std::sync::Arc;
 use arrow::array::RecordBatch;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
+use tracing::{debug, error, instrument, warn};
 
 use crate::CapturedError;
 use crate::format::log_wal::{LogEntry, LogWal};
@@ -13,6 +14,7 @@ use crate::{
 };
 
 use super::data::DataManager;
+use super::session::SessionStatusManager;
 
 // =============================================================================
 // Pipeline
@@ -70,24 +72,94 @@ pub struct SessionDiffPipeline {
     pub wal_capacity: usize,
     pub active_sessions: std::collections::HashMap<u32, ActiveSession>,
     pub callbacks: Vec<(uuid::Uuid, crate::pipeline::Callback)>,
+    pub session_status_manager: SessionStatusManager,
 }
 
 impl SessionDiffPipeline {
-    pub fn next_session_id(&self) -> u32 {
-        let mut id = self.output_manager.len() as u32;
-        while self.active_sessions.contains_key(&id) {
-            id += 1;
-        }
-        id
+    pub fn set_session_status(&self, session_id: usize, status: &str) -> Result<(), PyroError> {
+        self.session_status_manager.set_status(session_id, status)
     }
 
+    pub fn get_session_status(&self, session_id: usize) -> Result<Option<String>, PyroError> {
+        self.session_status_manager.get_status(session_id)
+    }
+
+    pub fn max_session_id(&self) -> Result<Option<usize>, PyroError> {
+        self.session_status_manager.max_session_id()
+    }
+
+    pub fn next_session_id(&self) -> u32 {
+        let mut max_id = self.output_manager.len() as u32;
+
+        // 1. Check in-memory active sessions
+        for &id in self.active_sessions.keys() {
+            if id >= max_id {
+                max_id = id + 1;
+            }
+        }
+
+        // 2. Check the SQLite database
+        if let Ok(Some(db_max)) = self.max_session_id() {
+            let db_max = db_max as u32;
+            if db_max >= max_id {
+                max_id = db_max + 1;
+            }
+        }
+
+        // 3. Scan output directory for any existing session files
+        if let Ok(entries) = std::fs::read_dir(&self.output_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("session_val_") {
+                    let id_str = name_str
+                        .strip_prefix("session_val_")
+                        .and_then(|s| s.split('.').next());
+                    if let Some(id_str) = id_str {
+                        if let Ok(id) = id_str.parse::<u32>() {
+                            if id >= max_id {
+                                max_id = id + 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Scan log directory for any existing session directories
+        if let Ok(entries) = std::fs::read_dir(&self.log_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("session_log_") {
+                    let id_str = name_str
+                        .strip_prefix("session_log_")
+                        .and_then(|s| s.split('.').next());
+                    if let Some(id_str) = id_str {
+                        if let Ok(id) = id_str.parse::<u32>() {
+                            if id >= max_id {
+                                max_id = id + 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        debug!(next_id = max_id, "Determined next session ID");
+        max_id
+    }
+
+    #[instrument(skip(self), fields(session_id = session_id))]
     async fn get_or_open_session(
         &mut self,
         session_id: u32,
     ) -> Result<&mut ActiveSession, PyroError> {
         if !self.active_sessions.contains_key(&session_id) {
-            if let Ok(Some(status)) = self.output_manager.get_session_status(session_id as usize) {
+            debug!("Opening session");
+            if let Ok(Some(status)) = self.get_session_status(session_id as usize) {
                 if status == "succeeded" || status == "failed" {
+                    warn!(status, "Cannot resume closed session");
                     return Err(PyroError::validation(crate::capture!(
                         "Cannot resume closed session {}",
                         session_id
@@ -130,15 +202,19 @@ impl SessionDiffPipeline {
                     )
                 })?;
 
+            debug!("Successfully opened session files, inserting active session");
             self.active_sessions
                 .insert(session_id, ActiveSession { log_wal, data_wal });
         }
         Ok(self.active_sessions.get_mut(&session_id).unwrap())
     }
 
+    #[instrument(skip(self), fields(session_id = session_id))]
     async fn rollup_and_cleanup_session(&mut self, session_id: u32) -> Result<(), PyroError> {
+        debug!("Rolling up and cleaning up session");
         let data_path = self.output_dir.join(format!("session_val_{}", session_id));
         let wal_rows = crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
+        debug!(wal_rows_count = wal_rows.len(), "Recovered data WAL rows");
 
         let mut in_list = Vec::new();
         let mut out_list = Vec::new();
@@ -166,6 +242,7 @@ impl SessionDiffPipeline {
 
         let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
         if log_dir.exists() {
+            debug!("Reading individual log WAL to merge with general log manager");
             let mut reader = crate::format::log_wal::LogWalReader::open(&log_dir)
                 .await
                 .map_err(|io| {
@@ -208,13 +285,19 @@ impl SessionDiffPipeline {
             let _ = tokio::fs::remove_dir_all(log_dir).await;
         }
 
+        debug!(
+            callbacks_count = self.callbacks.len(),
+            "Executing callbacks for session rollup"
+        );
         for (_, cb) in &mut self.callbacks {
             cb.execute(session_id as usize, &rolled_up_row).await;
         }
 
+        debug!("Rollup and cleanup complete");
         Ok(())
     }
 
+    #[instrument(skip(self, prior_inputs, prior_outputs, input), fields(row_index = row_index))]
     pub async fn process(
         &mut self,
         row_index: usize,
@@ -223,11 +306,13 @@ impl SessionDiffPipeline {
         input: &PyroRow<'_>,
     ) -> Result<SessionDiffExecutionRecord, PyroError> {
         let session_id = row_index as u32;
+        debug!("Processing session diff");
 
         if let Err(e) = self
             .prep_session(session_id, prior_inputs, prior_outputs)
             .await
         {
+            warn!(?e, "Failed to prepare session");
             let logs = e.logs.clone();
             let log_entry = LogEntry {
                 row_index,
@@ -247,10 +332,12 @@ impl SessionDiffPipeline {
 
         match self.call(session_id, input).await {
             Ok(record) => {
+                debug!("Session diff call succeeded, closing session");
                 let _ = self.close_session(session_id).await;
                 Ok(record)
             }
             Err(e) => {
+                warn!(?e, "Session diff call failed, closing session");
                 let _ = self.close_session(session_id).await;
                 match e.result {
                     Ok(captured) => Err(PyroError::CodePanic(captured)),
@@ -262,29 +349,34 @@ impl SessionDiffPipeline {
         }
     }
 
+    #[instrument(skip(self, inputs, outputs), fields(session_id = session_id))]
     pub async fn prep_session(
         &mut self,
         session_id: u32,
         inputs: &[PyroRow<'_>],
         outputs: &[PyroRow<'_>],
     ) -> Result<(), PyroFailure> {
+        debug!(
+            inputs_len = inputs.len(),
+            outputs_len = outputs.len(),
+            "Preparing session diff"
+        );
         if let Err(e) = self.step.prep_session(session_id, inputs, outputs).await {
-            let _ = self
-                .output_manager
-                .set_session_status(session_id as usize, "failed");
+            warn!(?e, "prep_session: Step returned error");
+            let _ = self.set_session_status(session_id as usize, "failed");
             return Err(e);
         }
 
         let data_path = self.output_dir.join(format!("session_val_{}", session_id));
         let existing = crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
+        debug!(existing_len = existing.len(), "Recovered existing data WAL");
 
         let active_logs = self.step.unpack_logs();
         let active = match self.get_or_open_session(session_id).await {
             Ok(act) => act,
             Err(e) => {
-                let _ = self
-                    .output_manager
-                    .set_session_status(session_id as usize, "failed");
+                error!(?e, "Failed to get/open session during prep");
+                let _ = self.set_session_status(session_id as usize, "failed");
                 return Err(PyroFailure {
                     row_index: session_id,
                     result: Err(e.to_string()),
@@ -294,6 +386,7 @@ impl SessionDiffPipeline {
         };
 
         let max_len = inputs.len().max(outputs.len());
+        debug!(max_len, "Appending inputs/outputs to active session WAL");
         for i in 0..max_len {
             if i >= existing.len() {
                 let in_val = inputs
@@ -306,9 +399,12 @@ impl SessionDiffPipeline {
                     .unwrap_or(crate::format::value::PyroValue::Null);
                 let row = PyroRow::from([("input", in_val), ("output", out_val)]);
                 if let Err(e) = active.data_wal.append(i, &row).await {
-                    let _ = self
-                        .output_manager
-                        .set_session_status(session_id as usize, "failed");
+                    error!(
+                        index = i,
+                        ?e,
+                        "Failed to append input/output row to data WAL"
+                    );
+                    let _ = self.set_session_status(session_id as usize, "failed");
                     return Err(PyroFailure {
                         row_index: session_id,
                         result: Err(e.to_string()),
@@ -318,32 +414,32 @@ impl SessionDiffPipeline {
             }
         }
 
+        debug!("Session diff prep complete");
         Ok(())
     }
 
+    #[instrument(skip(self, input), fields(session_id = session_id))]
     pub async fn call(
         &mut self,
         session_id: u32,
         input: &PyroRow<'_>,
     ) -> Result<SessionDiffExecutionRecord, PyroFailure> {
+        debug!("Calling step for session diff");
         let res = self.step.call_session(session_id, input).await;
 
         // PERSIST STATUS
         match &res {
             Ok(SessionResult::Continue { .. }) => {
-                let _ = self
-                    .output_manager
-                    .set_session_status(session_id as usize, "active");
+                debug!("Step returned Continue, setting status to active");
+                let _ = self.set_session_status(session_id as usize, "active");
             }
             Ok(SessionResult::End { .. }) | Ok(SessionResult::Terminate { .. }) => {
-                let _ = self
-                    .output_manager
-                    .set_session_status(session_id as usize, "succeeded");
+                debug!("Step returned End/Terminate, setting status to succeeded");
+                let _ = self.set_session_status(session_id as usize, "succeeded");
             }
-            Err(_) => {
-                let _ = self
-                    .output_manager
-                    .set_session_status(session_id as usize, "failed");
+            Err(e) => {
+                warn!(?e, "Step returned failure, setting status to failed");
+                let _ = self.set_session_status(session_id as usize, "failed");
             }
         }
 
@@ -361,6 +457,7 @@ impl SessionDiffPipeline {
             let active = match self.get_or_open_session(session_id).await {
                 Ok(act) => act,
                 Err(e) => {
+                    error!(?e, "Failed to open session for append");
                     let logs = self.step.unpack_logs();
                     return Err(PyroFailure {
                         row_index: session_id,
@@ -378,6 +475,10 @@ impl SessionDiffPipeline {
                 ),
                 ("output", output_row),
             ]);
+            debug!(
+                record_index,
+                "Appending step (input/output) row to data WAL"
+            );
             let _ = active.data_wal.append(record_index, &step_row).await;
         }
 
@@ -385,6 +486,7 @@ impl SessionDiffPipeline {
         let active = match self.get_or_open_session(session_id).await {
             Ok(act) => act,
             Err(e) => {
+                error!(?e, "Failed to open session to append logs");
                 let logs = self.step.unpack_logs();
                 return Err(PyroFailure {
                     row_index: session_id,
@@ -397,6 +499,7 @@ impl SessionDiffPipeline {
         let row_index = active.log_wal.total_entries();
         match &res {
             Ok(_) => {
+                debug!(row_index, "Appending success to log WAL");
                 let log_entry = LogEntry {
                     row_index,
                     module_logs: logs.module_logs.clone(),
@@ -406,6 +509,7 @@ impl SessionDiffPipeline {
                 let _ = active.log_wal.append(&log_entry).await;
             }
             Err(e) => {
+                debug!(row_index, ?e, "Appending failure to log WAL");
                 let log_entry = LogEntry {
                     row_index,
                     module_logs: e.logs.module_logs.clone(),
@@ -457,19 +561,17 @@ impl SessionDiffPipeline {
         match &res {
             Ok(SessionResult::End { .. }) | Ok(SessionResult::Terminate { .. }) => {
                 if let Err(e) = self.rollup_and_cleanup_session(session_id).await {
-                    tracing::error!(
+                    error!(
                         "Failed to rollup and cleanup session {}: {:?}",
-                        session_id,
-                        e
+                        session_id, e
                     );
                 }
             }
             Err(_) => {
                 if let Err(e) = self.rollup_and_cleanup_session(session_id).await {
-                    tracing::error!(
+                    error!(
                         "Failed to rollup and cleanup failed session {}: {:?}",
-                        session_id,
-                        e
+                        session_id, e
                     );
                 }
             }
@@ -565,29 +667,33 @@ impl SessionDiffPipeline {
         }
     }
 
+    #[instrument(skip(self), fields(session_id = session_id))]
     pub async fn get_record(
         &self,
         session_id: u32,
     ) -> Result<SessionDiffExecutionRecord, PyroError> {
-        tracing::debug!(session_id, "get_record: starting lookup");
+        debug!("get_record: starting lookup");
 
         // 1. Determine persistent status
         let status = self
-            .output_manager
             .get_session_status(session_id as usize)?
             .ok_or_else(|| {
+                warn!("Session status not found");
                 PyroError::not_found(format!("Session {} status not found", session_id))
             })?;
+        debug!(status = ?status, "Found session status");
 
         // 2. Retrieve all steps (input, output) for the closed session
         let rolled_up_row = self.output_manager.get_record(session_id as usize)?;
         let steps = Self::unpack_session_diff(rolled_up_row);
+        debug!(steps_len = steps.len(), "Unpacked session steps");
 
         // 3. Retrieve logs
         let mut logs = PyroLogs::empty();
         let mut log_failure = None;
         let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
         if log_dir.exists() {
+            debug!("Reading logs from session-specific directory");
             if let Ok(mut reader) = crate::format::log_wal::LogWalReader::open(&log_dir).await
                 && let Ok(entries) = reader.read_all().await
                 && let Some(last_entry) = entries.last()
@@ -599,6 +705,7 @@ impl SessionDiffPipeline {
                 log_failure = last_entry.failure.clone();
             }
         } else {
+            debug!("Reading logs from general directory");
             if let Ok(mut reader) = crate::format::log_wal::LogWalReader::open(&self.log_dir).await
                 && let Ok(entries) = reader.read_all().await
                 && let Some(entry) = entries.iter().rfind(|e| e.row_index == session_id as usize)
@@ -613,6 +720,7 @@ impl SessionDiffPipeline {
 
         // 4. Reconstruct prior_input, prior_output, input, success/failure
         let is_failed = status == "failed";
+        debug!(is_failed, "Reconstructed execution record");
         Ok(Self::into_record(
             session_id,
             steps,
@@ -622,13 +730,15 @@ impl SessionDiffPipeline {
         ))
     }
 
+    #[instrument(skip(self), fields(session_id = session_id))]
     pub async fn close_session(&mut self, session_id: u32) -> Result<(), PyroFailure> {
+        debug!("Closing session");
         if self.active_sessions.contains_key(&session_id) {
+            debug!("Active session found, triggering rollup and cleanup");
             if let Err(e) = self.rollup_and_cleanup_session(session_id).await {
-                tracing::error!(
+                error!(
                     "Failed to rollup and cleanup active session {} on close: {:?}",
-                    session_id,
-                    e
+                    session_id, e
                 );
             }
         }
@@ -653,10 +763,12 @@ impl SessionDiffPipeline {
         self.step.session_lengths(session_id)
     }
 
+    #[instrument(skip(self), fields(session_id = session_id))]
     pub async fn get_session(
         &self,
         session_id: u32,
     ) -> Result<SessionDiffExecutionRecord, PyroError> {
+        debug!("Getting session");
         if let Some(active) = self.active_sessions.get(&session_id) {
             let mut wal_rows = Vec::with_capacity(active.data_wal.prebatch.len());
             for i in 0..active.data_wal.prebatch.len() {
@@ -685,10 +797,12 @@ impl SessionDiffPipeline {
                 };
                 steps.push((in_row, out_row));
             }
+            debug!(steps_len = steps.len(), "Unpacked active session steps");
 
             let mut logs = PyroLogs::empty();
             let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
             if log_dir.exists() {
+                debug!("Reading active session logs");
                 if let Ok(mut reader) = crate::format::log_wal::LogWalReader::open(&log_dir).await
                     && let Ok(entries) = reader.read_all().await
                     && let Some(last_entry) = entries.last()
@@ -701,6 +815,7 @@ impl SessionDiffPipeline {
             }
             Ok(Self::into_record(session_id, steps, false, logs, None))
         } else {
+            warn!("Active session not found");
             Err(PyroError::not_found(format!(
                 "Session {} not found",
                 session_id
@@ -708,10 +823,14 @@ impl SessionDiffPipeline {
         }
     }
 
+    #[instrument(skip(self), fields(session_id = session_id))]
     pub async fn get(&self, session_id: u32) -> Result<SessionDiffExecutionRecord, PyroError> {
+        debug!("Retrieving session (active or closed)");
         if self.active_sessions.contains_key(&session_id) {
+            debug!("Session is active");
             self.get_session(session_id).await
         } else {
+            debug!("Session is closed, looking up record");
             self.get_record(session_id).await
         }
     }

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use arrow::array::RecordBatch;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::CapturedError;
 use crate::format::log_wal::{LogEntry, LogWal};
@@ -57,6 +58,88 @@ pub struct ActiveSession {
     pub data_wal: crate::format::value::arrow::wal::WalWriter,
 }
 
+pub struct SessionStatusManager {
+    pub sqlite_conn: std::sync::Mutex<rusqlite::Connection>,
+}
+
+impl SessionStatusManager {
+    pub fn new(output_dir: &std::path::Path) -> Result<Self, PyroError> {
+        let db_path = output_dir.join("session.db");
+        let conn = rusqlite::Connection::open(db_path)
+            .map_err(|e| {
+                PyroError::validation(
+                    CapturedError::new("Failed to open SQLite database for sessions").with_source(e),
+                )
+            })?;
+        let _ = conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_status (
+                session_id INTEGER PRIMARY KEY,
+                status TEXT NOT NULL
+            )",
+            [],
+        );
+        Ok(Self {
+            sqlite_conn: std::sync::Mutex::new(conn),
+        })
+    }
+
+    pub fn set_status(&self, session_id: usize, status: &str) -> Result<(), PyroError> {
+        self.sqlite_conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT OR REPLACE INTO session_status (session_id, status) VALUES (?1, ?2)",
+                rusqlite::params![session_id as i64, status],
+            )
+            .map_err(|e| {
+                PyroError::validation(
+                    CapturedError::new("Failed to set session status").with_source(e),
+                )
+            })?;
+        Ok(())
+    }
+
+    pub fn get_status(&self, session_id: usize) -> Result<Option<String>, PyroError> {
+        let conn = self.sqlite_conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT status FROM session_status WHERE session_id = ?")
+            .map_err(|e| {
+                PyroError::validation(
+                    CapturedError::new("Failed to prepare SELECT statement for session_status")
+                        .with_source(e),
+                )
+            })?;
+        let status_opt = stmt.query_row([session_id as i64], |r| r.get::<_, String>(0));
+        match status_opt {
+            Ok(status) => Ok(Some(status)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(PyroError::validation(
+                CapturedError::new("Failed to query session status").with_source(e),
+            )),
+        }
+    }
+
+    pub fn max_session_id(&self) -> Result<Option<usize>, PyroError> {
+        let conn = self.sqlite_conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT MAX(session_id) FROM session_status")
+            .map_err(|e| {
+                PyroError::validation(
+                    CapturedError::new("Failed to prepare SELECT statement for max session_id")
+                        .with_source(e),
+                )
+            })?;
+        let res = stmt.query_row([], |r| r.get::<_, Option<i64>>(0));
+        match res {
+            Ok(Some(max_id)) => Ok(Some(max_id as usize)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(PyroError::validation(
+                CapturedError::new("Failed to query max session_id").with_source(e),
+            )),
+        }
+    }
+}
+
 pub struct SessionPipeline {
     pub step: PyroInstance,
     pub success_log_retention_secs: u64,
@@ -68,24 +151,94 @@ pub struct SessionPipeline {
     pub wal_capacity: usize,
     pub active_sessions: std::collections::HashMap<u32, ActiveSession>,
     pub callbacks: Vec<(uuid::Uuid, crate::pipeline::Callback)>,
+    pub session_status_manager: SessionStatusManager,
 }
 
 impl SessionPipeline {
-    pub fn next_session_id(&self) -> u32 {
-        let mut id = self.output_manager.len() as u32;
-        while self.active_sessions.contains_key(&id) {
-            id += 1;
-        }
-        id
+    pub fn set_session_status(&self, session_id: usize, status: &str) -> Result<(), PyroError> {
+        self.session_status_manager.set_status(session_id, status)
     }
 
+    pub fn get_session_status(&self, session_id: usize) -> Result<Option<String>, PyroError> {
+        self.session_status_manager.get_status(session_id)
+    }
+
+    pub fn max_session_id(&self) -> Result<Option<usize>, PyroError> {
+        self.session_status_manager.max_session_id()
+    }
+
+    pub fn next_session_id(&self) -> u32 {
+        let mut max_id = self.output_manager.len() as u32;
+
+        // 1. Check in-memory active sessions
+        for &id in self.active_sessions.keys() {
+            if id >= max_id {
+                max_id = id + 1;
+            }
+        }
+
+        // 2. Check the SQLite database
+        if let Ok(Some(db_max)) = self.max_session_id() {
+            let db_max = db_max as u32;
+            if db_max >= max_id {
+                max_id = db_max + 1;
+            }
+        }
+
+        // 3. Scan output directory for any existing session files
+        if let Ok(entries) = std::fs::read_dir(&self.output_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("session_val_") {
+                    let id_str = name_str
+                        .strip_prefix("session_val_")
+                        .and_then(|s| s.split('.').next());
+                    if let Some(id_str) = id_str {
+                        if let Ok(id) = id_str.parse::<u32>() {
+                            if id >= max_id {
+                                max_id = id + 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Scan log directory for any existing session directories
+        if let Ok(entries) = std::fs::read_dir(&self.log_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("session_log_") {
+                    let id_str = name_str
+                        .strip_prefix("session_log_")
+                        .and_then(|s| s.split('.').next());
+                    if let Some(id_str) = id_str {
+                        if let Ok(id) = id_str.parse::<u32>() {
+                            if id >= max_id {
+                                max_id = id + 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        debug!(next_id = max_id, "Determined next session ID");
+        max_id
+    }
+
+    #[instrument(skip(self), fields(session_id = session_id))]
     async fn get_or_open_session(
         &mut self,
         session_id: u32,
     ) -> Result<&mut ActiveSession, PyroError> {
         if !self.active_sessions.contains_key(&session_id) {
-            if let Ok(Some(status)) = self.output_manager.get_session_status(session_id as usize) {
+            debug!("Opening session");
+            if let Ok(Some(status)) = self.get_session_status(session_id as usize) {
                 if status == "succeeded" || status == "failed" {
+                    warn!(status, "Cannot resume closed session");
                     return Err(PyroError::validation(crate::capture!(
                         "Cannot resume closed session {}",
                         session_id
@@ -113,15 +266,19 @@ impl SessionPipeline {
                 )
             })?;
 
+            debug!("Successfully opened session files, inserting active session");
             self.active_sessions
                 .insert(session_id, ActiveSession { log_wal, data_wal });
         }
         Ok(self.active_sessions.get_mut(&session_id).unwrap())
     }
 
+    #[instrument(skip(self), fields(session_id = session_id))]
     async fn rollup_and_cleanup_session(&mut self, session_id: u32) -> Result<(), PyroError> {
+        debug!("Rolling up and cleaning up session");
         let data_path = self.output_dir.join(format!("session_val_{}", session_id));
         let inputs = crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
+        debug!(inputs_count = inputs.len(), "Recovered data WAL inputs");
 
         let mut list_vals = Vec::with_capacity(inputs.len());
         for row in inputs {
@@ -137,6 +294,7 @@ impl SessionPipeline {
 
         let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
         if log_dir.exists() {
+            debug!("Reading individual log WAL to merge with general log manager");
             let mut reader = crate::format::log_wal::LogWalReader::open(&log_dir)
                 .await
                 .map_err(|io| {
@@ -179,13 +337,19 @@ impl SessionPipeline {
             let _ = tokio::fs::remove_dir_all(log_dir).await;
         }
 
+        debug!(
+            callbacks_count = self.callbacks.len(),
+            "Executing callbacks for session rollup"
+        );
         for (_, cb) in &mut self.callbacks {
             cb.execute(session_id as usize, &rolled_up_row).await;
         }
 
+        debug!("Rollup and cleanup complete");
         Ok(())
     }
 
+    #[instrument(skip(self, prior, input), fields(row_index = row_index))]
     pub async fn process(
         &mut self,
         row_index: usize,
@@ -193,8 +357,10 @@ impl SessionPipeline {
         input: &PyroRow<'_>,
     ) -> Result<SessionExecutionRecord, PyroError> {
         let session_id = row_index as u32;
+        debug!("Processing session");
 
         if let Err(e) = self.prep_session(session_id, prior).await {
+            warn!(?e, "Failed to prepare session");
             let logs = e.logs.clone();
             let log_entry = LogEntry {
                 row_index,
@@ -214,11 +380,11 @@ impl SessionPipeline {
 
         match self.call(session_id, input).await {
             Ok(record) => {
-                let _ = self.close_session(session_id).await;
+                debug!("Session call succeeded");
                 Ok(record)
             }
             Err(e) => {
-                let _ = self.close_session(session_id).await;
+                warn!(?e, "Session call failed");
                 match e.result {
                     Ok(captured) => Err(PyroError::CodePanic(captured)),
                     Err(msg) => Err(PyroError::local(crate::error::ErrorKind::Transport(
@@ -229,28 +395,29 @@ impl SessionPipeline {
         }
     }
 
+    #[instrument(skip(self, prior), fields(session_id = session_id))]
     pub async fn prep_session(
         &mut self,
         session_id: u32,
         prior: &[PyroRow<'_>],
     ) -> Result<(), PyroFailure> {
+        debug!(prior_len = prior.len(), "Preparing session");
         if let Err(e) = self.step.prep_session(session_id, prior, &[]).await {
-            let _ = self
-                .output_manager
-                .set_session_status(session_id as usize, "failed");
+            warn!(?e, "prep_session: Step returned error");
+            let _ = self.set_session_status(session_id as usize, "failed");
             return Err(e);
         }
 
         let data_path = self.output_dir.join(format!("session_val_{}", session_id));
         let existing = crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
+        debug!(existing_len = existing.len(), "Recovered existing data WAL");
 
         let active_logs = self.step.unpack_logs();
         let active = match self.get_or_open_session(session_id).await {
             Ok(act) => act,
             Err(e) => {
-                let _ = self
-                    .output_manager
-                    .set_session_status(session_id as usize, "failed");
+                error!(?e, "Failed to get/open session during prep");
+                let _ = self.set_session_status(session_id as usize, "failed");
                 return Err(PyroFailure {
                     row_index: session_id,
                     result: Err(e.to_string()),
@@ -259,13 +426,13 @@ impl SessionPipeline {
             }
         };
 
+        debug!("Appending prior rows to active session WAL");
         for (i, row) in prior.iter().enumerate() {
             if i >= existing.len()
                 && let Err(e) = active.data_wal.append(i, row).await
             {
-                let _ = self
-                    .output_manager
-                    .set_session_status(session_id as usize, "failed");
+                error!(index = i, ?e, "Failed to append prior row to data WAL");
+                let _ = self.set_session_status(session_id as usize, "failed");
                 return Err(PyroFailure {
                     row_index: session_id,
                     result: Err(e.to_string()),
@@ -274,21 +441,23 @@ impl SessionPipeline {
             }
         }
 
+        debug!("Session prep complete");
         Ok(())
     }
 
+    #[instrument(skip(self, input), fields(session_id = session_id))]
     pub async fn call(
         &mut self,
         session_id: u32,
         input: &PyroRow<'_>,
     ) -> Result<SessionExecutionRecord, PyroFailure> {
+        debug!("Calling step for session");
         {
             let active = match self.get_or_open_session(session_id).await {
                 Ok(act) => act,
                 Err(e) => {
-                    let _ = self
-                        .output_manager
-                        .set_session_status(session_id as usize, "failed");
+                    error!(?e, "Failed to open session for append");
+                    let _ = self.set_session_status(session_id as usize, "failed");
                     let logs = self.step.unpack_logs();
                     return Err(PyroFailure {
                         row_index: session_id,
@@ -298,10 +467,10 @@ impl SessionPipeline {
                 }
             };
             let record_index = active.data_wal.records_written() as usize;
+            debug!(record_index, "Appending input row to data WAL");
             if let Err(e) = active.data_wal.append(record_index, input).await {
-                let _ = self
-                    .output_manager
-                    .set_session_status(session_id as usize, "failed");
+                error!(?e, "Failed to append input to data WAL");
+                let _ = self.set_session_status(session_id as usize, "failed");
                 let logs = self.step.unpack_logs();
                 return Err(PyroFailure {
                     row_index: session_id,
@@ -316,19 +485,16 @@ impl SessionPipeline {
         // PERSIST STATUS
         match &res {
             Ok(SessionResult::Continue { .. }) => {
-                let _ = self
-                    .output_manager
-                    .set_session_status(session_id as usize, "active");
+                debug!("Step returned Continue, setting status to active");
+                let _ = self.set_session_status(session_id as usize, "active");
             }
             Ok(SessionResult::End { .. }) | Ok(SessionResult::Terminate { .. }) => {
-                let _ = self
-                    .output_manager
-                    .set_session_status(session_id as usize, "succeeded");
+                debug!("Step returned End/Terminate, setting status to succeeded");
+                let _ = self.set_session_status(session_id as usize, "succeeded");
             }
-            Err(_) => {
-                let _ = self
-                    .output_manager
-                    .set_session_status(session_id as usize, "failed");
+            Err(e) => {
+                warn!(?e, "Step returned failure, setting status to failed");
+                let _ = self.set_session_status(session_id as usize, "failed");
             }
         }
 
@@ -336,6 +502,7 @@ impl SessionPipeline {
             let active = match self.get_or_open_session(session_id).await {
                 Ok(act) => act,
                 Err(e) => {
+                    error!(?e, "Failed to open session to append output");
                     let logs = self.step.unpack_logs();
                     return Err(PyroFailure {
                         row_index: session_id,
@@ -353,6 +520,7 @@ impl SessionPipeline {
             }) = &res
             {
                 let record_index = active.data_wal.records_written() as usize;
+                debug!(record_index, "Appending output row to data WAL");
                 let _ = active.data_wal.append(record_index, output_row).await;
             }
         }
@@ -361,6 +529,7 @@ impl SessionPipeline {
         let active = match self.get_or_open_session(session_id).await {
             Ok(act) => act,
             Err(e) => {
+                error!(?e, "Failed to open session to append logs");
                 return Err(PyroFailure {
                     row_index: session_id,
                     result: Err(e.to_string()),
@@ -372,6 +541,7 @@ impl SessionPipeline {
         let row_index = active.log_wal.total_entries();
         match &res {
             Ok(_) => {
+                debug!(row_index, "Appending success to log WAL");
                 let log_entry = LogEntry {
                     row_index,
                     module_logs: logs.module_logs.clone(),
@@ -381,6 +551,7 @@ impl SessionPipeline {
                 let _ = active.log_wal.append(&log_entry).await;
             }
             Err(e) => {
+                debug!(row_index, ?e, "Appending failure to log WAL");
                 let log_entry = LogEntry {
                     row_index,
                     module_logs: e.logs.module_logs.clone(),
@@ -407,7 +578,11 @@ impl SessionPipeline {
         };
 
         let record = Self::into_record(session_id, wal_rows, is_failed, logs.clone(), log_failure);
-        tracing::info!("SessionPipeline::call debug: session_id={}, success_row={:?}", session_id, record.row());
+        info!(
+            "SessionPipeline::call debug: session_id={}, success_row={:?}",
+            session_id,
+            record.row()
+        );
 
         match &res {
             Ok(SessionResult::End { .. }) | Ok(SessionResult::Terminate { .. }) => {
@@ -505,16 +680,18 @@ impl SessionPipeline {
         }
     }
 
+    #[instrument(skip(self), fields(session_id = session_id))]
     pub async fn get_record(&self, session_id: u32) -> Result<SessionExecutionRecord, PyroError> {
-        tracing::debug!(session_id, "get_record: starting lookup");
+        debug!("get_record: starting lookup");
 
         // 1. Determine persistent status
         let status = self
-            .output_manager
             .get_session_status(session_id as usize)?
             .ok_or_else(|| {
+                warn!("Session status not found");
                 PyroError::not_found(format!("Session {} status not found", session_id))
             })?;
+        debug!(status = ?status, "Found session status");
 
         // 2. Retrieve all rows for the closed session from output_manager
         let rolled_up_row = self.output_manager.get_record(session_id as usize)?;
@@ -525,6 +702,7 @@ impl SessionPipeline {
         let mut log_failure = None;
         let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
         if log_dir.exists() {
+            debug!("Reading logs from session-specific directory");
             if let Ok(mut reader) = crate::format::log_wal::LogWalReader::open(&log_dir).await
                 && let Ok(entries) = reader.read_all().await
                 && let Some(last_entry) = entries.last()
@@ -536,6 +714,7 @@ impl SessionPipeline {
                 log_failure = last_entry.failure.clone();
             }
         } else {
+            debug!("Reading logs from general directory");
             if let Ok(mut reader) = crate::format::log_wal::LogWalReader::open(&self.log_dir).await
                 && let Ok(entries) = reader.read_all().await
                 && let Some(entry) = entries.iter().rfind(|e| e.row_index == session_id as usize)
@@ -550,6 +729,7 @@ impl SessionPipeline {
 
         // 4. Reconstruct prior, input, success, failure
         let is_failed = status == "failed";
+        debug!(is_failed, "Reconstructed execution record");
         Ok(Self::into_record(
             session_id,
             wal_rows,
@@ -559,13 +739,15 @@ impl SessionPipeline {
         ))
     }
 
+    #[instrument(skip(self), fields(session_id = session_id))]
     pub async fn close_session(&mut self, session_id: u32) -> Result<(), PyroFailure> {
+        debug!("Closing session");
         if self.active_sessions.contains_key(&session_id) {
+            debug!("Active session found, triggering rollup and cleanup");
             if let Err(e) = self.rollup_and_cleanup_session(session_id).await {
-                tracing::error!(
+                error!(
                     "Failed to rollup and cleanup active session {} on close: {:?}",
-                    session_id,
-                    e
+                    session_id, e
                 );
             }
         }
@@ -580,7 +762,9 @@ impl SessionPipeline {
         self.step.session_lengths(session_id).map(|o| o.0 + o.1)
     }
 
+    #[instrument(skip(self), fields(session_id = session_id))]
     pub async fn get_session(&self, session_id: u32) -> Result<SessionExecutionRecord, PyroError> {
+        debug!("Getting session");
         if let Some(active) = self.active_sessions.get(&session_id) {
             let mut wal_rows = Vec::with_capacity(active.data_wal.prebatch.len());
             for i in 0..active.data_wal.prebatch.len() {
@@ -588,9 +772,15 @@ impl SessionPipeline {
                     wal_rows.push(row.clone());
                 }
             }
+            debug!(
+                wal_rows_len = wal_rows.len(),
+                "Unpacked active session WAL rows"
+            );
             let mut logs = PyroLogs::empty();
+            let mut log_failure = None;
             let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
             if log_dir.exists() {
+                debug!("Reading active session logs");
                 if let Ok(mut reader) = crate::format::log_wal::LogWalReader::open(&log_dir).await
                     && let Ok(entries) = reader.read_all().await
                     && let Some(last_entry) = entries.last()
@@ -599,10 +789,25 @@ impl SessionPipeline {
                         module_logs: last_entry.module_logs.clone(),
                         capability_logs: last_entry.capability_logs.clone(),
                     };
+                    log_failure = last_entry.failure.clone();
                 }
             }
-            Ok(Self::into_record(session_id, wal_rows, false, logs, None))
+            let is_failed = if let Ok(Some(status)) =
+                self.get_session_status(session_id as usize)
+            {
+                status == "failed"
+            } else {
+                false
+            };
+            Ok(Self::into_record(
+                session_id,
+                wal_rows,
+                is_failed,
+                logs,
+                log_failure,
+            ))
         } else {
+            warn!("Active session not found");
             Err(PyroError::not_found(format!(
                 "Session {} not found",
                 session_id
@@ -610,10 +815,14 @@ impl SessionPipeline {
         }
     }
 
+    #[instrument(skip(self), fields(session_id = session_id))]
     pub async fn get(&self, session_id: u32) -> Result<SessionExecutionRecord, PyroError> {
+        debug!("Retrieving session (active or closed)");
         if self.active_sessions.contains_key(&session_id) {
+            debug!("Session is active");
             self.get_session(session_id).await
         } else {
+            debug!("Session is closed, looking up record");
             self.get_record(session_id).await
         }
     }

@@ -8,7 +8,9 @@ use crate::format::{PyroRow, log_wal::LogWal};
 use crate::module::PyroFactory;
 use crate::module::interconnect::PlaybookInterconnect;
 use crate::pipeline::{
-    Pipeline, PipelineError, session::SessionPipeline, session_diff::SessionDiffPipeline,
+    Pipeline, PipelineError,
+    session::{SessionPipeline, SessionStatusManager},
+    session_diff::SessionDiffPipeline,
 };
 use crate::{CapturedError, PyroError};
 
@@ -123,6 +125,7 @@ impl PipelineServer {
                 ServerPipeline::Normal(pipeline)
             }
             pyro_spec::ModuleKind::Session => {
+                let session_status_manager = SessionStatusManager::new(&playbook.output_dir)?;
                 let pipeline = SessionPipeline {
                     step: instance,
                     success_log_retention_secs: 3600,
@@ -143,10 +146,12 @@ impl PipelineServer {
                     wal_capacity: 1000,
                     active_sessions: std::collections::HashMap::new(),
                     callbacks: Vec::new(),
+                    session_status_manager,
                 };
                 ServerPipeline::Session(pipeline)
             }
             pyro_spec::ModuleKind::SessionDiff => {
+                let session_status_manager = SessionStatusManager::new(&playbook.output_dir)?;
                 let pipeline = SessionDiffPipeline {
                     step: instance,
                     success_log_retention_secs: 3600,
@@ -167,6 +172,7 @@ impl PipelineServer {
                     wal_capacity: 1000,
                     active_sessions: std::collections::HashMap::new(),
                     callbacks: Vec::new(),
+                    session_status_manager,
                 };
                 ServerPipeline::SessionDiff(pipeline)
             }
