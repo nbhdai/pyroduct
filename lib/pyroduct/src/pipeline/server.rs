@@ -9,7 +9,7 @@ use crate::module::PyroFactory;
 use crate::module::interconnect::PlaybookInterconnect;
 use crate::pipeline::{
     Pipeline, PipelineError,
-    session::{SessionPipeline, SessionStatusManager},
+    session::{SessionPipeline, SessionStatusManager, SessionStatusFilter},
     session_diff::SessionDiffPipeline,
 };
 use crate::{CapturedError, PyroError};
@@ -244,6 +244,16 @@ impl PipelineServer {
             ServerPipeline::Normal(p) => p.output_manager.get_batch_slice(offset, limit),
             ServerPipeline::Session(p) => p.output_manager.get_batch_slice(offset, limit),
             ServerPipeline::SessionDiff(p) => p.output_manager.get_batch_slice(offset, limit),
+        }
+    }
+
+    /// List all sessions for this pipeline (only for Session and SessionDiff pipelines).
+    pub async fn list_sessions(&self, filter: Option<SessionStatusFilter>) -> Result<Vec<(u32, String)>, PyroError> {
+        let pipeline = self.pipeline.lock().await;
+        match &*pipeline {
+            ServerPipeline::Normal(_) => Ok(Vec::new()),
+            ServerPipeline::Session(p) => p.list_sessions(filter),
+            ServerPipeline::SessionDiff(p) => p.list_sessions(filter),
         }
     }
 

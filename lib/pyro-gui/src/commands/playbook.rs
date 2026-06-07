@@ -233,3 +233,43 @@ pub async fn call_playbook(
             e.to_string()
         })
 }
+
+#[tauri::command]
+pub async fn list_sessions(
+    playbook_name: String,
+    status: Option<pyroduct::pipeline::session::SessionStatusFilter>,
+) -> Result<Value, String> {
+    info!(
+        "Tauri command: list_sessions for playbook='{}', status={:?}",
+        playbook_name, status
+    );
+    let working_dir = pyro_daemon::PyroDaemon::default_working_dir();
+    let control_socket_path = working_dir.join("control");
+
+    if !control_socket_path.exists() {
+        error!(
+            "Daemon control socket does not exist at {:?}",
+            control_socket_path
+        );
+        return Err("Daemon control socket does not exist (offline)".to_string());
+    }
+
+    debug!("Connecting to daemon at {:?}", control_socket_path);
+    let client = pyro_daemon::client::DaemonClient::connect(&control_socket_path)
+        .await
+        .map_err(|e| {
+            error!("Failed to connect to daemon: {:?}", e);
+            format!("Failed to connect to daemon: {:?}", e)
+        })?;
+
+    match client.list_sessions(playbook_name, status).await {
+        Ok(sessions) => {
+            serde_json::to_value(sessions).map_err(|e| e.to_string())
+        }
+        Err(e) => {
+            error!("Failed to list sessions via daemon: {:?}", e);
+            Err(e.to_string())
+        }
+    }
+}
+

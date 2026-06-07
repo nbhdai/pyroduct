@@ -14,7 +14,7 @@ use crate::{
 };
 
 use super::data::DataManager;
-use super::session::SessionStatusManager;
+use super::session::{SessionStatusFilter, SessionStatusManager};
 
 // =============================================================================
 // Pipeline
@@ -82,6 +82,13 @@ impl SessionDiffPipeline {
 
     pub fn get_session_status(&self, session_id: usize) -> Result<Option<String>, PyroError> {
         self.session_status_manager.get_status(session_id)
+    }
+
+    pub fn list_sessions(
+        &self,
+        filter: Option<SessionStatusFilter>,
+    ) -> Result<Vec<(u32, String)>, PyroError> {
+        self.session_status_manager.list_sessions(filter)
     }
 
     pub fn max_session_id(&self) -> Result<Option<usize>, PyroError> {
@@ -195,12 +202,35 @@ impl SessionDiffPipeline {
                     true,
                 ),
             ]);
-            let data_wal = crate::format::value::arrow::wal::WalWriter::open(data_path, wal_schema)
-                .map_err(|io| {
-                    PyroError::local_io(
-                        CapturedError::new("Unable to open individual data wal").with_source(io),
-                    )
-                })?;
+            let data_wal =
+                crate::format::value::arrow::wal::WalWriter::open(data_path.clone(), wal_schema)
+                    .map_err(|io| {
+                        PyroError::local_io(
+                            CapturedError::new("Unable to open individual data wal")
+                                .with_source(io),
+                        )
+                    })?;
+
+            debug!("Reactivating session, preloading history into step");
+            let wal_rows =
+                crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
+            let mut inputs = Vec::new();
+            let mut outputs = Vec::new();
+            for row in wal_rows {
+                if let Some(in_val) = row.get("input")
+                    && let crate::format::value::PyroValue::Group(g) = in_val
+                {
+                    inputs.push(g.clone());
+                }
+                if let Some(out_val) = row.get("output")
+                    && let crate::format::value::PyroValue::Group(g) = out_val
+                {
+                    outputs.push(g.clone());
+                }
+            }
+            if let Err(e) = self.step.prep_session(session_id, &inputs, &outputs).await {
+                warn!(?e, "Failed to prep reactivated session_diff");
+            }
 
             debug!("Successfully opened session files, inserting active session");
             self.active_sessions
@@ -826,9 +856,65 @@ impl SessionDiffPipeline {
     #[instrument(skip(self), fields(session_id = session_id))]
     pub async fn get(&self, session_id: u32) -> Result<SessionDiffExecutionRecord, PyroError> {
         debug!("Retrieving session (active or closed)");
+        let is_active_in_db = matches!(
+            self.get_session_status(session_id as usize),
+            Ok(Some(ref status)) if status == "active"
+        );
+
         if self.active_sessions.contains_key(&session_id) {
-            debug!("Session is active");
+            debug!("Session is active in memory");
             self.get_session(session_id).await
+        } else if is_active_in_db {
+            debug!("Session is active but not loaded in memory, recovering from WAL");
+            let data_path = self.output_dir.join(format!("session_val_{}", session_id));
+            let wal_rows =
+                crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
+
+            let mut steps = Vec::with_capacity(wal_rows.len());
+            for row in wal_rows {
+                let in_val = row
+                    .get("input")
+                    .cloned()
+                    .unwrap_or(crate::format::value::PyroValue::Null);
+                let out_val = row
+                    .get("output")
+                    .cloned()
+                    .unwrap_or(crate::format::value::PyroValue::Null);
+
+                let in_row = match in_val {
+                    crate::format::value::PyroValue::Group(g) => g,
+                    _ => PyroRow::empty(),
+                };
+                let out_row = match out_val {
+                    crate::format::value::PyroValue::Group(g) => g,
+                    _ => PyroRow::empty(),
+                };
+                steps.push((in_row, out_row));
+            }
+
+            let mut logs = PyroLogs::empty();
+            let mut log_failure = None;
+            let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
+            if log_dir.exists() {
+                debug!("Reading active session logs");
+                if let Ok(mut reader) = crate::format::log_wal::LogWalReader::open(&log_dir).await
+                    && let Ok(entries) = reader.read_all().await
+                    && let Some(last_entry) = entries.last()
+                {
+                    logs = PyroLogs {
+                        module_logs: last_entry.module_logs.clone(),
+                        capability_logs: last_entry.capability_logs.clone(),
+                    };
+                    log_failure = last_entry.failure.clone();
+                }
+            }
+            Ok(Self::into_record(
+                session_id,
+                steps,
+                false,
+                logs,
+                log_failure,
+            ))
         } else {
             debug!("Session is closed, looking up record");
             self.get_record(session_id).await

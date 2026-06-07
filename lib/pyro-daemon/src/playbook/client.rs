@@ -1,5 +1,5 @@
 use crate::client::DaemonClient;
-use crate::playbook::{PlaybookRequest, PlaybookResponse, PlaybookStatus, CallbackMapping};
+use crate::playbook::{PlaybookRequest, PlaybookResponse, PlaybookStatus, CallbackMapping, SessionInfo};
 use crate::{DaemonRequest, DaemonResponse};
 use crate::Result;
 use std::path::PathBuf;
@@ -158,6 +158,15 @@ impl DaemonClient {
         let req = DaemonRequest::Playbook(PlaybookRequest::DeleteCallback { uuid });
         match self.request(req).await? {
             DaemonResponse::Playbook(PlaybookResponse::Success { message }) => Ok(message),
+            DaemonResponse::Playbook(PlaybookResponse::Error { message }) => pyroduct::bail!("{}", message),
+            _ => pyroduct::bail!("Unexpected response from daemon"),
+        }
+    }
+
+    pub async fn list_sessions(&self, name: String, status: Option<pyroduct::pipeline::session::SessionStatusFilter>) -> Result<Vec<SessionInfo>> {
+        let req = DaemonRequest::Playbook(PlaybookRequest::ListSessions { name, status });
+        match self.request(req).await? {
+            DaemonResponse::Playbook(PlaybookResponse::Sessions { sessions }) => Ok(sessions),
             DaemonResponse::Playbook(PlaybookResponse::Error { message }) => pyroduct::bail!("{}", message),
             _ => pyroduct::bail!("Unexpected response from daemon"),
         }

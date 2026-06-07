@@ -15,6 +15,14 @@ use crate::{
 
 use super::data::DataManager;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionStatusFilter {
+    Active,
+    Closed,
+    Failed,
+}
+
 // =============================================================================
 // Pipeline
 // =============================================================================
@@ -65,12 +73,11 @@ pub struct SessionStatusManager {
 impl SessionStatusManager {
     pub fn new(output_dir: &std::path::Path) -> Result<Self, PyroError> {
         let db_path = output_dir.join("session.db");
-        let conn = rusqlite::Connection::open(db_path)
-            .map_err(|e| {
-                PyroError::validation(
-                    CapturedError::new("Failed to open SQLite database for sessions").with_source(e),
-                )
-            })?;
+        let conn = rusqlite::Connection::open(db_path).map_err(|e| {
+            PyroError::validation(
+                CapturedError::new("Failed to open SQLite database for sessions").with_source(e),
+            )
+        })?;
         let _ = conn.execute(
             "CREATE TABLE IF NOT EXISTS session_status (
                 session_id INTEGER PRIMARY KEY,
@@ -138,6 +145,51 @@ impl SessionStatusManager {
             )),
         }
     }
+
+    pub fn list_sessions(
+        &self,
+        filter: Option<SessionStatusFilter>,
+    ) -> Result<Vec<(u32, String)>, PyroError> {
+        let conn = self.sqlite_conn.lock().unwrap();
+        let sql = match filter {
+            Some(SessionStatusFilter::Active) => {
+                "SELECT session_id, status FROM session_status WHERE status = 'active' ORDER BY session_id DESC"
+            }
+            Some(SessionStatusFilter::Closed) => {
+                "SELECT session_id, status FROM session_status WHERE status = 'succeeded' ORDER BY session_id DESC"
+            }
+            Some(SessionStatusFilter::Failed) => {
+                "SELECT session_id, status FROM session_status WHERE status = 'failed' ORDER BY session_id DESC"
+            }
+            None => "SELECT session_id, status FROM session_status ORDER BY session_id DESC",
+        };
+
+        let mut stmt = conn.prepare(sql).map_err(|e| {
+            PyroError::validation(
+                CapturedError::new("Failed to prepare SELECT statement for sessions list")
+                    .with_source(e),
+            )
+        })?;
+        let rows = stmt
+            .query_map([], |row| {
+                let id: i64 = row.get(0)?;
+                let status: String = row.get(1)?;
+                Ok((id as u32, status))
+            })
+            .map_err(|e| {
+                PyroError::validation(
+                    CapturedError::new("Failed to query sessions list").with_source(e),
+                )
+            })?;
+
+        let mut res = Vec::new();
+        for r in rows {
+            if let Ok(info) = r {
+                res.push(info);
+            }
+        }
+        Ok(res)
+    }
 }
 
 pub struct SessionPipeline {
@@ -161,6 +213,13 @@ impl SessionPipeline {
 
     pub fn get_session_status(&self, session_id: usize) -> Result<Option<String>, PyroError> {
         self.session_status_manager.get_status(session_id)
+    }
+
+    pub fn list_sessions(
+        &self,
+        filter: Option<SessionStatusFilter>,
+    ) -> Result<Vec<(u32, String)>, PyroError> {
+        self.session_status_manager.list_sessions(filter)
     }
 
     pub fn max_session_id(&self) -> Result<Option<usize>, PyroError> {
@@ -257,7 +316,7 @@ impl SessionPipeline {
                     )
                 })?;
             let data_wal = crate::format::value::arrow::wal::WalWriter::open(
-                data_path,
+                data_path.clone(),
                 self.step.spec().func.input.clone(),
             )
             .map_err(|io| {
@@ -265,6 +324,13 @@ impl SessionPipeline {
                     CapturedError::new("Unable to open individual data wal").with_source(io),
                 )
             })?;
+
+            debug!("Reactivating session, preloading history into step");
+            let existing =
+                crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
+            if let Err(e) = self.step.prep_session(session_id, &existing, &[]).await {
+                warn!(?e, "Failed to prep reactivated session");
+            }
 
             debug!("Successfully opened session files, inserting active session");
             self.active_sessions
@@ -792,9 +858,7 @@ impl SessionPipeline {
                     log_failure = last_entry.failure.clone();
                 }
             }
-            let is_failed = if let Ok(Some(status)) =
-                self.get_session_status(session_id as usize)
-            {
+            let is_failed = if let Ok(Some(status)) = self.get_session_status(session_id as usize) {
                 status == "failed"
             } else {
                 false
@@ -818,9 +882,44 @@ impl SessionPipeline {
     #[instrument(skip(self), fields(session_id = session_id))]
     pub async fn get(&self, session_id: u32) -> Result<SessionExecutionRecord, PyroError> {
         debug!("Retrieving session (active or closed)");
+        let is_active_in_db = matches!(
+            self.get_session_status(session_id as usize),
+            Ok(Some(ref status)) if status == "active"
+        );
+
         if self.active_sessions.contains_key(&session_id) {
-            debug!("Session is active");
+            debug!("Session is active in memory");
             self.get_session(session_id).await
+        } else if is_active_in_db {
+            debug!("Session is active but not loaded in memory, recovering from WAL");
+            let data_path = self.output_dir.join(format!("session_val_{}", session_id));
+            let wal_rows =
+                crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
+
+            let mut logs = PyroLogs::empty();
+            let mut log_failure = None;
+            let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
+            if log_dir.exists() {
+                debug!("Reading active session logs from disk");
+                if let Ok(mut reader) = crate::format::log_wal::LogWalReader::open(&log_dir).await
+                    && let Ok(entries) = reader.read_all().await
+                    && let Some(last_entry) = entries.last()
+                {
+                    logs = PyroLogs {
+                        module_logs: last_entry.module_logs.clone(),
+                        capability_logs: last_entry.capability_logs.clone(),
+                    };
+                    log_failure = last_entry.failure.clone();
+                }
+            }
+
+            Ok(Self::into_record(
+                session_id,
+                wal_rows,
+                false,
+                logs,
+                log_failure,
+            ))
         } else {
             debug!("Session is closed, looking up record");
             self.get_record(session_id).await

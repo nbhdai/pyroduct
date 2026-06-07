@@ -37,7 +37,8 @@ fn main() {
             commands::get_playbook_data,
             commands::query_playbook_data,
             commands::get_playbook_failures,
-            commands::get_playbook_execution_record
+            commands::get_playbook_execution_record,
+            commands::list_sessions
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

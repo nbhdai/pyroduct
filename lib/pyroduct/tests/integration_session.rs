@@ -9,26 +9,38 @@ use pyroduct::{
 use std::collections::HashMap;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
-/// A session module that returns a single string field.
+/// A session module that returns a ChatMessage.
 const SIMPLE_SESSION_MODULE: &str = r#"
 // Session module v2
 use pyroduct::{session::SessionResponse, tracing};
 
-#[pyroduct::module(session, output = message)]
+#[pyroduct::magma]
+#[derive(Debug, Clone)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[pyroduct::module(session, output = ChatMessage)]
 fn counter(
-    prior: Vec<String>,
-    input: String,
-) -> Result<SessionResponse<String>> {
-    tracing::info!(?prior, input, "Calling");
-    if input == "terminate" {
+    prior: Vec<ChatMessage>,
+    input: ChatMessage,
+) -> Result<SessionResponse<ChatMessage>> {
+    tracing::info!(?prior, ?input, "Calling");
+    if input.content == "terminate" {
         return Ok(SessionResponse::Terminate);
     }
     let turn = (prior.len() as u32 + 1) / 2;
 
-
     match turn {
-        0 => Ok(SessionResponse::Continue(format!("Hello! Turn {}", turn + 1))),
-        1 => Ok(SessionResponse::End(format!("Goodbye! Turn {}", turn + 1))),
+        0 => Ok(SessionResponse::Continue(ChatMessage {
+            role: "assistant".to_string(),
+            content: format!("Hello! Turn {}", turn + 1),
+        })),
+        1 => Ok(SessionResponse::End(ChatMessage {
+            role: "assistant".to_string(),
+            content: format!("Goodbye! Turn {}", turn + 1),
+        })),
         _ => Ok(SessionResponse::Terminate),
     }
 }
@@ -92,8 +104,15 @@ async fn test_session_lifecycle() {
         .await
         .expect("Should prep session");
 
+    let chat_msg = |role: &str, content: &str| {
+        PyroRow::from([
+            ("role", role.to_string().into()),
+            ("content", content.to_string().into()),
+        ])
+    };
+
     // --- Turn 1 ---
-    let turn1_input = PyroRow::from([("input", "Hello!".into())]);
+    let turn1_input = chat_msg("user", "Hello!");
     let result1 = pipeline
         .call(session_id, &turn1_input)
         .await
@@ -101,13 +120,14 @@ async fn test_session_lifecycle() {
 
     match result1 {
         SessionExecutionRecord::Success { success: row, .. } => {
-            assert_eq!(row.get_str("message").unwrap(), "Hello! Turn 1");
+            assert_eq!(row.get_str("role").unwrap(), "assistant");
+            assert_eq!(row.get_str("content").unwrap(), "Hello! Turn 1");
         }
         other => panic!("Expected Success, got {:?}", other),
     }
 
     // --- Turn 2 ---
-    let turn2_input = PyroRow::from([("input", "How are you?".into())]);
+    let turn2_input = chat_msg("user", "How are you?");
     let result2 = pipeline
         .call(session_id, &turn2_input)
         .await
@@ -115,7 +135,8 @@ async fn test_session_lifecycle() {
 
     match result2 {
         SessionExecutionRecord::Success { success: row, .. } => {
-            assert_eq!(row.get_str("message").unwrap(), "Goodbye! Turn 2");
+            assert_eq!(row.get_str("role").unwrap(), "assistant");
+            assert_eq!(row.get_str("content").unwrap(), "Goodbye! Turn 2");
         }
         other => panic!("Expected Success, got {:?}", other),
     }
@@ -128,7 +149,7 @@ async fn test_session_lifecycle() {
         .expect("Should prep session 43");
 
     // --- Turn 1 ---
-    let turn1_input_t = PyroRow::from([("input", "Hello!".into())]);
+    let turn1_input_t = chat_msg("user", "Hello!");
     let result1_t = pipeline
         .call(session_id_term, &turn1_input_t)
         .await
@@ -136,13 +157,14 @@ async fn test_session_lifecycle() {
 
     match result1_t {
         SessionExecutionRecord::Success { success: row, .. } => {
-            assert_eq!(row.get_str("message").unwrap(), "Hello! Turn 1");
+            assert_eq!(row.get_str("role").unwrap(), "assistant");
+            assert_eq!(row.get_str("content").unwrap(), "Hello! Turn 1");
         }
         other => panic!("Expected Success, got {:?}", other),
     }
 
     // --- Turn 2 ---
-    let turn2_input_t = PyroRow::from([("input", "terminate".into())]);
+    let turn2_input_t = chat_msg("user", "terminate");
     let result2_t = pipeline
         .call(session_id_term, &turn2_input_t)
         .await
@@ -168,7 +190,7 @@ async fn test_session_lifecycle() {
     // Trigger log rotation
     let mut rot_session_id = 10;
     for _ in 0..15 {
-        let input = PyroRow::from([("input", "rot".into())]);
+        let input = chat_msg("user", "rot");
         pipeline.call(rot_session_id, &input).await.unwrap();
         pipeline.close_session(rot_session_id).await.unwrap();
         rot_session_id += 1;
@@ -207,11 +229,11 @@ async fn test_session_lifecycle() {
         .expect("Should prep session 101");
 
     pipeline
-        .call(s1, &PyroRow::from([("input", "Active 1".into())]))
+        .call(s1, &chat_msg("user", "Active 1"))
         .await
         .expect("Call s1");
     pipeline
-        .call(s2, &PyroRow::from([("input", "Active 2".into())]))
+        .call(s2, &chat_msg("user", "Active 2"))
         .await
         .expect("Call s2");
 
@@ -229,8 +251,9 @@ async fn test_session_lifecycle() {
             ..
         } => {
             assert!(prior.is_empty());
-            assert_eq!(input.get_str("input").unwrap(), "Active 1");
-            assert_eq!(success.get_str("message").unwrap(), "Hello! Turn 1");
+            assert_eq!(input.get_str("content").unwrap(), "Active 1");
+            assert_eq!(success.get_str("role").unwrap(), "assistant");
+            assert_eq!(success.get_str("content").unwrap(), "Hello! Turn 1");
         }
         other => panic!("Expected Success, got {:?}", other),
     }
@@ -245,10 +268,13 @@ async fn test_session_lifecycle() {
             ..
         } => {
             assert_eq!(prior.len(), 2);
-            assert_eq!(prior[0].get_str("input").unwrap(), "Hello!");
-            assert_eq!(prior[1].get_str("message").unwrap(), "Hello! Turn 1");
-            assert_eq!(input.get_str("input").unwrap(), "How are you?");
-            assert_eq!(success.get_str("message").unwrap(), "Goodbye! Turn 2");
+            assert_eq!(prior[0].get_str("content").unwrap(), "Hello!");
+            assert_eq!(prior[1].get_str("role").unwrap(), "assistant");
+            assert_eq!(prior[1].get_str("content").unwrap(), "Hello! Turn 1");
+
+            assert_eq!(input.get_str("content").unwrap(), "How are you?");
+            assert_eq!(success.get_str("role").unwrap(), "assistant");
+            assert_eq!(success.get_str("content").unwrap(), "Goodbye! Turn 2");
         }
         other => panic!("Expected Success, got {:?}", other),
     }

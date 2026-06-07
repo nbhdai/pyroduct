@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { PlaybookSpec } from "../types";
+import { invoke } from "@tauri-apps/api/core";
+import { LogViewer } from "./LogViewer";
 
 interface ChatMessage {
   role: string;
@@ -14,19 +16,32 @@ interface PlaybookChatProps {
 
 const extractContentFromSuccess = (success: any): string => {
   if (!success) return "";
-  if (success.output) {
-    if (typeof success.output === "object" && success.output.content) {
-      return success.output.content;
+  if (success.content !== undefined) {
+    return typeof success.content === "string" ? success.content : JSON.stringify(success.content);
+  }
+  if (success.output !== undefined) {
+    if (typeof success.output === "object" && success.output !== null) {
+      if (success.output.content !== undefined) {
+        return typeof success.output.content === "string" ? success.output.content : JSON.stringify(success.output.content);
+      }
+      return JSON.stringify(success.output);
     }
     return typeof success.output === "string" ? success.output : JSON.stringify(success.output);
   }
-  if (success.message) {
+  if (success.message !== undefined) {
+    if (typeof success.message === "object" && success.message !== null) {
+      if (success.message.content !== undefined) {
+        return typeof success.message.content === "string" ? success.message.content : JSON.stringify(success.message.content);
+      }
+      return JSON.stringify(success.message);
+    }
     return typeof success.message === "string" ? success.message : JSON.stringify(success.message);
   }
-  // Fallback: get first field value
+  // Fallback: get first field value that is not "role"
   const keys = Object.keys(success);
-  if (keys.length > 0) {
-    const val = success[keys[0]];
+  const contentKey = keys.find(k => k !== "role") || keys[0];
+  if (contentKey !== undefined) {
+    const val = success[contentKey];
     return typeof val === "string" ? val : JSON.stringify(val);
   }
   return JSON.stringify(success);
@@ -38,6 +53,10 @@ export function PlaybookChat({ playbookName, onSubmit }: PlaybookChatProps) {
   const [inputText, setInputText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<Array<{ session_id: number, status: string }>>([]);
+  const [currentLogs, setCurrentLogs] = useState<any | null>(null);
+  const [showLogsModal, setShowLogsModal] = useState(false);
+  const [loadingSession, setLoadingSession] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -50,6 +69,15 @@ export function PlaybookChat({ playbookName, onSubmit }: PlaybookChatProps) {
     scrollToBottom();
   }, [messages, submitting]);
 
+  const fetchSessionsList = async () => {
+    try {
+      const res = await invoke("list_sessions", { playbookName }) as Array<{ session_id: number, status: string }>;
+      setSessions(res || []);
+    } catch (err) {
+      console.error("Failed to load sessions list:", err);
+    }
+  };
+
   // Reset chat when playbook changes
   useEffect(() => {
     setSessionId(null);
@@ -57,7 +85,46 @@ export function PlaybookChat({ playbookName, onSubmit }: PlaybookChatProps) {
     setInputText("");
     setError(null);
     setSubmitting(false);
+    setCurrentLogs(null);
+    fetchSessionsList();
   }, [playbookName]);
+
+  const handleSelectSession = async (sid: number | null) => {
+    if (sid === null) {
+      setSessionId(null);
+      setMessages([]);
+      setCurrentLogs(null);
+      setError(null);
+      return;
+    }
+    
+    setLoadingSession(true);
+    setError(null);
+    try {
+      const record = await invoke("get_playbook_execution_record", {
+        playbookName,
+        id: sid,
+      }) as any;
+      
+      const updatedHistory = rebuildMessagesFromRecord(record);
+      setMessages(updatedHistory);
+      setSessionId(sid);
+      
+      // Extract logs from record if available
+      const recordInner = record.Normal || record.Session || record.SessionDiff;
+      const successData = recordInner?.Success || recordInner?.Failure;
+      if (successData && successData.logs) {
+        setCurrentLogs(successData.logs);
+      } else {
+        setCurrentLogs(null);
+      }
+    } catch (err: any) {
+      setError(`Failed to load session: ${err}`);
+      console.error(err);
+    } finally {
+      setLoadingSession(false);
+    }
+  };
 
   const rebuildMessagesFromRecord = (res: any) => {
     const inner = res.Normal || res.Session || res.SessionDiff;
@@ -70,15 +137,20 @@ export function PlaybookChat({ playbookName, onSubmit }: PlaybookChatProps) {
         // 1. Map prior history
         const prior = successData.prior || [];
         prior.forEach((row: any) => {
-          if (row.input) {
+          if (row.role) {
+            list.push({
+              role: row.role,
+              content: extractContentFromSuccess(row),
+            });
+          } else if (row.input) {
             list.push({
               role: row.input.role || "user",
-              content: row.input.content || "",
+              content: row.input.content || extractContentFromSuccess(row.input),
             });
           } else if (row.output) {
             list.push({
               role: row.output.role || "assistant",
-              content: row.output.content || "",
+              content: row.output.content || extractContentFromSuccess(row.output),
             });
           } else {
             const text = extractContentFromSuccess(row);
@@ -93,7 +165,7 @@ export function PlaybookChat({ playbookName, onSubmit }: PlaybookChatProps) {
         if (successData.input) {
           list.push({
             role: successData.input.role || "user",
-            content: successData.input.content || "",
+            content: successData.input.content || extractContentFromSuccess(successData.input),
           });
         }
         
@@ -102,7 +174,7 @@ export function PlaybookChat({ playbookName, onSubmit }: PlaybookChatProps) {
           const succ = res.Session.Success.success;
           if (succ) {
             list.push({
-              role: succ.output?.role || "assistant",
+              role: succ.role || succ.output?.role || "assistant",
               content: extractContentFromSuccess(succ),
             });
           }
@@ -126,15 +198,15 @@ export function PlaybookChat({ playbookName, onSubmit }: PlaybookChatProps) {
           if (i < priorInput.length) {
             const row = priorInput[i];
             list.push({
-              role: row.input?.role || "user",
-              content: row.input?.content || extractContentFromSuccess(row),
+              role: row.role || row.input?.role || "user",
+              content: row.content || row.input?.content || extractContentFromSuccess(row),
             });
           }
           if (i < priorOutput.length) {
             const row = priorOutput[i];
             list.push({
-              role: row.output?.role || "assistant",
-              content: row.output?.content || extractContentFromSuccess(row),
+              role: row.role || row.output?.role || "assistant",
+              content: row.content || row.output?.content || extractContentFromSuccess(row),
             });
           }
         }
@@ -142,7 +214,7 @@ export function PlaybookChat({ playbookName, onSubmit }: PlaybookChatProps) {
         if (successData.input) {
           list.push({
             role: successData.input.role || "user",
-            content: successData.input.content || "",
+            content: successData.input.content || extractContentFromSuccess(successData.input),
           });
         }
         
@@ -150,7 +222,7 @@ export function PlaybookChat({ playbookName, onSubmit }: PlaybookChatProps) {
           const succ = res.SessionDiff.Success.success;
           if (succ) {
             list.push({
-              role: succ.output?.role || "assistant",
+              role: succ.role || succ.output?.role || "assistant",
               content: extractContentFromSuccess(succ),
             });
           }
@@ -195,6 +267,17 @@ export function PlaybookChat({ playbookName, onSubmit }: PlaybookChatProps) {
         setSessionId(record.Failure.row_index);
       }
 
+      // Extract and update logs
+      const successData = record?.Success || record?.Failure;
+      if (successData && successData.logs) {
+        setCurrentLogs(successData.logs);
+      } else {
+        setCurrentLogs(null);
+      }
+
+      // Refresh the session list in the dropdown
+      fetchSessionsList();
+
       const updatedHistory = rebuildMessagesFromRecord(res);
       if (updatedHistory.length > 0) {
         setMessages(updatedHistory);
@@ -217,10 +300,7 @@ export function PlaybookChat({ playbookName, onSubmit }: PlaybookChatProps) {
   };
 
   const handleReset = () => {
-    setSessionId(null);
-    setMessages([]);
-    setInputText("");
-    setError(null);
+    handleSelectSession(null);
   };
 
   return (
@@ -232,7 +312,9 @@ export function PlaybookChat({ playbookName, onSubmit }: PlaybookChatProps) {
         alignItems: "center",
         padding: "16px 24px",
         borderBottom: "1px solid var(--bg-card-border)",
-        backgroundColor: "rgba(255, 255, 255, 0.01)"
+        backgroundColor: "rgba(255, 255, 255, 0.01)",
+        flexWrap: "wrap",
+        gap: "12px"
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <div style={{
@@ -242,13 +324,58 @@ export function PlaybookChat({ playbookName, onSubmit }: PlaybookChatProps) {
             backgroundColor: sessionId !== null ? "var(--color-success)" : "var(--color-primary)",
             boxShadow: sessionId !== null ? "0 0 8px var(--color-success)" : "0 0 8px var(--color-primary)"
           }} />
-          <span style={{ fontSize: "14px", fontWeight: 600 }}>
-            {sessionId !== null ? `Active Session #${sessionId}` : "New Conversation"}
+          <span style={{ fontSize: "14px", fontWeight: 600, display: "flex", alignItems: "center", gap: "8px" }}>
+            {sessionId !== null ? `Session #${sessionId}` : "New Conversation"}
+            {loadingSession && (
+              <span className="spinner" style={{ width: "12px", height: "12px", borderWidth: "2px", margin: 0 }} />
+            )}
           </span>
         </div>
-        <button onClick={handleReset} className="btn btn-secondary btn-sm" style={{ padding: "6px 12px", fontSize: "12px" }}>
-          New Chat
-        </button>
+        
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          {/* Session Selector */}
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>Resume:</span>
+            <select
+              value={sessionId !== null ? String(sessionId) : "new"}
+              onChange={(e) => {
+                const val = e.target.value;
+                handleSelectSession(val === "new" ? null : parseInt(val));
+              }}
+              style={{
+                padding: "6px 12px",
+                borderRadius: "6px",
+                backgroundColor: "rgba(255, 255, 255, 0.03)",
+                border: "1px solid var(--bg-card-border)",
+                color: "var(--text-main)",
+                fontSize: "12px",
+                outline: "none",
+                cursor: "pointer"
+              }}
+            >
+              <option value="new">-- New Chat --</option>
+              {sessions.map((s) => (
+                <option key={s.session_id} value={s.session_id}>
+                  Session #{s.session_id} ({s.status})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {currentLogs && (
+            <button
+              onClick={() => setShowLogsModal(true)}
+              className="btn btn-secondary btn-sm"
+              style={{ padding: "6px 12px", fontSize: "12px", display: "flex", alignItems: "center", gap: "4px" }}
+            >
+              📄 View Logs
+            </button>
+          )}
+
+          <button onClick={handleReset} className="btn btn-secondary btn-sm" style={{ padding: "6px 12px", fontSize: "12px" }}>
+            New Chat
+          </button>
+        </div>
       </div>
 
       {/* Messages Thread Container */}
@@ -406,6 +533,28 @@ export function PlaybookChat({ playbookName, onSubmit }: PlaybookChatProps) {
           </div>
         )}
       </div>
+
+      {/* Logs Modal */}
+      {showLogsModal && currentLogs && (
+        <div className="modal-overlay active" onClick={() => setShowLogsModal(false)}>
+          <div className="modal modal-lg" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "800px" }}>
+            <div className="modal-header">
+              <h3>Session Logs (Session #{sessionId})</h3>
+              <button className="modal-close" onClick={() => setShowLogsModal(false)}>
+                &times;
+              </button>
+            </div>
+            <div className="modal-body" style={{ maxHeight: "450px", overflowY: "auto" }}>
+              <LogViewer logs={currentLogs} />
+            </div>
+            <div className="modal-footer" style={{ display: "flex", justifyContent: "flex-end", marginTop: "15px", borderTop: "1px solid var(--bg-card-border)", paddingTop: "15px" }}>
+              <button className="btn btn-secondary" onClick={() => setShowLogsModal(false)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         @keyframes bounce {

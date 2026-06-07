@@ -1,8 +1,7 @@
 [module]
-package = "chat"
+package = "persona_chat"
 version = "0.1.0"
 author = "nbhdai"
-
 
 [pyroduct]
 path = "../../lib/pyroduct/"
@@ -11,3 +10,6 @@ path = "../../lib/pyroduct/"
 llm = { package = "llm", author = "nbhdai", version = "0.1.0", configuration = { type = "capabilityconfig", classes = { llm_server = { base_url = "http://itx:8080/v1", system_prompt = "", permitted_models = ["gemma-4-31B-it-Q8_0"] } } } }
 
 [dependencies]
+
+[interconnect]
+chat = { author = "nbhdai", package = "chat", version = "0.1.0" }

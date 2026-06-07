@@ -1,7 +1,5 @@
 pyroduct::library!();
 
-use pyroduct::CapturedError;
-
 // =============================================================================
 // Config
 // =============================================================================
@@ -46,17 +44,16 @@ pub struct ChatRequest {
     model: String,
     messages: Vec<ChatMessage>,
     stream: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    options: Option<ChatOptions>,
-}
-
-#[derive(serde::Serialize)]
-struct ChatOptions {
     temperature: f32,
 }
 
 #[derive(serde::Deserialize)]
 struct ChatResponse {
+    choices: Vec<ChatChoice>,
+}
+
+#[derive(serde::Deserialize)]
+struct ChatChoice {
     message: ChatMessage,
 }
 
@@ -65,15 +62,17 @@ struct GenerateRequest {
     model: String,
     prompt: String,
     stream: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    system: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    options: Option<ChatOptions>,
+    temperature: f32,
 }
 
 #[derive(serde::Deserialize)]
 struct GenerateResponse {
-    response: String,
+    choices: Vec<CompletionChoice>,
+}
+
+#[derive(serde::Deserialize)]
+struct CompletionChoice {
+    text: String,
 }
 
 // =============================================================================
@@ -87,7 +86,7 @@ pub struct LlmServer {
     system_prompt: String,
 }
 
-/// Llm LLM capability — chat with models hosted on a local Llm instance.
+/// Llm LLM capability — chat with models hosted on standard OpenAI-compatible endpoints.
 #[pyroduct::capability]
 impl LlmServer {
     type Client = LlmClient;
@@ -102,10 +101,11 @@ impl LlmServer {
         let http = reqwest::Client::builder()
             .build()
             .expect("failed to build reqwest client");
+        let base_url = config.base_url.clone();
         let permitted_models = config.permitted_models.clone();
         let system_prompt = config.system_prompt.clone();
         Ok(Self {
-            base_url: config.base_url,
+            base_url,
             http,
             permitted_models,
             system_prompt,
@@ -130,26 +130,23 @@ impl LlmServer {
         client: &LlmClient,
         prompt: String,
     ) -> Result<String, CapturedError> {
-        let system = if self.system_prompt.is_empty() {
-            None
+        let prompt = if self.system_prompt.is_empty() {
+            prompt
         } else {
-            Some(self.system_prompt.clone())
+            format!("{}\n{}", self.system_prompt, prompt)
         };
 
         let body = GenerateRequest {
             model: client.model.clone(),
             prompt,
             stream: false,
-            system,
-            options: Some(ChatOptions {
-                temperature: client.temperature,
-            }),
+            temperature: client.temperature,
         };
 
-        let resp: reqwest::Response = self.http
-            .post(format!("{}/api/generate", self.base_url))
-            .json(&body)
-            .send()
+        let     req = self.http.post(format!("{}/completions", self.base_url))
+            .json(&body);
+
+        let resp: reqwest::Response = req.send()
             .await
             .map_err(|e| pyroduct::capture!("Llm request failed: {}", e))?;
 
@@ -164,7 +161,11 @@ impl LlmServer {
             .await
             .map_err(|e| pyroduct::capture!("Failed to parse Llm response: {}", e))?;
 
-        Ok(parsed.response)
+        let response = parsed.choices.into_iter().next()
+            .ok_or_else(|| pyroduct::capture!("Llm returned empty choices"))?
+            .text;
+
+        Ok(response)
     }
 
     /// Multi-turn chat: send a JSON-encoded array of `{"role":"...","content":"..."}`
@@ -194,15 +195,13 @@ impl LlmServer {
             model: client.model.clone(),
             messages,
             stream: false,
-            options: Some(ChatOptions {
-                temperature: client.temperature,
-            }),
+            temperature: client.temperature,
         };
 
-        let resp: reqwest::Response = self.http
-            .post(format!("{}/api/chat", self.base_url))
-            .json(&body)
-            .send()
+        let req = self.http.post(format!("{}/chat/completions", self.base_url))
+            .json(&body);
+
+        let resp: reqwest::Response = req.send()
             .await
             .map_err(|e| pyroduct::capture!("Llm chat request failed: {}", e))?;
 
@@ -217,6 +216,10 @@ impl LlmServer {
             .await
             .map_err(|e| pyroduct::capture!("Failed to parse Llm chat response: {}", e))?;
 
-        Ok(parsed.message)
+        let message = parsed.choices.into_iter().next()
+            .ok_or_else(|| pyroduct::capture!("Llm returned empty choices"))?
+            .message;
+
+        Ok(message)
     }
 }

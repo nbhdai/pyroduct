@@ -80,6 +80,16 @@ pub enum PlaybookRequest {
     DeleteCallback {
         uuid: uuid::Uuid,
     },
+    ListSessions {
+        name: String,
+        status: Option<pyroduct::pipeline::session::SessionStatusFilter>,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SessionInfo {
+    pub session_id: u32,
+    pub status: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -96,6 +106,9 @@ pub enum PlaybookResponse {
     },
     CallResult {
         result: pyroduct::pipeline::ServerExecutionRecord,
+    },
+    Sessions {
+        sessions: Vec<SessionInfo>,
     },
     Error {
         message: String,
@@ -338,6 +351,15 @@ impl PlaybooksManager {
                             message: format!("Failed to delete callback: {:?}", e),
                         }
                     }
+                }
+            }
+            PlaybookRequest::ListSessions { name, status } => {
+                tracing::info!(playbook = %name, status = ?status, "Received ListSessions request");
+                match self.list_sessions_for_playbook(&name, status).await {
+                    Ok(sessions) => PlaybookResponse::Sessions { sessions },
+                    Err(e) => PlaybookResponse::Error {
+                        message: format!("Failed to list sessions: {:?}", e),
+                    },
                 }
             }
         }
@@ -816,6 +838,36 @@ impl PlaybooksManager {
         Ok(())
     }
 
+    pub async fn list_sessions_for_playbook(
+        &self,
+        name: &str,
+        filter: Option<pyroduct::pipeline::session::SessionStatusFilter>,
+    ) -> Result<Vec<SessionInfo>> {
+        let worker = {
+            let workers = self.workers.lock().await;
+            workers
+                .get(name)
+                .ok_or_else(|| {
+                    tracing::error!(playbook = %name, "Playbook is not running");
+                    pyroduct::capture!("Playbook '{}' is not running", name)
+                })?
+                .server
+                .clone()
+        };
+
+        let raw_sessions = worker
+            .list_sessions(filter)
+            .await
+            .map_err(|e| pyroduct::capture!("Failed to list sessions: {:?}", e))?;
+
+        let sessions = raw_sessions
+            .into_iter()
+            .map(|(session_id, status)| SessionInfo { session_id, status })
+            .collect();
+
+        Ok(sessions)
+    }
+
     pub async fn call(
         &self,
         playbook: &str,
@@ -913,28 +965,41 @@ impl PlaybooksManager {
 
         let is_session = spec.func.kind == pyro_spec::ModuleKind::Session
             || spec.func.kind == pyro_spec::ModuleKind::SessionDiff;
+
         let repaired_row = if is_session {
             let input_field = spec.func.input.field_with_name("input").ok_or_else(|| {
                 pyroduct::capture!("Session input field 'input' not found in playbook spec")
             })?;
 
-            let wrapped_payload = if payload.get("input").is_some() {
-                payload
+            if let pyro_spec::PyroType::Group(fields) = &input_field.data_type {
+                tracing::debug!(playbook = %name, "Deserializing session struct payload to PyroRow");
+                let input_row: PyroRow<'static> = serde_json::from_value(payload).capture(
+                    "Invalid JSON payload: failed to deserialize session struct input into PyroRow",
+                )?;
+
+                tracing::debug!(playbook = %name, "Repairing session input struct row matching schema");
+                input_row
+                    .project_repair(fields)
+                    .capture("Failed to repair session input JSON according to module spec")?
             } else {
-                serde_json::json!({
-                    "input": payload
-                })
-            };
+                let wrapped_payload = if payload.get("input").is_some() {
+                    payload
+                } else {
+                    serde_json::json!({
+                        "input": payload
+                    })
+                };
 
-            tracing::debug!(playbook = %name, "Deserializing session payload to PyroRow");
-            let input_row: PyroRow<'static> = serde_json::from_value(wrapped_payload).capture(
-                "Invalid JSON payload: failed to deserialize session input into PyroRow",
-            )?;
+                tracing::debug!(playbook = %name, "Deserializing session payload to PyroRow");
+                let input_row: PyroRow<'static> = serde_json::from_value(wrapped_payload).capture(
+                    "Invalid JSON payload: failed to deserialize session input into PyroRow",
+                )?;
 
-            tracing::debug!(playbook = %name, "Repairing session input row matching schema");
-            input_row
-                .project_repair(&[input_field.clone()])
-                .capture("Failed to repair session input JSON according to module spec")?
+                tracing::debug!(playbook = %name, "Repairing session input row matching schema");
+                input_row
+                    .project_repair(&[input_field.clone()])
+                    .capture("Failed to repair session input JSON according to module spec")?
+            }
         } else {
             tracing::debug!(playbook = %name, "Deserializing payload to PyroRow");
             let input_row: PyroRow<'static> = serde_json::from_value(payload)
