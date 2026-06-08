@@ -1,0 +1,74 @@
+name: CD
+
+on:
+  push:
+    tags: [ "v*" ]
+
+jobs:
+  test:
+    name: Build & Test
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v25
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Build & Test in Nix DevShell
+        run: |
+          nix develop --command bash -c "
+            set -e
+            export RUST_BACKTRACE=1
+            prepare-pyro
+            test-rust
+          "
+
+  publish:
+    name: Publish to Crates.io
+    needs: test
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v25
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Publish Crates
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          nix develop --command bash -c '
+            set -e
+            publish_crate() {
+              local dir="$1"
+              local name="$2"
+              
+              local version=$(cargo metadata --manifest-path "$dir/Cargo.toml" --format-version 1 --no-deps | jq -r ".packages[0].version")
+              
+              echo "Checking if $name version $version is already published..."
+              if curl -s --fail "https://crates.io/api/v1/crates/$name/$version" > /dev/null; then
+                echo "$name version $version is already published on crates.io, skipping."
+              else
+                echo "Publishing $name version $version..."
+                (cd "$dir" && cargo publish --token "$CRATES_IO_TOKEN")
+                echo "Sleeping 60 seconds for crates.io indexing..."
+                sleep 60
+              fi
+            }
+            
+            # Publish order (topological dependencies first)
+            publish_crate "lib/pyro-spec" "pyro-spec"
+            publish_crate "lib/pyro-file" "pyro-file"
+            publish_crate "lib/pyro-macro" "pyro-macro"
+            publish_crate "lib/pyro-derive" "pyro-derive"
+            publish_crate "lib/pyro-artifacts" "pyro-artifacts"
+            publish_crate "lib/pyroduct" "pyroduct"
+            publish_crate "lib/pyro-daemon" "pyro-daemon"
+            publish_crate "lib/pyro-gui" "pyro-gui"
+          '
