@@ -72,7 +72,14 @@
         commonPyroArgs = {
           src = pyroSrc;
           strictDeps = true;
-          buildInputs = with pkgs; [ openssl ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.systemd ];
+          buildInputs = with pkgs; [ openssl ] ++ lib.optionals pkgs.stdenv.isLinux [
+            pkgs.systemd
+            pkgs.glib
+            pkgs.gtk3
+            pkgs.webkitgtk_4_1
+            pkgs.libsoup_3
+            pkgs.librsvg
+          ];
           nativeBuildInputs = with pkgs; [ pkg-config ];
         };
 
@@ -174,6 +181,8 @@
         devShells.default = craneLibWasm.devShell (
           wasmEnv
           // {
+            buildInputs = commonPyroArgs.buildInputs;
+            nativeBuildInputs = commonPyroArgs.nativeBuildInputs;
             packages = [
               wasmToolchain
               pyroduct
