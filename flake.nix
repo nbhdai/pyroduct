@@ -209,7 +209,7 @@
               export PYRODUCT_ROOT="$PWD/test/"
 
               ${lib.optionalString pkgs.stdenv.isLinux ''
-                export LD_LIBRARY_PATH="${lib.makeLibraryPath [ pkgs.systemd ]}:''${LD_LIBRARY_PATH:-}"
+                export LD_LIBRARY_PATH="${lib.makeLibraryPath commonPyroArgs.buildInputs}:''${LD_LIBRARY_PATH:-}"
               ''}
               ${lib.optionalString pkgs.stdenv.isDarwin ''
                 unset DEVELOPER_DIR
