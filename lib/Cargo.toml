@@ -39,6 +39,8 @@ pyroduct = { path = "pyroduct", version = "0.2.0" }
 pyro-file = { path = "pyro-file", version = "0.2.0" }
 pyro-spec = { path = "pyro-spec", version = "0.2.0" }
 pyro-artifacts = { path = "pyro-artifacts", version = "0.2.0" }
+pyro-daemon = { path = "pyro-daemon", version = "0.2.0" }
+pyro-gui = { path = "pyro-gui", version = "0.2.0" }
 
 # Errors and reporting
 anyhow = "1.0.100"
