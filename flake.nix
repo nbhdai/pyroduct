@@ -179,8 +179,6 @@
         devShells.default = craneLibWasm.devShell (
           wasmEnv
           // {
-            buildInputs = commonPyroArgs.buildInputs;
-            nativeBuildInputs = commonPyroArgs.nativeBuildInputs;
             packages = [
               wasmToolchain
               pyroduct
@@ -196,6 +194,7 @@
               pkgs.nodejs
               pkgs.cargo-tauri
               pkgs.bacon
+              pkgs.pkg-config
             ]
             ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.valgrind ];
             RUST_SRC_PATH = "${wasmToolchain}/lib/rustlib/src/rust/library";
