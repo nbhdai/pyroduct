@@ -13,7 +13,7 @@
 //! combining **`rkyv`** (for zero-copy serialization) with a **custom memory layout** that
 //! carries protocol metadata (length, capacity, status codes) in a 16-byte aligned header.
 //!
-//! 1.  **Define**: Annotate your Rust types with `#[bridgeable]`. This derives the necessary
+//! 1.  **Define**: Annotate your Rust types with `#[magma]`. This derives the necessary
 //!     `rkyv` traits, implements `UserHeaderValues` (version = 0) and `Bridgeable` (format = Rkyv).
 //! 2.  **Ship**: Call `.ship()` on your type to produce a `PyroVec`. This serializes the data
 //!     directly into an FFI-safe, aligned memory buffer.
@@ -22,7 +22,7 @@
 //!     data can then be accessed immediately (zero-copy) via `expose()`, or fully deserialized
 //!     back into a Rust type via a `Receiver`.
 //!
-//! ## The `#[bridgeable]` macro
+//! ## The `#[magma]` macro
 //!
 //! The attribute macro is the primary entry point for users. It accepts the following syntax:
 //!
@@ -88,21 +88,20 @@
 //!
 //! ## Results
 //!
-//! `Result<T, E>` is handled natively through the wire format's **Status** header field.
+//! `Result<T, CapturedError>` is handled natively through the wire format's **Status** header field.
 //! Instead of serializing the `Result` enum wrapper, the variant discriminant is lifted into
 //! the header so the receiver can distinguish success from failure before parsing the payload.
 //!
-//! Use the [`BridgeableResult`] trait (automatically implemented for `Result<T, E>` where
-//! both `T` and `E` are `Bridgeable`):
+//! `Result<T, CapturedError>` implements `Bridgeable` directly where `T` is `Bridgeable`:
 //!
-//! - `result.ship()` — serializes `Ok(T)` with Status `ValidData` (0) or `Err(E)` with
-//!   Status `UserError` (1).
-//! - `Result::<T, E>::expose(vec)` — returns `Result<Result<TypedBuf<T>, TypedBuf<E>>, PyroError>`.
+//! - `result.ship()` — serializes `Ok(T)` with the status of `T`'s format or `Err(CapturedError)` with
+//!   Status `CodeError` (1).
+//! - `Result::<T, CapturedError>::expose(vec)` — returns `Result<ResultWrapper<T>, PyroError>`.
 //!
 //! ### Example: Result transport
 //!
 //! ```rust,ignore
-//! use pyroduct::{magma, format::{Bridgeable, BridgeableResult}};
+//! use pyroduct::{magma, format::Bridgeable};
 //!
 //! #[magma]
 //! #[derive(Debug, PartialEq)]
@@ -111,23 +110,16 @@
 //!     payload: String,
 //! }
 //!
-//! #[magma]
-//! #[derive(Debug, PartialEq)]
-//! struct ApiError {
-//!     code: u16,
-//!     reason: String,
-//! }
-//!
-//! let success: Result<Response, ApiError> = Ok(Response {
+//! let success: Result<Response, pyroduct::CapturedError> = Ok(Response {
 //!     id: 101,
 //!     payload: "Data retrieved".to_string(),
 //! });
 //!
-//! // Ship the Result — Status = 0 (ValidData)
+//! // Ship the Result
 //! let vec = success.ship()?;
 //!
-//! // Expose — discriminate via the header, then zero-copy access
-//! match <Result<Response, ApiError>>::expose(vec)? {
+//! // Expose — discriminate via the header, then access
+//! match &*<Result<Response, pyroduct::CapturedError>>::expose(vec)? {
 //!     Ok(typed_ok)  => assert_eq!(typed_ok.id, 101),
 //!     Err(typed_err) => panic!("expected success"),
 //! }
@@ -230,18 +222,23 @@ mod execution;
 pub mod format;
 pub mod header;
 pub mod json;
+#[cfg(feature = "host")]
+pub mod log_wal;
 pub mod rkyv_8;
 pub mod value;
 pub mod vec_buf;
+#[cfg(feature = "host")]
 pub mod wal;
 
 pub use bridgeable::{Bridgeable, BridgeableResult};
-pub use execution::{PyroFailure, PyroLogs, PyroSuccess};
+pub use execution::{PyroFailure, PyroLogs, PyroSuccess, ResponseIndex, SessionResult};
 pub use format::{HasReceiver, Receiver, SpecWire};
 pub use header::ParseError;
 pub use rkyv_8::{Rkyv, RkyvParser, RkyvWriter, TypedBuf, TypedPyroRef};
 pub use value::{DeepRef, PyroRow, PyroValue, ToRow};
-pub use vec_buf::{PyroRef, PyroRefPtr, PyroVec, PyroView, PyroViewPtr, get_ref, make_view, get_ref_ids};
+pub use vec_buf::{
+    PyroRef, PyroRefPtr, PyroVec, PyroView, PyroViewPtr, get_ref, get_ref_ids, make_view,
+};
 
 // Async is not supported for wasm
 #[cfg(any(feature = "host", feature = "capability"))]

@@ -12,7 +12,7 @@ use std::path::Path;
 use tar::{Builder, Header};
 use tokio::fs;
 
-use crate::cargo::{CapabilityIdent, CapabilityManifest, ResolvedCapability};
+use crate::cargo::{CapabilityIdent, CapabilityManifest, ConfiguredCapability, ModuleManifest};
 
 pub enum CapBinary {
     Pe(Vec<u8>),
@@ -25,9 +25,9 @@ impl Deref for CapBinary {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            CapBinary::Pe(items) => &*items,
-            CapBinary::MachO(items) => &*items,
-            CapBinary::Elf(items) => &*items,
+            CapBinary::Pe(items) => items,
+            CapBinary::MachO(items) => items,
+            CapBinary::Elf(items) => items,
         }
     }
 }
@@ -54,73 +54,127 @@ pub struct Interface {
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct ModuleDependencies {
     pub dependencies: BTreeMap<String, Dependency>,
-    pub capabilities: Vec<ResolvedCapability>,
+    pub capabilities: Vec<CapabilityIdent>,
 }
 
 /// Identity for a named module (from Module.toml [module] section).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
-pub struct ModuleIdent {
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PlaybookIdent {
     pub author: String,
-    pub name: String,
+    pub package: String,
     pub version: String,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
-pub struct ModuleSource {
-    /// Named module identity (author/name/version), if this is a named module.
-    #[serde(default)]
-    pub ident: Option<ModuleIdent>,
-    pub dependencies: ModuleDependencies,
+pub struct PlaybookSource {
+    pub manifest: ModuleManifest,
     pub source: String,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
-pub struct ModuleSpec {
+pub struct PlaybookSpec {
+    pub ident: PlaybookIdent,
     pub hash: String,
     pub func: ModuleFunc<'static>,
-    pub capabilities: Vec<ResolvedCapability>,
+    pub capabilities: Vec<CapabilityIdent>,
     #[serde(default)]
-    pub ident: Option<ModuleIdent>,
+    pub interconnect: BTreeMap<String, PlaybookIdent>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
-pub struct ModuleBinary {
+pub struct PlaybookBinary {
     /// Named module identity (author/name/version), if this is a named module.
-    #[serde(default)]
-    pub ident: Option<ModuleIdent>,
     pub wasm: Vec<u8>,
-    pub spec: ModuleSpec,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
-pub enum Module {
-    Source(ModuleSource),
-    Binary(ModuleBinary),
-}
-
-/// A single wasm module in the pipeline intent.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
-pub struct Playbook {
-    pub hash: String,
-    /// Per-class capability configuration. Keys are class names.
+    pub spec: PlaybookSpec,
     #[serde(default)]
-    pub configurations: HashMap<String, Option<serde_json::Value>>,
+    pub configurations: Vec<ConfiguredCapability>,
 }
 
-impl ModuleSource {
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+pub enum Playbook {
+    Source(PlaybookSource),
+    Binary(PlaybookBinary),
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub struct CapabilityConfig {
+    /// Per-class capability configuration. Keys are class names.
+    pub classes: HashMap<String, Option<serde_json::Value>>,
+}
+
+impl std::hash::Hash for CapabilityConfig {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let mut entries: Vec<_> = self.classes.iter().collect();
+        entries.sort_by_key(|(k, _)| *k);
+        for (k, v) in entries {
+            k.hash(state);
+            if let Some(val) = v {
+                if let Ok(json_str) = serde_json::to_string(val) {
+                    json_str.hash(state);
+                }
+            } else {
+                0.hash(state);
+            }
+        }
+    }
+}
+
+impl PlaybookSource {
+    pub fn ident(&self) -> PlaybookIdent {
+        PlaybookIdent {
+            author: self.manifest.module.author.clone(),
+            package: self.manifest.module.package.clone(),
+            version: self.manifest.module.version.clone(),
+        }
+    }
+
+    pub fn dependencies(&self) -> ModuleDependencies {
+        let mut resolved_capabilities = Vec::new();
+        for cap in self.manifest.capabilities.values() {
+            resolved_capabilities.push(CapabilityIdent {
+                author: cap.author.clone(),
+                package: cap.package.clone(),
+                version: cap.version.clone(),
+            });
+        }
+        ModuleDependencies {
+            dependencies: self.manifest.dependencies.clone(),
+            capabilities: resolved_capabilities,
+        }
+    }
+
+    pub fn configurations(&self) -> Vec<ConfiguredCapability> {
+        self.manifest.capabilities.values().cloned().collect()
+    }
+
     /// Computes a deterministic hash of the module's source and dependencies.
     pub fn hash(&self) -> String {
-        Self::compute_hash(
+        let mut resolved_capabilities = Vec::new();
+        for cap in self.manifest.capabilities.values() {
+            resolved_capabilities.push(CapabilityIdent {
+                author: cap.author.clone(),
+                package: cap.package.clone(),
+                version: cap.version.clone(),
+            });
+        }
+        let base_hash = Self::compute_hash(
             &self.source,
-            &self.dependencies.dependencies,
-            &self.dependencies.capabilities,
-        )
+            &self.manifest.dependencies,
+            &resolved_capabilities,
+        );
+        let mut hasher = Sha256::new();
+        hasher.update(base_hash.as_bytes());
+        if let Ok(interconnect_json) = serde_json::to_string(&self.manifest.interconnect) {
+            hasher.update(interconnect_json.as_bytes());
+        }
+        format!("{:x}", hasher.finalize())
     }
 
     pub fn compute_hash(
         code: &str,
         dependencies: &std::collections::BTreeMap<String, cargo_toml::Dependency>,
-        capabilities: &[crate::cargo::ResolvedCapability],
+        capabilities: &[crate::cargo::CapabilityIdent],
     ) -> String {
         let mut hasher = Sha256::new();
 
@@ -144,19 +198,78 @@ impl ModuleSource {
 
         format!("{:x}", hasher.finalize())
     }
+
+    pub fn new(
+        ident: PlaybookIdent,
+        dependencies: ModuleDependencies,
+        configurations: Vec<ConfiguredCapability>,
+        source: String,
+        interconnect: BTreeMap<String, PlaybookIdent>,
+    ) -> Self {
+        let mut capabilities_map: BTreeMap<String, ConfiguredCapability> = BTreeMap::new();
+        for cap in configurations {
+            capabilities_map.insert(cap.package.clone(), cap);
+        }
+        for cap in dependencies.capabilities.iter() {
+            if !capabilities_map.contains_key(&cap.package) {
+                capabilities_map.insert(
+                    cap.package.clone(),
+                    ConfiguredCapability {
+                        author: cap.author.clone(),
+                        package: cap.package.clone(),
+                        version: cap.version.clone(),
+                        configuration: CapabilityConfig {
+                            classes: std::collections::HashMap::new(),
+                        },
+                    },
+                );
+            }
+        }
+        let pyroduct_dep =
+            cargo_toml::Dependency::Inherited(cargo_toml::InheritedDependencyDetail {
+                workspace: true,
+                ..Default::default()
+            });
+        let manifest = ModuleManifest::<toml::Value> {
+            module: CapabilityIdent {
+                package: ident.package,
+                version: ident.version,
+                author: ident.author,
+            },
+            workspace: None,
+            pyroduct: pyroduct_dep,
+            capabilities: capabilities_map,
+            dependencies: dependencies.dependencies,
+            dev_dependencies: Default::default(),
+            build_dependencies: Default::default(),
+            target: Default::default(),
+            features: Default::default(),
+            patch: Default::default(),
+            lib: None,
+            profile: Default::default(),
+            badges: Default::default(),
+            bin: Vec::new(),
+            bench: Vec::new(),
+            test: Vec::new(),
+            example: Vec::new(),
+            lints: Default::default(),
+            interconnect,
+        };
+        Self { manifest, source }
+    }
 }
 
-impl ModuleBinary {
+impl PlaybookBinary {
     pub fn hash(&self) -> String {
         self.spec.hash.clone()
     }
 }
 
-impl Module {
+impl Playbook {
     pub fn hash(&self) -> String {
         match self {
-            Module::Source(m) => m.hash(),
-            Module::Binary(m) => m.hash(),
+            Playbook::Source(m) => m.hash(),
+            Playbook::Binary(m) => m.hash(),
         }
     }
 }
@@ -165,7 +278,7 @@ pub enum Artifacts {
     CapabilityBinary(CapabilityBinary),
     CapabilitySource(CapabilitySource),
     Interface(Interface),
-    Module(Module),
+    Playbook(Playbook),
 }
 
 impl From<CapabilityBinary> for Artifacts {
@@ -186,21 +299,21 @@ impl From<Interface> for Artifacts {
     }
 }
 
-impl From<Module> for Artifacts {
-    fn from(value: Module) -> Self {
-        Artifacts::Module(value)
+impl From<Playbook> for Artifacts {
+    fn from(value: Playbook) -> Self {
+        Artifacts::Playbook(value)
     }
 }
 
-impl From<ModuleBinary> for Artifacts {
-    fn from(value: ModuleBinary) -> Self {
-        Artifacts::Module(Module::Binary(value))
+impl From<PlaybookBinary> for Artifacts {
+    fn from(value: PlaybookBinary) -> Self {
+        Artifacts::Playbook(Playbook::Binary(value))
     }
 }
 
-impl From<ModuleSource> for Artifacts {
-    fn from(value: ModuleSource) -> Self {
-        Artifacts::Module(Module::Source(value))
+impl From<PlaybookSource> for Artifacts {
+    fn from(value: PlaybookSource) -> Self {
+        Artifacts::Playbook(Playbook::Source(value))
     }
 }
 
@@ -232,7 +345,9 @@ pub(crate) fn append_file<W: Write>(
 // ==========================================
 
 impl Artifact for CapabilityBinary {
+    #[tracing::instrument(skip(self, path), fields(path = %path.display(), ident = ?self.ident))]
     async fn write_to_directory(&self, path: &Path) -> io::Result<()> {
+        tracing::debug!("Writing CapabilityBinary to directory");
         fs::create_dir_all(path).await?;
         for lib in &self.libs {
             match lib {
@@ -243,12 +358,18 @@ impl Artifact for CapabilityBinary {
         }
         fs::write(
             path.join("ident.json"),
-            serde_json::to_string(&self.ident)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+            serde_json::to_string(&self.ident).map_err(|e| {
+                let err = io::Error::new(io::ErrorKind::InvalidData, e);
+                tracing::error!(error = ?err, "Failed to serialize ident");
+                err
+            })?,
         )
         .await?;
-        let interface_json = serde_json::to_string_pretty(&self.interface)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let interface_json = serde_json::to_string_pretty(&self.interface).map_err(|e| {
+            let err = io::Error::new(io::ErrorKind::InvalidData, e);
+            tracing::error!(error = ?err, "Failed to serialize interface");
+            err
+        })?;
         fs::write(path.join("interface.json"), interface_json).await?;
         Ok(())
     }
@@ -334,7 +455,9 @@ impl Artifact for CapabilityBinary {
         })
     }
 
+    #[tracing::instrument(skip(path), fields(path = %path.display()))]
     async fn from_dir(path: &Path) -> Result<Self, io::Error> {
+        tracing::debug!("Loading CapabilityBinary from directory");
         let mut libs = Vec::new();
         if let Ok(bytes) = fs::read(path.join("lib.dll")).await {
             libs.push(CapBinary::Pe(bytes));
@@ -347,26 +470,29 @@ impl Artifact for CapabilityBinary {
         }
 
         if libs.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "Missing capability library",
-            ));
+            let err = io::Error::new(io::ErrorKind::NotFound, "Missing capability library");
+            tracing::error!(error = ?err, "Failed to load capability library");
+            return Err(err);
         }
 
         let ident_string = fs::read(path.join("ident.json")).await?;
         let ident = serde_json::from_slice(&ident_string).map_err(|e| {
-            io::Error::new(
+            let err = io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Unable to deserialize ident: {}", e),
-            )
+            );
+            tracing::error!(error = ?err, "Failed to deserialize ident.json");
+            err
         })?;
 
         let interface_string = fs::read(path.join("interface.json")).await?;
         let interface = serde_json::from_slice(&interface_string).map_err(|e| {
-            io::Error::new(
+            let err = io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Unable to deserialize interface: {}", e),
-            )
+            );
+            tracing::error!(error = ?err, "Failed to deserialize interface.json");
+            err
         })?;
 
         Ok(CapabilityBinary {
@@ -378,13 +504,17 @@ impl Artifact for CapabilityBinary {
 }
 
 impl Artifact for CapabilitySource {
+    #[tracing::instrument(skip(self, path), fields(path = %path.display(), manifest = ?self.manifest.capability))]
     async fn write_to_directory(&self, path: &Path) -> io::Result<()> {
+        tracing::debug!("Writing CapabilitySource to directory");
         fs::create_dir_all(path).await?;
         let manifest = toml::to_string_pretty(&self.manifest).map_err(|e| {
-            io::Error::new(
+            let err = io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Unable to serialize manifest: {}", e),
-            )
+            );
+            tracing::error!(error = ?err, "Failed to serialize Capability.toml");
+            err
         })?;
         fs::write(path.join("Capability.toml"), &manifest).await?;
         fs::write(path.join("Cargo.toml"), &self.cargo_toml).await?;
@@ -458,13 +588,17 @@ impl Artifact for CapabilitySource {
         })
     }
 
+    #[tracing::instrument(skip(path), fields(path = %path.display()))]
     async fn from_dir(path: &Path) -> Result<Self, io::Error> {
+        tracing::debug!("Loading CapabilitySource from directory");
         let manifest_string = fs::read(path.join("Capability.toml")).await?;
         let manifest = toml::from_slice(&manifest_string).map_err(|e| {
-            io::Error::new(
+            let err = io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Unable to deserialize manifest: {}", e),
-            )
+            );
+            tracing::error!(error = ?err, "Failed to deserialize Capability.toml");
+            err
         })?;
 
         Ok(CapabilitySource {
@@ -477,20 +611,26 @@ impl Artifact for CapabilitySource {
 }
 
 impl Artifact for Interface {
+    #[tracing::instrument(skip(self, path), fields(path = %path.display(), manifest = ?self.manifest.capability))]
     async fn write_to_directory(&self, path: &Path) -> io::Result<()> {
+        tracing::debug!("Writing Interface to directory");
         let manifest = toml::to_string_pretty(&self.manifest).map_err(|e| {
-            io::Error::new(
+            let err = io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Unable to serialize manifest: {}", e),
-            )
+            );
+            tracing::error!(error = ?err, "Failed to serialize Capability.toml");
+            err
         })?;
         fs::create_dir_all(path).await?;
         fs::write(path.join("Capability.toml"), &manifest).await?;
         let interface_str = serde_json::to_string_pretty(&self.interface).map_err(|e| {
-            io::Error::new(
+            let err = io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Unable to serialize manifest: {}", e),
-            )
+                format!("Unable to serialize interface: {}", e),
+            );
+            tracing::error!(error = ?err, "Failed to serialize interface.json");
+            err
         })?;
         fs::write(path.join("interface.json"), &interface_str).await?;
 
@@ -571,21 +711,27 @@ impl Artifact for Interface {
         })
     }
 
+    #[tracing::instrument(skip(path), fields(path = %path.display()))]
     async fn from_dir(path: &Path) -> Result<Self, io::Error> {
+        tracing::debug!("Loading Interface from directory");
         let manifest_string = fs::read(path.join("Capability.toml")).await?;
         let manifest = toml::from_slice(&manifest_string).map_err(|e| {
-            io::Error::new(
+            let err = io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Unable to deserialize manifest: {}", e),
-            )
+            );
+            tracing::error!(error = ?err, "Failed to deserialize Capability.toml");
+            err
         })?;
 
         let interface_string = fs::read(path.join("interface.json")).await?;
         let interface = toml::from_slice(&interface_string).map_err(|e| {
-            io::Error::new(
+            let err = io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Unable to deserialize interface: {}", e),
-            )
+            );
+            tracing::error!(error = ?err, "Failed to deserialize interface.json");
+            err
         })?;
 
         Ok(Interface {
@@ -596,31 +742,39 @@ impl Artifact for Interface {
     }
 }
 
-impl Artifact for ModuleSource {
+impl Artifact for PlaybookSource {
+    #[tracing::instrument(skip(self, path), fields(path = %path.display(), ident = ?self.ident()))]
     async fn write_to_directory(&self, path: &Path) -> io::Result<()> {
+        tracing::debug!("Writing PlaybookSource to directory");
         fs::create_dir_all(path).await?;
-        let dependencies = serde_json::to_string_pretty(&self.dependencies).map_err(|e| {
-            io::Error::new(
+
+        let toml_str = toml::to_string_pretty(&self.manifest).map_err(|e| {
+            let err = io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Unable to serialize dependencies: {}", e),
-            )
+                format!("Unable to serialize Module.toml: {}", e),
+            );
+            tracing::error!(error = ?err, "Failed to serialize Module.toml");
+            err
         })?;
+
+        fs::write(path.join("Module.toml"), &toml_str).await?;
         fs::write(path.join("source.rs"), &self.source).await?;
-        fs::write(path.join("dependencies.json"), &dependencies).await?;
         Ok(())
     }
 
     fn to_tarball(&self) -> Result<Vec<u8>, io::Error> {
         let encoder = GzEncoder::new(Vec::new(), Compression::default());
         let mut tar = Builder::new(encoder);
-        let dependencies = serde_json::to_string_pretty(&self.dependencies).map_err(|e| {
+
+        let toml_str = toml::to_string_pretty(&self.manifest).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Unable to serialize dependencies: {}", e),
+                format!("Unable to serialize Module.toml: {}", e),
             )
         })?;
+
+        append_file(&mut tar, "Module.toml", toml_str.as_bytes())?;
         append_file(&mut tar, "source.rs", self.source.as_bytes())?;
-        append_file(&mut tar, "dependencies.json", dependencies.as_bytes())?;
         tar.into_inner()?.finish()
     }
 
@@ -628,7 +782,14 @@ impl Artifact for ModuleSource {
         let tar = GzDecoder::new(bytes);
         let mut archive = tar::Archive::new(tar);
         let mut source = None;
-        let mut dependencies = None;
+
+        // Backward compatibility JSON parsing fields
+        let mut legacy_ident = None;
+        let mut legacy_dependencies = None;
+        let mut legacy_configurations = None;
+
+        // Module.toml parsed fields
+        let mut module_toml: Option<ModuleManifest<toml::Value>> = None;
 
         for file in archive.entries()? {
             let mut file = file?;
@@ -637,56 +798,269 @@ impl Artifact for ModuleSource {
             file.read_to_end(&mut content)?;
 
             match path.to_string_lossy().as_ref() {
-                "source.rs" => source = String::from_utf8(content).ok(),
-                "dependencies.json" => {
-                    dependencies = serde_json::from_slice(&content).map_err(|e| {
+                "Module.toml" => {
+                    module_toml = Some(toml::from_slice(&content).map_err(|e| {
                         io::Error::new(
                             io::ErrorKind::InvalidData,
-                            format!("Unable to deserialize dependencies: {}", e),
+                            format!("Unable to deserialize Module.toml: {}", e),
                         )
-                    })?;
+                    })?);
+                }
+                "source.rs" => source = String::from_utf8(content).ok(),
+                // Fallbacks
+                "ident.json" => {
+                    legacy_ident = Some(
+                        serde_json::from_slice::<PlaybookIdent>(&content).map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!("Unable to deserialize ident: {}", e),
+                            )
+                        })?,
+                    );
+                }
+                "dependencies.json" => {
+                    legacy_dependencies = Some(
+                        serde_json::from_slice::<ModuleDependencies>(&content).map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!("Unable to deserialize dependencies: {}", e),
+                            )
+                        })?,
+                    );
+                }
+                "configurations.json" => {
+                    legacy_configurations = Some(
+                        serde_json::from_slice::<Vec<ConfiguredCapability>>(&content).map_err(
+                            |e| {
+                                io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    format!("Unable to deserialize configurations: {}", e),
+                                )
+                            },
+                        )?,
+                    );
                 }
                 _ => {}
             }
         }
 
-        Ok(ModuleSource {
-            ident: None,
-            source: source
-                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Missing source.rs"))?,
-            dependencies: dependencies.ok_or_else(|| {
-                io::Error::new(io::ErrorKind::NotFound, "Missing dependencies.json")
-            })?,
-        })
+        let source =
+            source.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Missing source.rs"))?;
+
+        if let Some(mt) = module_toml {
+            Ok(PlaybookSource {
+                manifest: mt,
+                source,
+            })
+        } else {
+            let mut capabilities_map: BTreeMap<String, ConfiguredCapability> = BTreeMap::new();
+            let legacy_config = legacy_configurations.unwrap_or_default();
+            for cap in legacy_config {
+                capabilities_map.insert(cap.package.clone(), cap);
+            }
+            let legacy_dep = legacy_dependencies.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "Missing Module.toml or dependencies.json",
+                )
+            })?;
+            let legacy_id = legacy_ident.ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "Missing Module.toml or ident.json")
+            })?;
+
+            let manifest = ModuleManifest::<toml::Value> {
+                module: CapabilityIdent {
+                    package: legacy_id.package,
+                    version: legacy_id.version,
+                    author: legacy_id.author,
+                },
+                workspace: None,
+                pyroduct: cargo_toml::Dependency::Inherited(
+                    cargo_toml::InheritedDependencyDetail {
+                        workspace: true,
+                        ..Default::default()
+                    },
+                ),
+                capabilities: capabilities_map,
+                dependencies: legacy_dep.dependencies,
+                dev_dependencies: Default::default(),
+                build_dependencies: Default::default(),
+                target: Default::default(),
+                features: Default::default(),
+                patch: Default::default(),
+                lib: None,
+                profile: Default::default(),
+                badges: Default::default(),
+                bin: Vec::new(),
+                bench: Vec::new(),
+                test: Vec::new(),
+                example: Vec::new(),
+                lints: Default::default(),
+                interconnect: BTreeMap::new(),
+            };
+            Ok(PlaybookSource { manifest, source })
+        }
     }
 
+    #[tracing::instrument(skip(path), fields(path = %path.display()))]
     async fn from_dir(path: &Path) -> Result<Self, io::Error> {
-        let dependencies_string = fs::read(path.join("dependencies.json")).await?;
-        let dependencies = serde_json::from_slice(&dependencies_string).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Unable to deserialize dependencies: {}", e),
-            )
-        })?;
-        Ok(ModuleSource {
-            ident: None,
-            source: fs::read_to_string(path.join("source.rs")).await?,
-            dependencies,
-        })
+        tracing::debug!("Loading PlaybookSource from directory");
+        let source = fs::read_to_string(path.join("source.rs")).await?;
+
+        if fs::try_exists(path.join("Module.toml"))
+            .await
+            .unwrap_or(false)
+        {
+            let toml_bytes = fs::read(path.join("Module.toml")).await?;
+            let mt: ModuleManifest<toml::Value> = toml::from_slice(&toml_bytes).map_err(|e| {
+                let err = io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Failed to parse Module.toml: {e}"),
+                );
+                tracing::error!(error = ?err);
+                err
+            })?;
+            Ok(PlaybookSource {
+                manifest: mt,
+                source,
+            })
+        } else {
+            let ident_string = fs::read(path.join("ident.json")).await?;
+            let ident: PlaybookIdent = serde_json::from_slice(&ident_string).map_err(|e| {
+                let err = io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Unable to deserialize ident: {}", e),
+                );
+                tracing::error!(error = ?err, "Failed to deserialize ident.json");
+                err
+            })?;
+            let dependencies_string = fs::read(path.join("dependencies.json")).await?;
+            let dependencies: ModuleDependencies = serde_json::from_slice(&dependencies_string)
+                .map_err(|e| {
+                    let err = io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Unable to deserialize dependencies: {}", e),
+                    );
+                    tracing::error!(error = ?err, "Failed to deserialize dependencies.json");
+                    err
+                })?;
+            let configurations: Vec<ConfiguredCapability> =
+                if fs::try_exists(path.join("configurations.json"))
+                    .await
+                    .unwrap_or(false)
+                {
+                    let configurations_string = fs::read(path.join("configurations.json")).await?;
+                    serde_json::from_slice(&configurations_string).map_err(|e| {
+                        let err = io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Unable to deserialize configurations: {}", e),
+                        );
+                        tracing::error!(error = ?err, "Failed to deserialize configurations.json");
+                        err
+                    })?
+                } else {
+                    Vec::new()
+                };
+
+            let mut capabilities_map: BTreeMap<String, ConfiguredCapability> = BTreeMap::new();
+            for cap in configurations {
+                capabilities_map.insert(cap.package.clone(), cap);
+            }
+
+            let manifest = ModuleManifest::<toml::Value> {
+                module: CapabilityIdent {
+                    package: ident.package,
+                    version: ident.version,
+                    author: ident.author,
+                },
+                workspace: None,
+                pyroduct: cargo_toml::Dependency::Inherited(
+                    cargo_toml::InheritedDependencyDetail {
+                        workspace: true,
+                        ..Default::default()
+                    },
+                ),
+                capabilities: capabilities_map,
+                dependencies: dependencies.dependencies,
+                dev_dependencies: Default::default(),
+                build_dependencies: Default::default(),
+                target: Default::default(),
+                features: Default::default(),
+                patch: Default::default(),
+                lib: None,
+                profile: Default::default(),
+                badges: Default::default(),
+                bin: Vec::new(),
+                bench: Vec::new(),
+                test: Vec::new(),
+                example: Vec::new(),
+                lints: Default::default(),
+                interconnect: BTreeMap::new(),
+            };
+            Ok(PlaybookSource { manifest, source })
+        }
     }
 }
 
-impl Artifact for ModuleBinary {
+impl Artifact for PlaybookBinary {
+    #[tracing::instrument(skip(self, path), fields(path = %path.display()))]
     async fn write_to_directory(&self, path: &Path) -> io::Result<()> {
+        tracing::debug!("Writing PlaybookBinary to directory");
         fs::create_dir_all(path).await?;
         fs::write(path.join("mod.wasm"), &self.wasm).await?;
         let spec = serde_json::to_string_pretty(&self.spec).map_err(|e| {
-            io::Error::new(
+            let err = io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Unable to serialize spec: {}", e),
-            )
+            );
+            tracing::error!(error = ?err, "Failed to serialize spec.json");
+            err
         })?;
         fs::write(path.join("spec.json"), spec).await?;
+
+        let mut capabilities_map = BTreeMap::new();
+        for cap in &self.configurations {
+            capabilities_map.insert(cap.package.clone(), cap.clone());
+        }
+        let pyroduct_dep =
+            cargo_toml::Dependency::Inherited(cargo_toml::InheritedDependencyDetail {
+                workspace: true,
+                ..Default::default()
+            });
+        let manifest = ModuleManifest::<toml::Value> {
+            module: CapabilityIdent {
+                package: self.spec.ident.package.clone(),
+                version: self.spec.ident.version.clone(),
+                author: self.spec.ident.author.clone(),
+            },
+            workspace: None,
+            pyroduct: pyroduct_dep,
+            capabilities: capabilities_map,
+            dependencies: BTreeMap::new(),
+            dev_dependencies: Default::default(),
+            build_dependencies: Default::default(),
+            target: Default::default(),
+            features: Default::default(),
+            patch: Default::default(),
+            lib: None,
+            profile: Default::default(),
+            badges: Default::default(),
+            bin: Vec::new(),
+            bench: Vec::new(),
+            test: Vec::new(),
+            example: Vec::new(),
+            lints: Default::default(),
+            interconnect: self.spec.interconnect.clone(),
+        };
+        let toml_str = toml::to_string_pretty(&manifest).map_err(|e| {
+            let err = io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unable to serialize Module.toml: {}", e),
+            );
+            tracing::error!(error = ?err, "Failed to serialize Module.toml");
+            err
+        })?;
+        fs::write(path.join("Module.toml"), &toml_str).await?;
         Ok(())
     }
 
@@ -701,6 +1075,48 @@ impl Artifact for ModuleBinary {
             )
         })?;
         append_file(&mut tar, "spec.json", spec.as_bytes())?;
+
+        let mut capabilities_map = BTreeMap::new();
+        for cap in &self.configurations {
+            capabilities_map.insert(cap.package.clone(), cap.clone());
+        }
+        let pyroduct_dep =
+            cargo_toml::Dependency::Inherited(cargo_toml::InheritedDependencyDetail {
+                workspace: true,
+                ..Default::default()
+            });
+        let manifest = ModuleManifest::<toml::Value> {
+            module: CapabilityIdent {
+                package: self.spec.ident.package.clone(),
+                version: self.spec.ident.version.clone(),
+                author: self.spec.ident.author.clone(),
+            },
+            workspace: None,
+            pyroduct: pyroduct_dep,
+            capabilities: capabilities_map,
+            dependencies: BTreeMap::new(),
+            dev_dependencies: Default::default(),
+            build_dependencies: Default::default(),
+            target: Default::default(),
+            features: Default::default(),
+            patch: Default::default(),
+            lib: None,
+            profile: Default::default(),
+            badges: Default::default(),
+            bin: Vec::new(),
+            bench: Vec::new(),
+            test: Vec::new(),
+            example: Vec::new(),
+            lints: Default::default(),
+            interconnect: self.spec.interconnect.clone(),
+        };
+        let toml_str = toml::to_string_pretty(&manifest).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unable to serialize Module.toml: {}", e),
+            )
+        })?;
+        append_file(&mut tar, "Module.toml", toml_str.as_bytes())?;
         tar.into_inner()?.finish()
     }
 
@@ -708,7 +1124,9 @@ impl Artifact for ModuleBinary {
         let tar = GzDecoder::new(bytes);
         let mut archive = tar::Archive::new(tar);
         let mut wasm = None;
-        let mut spec = None;
+        let mut spec: Option<PlaybookSpec> = None;
+        let mut configurations = None;
+        let mut legacy_configurations = None;
 
         for file in archive.entries()? {
             let mut file = file?;
@@ -726,47 +1144,106 @@ impl Artifact for ModuleBinary {
                         )
                     })?;
                 }
+                "Module.toml" => {
+                    let mt: ModuleManifest<toml::Value> =
+                        toml::from_slice(&content).map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!("Unable to deserialize Module.toml: {}", e),
+                            )
+                        })?;
+                    configurations = Some(mt.capabilities.into_values().collect());
+                }
+                "configurations.json" => {
+                    legacy_configurations =
+                        Some(serde_json::from_slice(&content).map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!("Unable to deserialize configurations: {}", e),
+                            )
+                        })?);
+                }
                 _ => {}
             }
         }
 
-        Ok(ModuleBinary {
-            ident: None,
+        let configurations = configurations.or(legacy_configurations).unwrap_or_default();
+
+        Ok(PlaybookBinary {
             wasm: wasm
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Missing mod.wasm"))?,
             spec: spec
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Missing spec.json"))?,
+            configurations,
         })
     }
 
+    #[tracing::instrument(skip(path), fields(path = %path.display()))]
     async fn from_dir(path: &Path) -> Result<Self, io::Error> {
+        tracing::debug!("Loading PlaybookBinary from directory");
         let spec_string = fs::read(path.join("spec.json")).await?;
-        let spec = serde_json::from_slice(&spec_string).map_err(|e| {
-            io::Error::new(
+        let spec: PlaybookSpec = serde_json::from_slice(&spec_string).map_err(|e| {
+            let err = io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Unable to deserialize spec: {}", e),
-            )
+            );
+            tracing::error!(error = ?err, "Failed to deserialize spec.json");
+            err
         })?;
-        Ok(ModuleBinary {
-            ident: None,
+
+        let configurations = if fs::try_exists(path.join("Module.toml"))
+            .await
+            .unwrap_or(false)
+        {
+            let toml_bytes = fs::read(path.join("Module.toml")).await?;
+            let mt: ModuleManifest<toml::Value> = toml::from_slice(&toml_bytes).map_err(|e| {
+                let err = io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Unable to deserialize Module.toml: {}", e),
+                );
+                tracing::error!(error = ?err, "Failed to deserialize Module.toml");
+                err
+            })?;
+            mt.capabilities.into_values().collect()
+        } else if fs::try_exists(path.join("configurations.json"))
+            .await
+            .unwrap_or(false)
+        {
+            let configurations_string = fs::read(path.join("configurations.json")).await?;
+            serde_json::from_slice(&configurations_string).map_err(|e| {
+                let err = io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Unable to deserialize configurations: {}", e),
+                );
+                tracing::error!(error = ?err, "Failed to deserialize configurations.json");
+                err
+            })?
+        } else {
+            Vec::new()
+        };
+
+        Ok(PlaybookBinary {
             wasm: fs::read(path.join("mod.wasm")).await?,
             spec,
+            configurations,
         })
     }
 }
 
-impl Artifact for Module {
+impl Artifact for Playbook {
+    #[tracing::instrument(skip(self, path), fields(path = %path.display()))]
     async fn write_to_directory(&self, path: &Path) -> io::Result<()> {
+        tracing::debug!("Writing Playbook to directory");
         match self {
-            Module::Source(module_source) => module_source.write_to_directory(path).await,
-            Module::Binary(module_binary) => module_binary.write_to_directory(path).await,
+            Playbook::Source(module_source) => module_source.write_to_directory(path).await,
+            Playbook::Binary(module_binary) => module_binary.write_to_directory(path).await,
         }
     }
 
     fn to_tarball(&self) -> Result<Vec<u8>, io::Error> {
         match self {
-            Module::Source(module_source) => module_source.to_tarball(),
-            Module::Binary(module_binary) => module_binary.to_tarball(),
+            Playbook::Source(module_source) => module_source.to_tarball(),
+            Playbook::Binary(module_binary) => module_binary.to_tarball(),
         }
     }
 
@@ -790,9 +1267,9 @@ impl Artifact for Module {
         }
 
         if has_source_rs {
-            Ok(Module::Source(ModuleSource::from_tarball(bytes)?))
+            Ok(Playbook::Source(PlaybookSource::from_tarball(bytes)?))
         } else if has_wasm {
-            Ok(Module::Binary(ModuleBinary::from_tarball(bytes)?))
+            Ok(Playbook::Binary(PlaybookBinary::from_tarball(bytes)?))
         } else {
             Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -801,14 +1278,16 @@ impl Artifact for Module {
         }
     }
 
+    #[tracing::instrument(skip(path), fields(path = %path.display()))]
     async fn from_dir(path: &Path) -> Result<Self, io::Error> {
+        tracing::debug!("Loading Playbook from directory");
         if fs::try_exists(path.join("source.rs"))
             .await
             .unwrap_or(false)
         {
-            Ok(Module::Source(ModuleSource::from_dir(path).await?))
+            Ok(Playbook::Source(PlaybookSource::from_dir(path).await?))
         } else if fs::try_exists(path.join("mod.wasm")).await.unwrap_or(false) {
-            Ok(Module::Binary(ModuleBinary::from_dir(path).await?))
+            Ok(Playbook::Binary(PlaybookBinary::from_dir(path).await?))
         } else {
             Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -819,12 +1298,14 @@ impl Artifact for Module {
 }
 
 impl Artifact for Artifacts {
+    #[tracing::instrument(skip(self, path), fields(path = %path.display()))]
     async fn write_to_directory(&self, path: &Path) -> io::Result<()> {
+        tracing::debug!("Writing Artifacts to directory");
         match self {
             Artifacts::CapabilityBinary(c) => c.write_to_directory(path).await,
             Artifacts::CapabilitySource(c) => c.write_to_directory(path).await,
             Artifacts::Interface(i) => i.write_to_directory(path).await,
-            Artifacts::Module(m) => m.write_to_directory(path).await,
+            Artifacts::Playbook(m) => m.write_to_directory(path).await,
         }
     }
 
@@ -833,7 +1314,7 @@ impl Artifact for Artifacts {
             Artifacts::CapabilityBinary(c) => c.to_tarball(),
             Artifacts::CapabilitySource(c) => c.to_tarball(),
             Artifacts::Interface(i) => i.to_tarball(),
-            Artifacts::Module(m) => m.to_tarball(),
+            Artifacts::Playbook(m) => m.to_tarball(),
         }
     }
 
@@ -861,8 +1342,8 @@ impl Artifact for Artifacts {
         }
 
         if has_source_rs || has_wasm {
-            // Let the Module implementation handle the Source vs Binary split
-            Ok(Artifacts::Module(Module::from_tarball(bytes)?))
+            // Let the Playbook implementation handle the Source vs Binary split
+            Ok(Artifacts::Playbook(Playbook::from_tarball(bytes)?))
         } else if has_cap_toml {
             if has_lib {
                 // This shouldn't happen based on the split, but for backward compatibility or weird cases
@@ -884,15 +1365,17 @@ impl Artifact for Artifacts {
         }
     }
 
+    #[tracing::instrument(skip(path), fields(path = %path.display()))]
     async fn from_dir(path: &Path) -> Result<Self, io::Error> {
+        tracing::debug!("Loading Artifacts from directory");
         let has_source_rs = fs::try_exists(path.join("source.rs"))
             .await
             .unwrap_or(false);
         let has_wasm = fs::try_exists(path.join("mod.wasm")).await.unwrap_or(false);
 
         if has_source_rs || has_wasm {
-            // Let the Module implementation handle the Source vs Binary split
-            Ok(Artifacts::Module(Module::from_dir(path).await?))
+            // Let the Playbook implementation handle the Source vs Binary split
+            Ok(Artifacts::Playbook(Playbook::from_dir(path).await?))
         } else if fs::try_exists(path.join("Capability.toml"))
             .await
             .unwrap_or(false)

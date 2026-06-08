@@ -133,17 +133,11 @@ impl<'a> PyroRow<'a> {
     /// Returns true if the key exists and the value is explicitly Null.
     /// Returns false if the key does not exist or the value is not Null.
     pub fn get_is_null(&self, key: &str) -> bool {
-        match self.get(key) {
-            Some(PyroValue::Null) => true,
-            _ => false,
-        }
+        matches!(self.get(key), Some(PyroValue::Null))
     }
 
     pub fn get_deep_is_null<S: AsRef<str>>(&self, path: &[S]) -> bool {
-        match self.get_deep(path) {
-            Some(PyroValue::Null) => true,
-            _ => false,
-        }
+        matches!(self.get_deep(path), Some(PyroValue::Null))
     }
 
     /// Returns true if the key exists and the value is explicitly Null.

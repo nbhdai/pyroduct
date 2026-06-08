@@ -51,6 +51,8 @@ enum Commands {
     },
     /// Initializes the Pyroduct cache
     Setup,
+    /// Purges the Pyroduct cache (capabilities, interfaces, modules, anon)
+    Purge,
     /// Generates the interface.json for a capability
     Spec {
         #[arg(value_name = "DIRECTORY", default_value = ".")]
@@ -102,6 +104,72 @@ enum Commands {
         #[arg(value_name = "INPUT")]
         input: PathBuf,
     },
+    /// Starts a playbook server or capability server.
+    Serve {
+        /// Path to JSON configuration file
+        #[arg(long)]
+        config: Option<PathBuf>,
+
+        /// JSON encoded configuration string
+        #[arg(long)]
+        config_json: Option<String>,
+
+        /// Server type to run (playbook or capability)
+        #[arg(long, value_enum)]
+        server_type: Option<commands::serve::ServerType>,
+
+        /// Address or path to listen on (e.g. 127.0.0.1:8080 or /tmp/pyro.sock)
+        #[arg(long)]
+        socket: Option<String>,
+
+        /// Run playbook server as an HTTP server instead of TCP/Unix
+        #[arg(long)]
+        http: bool,
+
+        /// Path to the playbook config file (playbook only)
+        #[arg(long)]
+        playbook_config: Option<PathBuf>,
+
+        /// Playbook identifier (author:package:version) (playbook only)
+        #[arg(long, value_parser = parse_playbook_ident)]
+        playbook: Option<pyro_artifacts::artifacts::PlaybookIdent>,
+
+        /// Remote capability mappings in format "author:package:version=addr"
+        #[arg(long, value_parser = parse_remote_mapping)]
+        remote: Vec<(pyro_artifacts::cargo::CapabilityIdent, pyro_artifacts::cache::RemoteAddress)>,
+
+        /// WAL capacity
+        #[arg(long)]
+        wal_capacity: Option<usize>,
+
+        /// Success log retention in seconds
+        #[arg(long)]
+        success_log_retention_secs: Option<u64>,
+
+        /// Error log retention in seconds
+        #[arg(long)]
+        error_log_retention_secs: Option<u64>,
+
+        /// Directory for logs
+        #[arg(long)]
+        log_dir: Option<PathBuf>,
+
+        /// Directory for inputs
+        #[arg(long)]
+        input_dir: Option<PathBuf>,
+
+        /// Directory for outputs
+        #[arg(long)]
+        output_dir: Option<PathBuf>,
+
+        /// Name of the capability library (capability only) in format author:package:version
+        #[arg(long, value_parser = parse_capability_ident)]
+        cap: Option<pyro_artifacts::cargo::CapabilityIdent>,
+
+        /// Capability's class configuration as a JSON string (capability only)
+        #[arg(long)]
+        cap_config: Option<String>,
+    },
 }
 
 pub fn start_logging() {
@@ -127,9 +195,12 @@ async fn main() -> Result<()> {
     match args.command {
         Commands::Init { path, cap } => commands::init::init(path, cap),
         Commands::Expand { path, no_compile } => commands::expand::expand(&path, no_compile).await,
-        Commands::Ship { path, debug, out } => commands::ship::ship(&path, debug, out.as_deref()).await,
+        Commands::Ship { path, debug, out } => {
+            commands::ship::ship(&path, debug, out.as_deref()).await
+        }
         Commands::Clean { path } => commands::clean::clean(&path),
         Commands::Setup => commands::cache::init().await,
+        Commands::Purge => commands::cache::purge().await,
         Commands::Spec { path, out } => commands::spec::spec(&path, out.as_deref()).await,
         Commands::Replay { input, socket } => commands::replay::replay(&input, &socket).await,
         Commands::Run {
@@ -152,5 +223,116 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Tui { config, input } => tui::run_tui(&config, &input).await,
+        Commands::Serve {
+            config,
+            config_json,
+            server_type,
+            socket,
+            http,
+            playbook_config,
+            playbook,
+            remote,
+            wal_capacity,
+            success_log_retention_secs,
+            error_log_retention_secs,
+            log_dir,
+            input_dir,
+            output_dir,
+            cap,
+            cap_config,
+        } => {
+            let remote_map = remote.into_iter().collect();
+            commands::serve::serve(
+                config.as_deref(),
+                config_json.as_deref(),
+                server_type,
+                socket,
+                http,
+                playbook_config.as_deref(),
+                playbook,
+                remote_map,
+                wal_capacity,
+                success_log_retention_secs,
+                error_log_retention_secs,
+                log_dir,
+                input_dir,
+                output_dir,
+                cap,
+                cap_config.as_deref(),
+            )
+            .await
+        }
     }
+}
+
+fn parse_capability_ident(s: &str) -> Result<pyro_artifacts::cargo::CapabilityIdent, String> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 3 {
+        return Err(format!(
+            "Invalid capability identifier '{}'. Must be in format '{{author}}:{{name}}:{{version}}', e.g. 'my_author:my_cap:0.1.0'",
+            s
+        ));
+    }
+    if parts[0].is_empty() || parts[1].is_empty() || parts[2].is_empty() {
+        return Err(format!(
+            "Capability identifier parts cannot be empty. Got '{}'",
+            s
+        ));
+    }
+    Ok(pyro_artifacts::cargo::CapabilityIdent {
+        author: parts[0].to_string(),
+        package: parts[1].to_string(),
+        version: parts[2].to_string(),
+    })
+}
+
+fn parse_playbook_ident(s: &str) -> Result<pyro_artifacts::artifacts::PlaybookIdent, String> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 3 {
+        return Err(format!(
+            "Invalid playbook identifier '{}'. Must be in format '{{author}}:{{package}}:{{version}}', e.g. 'my_author:my_playbook:0.1.0'",
+            s
+        ));
+    }
+    if parts[0].is_empty() || parts[1].is_empty() || parts[2].is_empty() {
+        return Err(format!(
+            "Playbook identifier parts cannot be empty. Got '{}'",
+            s
+        ));
+    }
+    Ok(pyro_artifacts::artifacts::PlaybookIdent {
+        author: parts[0].to_string(),
+        package: parts[1].to_string(),
+        version: parts[2].to_string(),
+    })
+}
+
+fn parse_remote_mapping(
+    s: &str,
+) -> Result<
+    (
+        pyro_artifacts::cargo::CapabilityIdent,
+        pyro_artifacts::cache::RemoteAddress,
+    ),
+    String,
+> {
+    let parts: Vec<&str> = s.split('=').collect();
+    if parts.len() != 2 {
+        return Err(format!(
+            "Invalid remote mapping '{}'. Must be in format '{{author}}:{{package}}:{{version}}={{addr}}'",
+            s
+        ));
+    }
+    let cap_ident = parse_capability_ident(parts[0])?;
+    let addr_str = parts[1];
+    let remote_addr = if let Some(stripped) = addr_str.strip_prefix("tcp://") {
+        pyro_artifacts::cache::RemoteAddress::Tcp(stripped.to_string())
+    } else if let Some(stripped) = addr_str.strip_prefix("unix://") {
+        pyro_artifacts::cache::RemoteAddress::Unix(PathBuf::from(stripped))
+    } else if addr_str.contains(':') {
+        pyro_artifacts::cache::RemoteAddress::Tcp(addr_str.to_string())
+    } else {
+        pyro_artifacts::cache::RemoteAddress::Unix(PathBuf::from(addr_str))
+    };
+    Ok((cap_ident, remote_addr))
 }

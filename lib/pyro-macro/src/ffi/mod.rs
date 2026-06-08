@@ -22,7 +22,7 @@ pub fn generate_interface(
     cap_version: &str,
 ) -> syn::Result<(syn::File, InterfaceSpec<'static>)> {
     let file = parse_file(content)?;
-    let spec = build_spec(&file);
+    let spec = build_spec(cap_name, &file);
     let import_location: syn::Path = syn::parse_quote!(::pyroduct);
 
     let mut generated_code = quote::quote! {
@@ -33,11 +33,9 @@ pub fn generate_interface(
 
     for item in file.items {
         match item {
-            syn::Item::Impl(item_impl) => {
-                if has_attr(&item_impl.attrs, "capability") {
-                    let cap = CapabilityImpl::new(item_impl, true, cap_name, cap_version)?;
-                    generated_code.extend(cap.expand_module());
-                }
+            syn::Item::Impl(item_impl) if has_attr(&item_impl.attrs, "capability") => {
+                let cap = CapabilityImpl::new(item_impl, true, cap_name, cap_version)?;
+                generated_code.extend(cap.expand_module());
             }
             syn::Item::Struct(mut item_struct) => {
                 if let Some(args) = extract_magma_args(&item_struct.attrs)? {
@@ -70,11 +68,9 @@ pub fn generate_capability(
 
     for item in file.items {
         match item {
-            syn::Item::Impl(item_impl) => {
-                if has_attr(&item_impl.attrs, "capability") {
-                    let cap = CapabilityImpl::new(item_impl, true, cap_name, cap_version)?;
-                    generated_code.extend(cap.expand_capability());
-                }
+            syn::Item::Impl(item_impl) if has_attr(&item_impl.attrs, "capability") => {
+                let cap = CapabilityImpl::new(item_impl, true, cap_name, cap_version)?;
+                generated_code.extend(cap.expand_capability());
             }
             syn::Item::Struct(mut item_struct) => {
                 if let Some(args) = extract_magma_args(&item_struct.attrs)? {

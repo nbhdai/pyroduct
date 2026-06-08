@@ -7,7 +7,7 @@ struct CallMessage {
 }
 
 #[pyroduct::module(output = (output, messages))]
-fn process<'a>(input: Vec<CallMessageRef<'_>>) -> anyhow::Result<(String, Vec<CallMessage>)> {
+fn process<'a>(input: Vec<CallMessageRef<'_>>) -> Result<(String, Vec<CallMessage>)> {
     let output = input.first().capture("Empty chat history")?;
     Ok((
         output.message.to_string(),

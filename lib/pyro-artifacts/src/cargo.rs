@@ -9,16 +9,18 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path};
 use toml::Value;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+use crate::artifacts::{CapabilityConfig, PlaybookIdent};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Eq, PartialOrd, Ord, Hash)]
 pub struct CapabilityIdent {
-    pub name: String,
-    pub version: String,
     pub author: String,
+    pub package: String,
+    pub version: String,
 }
 
 impl CapabilityIdent {
     pub fn to_package(self) -> Package<Value> {
-        let mut package = Package::new(self.name, self.version);
+        let mut package = Package::new(self.package, self.version);
         package.authors = Inheritable::Set(vec![self.author]);
         package.edition = Inheritable::Set(Edition::E2024);
         package
@@ -102,11 +104,28 @@ pub enum ManifestError {
     CapabilitySectionMissing,
 }
 
+impl std::fmt::Display for CapabilityIdent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}:{}", self.author, self.package, self.version)
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ResolvedCapability {
+pub struct ConfiguredCapability {
     pub author: String,
     pub package: String,
     pub version: String,
+    pub configuration: CapabilityConfig,
+}
+
+impl ConfiguredCapability {
+    pub fn ident(&self) -> CapabilityIdent {
+        CapabilityIdent {
+            author: self.author.clone(),
+            package: self.package.clone(),
+            version: self.version.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -117,7 +136,7 @@ pub struct ModuleManifest<Metadata = Value> {
     #[serde(default = "default_pyroduct")]
     pub pyroduct: Dependency,
     #[serde(default)]
-    pub capabilities: BTreeMap<String, ResolvedCapability>,
+    pub capabilities: BTreeMap<String, ConfiguredCapability>,
     #[serde(default)]
     pub dependencies: DepsSet,
     #[serde(default)]
@@ -128,9 +147,6 @@ pub struct ModuleManifest<Metadata = Value> {
     pub target: TargetDepsSet,
     #[serde(default)]
     pub features: FeatureSet,
-    #[serde(default)]
-    #[deprecated(note = "Cargo recommends patch instead")]
-    pub replace: DepsSet,
     #[serde(default)]
     pub patch: PatchSet,
     pub lib: Option<Product>,
@@ -148,6 +164,8 @@ pub struct ModuleManifest<Metadata = Value> {
     pub example: Vec<Product>,
     #[serde(default)]
     pub lints: Inheritable<LintGroups>,
+    #[serde(default)]
+    pub interconnect: BTreeMap<String, PlaybookIdent>,
 }
 
 fn default_pyroduct() -> Dependency {
@@ -179,7 +197,7 @@ impl CapabilityManifest {
             .features
             .push("capability".to_string());
         final_deps.insert("pyroduct".to_string(), pyro_dep);
-        final_deps.extend(self.dependencies.shared.clone().into_iter());
+        final_deps.extend(self.dependencies.shared.clone());
         self.augment_deps(&mut final_deps, &self.dependencies.host, true);
         self.augment_deps(&mut final_deps, &self.dependencies.module, true);
         let final_features = self.create_requisite_features(&self.features);
@@ -210,11 +228,12 @@ impl CapabilityManifest {
         let mut final_deps = BTreeMap::new();
 
         // Use a simple version dependency for pyroduct to allow patching by the builder
-        let pyroduct = Dependency::Simple("*".to_string());
+        let mut pyro_dep = self.pyroduct.clone();
+        pyro_dep.detail_mut().features.push("module".to_string());
 
         // 1. Shared Dependencies (Required)
-        final_deps.extend(self.dependencies.shared.clone().into_iter());
-        final_deps.insert("pyroduct".to_string(), pyroduct);
+        final_deps.extend(self.dependencies.shared.clone());
+        final_deps.insert("pyroduct".to_string(), pyro_dep);
 
         // 2. Module Dependencies (Required, NOT optional)
         self.augment_deps(&mut final_deps, &self.dependencies.module, false);
@@ -312,7 +331,7 @@ impl ModuleManifest {
         let mut pyro_dep = self.pyroduct.clone();
         pyro_dep.detail_mut().features.push("module".to_string());
         final_deps.insert("pyroduct".to_string(), pyro_dep);
-        final_deps.extend(self.dependencies.clone().into_iter());
+        final_deps.extend(self.dependencies.clone());
         self.augment_deps(&mut final_deps, &self.capabilities, cache_manager);
 
         #[allow(deprecated)]
@@ -340,7 +359,7 @@ impl ModuleManifest {
     fn augment_deps(
         &self,
         target_map: &mut DepsSet,
-        capabilities: &BTreeMap<String, ResolvedCapability>,
+        capabilities: &BTreeMap<String, ConfiguredCapability>,
         cache_manager: Option<&crate::cache::CacheManager>,
     ) {
         for (name, cap) in capabilities.iter() {
@@ -390,7 +409,7 @@ mod tests {
     fn test_full_transformation() {
         let input_toml = r#"
 [capability]
-name = "my-capability"
+package = "my-capability"
 version = "0.1.0"
 author = "Me"
 
@@ -419,13 +438,13 @@ serde = { version = "1.0", features = ["derive"] }
 
         // Check Host (converted to optional)
         match deps.get("tokio").unwrap() {
-            Dependency::Detailed(d) => assert_eq!(d.optional, true),
+            Dependency::Detailed(d) => assert!(d.optional),
             _ => panic!("tokio should be detailed"),
         }
 
         // Check Shared (remains not optional)
         match deps.get("serde").unwrap() {
-            Dependency::Detailed(d) => assert_eq!(d.optional, false),
+            Dependency::Detailed(d) => assert!(!d.optional),
             _ => panic!("serde should be detailed"),
         }
 

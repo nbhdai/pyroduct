@@ -1,19 +1,18 @@
 use std::io::{BufWriter, Write};
 use std::path::Path;
 use tokio::io::AsyncReadExt;
-use tokio::net::{UnixListener, TcpListener};
+use tokio::net::{TcpListener, UnixListener};
 
 use anyhow::{Context, Result, anyhow};
 use clap::ValueEnum;
 use fs_err as fs;
 
 use pyro_artifacts::cache::CacheManager;
-use pyroduct::format::PyroLogs;
-use pyroduct::pipeline::pipeline::LoadedPipelineConfig;
+use pyroduct::pipeline::factory::LoadedPipelineConfig;
 use pyroduct::{
     PyroRow,
     format::value::arrow::PreBatch,
-    pipeline::{Pipeline, PipelineConfig, PipelinePool},
+    pipeline::{ExecutionRecord, Pipeline, PipelineConfig, PipelinePool},
 };
 
 use pyro_file::{
@@ -72,7 +71,9 @@ pub async fn run_socket(config_path: &Path, socket_addr: &str) -> Result<()> {
     let mut pipeline = factory.build().await?;
 
     if let Ok(addr) = socket_addr.parse::<std::net::SocketAddr>() {
-        let listener = TcpListener::bind(addr).await.context("Failed to bind to TCP socket")?;
+        let listener = TcpListener::bind(addr)
+            .await
+            .context("Failed to bind to TCP socket")?;
         tracing::info!("Listening on TCP socket {}", addr);
 
         loop {
@@ -125,64 +126,46 @@ async fn process_and_print(pipeline: &mut Pipeline, input_json: &str) -> Result<
         serde_json::from_str(input_json).context("Failed to deserialize input JSON to PyroRow")?;
 
     tracing::info!("Executing pipeline...");
-    let result_row = pipeline.process(&input_row).await;
+    let result_row = pipeline.process(0, &input_row).await?;
 
-    if let Some(failure) = &result_row.failure {
-        println!("Pipeline Failed!");
-        match &failure.result {
-            Ok(err) => println!("Error: {}", err),
-            Err(err) => println!("Error: {}", err),
+    match &result_row {
+        ExecutionRecord::Failure { failure, input, .. } => {
+            println!("Pipeline Failed!");
+            match failure {
+                Ok(err) => println!("Error: {:?}", err),
+                Err(err) => println!("Error: {}", err),
+            }
+            println!("Partial Data:\n{:#?}", input);
         }
-        if let Some(last_success) = result_row.steps.last() {
-            println!("Partial Data:\n{:#?}", last_success.row);
+        ExecutionRecord::Success { success, .. } => {
+            println!("Pipeline Succeeded!");
+            println!("Result:\n{:#?}", success);
         }
-    } else if let Some(last_success) = result_row.steps.last() {
-        println!("Pipeline Succeeded!");
-        println!("Result:\n{:#?}", last_success.row);
     }
 
-    let mut has_logs = false;
-    for step in &result_row.steps {
-        if !step.logs.module_logs.is_empty() || !step.logs.capability_logs.is_empty() {
-            has_logs = true;
-            break;
-        }
-    }
-    if let Some(fail) = &result_row.failure {
-        if !fail.logs.module_logs.is_empty() || !fail.logs.capability_logs.is_empty() {
-            has_logs = true;
-        }
-    }
+    let logs = match &result_row {
+        ExecutionRecord::Success { logs, .. } => logs,
+        ExecutionRecord::Failure { logs, .. } => logs,
+    };
+
+    let has_logs = !logs.module_logs.is_empty() || !logs.capability_logs.is_empty();
 
     if has_logs {
         println!("\n=== Logs ===");
-        let print_step_logs = |step_idx: usize, logs: &PyroLogs| {
-            if logs.module_logs.is_empty() && logs.capability_logs.is_empty() {
-                return;
+        if !logs.module_logs.is_empty() {
+            println!("  Module:");
+            for log in &logs.module_logs {
+                println!("    {}", log);
             }
-            println!("Step {}:", step_idx);
-            if !logs.module_logs.is_empty() {
-                println!("  Module:");
-                for log in &logs.module_logs {
-                    println!("    {}", log);
-                }
-            }
-            if !logs.capability_logs.is_empty() {
-                println!("  Capabilities:");
-                for ((lib, cap), cap_logs) in &logs.capability_logs {
-                    println!("    [{lib}::{cap}]");
-                    for log in cap_logs {
-                        println!("      {}", log);
-                    }
-                }
-            }
-        };
-
-        for (i, step) in result_row.steps.iter().enumerate() {
-            print_step_logs(i, &step.logs);
         }
-        if let Some(failure) = &result_row.failure {
-            print_step_logs(result_row.steps.len(), &failure.logs);
+        if !logs.capability_logs.is_empty() {
+            println!("  Capabilities:");
+            for ((lib, cap), cap_logs) in &logs.capability_logs {
+                println!("    [{lib}::{cap}]");
+                for log in cap_logs {
+                    println!("      {}", log);
+                }
+            }
         }
     }
 
@@ -214,45 +197,26 @@ pub async fn run_batch(
         .await?;
 
     for exec in successes.iter().chain(failures.iter()) {
-        let mut all_module_logs = Vec::new();
-        let mut all_cap_logs: std::collections::HashMap<(String, String), Vec<String>> =
-            std::collections::HashMap::new();
+        let logs = match exec {
+            ExecutionRecord::Success { logs, .. } => logs,
+            ExecutionRecord::Failure { logs, .. } => logs,
+        };
 
-        for step in &exec.steps {
-            all_module_logs.extend(step.logs.module_logs.iter().cloned());
-            for (k, v) in &step.logs.capability_logs {
-                all_cap_logs
-                    .entry(k.clone())
-                    .or_default()
-                    .extend(v.iter().cloned());
-            }
-        }
-
-        if let Some(fail) = &exec.failure {
-            all_module_logs.extend(fail.logs.module_logs.iter().cloned());
-            for (k, v) in &fail.logs.capability_logs {
-                all_cap_logs
-                    .entry(k.clone())
-                    .or_default()
-                    .extend(v.iter().cloned());
-            }
-        }
-
-        if !all_module_logs.is_empty() || !all_cap_logs.is_empty() {
+        if !logs.module_logs.is_empty() || !logs.capability_logs.is_empty() {
             let logs_dir = output_dir
                 .join("logs")
-                .join(format!("row_{}", exec.row_index));
+                .join(format!("row_{}", exec.row_index()));
             fs::create_dir_all(&logs_dir)?;
 
-            if !all_module_logs.is_empty() {
-                fs::write(logs_dir.join("module.log"), all_module_logs.join("\n"))?;
+            if !logs.module_logs.is_empty() {
+                fs::write(logs_dir.join("module.log"), logs.module_logs.join("\n"))?;
             }
 
-            for ((lib, cap), logs) in all_cap_logs {
-                if !logs.is_empty() {
+            for ((lib, cap), cap_logs) in &logs.capability_logs {
+                if !cap_logs.is_empty() {
                     fs::write(
                         logs_dir.join(format!("{}_{}.log", lib, cap)),
-                        logs.join("\n"),
+                        cap_logs.join("\n"),
                     )?;
                 }
             }
@@ -271,14 +235,19 @@ pub async fn run_batch(
         let mut writer = BufWriter::new(f);
 
         for fail in failures {
-            let error_msg = match &fail.failure.as_ref().unwrap().result {
-                Ok(cap_err) => cap_err.to_string(),
-                Err(wasm_err) => wasm_err.to_string(),
+            let (error_msg, partial_data) = match &fail {
+                ExecutionRecord::Failure { failure, input, .. } => {
+                    let msg = match &failure {
+                        Ok(cap_err) => cap_err.to_string(),
+                        Err(wasm_err) => wasm_err.to_string(),
+                    };
+                    (msg, input.clone())
+                }
+                _ => unreachable!(),
             };
-            let partial_data = fail.steps.last().map(|s| s.row.clone()).unwrap_or_default();
 
             let entry = serde_json::json!({
-                "row_index": fail.row_index,
+                "row_index": fail.row_index(),
                 "error": error_msg,
                 "partial_data": partial_data
             });
@@ -291,12 +260,17 @@ pub async fn run_batch(
         if !output_dir.exists() {
             fs::create_dir_all(output_dir)?;
         }
-        let schema = successes[0].steps.last().unwrap().row.schema()?;
+        let schema = match &successes[0] {
+            ExecutionRecord::Success { success, .. } => success.schema()?,
+            _ => unreachable!(),
+        };
         let mut prebatch = PreBatch::new(schema);
         for row in successes {
-            prebatch
-                .push(row.steps.last().unwrap().row.clone())
-                .map_err(|e| anyhow!("Row reconstruction failed: {:?}", e))?;
+            if let ExecutionRecord::Success { success, .. } = row {
+                prebatch
+                    .push(success)
+                    .map_err(|e| anyhow!("Row reconstruction failed: {:?}", e))?;
+            }
         }
 
         let output_batch = prebatch

@@ -6,6 +6,8 @@ members = [
     "pyro-file",
     "pyro-spec",
     "pyro-artifacts",
+    "pyro-daemon",
+    "pyro-gui",
 ]
 
 default-members = [
@@ -14,6 +16,8 @@ default-members = [
     "pyro-file",
     "pyro-spec",
     "pyro-artifacts",
+    "pyro-daemon",
+    "pyro-gui",
 ]
 resolver = "2"
 
@@ -42,6 +46,7 @@ thiserror = "2.0.17"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 tracing-test = "0.2.5"
+rusqlite = { version = "0.32.1", features = ["bundled"] }
 
 # Serialization
 rkyv = "0.8.14"
@@ -55,6 +60,8 @@ half = { version = "2.7.1", features = ["serde", "rkyv"] }
 arrow = "57.2.0"
 parquet = "57.2.0"
 arrow-schema = "57.2.0"
+datafusion = "51"
+
 
 # I/O and hashing
 bytes = "1.11.0"
@@ -75,6 +82,7 @@ futures = "0.3.31"
 async-ffi = "0.5.0"
 object = { version = "0.38.1", features = ["macho"] }
 libloading = "0.9.0"
+axum = "0.7.9"
 
 # Macro & Expansion
 cargo_toml = "0.22.3"

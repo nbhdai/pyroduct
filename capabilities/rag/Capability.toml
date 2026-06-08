@@ -1,10 +1,10 @@
 [capability]
 author = "nbhdai"
 version = "0.1.0"
-name = "rag"
+package = "rag"
 
 [pyroduct]
-version = "0.1.0"
+path = "../../lib/pyroduct/"
 
 [dependencies.host]
 reqwest = { version = "0.13.1", features = ["json"] }

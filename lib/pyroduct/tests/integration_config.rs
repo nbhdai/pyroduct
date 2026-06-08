@@ -1,15 +1,14 @@
 use pyro_artifacts::{
-    artifacts::{ModuleDependencies, ModuleSource, Playbook},
-    build::Builder,
+    artifacts::CapabilityConfig,
+    build::{AnonPlaybook, Builder},
     cache::CacheManager,
-    cargo::ResolvedCapability,
 };
 use pyroduct::{PyroRow, pipeline::PipelineConfig};
 use serde_json::json;
 use std::collections::{BTreeMap, HashMap};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
-const CODE: &'static str = r#"
+const CODE: &str = r#"
 //! The behavior of this module changes based on the configuration 
 //! of the linked capability
 
@@ -42,70 +41,92 @@ async fn test_capability_configuration_respect() {
         .init();
     let cache = std::sync::Arc::new(CacheManager::from_env().await.unwrap());
     let builder = Builder::from_env(cache.clone()).await.unwrap();
-    let source = ModuleSource {
-        dependencies: ModuleDependencies {
-            dependencies: BTreeMap::new(),
-            capabilities: vec![ResolvedCapability {
-                package: "config".to_string(),
-                author: "nbhdai".to_string(),
-                version: "0.1.0".to_string(),
-            }],
-        },
+    let source = AnonPlaybook {
+        package: "test_integration_config".to_string(),
+        dependencies: BTreeMap::new(),
+        configurations: vec![pyro_artifacts::cargo::ConfiguredCapability {
+            package: "config".to_string(),
+            author: "nbhdai".to_string(),
+            version: "0.1.0".to_string(),
+            configuration: CapabilityConfig {
+                classes: HashMap::from([(
+                    "transform".to_string(),
+                    Some(json!({
+                        "uppercase": true,
+                        "suffix": "!!!"
+                    })),
+                )]),
+            },
+        }],
         source: CODE.to_string(),
-                ident: None,
+        interconnect: std::collections::BTreeMap::new(),
     };
+    cache
+        .remove_module("anon", "test_integration_config", "0.1.0")
+        .await
+        .unwrap();
 
     let binary = builder
-        .compile(&source)
+        .compile_anon(&source)
         .await
         .expect("Valid module should compile");
 
+    let tmp_dir = tempfile::tempdir().unwrap();
+    let tmp_path = tmp_dir.path().to_path_buf();
+
+    let ident = &binary.spec.ident;
+
     let config = PipelineConfig {
-        playbook: Playbook {
-            hash: binary.hash(),
-            configurations: HashMap::from([(
-                "config".to_string(),
-                Some(json!({
-                    "uppercase": true,
-                    "suffix": "!!!"
-                })),
-            )]),
-        },
-        wal_capacity: 1000,
+        playbook: ident.clone(),
+        remote: HashMap::new(),
+        wal_capacity: 2,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
-        output_dir: std::env::current_dir().unwrap(),
+        input_dir: tmp_path.clone(),
+        output_dir: tmp_path.clone(),
+        log_dir: tmp_path.clone(),
     };
     let config = config.load(&cache).await.unwrap();
     let factory = config.factory().unwrap();
     let mut pipeline = factory.build().await.unwrap();
 
-    let input = PyroRow::from([("input", "hello".into())]);
-    let result = pipeline.process(&input).await;
+    for i in 0..5 {
+        let input = PyroRow::from([("input", format!("hello {}", i).into())]);
+        pipeline.process(i, &input).await.unwrap();
+    }
 
-    for (i, step) in result.steps.iter().enumerate() {
-        println!("--- Step {} logs ---", i);
-        for log in &step.logs.module_logs {
-            println!("{}", log);
-        }
-        for ((cap, ver), logs) in &step.logs.capability_logs {
-            for log in logs {
-                println!("[{} v{}]: {}", cap, ver, log);
-            }
+    // Verify that multiple log files were created due to low wal_capacity
+    let log_files = std::fs::read_dir(&tmp_path)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "pyrolog"))
+        .count();
+    assert!(
+        log_files > 1,
+        "Should have rotated logs, but found only {} file(s)",
+        log_files
+    );
+
+    let input = PyroRow::from([("input", "hello".into())]);
+    let result = pipeline.process(10, &input).await.unwrap();
+
+    let logs = match &result {
+        pyroduct::pipeline::ExecutionRecord::Success { logs, .. } => logs,
+        pyroduct::pipeline::ExecutionRecord::Failure { logs, .. } => logs,
+    };
+
+    println!("--- Logs ---");
+    for log in &logs.module_logs {
+        println!("{}", log);
+    }
+    for ((cap, ver), logs) in &logs.capability_logs {
+        for log in logs {
+            println!("[{} v{}]: {}", cap, ver, log);
         }
     }
 
-    if let Some(failure) = &result.failure {
-        println!("--- Failure logs ---");
-        for log in &failure.logs.module_logs {
-            println!("{}", log);
-        }
-        for ((cap, ver), logs) in &failure.logs.capability_logs {
-            for log in logs {
-                println!("[{} v{}]: {}", cap, ver, log);
-            }
-        }
-        println!("Failure: {:?}", failure.result);
+    if let pyroduct::pipeline::ExecutionRecord::Failure { failure, .. } = &result {
+        println!("Failure: {:?}", failure);
     }
 
     let row = result.row().unwrap();

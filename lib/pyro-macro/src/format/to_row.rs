@@ -22,7 +22,7 @@ pub fn to_row(input: &ItemStruct, import_location: &Path) -> syn::Result<TokenSt
                 }
             }
         };
-        return Ok(TokenStream::from(expanded));
+        return Ok(expanded);
     }
 
     // 5. Generate Field Conversions
@@ -51,5 +51,5 @@ pub fn to_row(input: &ItemStruct, import_location: &Path) -> syn::Result<TokenSt
         }
     };
 
-    Ok(TokenStream::from(expanded))
+    Ok(expanded)
 }

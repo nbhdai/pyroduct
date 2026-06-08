@@ -1,4 +1,5 @@
 use pyroduct::{
+    Capture,
     format::{DeepRef, FromRow, ToRow},
     module,
 };
@@ -10,8 +11,8 @@ struct CallMessage {
 }
 
 #[module(output = (output, messages))]
-fn process<'a>(input: &[CallMessageRef]) -> Result<(String, Vec<CallMessage>), String> {
-    let output = input.first().ok_or("Empty chat history".to_string())?;
+fn process<'a>(input: &[CallMessageRef]) -> Result<(String, Vec<CallMessage>)> {
+    let output = input.first().capture("Empty chat history")?;
     Ok((
         output.message.to_string(),
         vec![

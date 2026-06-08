@@ -165,39 +165,39 @@ pub(crate) fn map_type_to_ref(ty: &Type) -> (TokenStream, bool) {
                     (quote! { #ident }, true)
                 }
                 "Vec" => {
-                    if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                        if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
-                            let (inner_ref, is_prim) = map_type_to_ref(inner_ty);
-                            if is_prim {
-                                return (quote! { &'a [#inner_ref] }, false);
-                            } else {
-                                // For complex types, we return Vec<Ref>
-                                return (quote! { Vec<#inner_ref> }, false);
-                            }
+                    if let PathArguments::AngleBracketed(args) = &segment.arguments
+                        && let Some(GenericArgument::Type(inner_ty)) = args.args.first()
+                    {
+                        let (inner_ref, is_prim) = map_type_to_ref(inner_ty);
+                        if is_prim {
+                            return (quote! { &'a [#inner_ref] }, false);
+                        } else {
+                            // For complex types, we return Vec<Ref>
+                            return (quote! { Vec<#inner_ref> }, false);
                         }
                     }
                     (quote! { Vec<()> }, false)
                 }
                 "Option" => {
-                    if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                        if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
-                            // Recursively map the inner type
+                    if let PathArguments::AngleBracketed(args) = &segment.arguments
+                        && let Some(GenericArgument::Type(inner_ty)) = args.args.first()
+                    {
+                        // Recursively map the inner type
 
-                            // 1. If inner is primitive (i32), Option<i32> is Copy (effectively),
-                            //    so we keep Option<i32>.
-                            if is_primitive(inner_ty) {
-                                return (quote! { Option<#inner_ty> }, true);
-                            }
-
-                            // 2. If inner is string-like (String, Arc<str>), we want Option<&'a str>
-                            if is_string_like(inner_ty) {
-                                return (quote! { Option<&'a str> }, false);
-                            }
-
-                            // 3. Otherwise, map normally (e.g., Option<MyStruct> -> Option<MyStructRef>)
-                            let (inner_ref, _) = map_type_to_ref(inner_ty);
-                            return (quote! { Option<#inner_ref> }, false);
+                        // 1. If inner is primitive (i32), Option<i32> is Copy (effectively),
+                        //    so we keep Option<i32>.
+                        if is_primitive(inner_ty) {
+                            return (quote! { Option<#inner_ty> }, true);
                         }
+
+                        // 2. If inner is string-like (String, Arc<str>), we want Option<&'a str>
+                        if is_string_like(inner_ty) {
+                            return (quote! { Option<&'a str> }, false);
+                        }
+
+                        // 3. Otherwise, map normally (e.g., Option<MyStruct> -> Option<MyStructRef>)
+                        let (inner_ref, _) = map_type_to_ref(inner_ty);
+                        return (quote! { Option<#inner_ref> }, false);
                     }
                     (quote! { Option<()> }, false)
                 }
@@ -437,19 +437,17 @@ fn is_string_like(ty: &Type) -> bool {
         }
 
         // 2. Wrappers (Arc, Box, Cow)
-        if matches!(ident.as_str(), "Arc" | "Box" | "Cow" | "Rc") {
-            if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
-                    // Check if inner is "str"
-                    if let Type::Path(TypePath {
-                        path: inner_path, ..
-                    }) = inner_ty
-                    {
-                        if let Some(inner_seg) = inner_path.segments.last() {
-                            return inner_seg.ident == "str";
-                        }
-                    }
-                }
+        if matches!(ident.as_str(), "Arc" | "Box" | "Cow" | "Rc")
+            && let PathArguments::AngleBracketed(args) = &segment.arguments
+            && let Some(GenericArgument::Type(inner_ty)) = args.args.first()
+        {
+            // Check if inner is "str"
+            if let Type::Path(TypePath {
+                path: inner_path, ..
+            }) = inner_ty
+                && let Some(inner_seg) = inner_path.segments.last()
+            {
+                return inner_seg.ident == "str";
             }
         }
     }

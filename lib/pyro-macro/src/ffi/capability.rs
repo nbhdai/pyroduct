@@ -81,7 +81,6 @@ impl CapabilityImpl {
         // 3. First pass: collect types
         let mut client_tn: Option<Ident> = None;
         let mut config_tn: Option<Ident> = None;
-        let mut error_tn: Option<Type> = None;
 
         let mut init_fn: Option<InitFn> = None;
         let mut reset_fn: Option<ResetFn> = None;
@@ -90,19 +89,14 @@ impl CapabilityImpl {
         let mut other_items = Vec::new();
 
         for item in &input.items {
-            match item {
-                ImplItem::Type(ty) => {
-                    if ty.ident == "Client" {
-                        client_tn = Some(extract_ident_from_type(&ty.ty)?);
-                    } else if ty.ident == "Config" {
-                        config_tn = Some(extract_ident_from_type(&ty.ty)?);
-                    } else if ty.ident == "Error" {
-                        error_tn = Some(ty.ty.clone());
-                    }
-                    // Note: We intentionally do NOT add type aliases to other_items
-                    // because inherent associated types are unstable in Rust
+            if let ImplItem::Type(ty) = item {
+                if ty.ident == "Client" {
+                    client_tn = Some(extract_ident_from_type(&ty.ty)?);
+                } else if ty.ident == "Config" {
+                    config_tn = Some(extract_ident_from_type(&ty.ty)?);
                 }
-                _ => {}
+                // Note: We intentionally do NOT add type aliases to other_items
+                // because inherent associated types are unstable in Rust
             }
         }
 
@@ -116,7 +110,6 @@ impl CapabilityImpl {
             state_tn,
             client_tn,
             config_tn,
-            error_tn,
         });
 
         for item in &input.items {
@@ -317,7 +310,7 @@ impl CapabilityImpl {
         let server_upper = server_snake.to_uppercase();
 
         let class_name_static = format_ident!("p__{}", server_upper);
-        let class_name_string = format!("p__{}", server_snake);
+        let class_name_string = format!("{}", server_snake);
 
         let static_strs: Vec<_> = self
             .methods
@@ -351,8 +344,8 @@ impl CapabilityImpl {
                 ::pyroduct::ffi::guest::logger::init_logging(id, log_callback);
 
                 ::pyroduct::ffi::ClassExport {
-                    name: CAPABILITY_NAME_VERSION.as_ptr(),
-                    name_len: CAPABILITY_NAME_VERSION.len(),
+                    name: #class_name_static.as_ptr(),
+                    name_len: #class_name_static.len(),
                     len: #exports_array_name.len(),
                     ptr: #exports_array_name.as_ptr() as *mut _,
                     init: #init_export,
@@ -376,7 +369,7 @@ impl CapabilityImpl {
     }
 
     fn generate_wasm_imports(&self) -> TokenStream {
-        let cap_id = self.ident.cap_id();
+        let class_id = self.ident.class_name();
         let new_client_decl = self.register_fn.generate_client_wasm();
 
         let method_decls: Vec<_> = self
@@ -388,7 +381,7 @@ impl CapabilityImpl {
         quote! {
             mod wasm {
                 use super::*;
-                #[link(wasm_import_module = #cap_id)]
+                #[link(wasm_import_module = #class_id)]
                 unsafe extern "C" {
                     #new_client_decl
                     #(#method_decls)*
@@ -409,10 +402,10 @@ mod tests {
             impl StatefulServer {
                 type Client = SimpleClient;
 
-                fn new() -> Self { Self }
-                fn reset(&mut self) {}
-                fn register(&self, _client: &SimpleClient) {}
-                fn call(&self, _client: &SimpleClient) -> f32 { 42.0 }
+                fn new() -> Result<Self, CapturedError> { Ok(Self) }
+                fn reset(&mut self) -> Result<(), CapturedError> { Ok(()) }
+                fn register(&self, _client: &SimpleClient) -> Result<(), CapturedError> { Ok(()) }
+                fn call(&self, _client: &SimpleClient) -> Result<f32, CapturedError> { Ok(42.0) }
             }
         };
 
@@ -435,9 +428,9 @@ mod tests {
                 type Config = MyConfig;
                 type Client = SimpleClient;
 
-                fn new(config: Option<MyConfig>) -> Self { Self }
-                fn reset(&mut self) {}
-                fn register(&self, client: &SimpleClient) {}
+                fn new(config: Option<MyConfig>) -> Result<Self, CapturedError> { Ok(Self) }
+                fn reset(&mut self) -> Result<(), CapturedError> { Ok(()) }
+                fn register(&self, client: &SimpleClient) -> Result<(), CapturedError> { Ok(()) }
             }
         };
 
@@ -458,9 +451,9 @@ mod tests {
                 type Config = MyConfig;
                 type Client = SimpleClient;
 
-                fn new(config: Option<OtherConfig>) -> Self { Self }
-                fn reset(&mut self) {}
-                fn register(&self, client: &SimpleClient) {}
+                fn new(config: Option<OtherConfig>) -> Result<Self, CapturedError> { Ok(Self) }
+                fn reset(&mut self) -> Result<(), CapturedError> { Ok(()) }
+                fn register(&self, client: &SimpleClient) -> Result<(), CapturedError> { Ok(()) }
             }
         };
 
@@ -476,9 +469,9 @@ mod tests {
             impl StatefulServer {
                 type Client = SimpleClient;
 
-                async fn new() -> Self { Self }
-                async fn reset(&mut self) {}
-                fn register(&self, client: &SimpleClient) {}
+                async fn new() -> Result<Self, CapturedError> { Ok(Self) }
+                async fn reset(&mut self) -> Result<(), CapturedError> { Ok(()) }
+                fn register(&self, client: &SimpleClient) -> Result<(), CapturedError> { Ok(()) }
             }
         };
 
@@ -490,24 +483,42 @@ mod tests {
     }
 
     #[test]
-    fn test_with_error_type() {
+    fn test_with_error_type_fails() {
         let code = quote! {
             impl StatefulServer {
                 type Client = SimpleClient;
                 type Error = MyError;
 
-                fn new() -> Self { Self }
-                fn reset(&mut self) {}
+                fn new() -> Result<Self, CapturedError> { Ok(Self) }
+                fn reset(&mut self) -> Result<(), CapturedError> { Ok(()) }
                 fn register(&self, client: &SimpleClient) -> Result<(), MyError> { Ok(()) }
-                fn fallible(&self, _client: &SimpleClient) -> Result<u32, MyError> { Ok(42) }
+            }
+        };
+
+        let input: ItemImpl = parse2(code).unwrap();
+        let err = CapabilityImpl::new(input, false, "cap_name", "0.1.0").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Invalid error type. Expected 'CapturedError', found 'MyError'")
+        );
+    }
+
+    #[test]
+    fn test_with_captured_error() {
+        let code = quote! {
+            impl StatefulServer {
+                type Client = SimpleClient;
+
+                fn new() -> Result<Self, CapturedError> { Ok(Self) }
+                fn reset(&mut self) -> Result<(), CapturedError> { Ok(()) }
+                fn register(&self, client: &SimpleClient) -> Result<(), CapturedError> { Ok(()) }
+                fn fallible(&self, _client: &SimpleClient) -> Result<u32, CapturedError> { Ok(42) }
             }
         };
 
         let input: ItemImpl = parse2(code).unwrap();
         let cap = CapabilityImpl::new(input, false, "cap_name", "0.1.0").unwrap();
 
-        assert!(cap.ident.error_tn.is_some());
-        assert!(cap.register_fn.error_type.is_some());
         assert_eq!(cap.methods.len(), 1);
     }
 
@@ -517,10 +528,10 @@ mod tests {
             impl TestServer {
                 type Client = TestClient;
 
-                fn new() -> Self { Self }
-                fn reset(&mut self) {}
-                fn register(&self, client: &TestClient) {}
-                fn get_value(&self, client: &TestClient) -> u32 { 0 }
+                fn new() -> Result<Self, CapturedError> { Ok(Self) }
+                fn reset(&mut self) -> Result<(), CapturedError> { Ok(()) }
+                fn register(&self, client: &TestClient) -> Result<(), CapturedError> { Ok(()) }
+                fn get_value(&self, client: &TestClient) -> Result<u32, CapturedError> { Ok(0) }
             }
         };
 
@@ -531,7 +542,7 @@ mod tests {
 
         let expected = quote! {
             const CAPABILITY_NAME_VERSION: &'static str = "cap_name";
-            const p__TEST_SERVER: &'static str = "p__test_server";
+            const p__TEST_SERVER: &'static str = "test_server";
             const p__TEST_SERVER__GET_VALUE: &'static str = "p__test_server__get_value__wasm";
 
             const p__TEST_SERVER__METHODS: [::pyroduct::ffi::MethodExport; 1usize] = [
@@ -550,8 +561,8 @@ mod tests {
                 ::pyroduct::ffi::guest::logger::init_logging(id, log_callback);
 
                 ::pyroduct::ffi::ClassExport {
-                    name: CAPABILITY_NAME_VERSION.as_ptr(),
-                    name_len: CAPABILITY_NAME_VERSION.len(),
+                    name: p__TEST_SERVER.as_ptr(),
+                    name_len: p__TEST_SERVER.len(),
                     len: p__TEST_SERVER__METHODS.len(),
                     ptr: p__TEST_SERVER__METHODS.as_ptr() as *mut _,
                     init: ::pyroduct::ffi::ClassInitFn::Sync(p__test_server__ffi_init),
@@ -561,6 +572,23 @@ mod tests {
             }
         };
 
+        crate::fmt::assert_code_eq_token(&output, &expected);
+
+        let output = cap.generate_wasm_imports();
+
+        let expected = quote! {
+            mod wasm {
+                use super::*;
+                #[link(wasm_import_module = "test_server")]
+                unsafe extern "C" {
+                    pub fn register(ptr: *const u8) -> *mut u8;
+                    pub fn p__test_server__get_value__wasm(
+                        cs_ptr: *const u8,
+                        in_ptr: *const u8,
+                    ) -> *mut u8;
+                }
+            }
+        };
         crate::fmt::assert_code_eq_token(&output, &expected);
     }
 
@@ -572,11 +600,11 @@ mod tests {
                 type Client = MyClient;
                 type Config = MyConfig;
 
-                fn new(config: Option<MyConfig>) -> Self { Self }
-                fn reset(&mut self) {}
-                fn register(&self, client: &MyClient) {}
-                fn get_info(&self, client: &MyClient) -> u32 { 0 }
-                fn get_other_info(&self, client: &MyClient, data: f32) -> u32 { 0 }
+                fn new(config: Option<MyConfig>) -> Result<Self, CapturedError> { Ok(Self) }
+                fn reset(&mut self) -> Result<(), CapturedError> { Ok(()) }
+                fn register(&self, client: &MyClient) -> Result<(), CapturedError> { Ok(()) }
+                fn get_info(&self, client: &MyClient) -> Result<u32, CapturedError> { Ok(0) }
+                fn get_other_info(&self, client: &MyClient, data: f32) -> Result<u32, CapturedError> { Ok(0) }
             }
         };
 
@@ -591,17 +619,17 @@ mod tests {
         // Checks constructor generation (using rkyv for config) and normal method generation.
         let expected = quote! {
             impl MyClient {
-                pub fn register(self) -> ::pyroduct::wasm::Client<Self> {
-                    ::pyroduct::wasm::Client::<Self>::__register(self, |ptr| unsafe { wasm::register(ptr) })
+                pub fn register(self) -> Result<::pyroduct::wasm::Client<Self>, ::pyroduct::CapturedError> {
+                    ::pyroduct::wasm::Client::<Self>::__register_result(self, |ptr| unsafe { wasm::register(ptr) })
                 }
             }
             pub trait MyClientMethods {
-                fn get_info(&self) -> u32;
-                fn get_other_info(&self, data: f32) -> u32;
+                fn get_info(&self) -> Result<u32, ::pyroduct::CapturedError>;
+                fn get_other_info(&self, data: f32) -> Result<u32, ::pyroduct::CapturedError>;
             }
             impl MyClientMethods for ::pyroduct::wasm::Client<MyClient> {
-                fn get_info(&self) -> u32 {
-                    self.__call_from_wasm::<(), u32, _>(None,
+                fn get_info(&self) -> Result<u32, ::pyroduct::CapturedError> {
+                    self.__call_result_from_wasm::<(), u32, _>(None,
                         |client_state_ptr: *const u8,
                             input_ptr: *const u8| {
                             unsafe {
@@ -613,8 +641,8 @@ mod tests {
                         })
                 }
 
-                fn get_other_info(&self, data: f32) -> u32 {
-                    self.__call_from_wasm::<
+                fn get_other_info(&self, data: f32) -> Result<u32, ::pyroduct::CapturedError> {
+                    self.__call_result_from_wasm::<
                         f32,
                         u32,
                         _,
@@ -642,16 +670,15 @@ mod tests {
         let code = quote! {
             impl AdvancedStruct {
                 type Client = AdvancedClient;
-                type Error = MyError;
 
-                fn new() -> Self { Self }
-                fn reset(&mut self) {}
+                fn new() -> Result<Self, CapturedError> { Ok(Self) }
+                fn reset(&mut self) -> Result<(), CapturedError> { Ok(()) }
 
-                fn register(&self, client: &AdvancedClient) -> Result<(), MyError> {
+                fn register(&self, client: &AdvancedClient) -> Result<(), CapturedError> {
                     Ok(())
                 }
 
-                async fn process(&self, client: &AdvancedClient, val: u32, flag: bool) -> Result<u32, MyError> {
+                async fn process(&self, client: &AdvancedClient, val: u32, flag: bool) -> Result<u32, CapturedError> {
                     Ok(val)
                 }
             }
@@ -665,19 +692,19 @@ mod tests {
         let output = cap.generate_client_impl();
 
         // 4. Define Expected Output
-        // - new_client constructor should return Result<Self, MyError>.
-        // - process method should define an input struct and return Result<u32, MyError>.
+        // - new_client constructor should return Result<Self, CapturedError>.
+        // - process method should define an input struct and return Result<u32, CapturedError>.
         let expected = quote! {
             impl AdvancedClient {
-                pub fn register(self) -> Result<::pyroduct::wasm::Client<Self>, MyError> {
-                    ::pyroduct::wasm::Client::<Self>::__register_result::<MyError, _>(self, |ptr| unsafe { wasm::register(ptr) })
+                pub fn register(self) -> Result<::pyroduct::wasm::Client<Self>, ::pyroduct::CapturedError> {
+                    ::pyroduct::wasm::Client::<Self>::__register_result(self, |ptr| unsafe { wasm::register(ptr) })
                 }
             }
             pub trait AdvancedClientMethods {
-                fn process(&self, val: u32, flag: bool) -> Result<u32, MyError>;
+                fn process(&self, val: u32, flag: bool) -> Result<u32, ::pyroduct::CapturedError>;
             }
             impl AdvancedClientMethods for ::pyroduct::wasm::Client<AdvancedClient> {
-                fn process(&self, val: u32, flag: bool) -> Result<u32, MyError> {
+                fn process(&self, val: u32, flag: bool) -> Result<u32, ::pyroduct::CapturedError> {
                     #[::pyroduct::magma]
                     struct p__AdvancedStruct__Process__Input {
                         pub val: u32,
@@ -687,7 +714,6 @@ mod tests {
                     self.__call_result_from_wasm::<
                         p__AdvancedStruct__Process__Input,
                         u32,
-                        MyError,
                         _
                     >(
                         Some(&p__AdvancedStruct__Process__Input { val, flag }),

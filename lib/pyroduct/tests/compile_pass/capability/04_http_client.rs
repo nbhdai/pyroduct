@@ -15,18 +15,19 @@ pub struct HttpServer {
 impl HttpServer {
     type Client = HttpClient;
     type Config = HttpConfig;
-    type Error = String;
 
-    async fn new(config: Option<HttpConfig>) -> Self {
+    async fn new(config: Option<HttpConfig>) -> Result<Self> {
         let config = config.unwrap_or(HttpConfig { timeout_ms: 30000 });
-        Self {
+        Ok(Self {
             timeout: std::time::Duration::from_millis(config.timeout_ms),
-        }
+        })
     }
 
-    async fn reset(&mut self) {}
+    async fn reset(&mut self) -> Result<()> {
+        Ok(())
+    }
 
-    fn register(&self, _client: &HttpClient) -> Result<(), String> {
+    fn register(&self, _client: &HttpClient) -> Result<(), pyroduct::CapturedError> {
         Ok(())
     }
 
@@ -36,7 +37,7 @@ impl HttpServer {
         url: String,
         body: String,
         _len: u64,
-    ) -> Result<String, String> {
+    ) -> Result<String, pyroduct::CapturedError> {
         Ok(format!("POST {} bytes to {}", body.len(), url))
     }
 }

@@ -28,11 +28,11 @@ pub enum PyroError {
     IncorrectParse(DataStatus),
 
     #[error("Bad header in an FFI context: {0}")]
-    HeaderFfi(Box<CapturedError>),
+    HeaderFfi(CapturedError),
 
     /// The remote code panicked and we captured it here
     #[error("Remote Code Panic: {0}")]
-    CodePanic(Box<CapturedError>),
+    CodePanic(CapturedError),
 
     /// A pyro/transport error with origin and kind.
     #[error("{origin} {kind}")]
@@ -44,8 +44,11 @@ pub enum PyroError {
     #[error("Bad header: {0}")]
     Header(#[from] ParseError),
 
-    #[error("unknown status code: {0}")]
+    #[error("not found: {0}")]
     NotFound(String),
+
+    #[error("not permitted: {0}")]
+    NotPermitted(String),
 }
 
 impl PyroError {
@@ -87,12 +90,21 @@ impl PyroError {
         )
     }
 
+    pub fn not_found<S: std::fmt::Display>(missing: S) -> Self {
+        Self::NotFound(missing.to_string())
+    }
+
+    pub fn not_permitted<S: std::fmt::Display>(msg: S) -> Self {
+        Self::NotPermitted(msg.to_string())
+    }
+
     /// Returns true if this error originated remotely.
     pub fn library(&self) -> Option<&LibraryInfo<'static>> {
         match self {
             PyroError::IncorrectParse(_) => library(),
             PyroError::Header(_) => library(),
             PyroError::NotFound(_) => library(),
+            PyroError::NotPermitted(_) => library(),
             PyroError::HeaderFfi(captured_error) => captured_error.library.as_ref(),
             PyroError::CodePanic(captured_error) => captured_error.library.as_ref(),
             PyroError::Pyro { kind, .. } => match kind {
@@ -105,6 +117,8 @@ impl PyroError {
                 ErrorKind::InvalidHeader => library(),
                 ErrorKind::LayoutError => library(),
                 ErrorKind::UnexpectedEof => library(),
+                ErrorKind::NotFound(_) => library(),
+                ErrorKind::NotPermitted(_) => library(),
             },
         }
     }
@@ -120,14 +134,14 @@ impl PyroError {
 // Todo: make this capture the stack and library and all that
 impl From<std::io::Error> for PyroError {
     fn from(err: std::io::Error) -> Self {
-        Self::local(ErrorKind::Io(CapturedError::new(err).into()))
+        Self::local(ErrorKind::Io(CapturedError::new(err)))
     }
 }
 
 // Todo: make this capture the stack and library and all that
 impl From<std::str::Utf8Error> for PyroError {
     fn from(err: std::str::Utf8Error) -> Self {
-        Self::local(ErrorKind::Utf8(CapturedError::new(err).into()))
+        Self::local(ErrorKind::Utf8(CapturedError::new(err)))
     }
 }
 
@@ -152,6 +166,7 @@ impl fmt::Debug for PyroError {
                 .field("kind", kind)
                 .finish(),
             Self::NotFound(arg0) => f.debug_tuple("NotFound").field(arg0).finish(),
+            Self::NotPermitted(arg0) => f.debug_tuple("NotPermitted").field(arg0).finish(),
         }
     }
 }
@@ -168,29 +183,32 @@ impl fmt::Display for ErrorOrigin {
 /// The specific kind of pyro/transport error that occurred.
 #[derive(Debug)]
 pub enum ErrorKind {
+    NotFound(String),
     /// Failed to serialize data.
-    Serialization(Box<CapturedError>),
+    Serialization(CapturedError),
     /// Failed to deserialize data.
-    Deserialization(Box<CapturedError>),
+    Deserialization(CapturedError),
     /// Failed to validate archived data.
-    Validation(Box<CapturedError>),
+    Validation(CapturedError),
     /// Generic transport failure.
-    Transport(Box<CapturedError>),
+    Transport(CapturedError),
     /// I/O error.
-    Io(Box<CapturedError>),
+    Io(CapturedError),
     /// UTF-8 decoding error.
-    Utf8(Box<CapturedError>),
+    Utf8(CapturedError),
     /// Header was invalid
     InvalidHeader,
     /// Layout/capacity calculation failed.
     LayoutError,
     /// Stream ended unexpectedly.
     UnexpectedEof,
+    NotPermitted(String),
 }
 
 impl ErrorKind {
     pub fn to_status(&self) -> ErrorStatus {
         match self {
+            ErrorKind::NotFound(_) => ErrorStatus::NotFound,
             ErrorKind::Serialization(_) => ErrorStatus::Serialization,
             ErrorKind::Deserialization(_) => ErrorStatus::Deserialization,
             ErrorKind::Validation(_) => ErrorStatus::Validation,
@@ -200,6 +218,7 @@ impl ErrorKind {
             ErrorKind::InvalidHeader => ErrorStatus::InvalidHeader,
             ErrorKind::LayoutError => ErrorStatus::LayoutError,
             ErrorKind::UnexpectedEof => ErrorStatus::UnexpectedEof,
+            ErrorKind::NotPermitted(_) => ErrorStatus::NotPermitted,
         }
     }
 }
@@ -207,6 +226,7 @@ impl ErrorKind {
 /// The specific kind of pyro/transport error that occurred.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorStatus {
+    NotFound,
     Serialization,
     Deserialization,
     Validation,
@@ -216,11 +236,13 @@ pub enum ErrorStatus {
     InvalidHeader,
     LayoutError,
     UnexpectedEof,
+    NotPermitted,
 }
 
 impl ErrorStatus {
     pub fn to_local(&self) -> DataStatus {
         match self {
+            ErrorStatus::NotFound => DataStatus::LocalNotFound,
             ErrorStatus::Serialization => DataStatus::LocalSerialization,
             ErrorStatus::Deserialization => DataStatus::LocalDeserialization,
             ErrorStatus::Validation => DataStatus::LocalValidation,
@@ -230,11 +252,13 @@ impl ErrorStatus {
             ErrorStatus::InvalidHeader => DataStatus::LocalInvalidHeader,
             ErrorStatus::LayoutError => DataStatus::LocalLayoutError,
             ErrorStatus::UnexpectedEof => DataStatus::LocalUnexpectedEof,
+            ErrorStatus::NotPermitted => DataStatus::LocalNotPermitted,
         }
     }
 
     pub fn to_remote(&self) -> DataStatus {
         match self {
+            ErrorStatus::NotFound => DataStatus::RemoteNotFound,
             ErrorStatus::Serialization => DataStatus::RemoteSerialization,
             ErrorStatus::Deserialization => DataStatus::RemoteDeserialization,
             ErrorStatus::Validation => DataStatus::RemoteValidation,
@@ -244,6 +268,7 @@ impl ErrorStatus {
             ErrorStatus::InvalidHeader => DataStatus::RemoteInvalidHeader,
             ErrorStatus::LayoutError => DataStatus::RemoteLayoutError,
             ErrorStatus::UnexpectedEof => DataStatus::RemoteUnexpectedEof,
+            ErrorStatus::NotPermitted => DataStatus::RemoteNotPermitted,
         }
     }
 }
@@ -251,6 +276,7 @@ impl ErrorStatus {
 impl fmt::Display for ErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ErrorKind::NotFound(msg) => write!(f, "not found: {}", msg),
             ErrorKind::Serialization(e) => write!(f, "serialization error: {}", e),
             ErrorKind::Deserialization(e) => write!(f, "deserialization error: {}", e),
             ErrorKind::Validation(e) => write!(f, "validation error: {}", e),
@@ -260,37 +286,42 @@ impl fmt::Display for ErrorKind {
             ErrorKind::InvalidHeader => write!(f, "invalid header"),
             ErrorKind::LayoutError => write!(f, "layout/capacity error"),
             ErrorKind::UnexpectedEof => write!(f, "unexpected end of stream"),
+            ErrorKind::NotPermitted(msg) => write!(f, "not permitted: {}", msg),
         }
     }
 }
 
 // Convenience constructors for common local errors
 impl PyroError {
-    pub fn serialization(err: impl Into<Box<CapturedError>>) -> Self {
+    pub fn remote_code(err: impl Into<CapturedError>) -> Self {
+        Self::CodePanic(err.into())
+    }
+
+    pub fn serialization(err: impl Into<CapturedError>) -> Self {
         Self::local(ErrorKind::Serialization(err.into()))
     }
 
-    pub fn deserialization(err: impl Into<Box<CapturedError>>) -> Self {
+    pub fn deserialization(err: impl Into<CapturedError>) -> Self {
         Self::local(ErrorKind::Deserialization(err.into()))
     }
 
-    pub fn validation(err: impl Into<Box<CapturedError>>) -> Self {
+    pub fn validation(err: impl Into<CapturedError>) -> Self {
         Self::local(ErrorKind::Validation(err.into()))
     }
 
-    pub fn transport(err: impl Into<Box<CapturedError>>) -> Self {
+    pub fn transport(err: impl Into<CapturedError>) -> Self {
         Self::local(ErrorKind::Transport(err.into()))
     }
 
-    pub fn local_io(err: impl Into<Box<CapturedError>>) -> Self {
+    pub fn local_io(err: impl Into<CapturedError>) -> Self {
         Self::local(ErrorKind::Io(err.into()))
     }
 
-    pub fn remote_io(err: impl Into<Box<CapturedError>>) -> Self {
+    pub fn remote_io(err: impl Into<CapturedError>) -> Self {
         Self::remote(ErrorKind::Io(err.into()))
     }
 
-    pub fn remote_utf8(err: impl Into<Box<CapturedError>>) -> Self {
+    pub fn remote_utf8(err: impl Into<CapturedError>) -> Self {
         Self::remote(ErrorKind::Utf8(err.into()))
     }
 

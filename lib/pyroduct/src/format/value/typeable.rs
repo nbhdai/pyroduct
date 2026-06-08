@@ -150,10 +150,10 @@ impl<T: Typeable> Typeable for Vec<T> {
     fn pyro_type() -> PyroType<'static> {
         // If it is a primitive and NOT nullable (e.g. Vec<i32>), use optimized PrimitiveList.
         // If it is nullable (e.g. Vec<Option<i32>>), we must use the generic List.
-        if let Some(prim) = T::primitive_data_type() {
-            if !T::is_nullable() {
-                return PyroType::PrimitiveList(prim);
-            }
+        if let Some(prim) = T::primitive_data_type()
+            && !T::is_nullable()
+        {
+            return PyroType::PrimitiveList(prim);
         }
 
         PyroType::List(Box::new(T::pyro_type()), T::is_nullable())
@@ -169,10 +169,10 @@ impl<T: Typeable> Typeable for Vec<T> {
 /// Maps to `List` (generic) otherwise, as `PyroType` does not support fixed lists of complex types.
 impl<T: Typeable, const N: usize> Typeable for [T; N] {
     fn pyro_type() -> PyroType<'static> {
-        if let Some(prim) = T::primitive_data_type() {
-            if !T::is_nullable() {
-                return PyroType::PrimitiveFixedList(prim, N);
-            }
+        if let Some(prim) = T::primitive_data_type()
+            && !T::is_nullable()
+        {
+            return PyroType::PrimitiveFixedList(prim, N);
         }
 
         // Fallback for complex types (e.g. [String; 4])

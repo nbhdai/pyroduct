@@ -32,6 +32,8 @@ use syn::{Attribute, Expr, Fields, Lit, Meta};
 pub struct SchemaBuilder {
     /// Struct name → list of (field_name, field_type, field_doc).
     structs: HashMap<String, StructEntry>,
+    /// Foreign struct name → PyroSchema.
+    foreign_structs: HashMap<String, PyroSchema<'static>>,
 }
 
 struct StructEntry {
@@ -64,7 +66,26 @@ impl SchemaBuilder {
                 structs.insert(name, StructEntry { doc, fields });
             }
         }
-        Self { structs }
+        Self {
+            structs,
+            foreign_structs: HashMap::new(),
+        }
+    }
+
+    pub fn with_foreign_specs(
+        mut self,
+        dep_interfaces: &[pyro_spec::InterfaceSpec<'static>],
+    ) -> Self {
+        for spec in dep_interfaces {
+            for (struct_name, schema) in &spec.structs {
+                self.foreign_structs.insert(struct_name.to_string(), schema.clone());
+            }
+        }
+        self
+    }
+
+    pub fn struct_names(&self) -> Vec<String> {
+        self.structs.keys().cloned().collect()
     }
 
     fn collect_fields(fields: &Fields) -> Vec<FieldEntry> {
@@ -223,16 +244,39 @@ impl SchemaBuilder {
 
                     // --- User-defined struct (look up in registry) ---
                     other => {
-                        if visited.contains(&other.to_string()) {
-                            // Cycle guard — return empty group
-                            return PyroType::Group(Cow::Owned(vec![]));
+                        let mut entry_opt = self.structs.get(other);
+                        let mut resolved_name = other;
+                        if entry_opt.is_none() && other.ends_with("Ref") {
+                            let stripped = &other[..other.len() - 3];
+                            if let Some(entry) = self.structs.get(stripped) {
+                                entry_opt = Some(entry);
+                                resolved_name = stripped;
+                            }
                         }
-                        if let Some(entry) = self.structs.get(other) {
-                            visited.push(other.to_string());
+
+                        if let Some(entry) = entry_opt {
+                            if visited.contains(&resolved_name.to_string()) {
+                                // Cycle guard — return empty group
+                                return PyroType::Group(Cow::Owned(vec![]));
+                            }
+                            visited.push(resolved_name.to_string());
                             let fields = self.resolve_fields_inner(&entry.fields, visited);
                             visited.pop();
                             PyroType::Group(Cow::Owned(fields))
                         } else {
+                            // Try foreign structs
+                            let base_name = if other.ends_with("Ref") {
+                                &other[..other.len() - 3]
+                            } else {
+                                other
+                            };
+
+                            if let Some(schema) = self.foreign_structs.get(base_name) {
+                                return PyroType::Group(Cow::Owned(
+                                    schema.fields.iter().map(|f| f.clone().into_owned()).collect(),
+                                ));
+                            }
+
                             // Unknown struct — opaque group
                             PyroType::Group(Cow::Owned(vec![]))
                         }
@@ -251,19 +295,19 @@ impl SchemaBuilder {
 // =============================================================================
 
 fn is_option_type(ty: &syn::Type) -> bool {
-    if let syn::Type::Path(type_path) = ty {
-        if let Some(seg) = type_path.path.segments.last() {
-            return seg.ident == "Option";
-        }
+    if let syn::Type::Path(type_path) = ty
+        && let Some(seg) = type_path.path.segments.last()
+    {
+        return seg.ident == "Option";
     }
     false
 }
 
 fn extract_single_generic_arg(segment: &syn::PathSegment) -> Option<&syn::Type> {
-    if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-        if let Some(syn::GenericArgument::Type(ty)) = args.args.first() {
-            return Some(ty);
-        }
+    if let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+        && let Some(syn::GenericArgument::Type(ty)) = args.args.first()
+    {
+        return Some(ty);
     }
     None
 }
@@ -283,14 +327,12 @@ fn extract_two_generic_args(segment: &syn::PathSegment) -> Option<(&syn::Type, &
 fn extract_doc_string(attrs: &[Attribute]) -> Option<String> {
     let mut lines = Vec::new();
     for attr in attrs {
-        if attr.path().is_ident("doc") {
-            if let Meta::NameValue(nv) = &attr.meta {
-                if let Expr::Lit(expr_lit) = &nv.value {
-                    if let Lit::Str(lit_str) = &expr_lit.lit {
-                        lines.push(lit_str.value().trim().to_string());
-                    }
-                }
-            }
+        if attr.path().is_ident("doc")
+            && let Meta::NameValue(nv) = &attr.meta
+            && let Expr::Lit(expr_lit) = &nv.value
+            && let Lit::Str(lit_str) = &expr_lit.lit
+        {
+            lines.push(lit_str.value().trim().to_string());
         }
     }
     if lines.is_empty() {

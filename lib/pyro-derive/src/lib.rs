@@ -165,8 +165,13 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
         Ok(attrs) => attrs,
         Err(error) => return error.to_compile_error().into(),
     };
-
-    pyro_macro::module::expand(attrs, input_fn)
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
+    if attrs.session {
+        pyro_macro::module::expand_session(attrs, input_fn)
+            .unwrap_or_else(|e| e.to_compile_error())
+            .into()
+    } else {
+        pyro_macro::module::expand(attrs, input_fn)
+            .unwrap_or_else(|e| e.to_compile_error())
+            .into()
+    }
 }

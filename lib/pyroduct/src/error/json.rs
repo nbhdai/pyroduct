@@ -47,21 +47,13 @@ impl PyroError {
                     } else {
                         let half = CONTEXT_WINDOW / 2;
                         // Try to center
-                        let mut s = if error_idx > half {
-                            error_idx - half
-                        } else {
-                            0
-                        };
+                        let mut s = error_idx.saturating_sub(half);
                         let mut e = s + CONTEXT_WINDOW;
 
                         // Clamp to end
                         if e > char_count {
                             e = char_count;
-                            s = if e > CONTEXT_WINDOW {
-                                e - CONTEXT_WINDOW
-                            } else {
-                                0
-                            };
+                            s = e.saturating_sub(CONTEXT_WINDOW);
                         }
                         (s, e, error_idx - s)
                     };

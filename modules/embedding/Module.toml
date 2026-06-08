@@ -1,11 +1,11 @@
 [module]
-name = "embedding"
+package = "embedding"
 version = "0.1.0"
 author = "nbhdai"
 
 
 [pyroduct]
-version = "0.1.0"
+path = "../../lib/pyroduct/"
 
 [capabilities]
 

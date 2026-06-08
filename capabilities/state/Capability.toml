@@ -1,10 +1,10 @@
 [capability]
-name = "state"
+package = "state"
 version = "0.1.0"
 author = "nbhdai"
 
 [pyroduct]
-version = "0.1.0"
+path = "../../lib/pyroduct/"
 
 [dependencies.host]
 

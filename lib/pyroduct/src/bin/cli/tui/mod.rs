@@ -17,8 +17,8 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use pyro_artifacts::{build::Builder, cache::CacheManager, cargo::ResolvedCapability};
-use pyroduct::pipeline::{PipelinePool, wasm_execute::PipelineExecution};
+use pyro_artifacts::{build::Builder, cache::CacheManager, cargo::CapabilityIdent};
+use pyroduct::pipeline::{PipelinePool, normal::PipelineExecution};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
@@ -56,7 +56,7 @@ pub struct SourcePipeline {
     pub source: String,
     pub compile_error: Option<String>,
     #[serde(default)]
-    pub capabilities: HashMap<ResolvedCapability, Option<serde_json::Value>>,
+    pub capabilities: HashMap<CapabilityIdent, Option<serde_json::Value>>,
     #[serde(default = "default_wal_capacity")]
     pub wal_capacity: usize,
     #[serde(default = "default_success_retention")]
@@ -90,7 +90,9 @@ pub struct App {
 impl App {
     pub async fn load(yaml_path: &Path, input_path: &Path) -> Result<Self> {
         let cache = Arc::new(CacheManager::from_env().await?);
-        let builder = Builder::from_env(cache.clone()).await.context("Failed to initialize builder")?;
+        let builder = Builder::from_env(cache.clone())
+            .await
+            .context("Failed to initialize builder")?;
 
         let tui_path = yaml_path.with_extension("tui.json");
         let pipelines: Vec<SourcePipeline> = if tui_path.exists() {
@@ -115,11 +117,18 @@ impl App {
 
             let mut pipelines = Vec::new();
             for (name, pipeline_config) in configs {
-                let playbook = pipeline_config.playbook;
-                if let Ok(source_module) = cache.get_source(&playbook.hash).await {
+                if let Ok(source_module) = cache.get_named_source(&pipeline_config.playbook.author, &pipeline_config.playbook.package, &pipeline_config.playbook.version).await {
                     let mut capabilities = HashMap::new();
-                    for cap in source_module.dependencies.capabilities {
-                        let config = playbook.configurations.get(&cap.package).cloned().flatten();
+                    let binary = cache.get_named_binary(&pipeline_config.playbook.author, &pipeline_config.playbook.package, &pipeline_config.playbook.version).await.ok();
+                    for cap in source_module.dependencies().capabilities {
+                        let config = binary
+                            .as_ref()
+                            .and_then(|bin| {
+                                bin.configurations
+                                    .iter()
+                                    .find(|c| c.author == cap.author && c.package == cap.package && c.version == cap.version)
+                            })
+                            .and_then(|cap_cfg| cap_cfg.configuration.classes.values().next().cloned().flatten());
                         capabilities.insert(cap, config);
                     }
                     pipelines.push(SourcePipeline {
@@ -225,45 +234,67 @@ impl App {
 
     async fn run_pipeline_inner(&mut self) -> Result<()> {
         let mut pipelines = Vec::new();
-        let output_dir = self.pipeline.yaml_path.parent().unwrap_or(Path::new("."));
+        let root_dir = self.pipeline.yaml_path.parent().unwrap_or(Path::new("."));
+        let output_dir = root_dir.join("output");
+        let input_dir = root_dir.join("input");
+        let log_dir = root_dir.join("log");
 
         for (i, source_pipeline) in self.pipeline.pipelines.iter().enumerate() {
-            let mut configurations: HashMap<String, Option<serde_json::Value>> = HashMap::new();
+            let mut configurations = Vec::new();
             let mut capabilities = Vec::new();
 
             for (cap, config) in &source_pipeline.capabilities {
                 capabilities.push(cap.clone());
-                configurations.insert(cap.package.clone(), config.clone());
+
+                let mut class_name = format!("{}Client", cap.package); // standard fallback
+                if let Ok(json) = self
+                    .cache
+                    .capability_interface_spec(&cap.author, &cap.package, &cap.version)
+                    .await
+                {
+                    if let Ok(spec) = serde_json::from_str::<pyro_spec::InterfaceSpec>(&json) {
+                        if let Some(cls) = spec.classes.first() {
+                            class_name = cls.name.to_string();
+                        }
+                    }
+                }
+
+                let cap_config = pyro_artifacts::artifacts::CapabilityConfig {
+                    classes: HashMap::from([(class_name, config.clone())]),
+                };
+                configurations.push(pyro_artifacts::cargo::ConfiguredCapability {
+                    author: cap.author.clone(),
+                    package: cap.package.clone(),
+                    version: cap.version.clone(),
+                    configuration: cap_config,
+                });
             }
 
-            let dependencies = pyro_artifacts::artifacts::ModuleDependencies {
+            let playbook = pyro_artifacts::build::AnonPlaybook {
+                package: source_pipeline.name.clone(),
                 dependencies: std::collections::BTreeMap::new(),
-                capabilities,
-            };
-
-            let module_source = pyro_artifacts::artifacts::ModuleSource {
-                dependencies,
+                configurations,
                 source: source_pipeline.source.clone(),
-                ident: None,
+                interconnect: std::collections::BTreeMap::new(),
             };
 
             let binary = self
                 .builder
-                .compile(&module_source)
+                .compile_anon(&playbook)
                 .await
                 .context(format!("Compilation failed for pipeline {}", i))?;
 
-            let playbook = pyro_artifacts::artifacts::Playbook {
-                hash: binary.hash(),
-                configurations,
-            };
+            let ident = &binary.spec.ident;
 
             let pipeline_config = pyroduct::pipeline::PipelineConfig {
-                playbook,
+                playbook: ident.clone(),
+                remote: HashMap::new(),
                 wal_capacity: source_pipeline.wal_capacity,
                 success_log_retention_secs: source_pipeline.success_log_retention_secs,
                 error_log_retention_secs: source_pipeline.error_log_retention_secs,
                 output_dir: output_dir.to_path_buf(),
+                input_dir: input_dir.to_path_buf(),
+                log_dir: log_dir.to_path_buf(),
             };
 
             let loaded = pipeline_config
@@ -280,7 +311,7 @@ impl App {
 
         let mut all_executions = successes;
         all_executions.extend(failures);
-        all_executions.sort_by_key(|e| e.row_index);
+        all_executions.sort_by_key(|e| e.row_index());
         self.pipeline.execution = all_executions;
 
         // If currently viewing the output table, refresh it seamlessly
@@ -500,11 +531,15 @@ async fn handle_event(app: &mut App) -> Result<()> {
 
                         // Proactively refresh config if that tab is visible
                         if mv.bottom_tab == module::BottomTab::Config {
-                            mv.cap_config.refresh_available_caps(app.cache.as_ref()).await;
+                            mv.cap_config
+                                .refresh_available_caps(app.cache.as_ref())
+                                .await;
                             if mv.cap_config.selected_tab < mv.cap_config.editors.len() {
                                 let name =
                                     mv.cap_config.editors[mv.cap_config.selected_tab].0.clone();
-                                mv.cap_config.load_interface(app.cache.as_ref(), &name).await;
+                                mv.cap_config
+                                    .load_interface(app.cache.as_ref(), &name)
+                                    .await;
                             }
                         }
                     }

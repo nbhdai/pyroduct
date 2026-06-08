@@ -1,8 +1,9 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use wasmtime::{ExternType, Instance, Module, Store, TypedFunc, ValType};
 
 use crate::module::WasmError;
+use crate::module::interconnect::PlaybookInterconnect;
 
 // ---------------------------------------------------------------------------
 // PyroModule — validated wrapper around wasmtime::Module
@@ -119,9 +120,10 @@ impl PyroModule {
                 match import.ty() {
                     ExternType::Func(func_type) => {
                         if func_type.params().len() != 1 {
-                            return Err(WasmError::SignatureMismatch(format!(
+                            return Err(WasmError::SignatureMismatch(
                                 "Register function didn't have the correct number of parameters"
-                            )));
+                                    .to_string(),
+                            ));
                         }
                         if !matches!(func_type.param(0), Some(ValType::I32)) {
                             return Err(WasmError::SignatureMismatch(format!(
@@ -131,20 +133,21 @@ impl PyroModule {
                         }
 
                         if func_type.results().len() != 1 {
-                            return Err(WasmError::SignatureMismatch(format!(
+                            return Err(WasmError::SignatureMismatch(
                                 "Register function didn't have the correct number of returns"
-                            )));
+                                    .to_string(),
+                            ));
                         }
                         if !matches!(func_type.result(0), Some(ValType::I32)) {
-                            return Err(WasmError::SignatureMismatch(format!(
-                                "Register function didn't return a pointer"
-                            )));
+                            return Err(WasmError::SignatureMismatch(
+                                "Register function didn't return a pointer".to_string(),
+                            ));
                         }
                     }
                     _ => {
-                        return Err(WasmError::SignatureMismatch(format!(
-                            "Register function didn't return a pointer"
-                        )));
+                        return Err(WasmError::SignatureMismatch(
+                            "Register function didn't return a pointer".to_string(),
+                        ));
                     }
                 }
                 pyro_classes.push(import.module().to_string());
@@ -203,6 +206,17 @@ pub(crate) struct PyroMethods {
     new_input: TypedFunc<i32, i32>,
     _grow_input: TypedFunc<(i32, i32), i32>,
     free_output: TypedFunc<i32, ()>,
+    new_session_input: TypedFunc<(i32, i32), i32>,
+    new_session_output: TypedFunc<(i32, i32), i32>,
+    borrow_session_input: TypedFunc<(i32, i32), i32>,
+    borrow_session_output: TypedFunc<(i32, i32), i32>,
+    _grow_session_input: TypedFunc<(i32, i32), i32>,
+    _grow_session_output: TypedFunc<(i32, i32), i32>,
+    session_input_length: TypedFunc<i32, i32>,
+    session_output_length: TypedFunc<i32, i32>,
+    free_session: TypedFunc<i32, ()>,
+    lend_error: Option<TypedFunc<(), i32>>,
+    free_error: Option<TypedFunc<(), ()>>,
     last_error: Option<anyhow::Error>,
 }
 
@@ -215,6 +229,44 @@ impl PyroMethods {
     /// The `free_output` typed function handle.
     pub fn free_output(&self) -> TypedFunc<i32, ()> {
         self.free_output.clone()
+    }
+
+    /// The `new_input` typed function handle.
+    pub fn new_session_input(&self) -> TypedFunc<(i32, i32), i32> {
+        self.new_session_input.clone()
+    }
+
+    /// The `new_input` typed function handle.
+    pub fn new_session_output(&self) -> TypedFunc<(i32, i32), i32> {
+        self.new_session_output.clone()
+    }
+
+    pub fn borrow_session_input(&self) -> TypedFunc<(i32, i32), i32> {
+        self.borrow_session_input.clone()
+    }
+
+    pub fn borrow_session_output(&self) -> TypedFunc<(i32, i32), i32> {
+        self.borrow_session_output.clone()
+    }
+
+    pub fn session_input_length(&self) -> TypedFunc<i32, i32> {
+        self.session_input_length.clone()
+    }
+
+    pub fn session_output_length(&self) -> TypedFunc<i32, i32> {
+        self.session_output_length.clone()
+    }
+
+    pub fn free_session(&self) -> TypedFunc<i32, ()> {
+        self.free_session.clone()
+    }
+
+    pub fn lend_error(&self) -> Option<TypedFunc<(), i32>> {
+        self.lend_error.clone()
+    }
+
+    pub fn free_error(&self) -> Option<TypedFunc<(), ()>> {
+        self.free_error.clone()
     }
 
     /// Record an error that will be surfaced after the wasm call completes.
@@ -237,14 +289,24 @@ impl PyroMethods {
 pub struct PyroState {
     methods: Option<PyroMethods>,
     module_log: Mutex<Vec<String>>,
+    pub interconnect: Option<Arc<dyn PlaybookInterconnect>>,
+    pub current_session_id: Mutex<Option<u32>>,
+}
+
+impl Default for PyroState {
+    fn default() -> Self {
+        Self::new(None)
+    }
 }
 
 impl PyroState {
     /// Create an un-linked state (methods not yet resolved).
-    pub fn new() -> Self {
+    pub fn new(interconnect: Option<Arc<dyn PlaybookInterconnect>>) -> Self {
         Self {
             methods: None,
             module_log: Mutex::new(Vec::new()),
+            interconnect,
+            current_session_id: Mutex::new(None),
         }
     }
 
@@ -260,10 +322,66 @@ impl PyroState {
         let free_output = instance
             .get_typed_func::<i32, ()>(&mut *store, "free_output")
             .map_err(|_| WasmError::SignatureMismatch("free_output".to_string()))?;
+
+        let new_session_input = instance
+            .get_typed_func::<(i32, i32), i32>(&mut *store, "new_session_input")
+            .map_err(|_| WasmError::SignatureMismatch("new_session_input".to_string()))?;
+
+        let grow_session_input = instance
+            .get_typed_func::<(i32, i32), i32>(&mut *store, "grow_session_input")
+            .map_err(|_| WasmError::SignatureMismatch("grow_session_input".to_string()))?;
+
+        let new_session_output = instance
+            .get_typed_func::<(i32, i32), i32>(&mut *store, "new_session_output")
+            .map_err(|_| WasmError::SignatureMismatch("new_session_output".to_string()))?;
+
+        let grow_session_output = instance
+            .get_typed_func::<(i32, i32), i32>(&mut *store, "grow_session_output")
+            .map_err(|_| WasmError::SignatureMismatch("grow_session_output".to_string()))?;
+
+        let borrow_session_input = instance
+            .get_typed_func::<(i32, i32), i32>(&mut *store, "borrow_session_input")
+            .map_err(|_| WasmError::SignatureMismatch("borrow_session_input".to_string()))?;
+
+        let borrow_session_output = instance
+            .get_typed_func::<(i32, i32), i32>(&mut *store, "borrow_session_output")
+            .map_err(|_| WasmError::SignatureMismatch("borrow_session_output".to_string()))?;
+
+        let session_input_length = instance
+            .get_typed_func::<i32, i32>(&mut *store, "session_input_length")
+            .map_err(|e| WasmError::SignatureMismatch(format!("session_input_length: {}", e)))?;
+
+        let session_output_length = instance
+            .get_typed_func::<i32, i32>(&mut *store, "session_output_length")
+            .map_err(|e| WasmError::SignatureMismatch(format!("session_output_length: {}", e)))?;
+
+        let free_session = instance
+            .get_typed_func::<i32, ()>(&mut *store, "free_session")
+            .map_err(|_| WasmError::SignatureMismatch("free_session".to_string()))?;
+
+        let lend_error = instance
+            .get_typed_func::<(), i32>(&mut *store, "lend_error")
+            .ok();
+
+        let free_error = instance
+            .get_typed_func::<(), ()>(&mut *store, "free_error")
+            .ok();
+
         store.data_mut().methods = Some(PyroMethods {
             new_input,
             _grow_input: grow_input,
             free_output,
+            new_session_input,
+            _grow_session_input: grow_session_input,
+            new_session_output,
+            _grow_session_output: grow_session_output,
+            borrow_session_input,
+            borrow_session_output,
+            session_input_length,
+            session_output_length,
+            free_session,
+            lend_error,
+            free_error,
             last_error: None,
         });
         Ok(())
@@ -294,6 +412,8 @@ impl PyroState {
 
     pub fn module_log(&self, log: &[u8]) {
         let log_msg = String::from_utf8_lossy(log).trim_end().to_string();
+        tracing::trace!(msg = log_msg, "[MODULE]");
+
         self.module_log.lock().unwrap().push(log_msg);
     }
 

@@ -17,19 +17,19 @@ struct SerialServer {
 impl SerialServer {
     type Client = SerialHandle;
     type Config = SerialConfig;
-    type Error = String;
-    fn new(_config: Option<SerialConfig>) -> Self { 
-        Self { ids: Vec::new() } 
+    fn new(_config: Option<SerialConfig>) -> Result<Self> {
+        Ok(Self { ids: Vec::new() })
     }
-    fn reset(&mut self) { 
-        self.ids.clear(); 
-    }
-
-    fn register(&self, _client: &SerialHandle) -> Result<(), String>  {
+    fn reset(&mut self) -> Result<()> {
+        self.ids.clear();
         Ok(())
     }
-    
-    fn close(&self, _client: &SerialHandle) -> Result<(), String> {
+
+    fn register(&self, _client: &SerialHandle) -> Result<(), pyroduct::CapturedError> {
+        Ok(())
+    }
+
+    fn close(&self, _client: &SerialHandle) -> Result<(), pyroduct::CapturedError> {
         Ok(())
     }
 }

@@ -1,0 +1,13 @@
+error: If 2 inputs, then the first parameter of session module must be named `prior`
+  --> tests/compile_fail/module/session_missing_prior.rs:11:5
+   |
+11 |     other: Vec<ChatMessage>,
+   |     ^^^^^
+
+warning: unused import: `pyroduct::session::SessionResponse`
+ --> tests/compile_fail/module/session_missing_prior.rs:1:5
+  |
+1 | use pyroduct::session::SessionResponse;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

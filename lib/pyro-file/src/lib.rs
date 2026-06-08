@@ -17,7 +17,6 @@
 use arrow::array::RecordBatch;
 use arrow::buffer::Buffer;
 use arrow::datatypes::{Field, Schema};
-use arrow::error::ArrowError;
 use arrow::ipc::{
     convert::fb_to_schema,
     reader::{FileDecoder, read_footer_length},
@@ -102,6 +101,13 @@ pub fn record_batch_to_bytes(batch: &RecordBatch) -> Result<Vec<u8>, DataError> 
         writer.finish()?;
     }
     Ok(buffer)
+}
+
+/// Writes a RecordBatch to Arrow IPC format (File/Feather format).
+pub fn write_ipc<P: AsRef<Path>>(batch: &RecordBatch, path: P) -> Result<(), DataError> {
+    let bytes = record_batch_to_bytes(batch)?;
+    std::fs::write(path, bytes)?;
+    Ok(())
 }
 
 fn get_chunk_path(base_path: &Path, chunk_index: Option<usize>) -> PathBuf {
@@ -392,6 +398,15 @@ impl ArrowIpc {
     }
 }
 
+/// Reads an Arrow IPC file from disk using memory-mapping.
+/// This provides zero-copy access to the record batch data.
+pub fn parse_ipc_file_mmap<P: AsRef<Path>>(path: P) -> Result<ArrowIpc, DataError> {
+    let file = File::open(path)?;
+    let mmap = unsafe { Mmap::map(&file)? };
+    let bytes = Bytes::from_owner(mmap);
+    ArrowIpc::try_from(bytes)
+}
+
 // -----------------------------------------------------------------------------
 // 5. Main Async Parser
 // -----------------------------------------------------------------------------
@@ -417,6 +432,16 @@ pub async fn parse_data_to_batch(
     }
 }
 
+/// Synchronous version of parse_data_to_batch.
+pub fn parse_data_to_batch_sync(data: Vec<u8>, filename: &str) -> Result<Vec<ArrowIpc>, DataError> {
+    let inner = inter_parse_data_to_batch(data, filename)?;
+    if inner.is_empty() || inner.iter().all(|b| b.num_rows() == 0) {
+        Err(DataError::Empty)
+    } else {
+        Ok(inner)
+    }
+}
+
 fn inter_parse_data_to_batch(data: Vec<u8>, filename: &str) -> Result<Vec<ArrowIpc>, DataError> {
     let extension = Path::new(filename)
         .extension()
@@ -428,6 +453,19 @@ fn inter_parse_data_to_batch(data: Vec<u8>, filename: &str) -> Result<Vec<ArrowI
         "ipc" | "arrow" => {
             info!("File detected as IPC/Arrow.");
             Ok(vec![ArrowIpc::try_from(data)?])
+        }
+        "parquet" => {
+            debug!("Parsing Parquet...");
+            let bytes = Bytes::from(data);
+            let builder =
+                parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(bytes)?;
+            let reader = builder.build()?;
+            let mut batches = Vec::new();
+            for batch_res in reader {
+                let batch = batch_res?;
+                batches.push(ArrowIpc::from_batch(batch)?);
+            }
+            Ok(batches)
         }
         "csv" => {
             debug!("Parsing CSV...");
@@ -488,8 +526,7 @@ fn parse_footer_and_batch(buffer: Buffer) -> Result<RecordBatch, DataError> {
     }
 
     let trailer_start = buffer.len() - 10;
-    let footer_len = read_footer_length(buffer[trailer_start..].try_into().unwrap())
-        .map_err(ArrowError::from)?;
+    let footer_len = read_footer_length(buffer[trailer_start..].try_into().unwrap())?;
 
     if trailer_start < footer_len {
         return Err(DataError::InvalidContent(
@@ -507,7 +544,7 @@ fn parse_footer_and_batch(buffer: Buffer) -> Result<RecordBatch, DataError> {
         for block in dicts.iter() {
             let block_len = block.bodyLength() as usize + block.metaDataLength() as usize;
             let data = buffer.slice_with_length(block.offset() as _, block_len);
-            decoder.read_dictionary(&block, &data)?;
+            decoder.read_dictionary(block, &data)?;
         }
     }
 
@@ -716,7 +753,7 @@ mod tests {
         // for reliability. So this should fail immediately.
         assert!(result.is_err());
         match result.unwrap_err() {
-            DataError::InvalidContent(_) | DataError::Arrow(_) => assert!(true),
+            DataError::InvalidContent(_) | DataError::Arrow(_) => {}
             e => panic!("Wrong error type: {:?}", e),
         }
     }

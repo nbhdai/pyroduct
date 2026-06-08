@@ -302,7 +302,7 @@ impl PyroVec {
 
     pub fn clone_from_pyro<T: PyroData>(source: &T) -> Self {
         let mut new_vec = Self::with_capacity(source.len());
-        new_vec.extend_from_slice(&*source);
+        new_vec.extend_from_slice(source);
         new_vec.header_mut().copy_from_slice(source.header());
         new_vec
     }
@@ -502,6 +502,7 @@ impl PyroView {
         let drop_ptr = raw.drop_ptr;
         let capacity = raw.capacity;
         if raw.ref_count.is_null() {
+            tracing::error!("null_pointer: ref_count is null");
             return Err(PyroError::null_pointer());
         }
         let ref_count = raw.ref_count;
@@ -548,9 +549,7 @@ impl PyroView {
     }
 
     pub fn clone_to_vec(&self) -> PyroVec {
-        let mut vec = PyroVec::clone_from_pyro(self);
-        vec.extend_from_slice(self.as_slice());
-        vec
+        PyroVec::clone_from_pyro(self)
     }
 }
 
@@ -598,7 +597,8 @@ impl From<PyroView> for PyroViewPtr {
 /// * `wasm_memory` - The entire available memory buffer.
 /// * `offset` - The index into `wasm_memory` where the `PyroInner` struct begins.
 ///
-/// SAFETY: The caller needs to own the memory and the counter for this. It can only drop once the counter is 0 again.
+/// # Safety
+/// The caller needs to own the memory and the counter for this. It can only drop once the counter is 0 again.
 pub unsafe fn make_view(
     counter: &AtomicU32,
     reference: PyroRef<'_>,
@@ -718,7 +718,7 @@ impl<'a> PyroData for PyroRef<'a> {
     }
 
     fn py_ref(&self) -> PyroRef<'_> {
-        self.clone()
+        *self
     }
 
     fn py_ptr(&self) -> PyroRefPtr {
@@ -734,6 +734,10 @@ impl<'a> PyroRef<'a> {
 
     ///
     /// The slice must contain the 16-byte header followed by the payload.
+    ///
+    /// # Safety
+    ///
+    /// The other side needs to be a fully allocated pyroref
     pub unsafe fn try_from_ptr(data: PyroRefPtr) -> Result<Self, PyroError> {
         // Validate the raw pointer and header fields
         if let Err(parse_error) = unsafe { PyroParser::check_raw(data.0) } {
@@ -765,6 +769,7 @@ impl<'a> PyroRef<'a> {
     /// The slice must contain the 16-byte header followed by the payload.
     pub fn try_from_slice(data: &'a [u8]) -> Result<Self, PyroError> {
         if data.len() < PyroParser::HEADER_SIZE {
+            tracing::error!("SliceTooSmall");
             return Err(ParseError::SliceTooSmall.into());
         }
 
@@ -786,6 +791,7 @@ impl<'a> PyroRef<'a> {
         let total_required = PyroParser::HEADER_SIZE + payload_len;
 
         if data.len() < total_required {
+            tracing::error!("LengthExceedsCapacity");
             return Err(ParseError::LengthExceedsCapacity.into());
         }
 
@@ -838,9 +844,11 @@ impl<'a> fmt::Debug for PyroRef<'a> {
 pub fn get_ref(wasm_memory: &[u8], offset: usize) -> Result<PyroRef<'_>, PyroError> {
     // 1. We need at least 16 bytes for PyroInner + 16 bytes for the Data Header
     if wasm_memory.len() < offset + PyroParser::HEADER_SIZE {
+        tracing::error!("SliceTooSmall");
         return Err(ParseError::SliceTooSmall.into());
     }
-    if offset % 16 != 0 {
+    if !offset.is_multiple_of(16) {
+        tracing::error!("MisalignedPointer");
         return Err(ParseError::MisalignedPointer.into());
     }
 
@@ -866,6 +874,7 @@ pub fn get_ref(wasm_memory: &[u8], offset: usize) -> Result<PyroRef<'_>, PyroErr
     // 4. Validate total bounds
     let total_required = PyroParser::HEADER_SIZE + payload_len;
     if wasm_memory.len() - offset < total_required {
+        tracing::error!("LengthExceedsCapacity");
         return Err(ParseError::LengthExceedsCapacity.into());
     }
     // 6. Construct View

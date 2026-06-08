@@ -7,8 +7,9 @@ use std::{backtrace::Backtrace, borrow::Cow};
 use thiserror::Error;
 
 use crate::format::PyroVec;
+use crate::format::header::PyroHeaderMut;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LibraryInfo<'a> {
     pub meta: Cow<'a, str>,
     pub name: Cow<'a, str>,
@@ -37,8 +38,11 @@ pub fn library() -> Option<&'static LibraryInfo<'static>> {
     APP_IDENTITY.get().map(|l| &l.0)
 }
 
+/// # Safety
+///
+/// Len needs to be valid for the full call, returns a pointer to the data.
 #[unsafe(no_mangle)]
-pub extern "C" fn library_json(len: *mut usize) -> *const u8 {
+pub unsafe extern "C" fn library_json(len: *mut usize) -> *const u8 {
     // 1. Retrieve the encoded JSON string from the global OnceLock
     // If it hasn't been set yet, we return an empty result.
     let json_str = match APP_IDENTITY.get() {
@@ -64,11 +68,11 @@ pub extern "C" fn library_json(len: *mut usize) -> *const u8 {
     json_str.as_ptr()
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Error)]
-#[error("Panic at {file}:{line}:{column} - {message}{}", 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, Error)]
+#[error("Error at {file}:{line}:{column} - {message}{}", 
     .error.as_ref().map(|e| format!(" (Error: {e})")).unwrap_or_default()
 )]
-pub struct CapturedError {
+pub struct CapturedErrorInner {
     pub message: String,
     pub file: String,
     pub line: u32,
@@ -86,11 +90,35 @@ pub struct CapturedError {
     pub library: Option<LibraryInfo<'static>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, Error)]
+#[serde(transparent)]
+#[error("{0}")]
+pub struct CapturedError(pub Box<CapturedErrorInner>);
+
+impl std::ops::Deref for CapturedError {
+    type Target = CapturedErrorInner;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for CapturedError {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl From<CapturedErrorInner> for CapturedError {
+    fn from(inner: CapturedErrorInner) -> Self {
+        Self(Box::new(inner))
+    }
+}
+
 impl CapturedError {
     /// Creates a new CapturedError, automatically recording the file, line, and column
     /// of the caller.
     pub fn new(message: impl Display) -> Self {
-        Self {
+        Self(Box::new(CapturedErrorInner {
             message: message.to_string(),
             file: "unknown".to_string(),
             line: 0,
@@ -98,15 +126,15 @@ impl CapturedError {
             error: None,
             stack_trace: None,
             library: APP_IDENTITY.get().map(|l| l.0.clone()),
-        }
+        }))
     }
 
     /// Useful when wrapping an error that already has location data
     /// (e.g., from a parser or a lexer).
     pub fn with_location(mut self, location: &Location<'_>) -> Self {
-        self.file = location.file().to_string();
-        self.line = location.line();
-        self.column = location.column();
+        self.0.file = location.file().to_string();
+        self.0.line = location.line();
+        self.0.column = location.column();
         self
     }
 
@@ -117,14 +145,14 @@ impl CapturedError {
         // We force capture to string immediately because Backtrace is not Serializable
         match backtrace.status() {
             std::backtrace::BacktraceStatus::Captured => {
-                self.stack_trace = Some(format!("{}", backtrace));
+                self.0.stack_trace = Some(format!("{}", backtrace));
             }
             std::backtrace::BacktraceStatus::Disabled => {
-                self.stack_trace =
+                self.0.stack_trace =
                     Some("Backtrace captured but disabled (set RUST_BACKTRACE=1)".to_string());
             }
             _ => {
-                self.stack_trace = Some("Backtrace unsupported on this platform".to_string());
+                self.0.stack_trace = Some("Backtrace unsupported on this platform".to_string());
             }
         }
         self
@@ -132,14 +160,15 @@ impl CapturedError {
 
     /// Attaches an underlying error (e.g., from a `Result::Err`).
     pub fn with_source<E: fmt::Display>(mut self, error: E) -> Self {
-        self.error = Some(error.to_string());
+        self.0.error = Some(error.to_string());
         self
     }
 
     pub fn encode(&self) -> PyroVec {
-        let mut vec = PyroVec::with_capacity(predict_captured_error_size(&self));
-        serde_json::to_writer(&mut vec, self)
+        let mut vec = PyroVec::with_capacity(predict_captured_error_size(&self.0));
+        serde_json::to_writer(&mut vec, &self.0)
             .expect("CapturedError serialization should never fail");
+        vec.set_status(crate::format::header::DataStatus::CodeError);
         vec
     }
 }
@@ -148,7 +177,7 @@ impl CapturedError {
 ///
 /// This is a conservative estimate that may slightly overcount due to
 /// escaped characters being rare in practice.
-fn predict_captured_error_size(err: &CapturedError) -> usize {
+fn predict_captured_error_size(err: &CapturedErrorInner) -> usize {
     // Fixed JSON overhead: {"message":"","file":"","line":,"column":,"error":,"cause":}
     // Keys + colons + commas + braces + quotes ≈ 70 bytes
     // Adding a 10 byte buffer
@@ -162,10 +191,9 @@ fn predict_captured_error_size(err: &CapturedError) -> usize {
     size += err.file.len();
     size += MAX_U32_DIGITS * 2; // line + column
 
-    match &err.error {
-        Some(s) => size += s.len() + 2, // + quotes
-        None => {}                      // null
-    }
+    if let Some(s) = &err.error {
+        size += s.len() + 2
+    } // + quotes
 
     if let Some(lib) = &err.library {
         // Keys overhead: {"meta":"","name":"","version":"","authors":"","filename":""}
@@ -200,13 +228,13 @@ macro_rules! capture {
             .with_location(::std::panic::Location::caller())
             .with_backtrace(::std::backtrace::Backtrace::capture())
     };
-    ($err:expr, $fmt:expr, $($arg:tt)*) => {
+    ($err:expr, $fmt:literal, $($arg:tt)*) => {
         $crate::CapturedError::new(format!($fmt, $($arg)*))
             .with_source($err)
             .with_location(::std::panic::Location::caller())
             .with_backtrace(::std::backtrace::Backtrace::capture())
     };
-    ($fmt:expr, $($arg:tt)*) => {
+    ($fmt:literal, $($arg:tt)*) => {
         $crate::CapturedError::new(format!($fmt, $($arg)*))
             .with_location(::std::panic::Location::caller())
             .with_backtrace(::std::backtrace::Backtrace::capture())
@@ -234,13 +262,13 @@ macro_rules! bail {
             .with_location(::std::panic::Location::caller())
             .with_backtrace(::std::backtrace::Backtrace::capture()))
     };
-    ($err:expr, $fmt:expr, $($arg:tt)*) => {
+    ($err:expr, $fmt:literal, $($arg:tt)*) => {
         return Err($crate::CapturedError::new(format!($fmt, $($arg)*))
             .with_source($err)
             .with_location(::std::panic::Location::caller())
             .with_backtrace(::std::backtrace::Backtrace::capture()))
     };
-    ($fmt:expr, $($arg:tt)*) => {
+    ($fmt:literal, $($arg:tt)*) => {
         return Err($crate::CapturedError::new(format!($fmt, $($arg)*))
             .with_location(::std::panic::Location::caller())
             .with_backtrace(::std::backtrace::Backtrace::capture()))
@@ -248,20 +276,8 @@ macro_rules! bail {
 }
 
 /// Extension trait to convert `Result<T, E>` and `Option<T>` into `Result<T, CapturedError>` with context.
+#[allow(clippy::result_large_err)]
 pub trait Capture<T> {
-    /// Adds context to the error, converting it into a `CapturedError`.
-    #[track_caller]
-    fn context<C>(self, context: C) -> Result<T, CapturedError>
-    where
-        C: Display;
-
-    /// Adds lazily-evaluated context to the error, converting it into a `CapturedError`.
-    #[track_caller]
-    fn with_context<C, F>(self, f: F) -> Result<T, CapturedError>
-    where
-        C: Display,
-        F: FnOnce() -> C;
-
     /// Alias for `context`.
     #[track_caller]
     fn capture<C>(self, context: C) -> Result<T, CapturedError>
@@ -281,7 +297,7 @@ where
     E: std::error::Error,
 {
     #[track_caller]
-    fn context<C>(self, context: C) -> Result<T, CapturedError>
+    fn capture<C>(self, context: C) -> Result<T, CapturedError>
     where
         C: Display,
     {
@@ -295,7 +311,7 @@ where
     }
 
     #[track_caller]
-    fn with_context<C, F>(self, f: F) -> Result<T, CapturedError>
+    fn with_capture<C, F>(self, f: F) -> Result<T, CapturedError>
     where
         C: Display,
         F: FnOnce() -> C,
@@ -308,28 +324,11 @@ where
                 .with_backtrace(std::backtrace::Backtrace::capture())),
         }
     }
-
-    #[track_caller]
-    fn capture<C>(self, context: C) -> Result<T, CapturedError>
-    where
-        C: Display,
-    {
-        self.context(context)
-    }
-
-    #[track_caller]
-    fn with_capture<C, F>(self, f: F) -> Result<T, CapturedError>
-    where
-        C: Display,
-        F: FnOnce() -> C,
-    {
-        self.with_context(f)
-    }
 }
 
 impl<T> Capture<T> for Option<T> {
     #[track_caller]
-    fn context<C>(self, context: C) -> Result<T, CapturedError>
+    fn capture<C>(self, context: C) -> Result<T, CapturedError>
     where
         C: Display,
     {
@@ -342,7 +341,7 @@ impl<T> Capture<T> for Option<T> {
     }
 
     #[track_caller]
-    fn with_context<C, F>(self, f: F) -> Result<T, CapturedError>
+    fn with_capture<C, F>(self, f: F) -> Result<T, CapturedError>
     where
         C: Display,
         F: FnOnce() -> C,
@@ -353,22 +352,5 @@ impl<T> Capture<T> for Option<T> {
                 .with_location(std::panic::Location::caller())
                 .with_backtrace(std::backtrace::Backtrace::capture())),
         }
-    }
-
-    #[track_caller]
-    fn capture<C>(self, context: C) -> Result<T, CapturedError>
-    where
-        C: Display,
-    {
-        self.context(context)
-    }
-
-    #[track_caller]
-    fn with_capture<C, F>(self, f: F) -> Result<T, CapturedError>
-    where
-        C: Display,
-        F: FnOnce() -> C,
-    {
-        self.with_context(f)
     }
 }

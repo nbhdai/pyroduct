@@ -1,10 +1,10 @@
 [capability]
 author = "nbhdai"
-name = "cpu_client"
+package = "cpu_client"
 version = "0.1.0"
 
 [pyroduct]
-version = "0.1.0"
+path = "../../lib/pyroduct/"
   
 [dependencies.host]
 

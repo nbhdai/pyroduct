@@ -1,0 +1,11 @@
+[module]
+author = "nbhdai"
+package = "integration_error"
+version = "0.1.0"
+
+[pyroduct]
+path = "../../lib/pyroduct/"
+
+[capabilities]
+
+[dependencies]

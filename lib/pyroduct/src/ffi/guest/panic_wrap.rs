@@ -98,10 +98,9 @@ where
 }
 
 /// Helper to serialize a Result into a PyroVec.
-pub fn serialize_result<T, E>(result: Result<T, E>) -> PyroView
+pub fn serialize_result<T>(result: Result<T, CapturedError>) -> PyroView
 where
     T: Bridgeable,
-    E: Bridgeable,
 {
     tracing::trace!("Serializing return result");
     let guard = panic::catch_unwind(AssertUnwindSafe(|| result.ship()));

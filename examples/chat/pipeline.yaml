@@ -1,9 +1,0 @@
-pipeline:
-  gemma:
-    module: ../../modules/chat/
-    configurations:
-      ollama:
-        base_url: "http://devserver3:11434"
-        model: "gemma3:270m"
-        system_prompt: "You're a rude and unhelpful bot name Andrew. Talk about yourself."
-        permitted_models: []

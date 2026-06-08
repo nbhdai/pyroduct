@@ -21,17 +21,13 @@
 //! let vec = row.ship().unwrap();
 //! ```
 
-use crate::format::{Bridgeable, format::UserHeaderValues, rkyv_8::Rkyv};
+use crate::format::{Bridgeable, rkyv_8::Rkyv};
 
 use super::{PyroRow, PyroValue};
 
 // =============================================================================
 // UserHeaderValues + Bridgeable for PyroRowOwned
 // =============================================================================
-
-impl UserHeaderValues for PyroRow<'static> {
-    const VERSION: u8 = 0;
-}
 
 impl Bridgeable for PyroRow<'static> {
     type Format = Rkyv<PyroRow<'static>>;
@@ -41,10 +37,6 @@ impl Bridgeable for PyroRow<'static> {
 // UserHeaderValues + Bridgeable for PyroValue<'static>
 // =============================================================================
 
-impl UserHeaderValues for PyroValue<'static> {
-    const VERSION: u8 = 0;
-}
-
 impl Bridgeable for PyroValue<'static> {
     type Format = Rkyv<PyroValue<'static>>;
 }
@@ -52,7 +44,7 @@ impl Bridgeable for PyroValue<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::format::{HasReceiver, Receiver, value::PyroRowOwned};
+    use crate::format::{HasReceiver, Receiver, header::PyroHeader, value::PyroRowOwned};
 
     #[test]
     fn test_pyro_row_owned_ship_roundtrip() {
@@ -65,7 +57,11 @@ mod tests {
 
         // Ship
         let vec = row.ship().expect("ship failed");
-        assert!(vec.len() > 0);
+        assert_eq!(
+            vec.status(),
+            Ok(crate::format::header::DataStatus::RkyvValid)
+        );
+        assert!(!vec.is_empty());
 
         // Expose
         let typed = PyroRowOwned::expose(vec.view()).expect("expose failed");

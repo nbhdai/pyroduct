@@ -29,9 +29,14 @@ host = [
     "dep:pin-project",
     "dep:object",
     "dep:pyro-artifacts",
+    "dep:pyro-file",
+    "dep:rusqlite",
     "pyro-spec/arrow",
+    "dep:reqwest",
+    "dep:uuid",
 ]
-transport = ["host"]
+sql = ["dep:datafusion", "dep:sqlparser"]
+transport = ["host", "dep:axum", "dep:hyper", "dep:hyper-util", "dep:tower"]
 module = []
 
 cli = [
@@ -46,7 +51,8 @@ cli = [
     "dep:pyro-macro",
     "dep:prettyplease",
     "host", # The CLI needs the host feature to execute pipelines
-    "dep:pyro-file"
+    "dep:pyro-file",
+    "transport"
 ]
 
 [dependencies]
@@ -61,6 +67,12 @@ anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+uuid = { version = "1.6", features = ["v4", "serde"], optional = true }
+axum = { workspace = true, optional = true }
+hyper = { version = "1", features = ["full"], optional = true }
+hyper-util = { version = "0.1", features = ["server-auto", "tokio"], optional = true }
+tower = { version = "0.4", optional = true }
+reqwest = { version = "0.12", features = ["json"], optional = true }
 
 # Value dependencies
 half.workspace = true
@@ -76,12 +88,16 @@ tokio = { workspace = true, optional = true }
 async-ffi = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
 wasmtime = { workspace = true, optional = true }
+async-trait = "0.1"
 lazy_static = "1.4.0"
 sha2 = "0.10.9"
 
 # Arrow
 arrow = { workspace = true, optional = true }
 parquet = { workspace = true, optional = true }
+rusqlite = { workspace = true, features = ["bundled"], optional = true }
+datafusion = { workspace = true, optional = true }
+sqlparser = { version = "0.59.0", optional = true }
 
 pin-project = { workspace = true, optional = true }
 libloading = { workspace = true, optional = true }
@@ -122,7 +138,11 @@ name = "logs"
 required-features = ["host"]
 
 [[test]]
-name = "integration_state"
+name = "integration_recovery"
+required-features = ["host"]
+
+[[test]]
+name = "integration_session"
 required-features = ["host"]
 
 [[test]]
@@ -134,9 +154,31 @@ name = "ffi_safety"
 required-features = ["host", "capability"]
 
 [[test]]
-name = "test_pyro_server"
+name = "test_socket_capability_server"
 required-features = ["transport"]
 
 [[test]]
-name = "test_playbook_server"
+name = "test_socket_playbook_server"
 required-features = ["transport", "host"]
+
+[[test]]
+name = "test_socket_session_server"
+required-features = ["transport", "host"]
+
+[[test]]
+name = "test_http_playbook_server"
+required-features = ["transport", "host"]
+
+[[test]]
+name = "socket_capability"
+required-features = ["transport", "host"]
+
+[[test]]
+name = "callbacks"
+required-features = ["transport", "host"]
+
+[[test]]
+name = "session_callbacks"
+required-features = ["transport", "host"]
+
+

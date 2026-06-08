@@ -11,6 +11,10 @@
     crane = {
       url = "github:ipetkov/crane";
     };
+    process-compose-flake = {
+      url = "github:Platonic-Systems/process-compose-flake";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -19,6 +23,7 @@
       flake-utils,
       fenix,
       crane,
+      process-compose-flake,
       ...
     }:
     flake-utils.lib.eachDefaultSystem (
@@ -34,6 +39,8 @@
           combine [
             stable.toolchain
             targets.wasm32-unknown-unknown.stable.rust-std
+            stable.rust-src
+            stable.rust-analyzer
           ];
 
         miriToolchain =
@@ -106,10 +113,19 @@
           pyroductSrc = pyroSrc;
         };
 
+        devGui = pkgs.writeShellScriptBin "dev-gui" ''
+          cd lib/pyro-gui
+          exec ${pkgs.bacon}/bin/bacon --job gui "$@"
+        '';
+
+        guiDev = import ./nix/gui-dev.nix { inherit pkgs process-compose-flake; };
+
       in
       {
         packages = {
           inherit pyroduct;
+          dev-gui = devGui;
+          process-compose = guiDev;
           default = pyroduct;
         };
 
@@ -122,6 +138,8 @@
 
         apps = {
           default = flake-utils.lib.mkApp { drv = pyroduct; };
+          dev-gui = flake-utils.lib.mkApp { drv = devGui; };
+          process-compose = flake-utils.lib.mkApp { drv = guiDev; };
         }
         // (lib.optionalAttrs pkgs.stdenv.isLinux {
           valgrind-test = {
@@ -162,27 +180,40 @@
               microvmTests.bin
               miriTests.bin
               rustTests.bin
+              rustTests.prepare
+              devGui
+              guiDev
               pkgs.jq
+              pkgs.bzip2
+              pkgs.cargo-expand
+              pkgs.nodejs
+              pkgs.cargo-tauri
+              pkgs.bacon
             ]
             ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.valgrind ];
             RUST_SRC_PATH = "${wasmToolchain}/lib/rustlib/src/rust/library";
+            RUST_ANALYZER_PATH = "${wasmToolchain}/bin/rust-analyzer";
             CARGO = "${wasmToolchain}/bin/cargo";
             RUSTUP_TOOLCHAIN = "${wasmToolchain}";
             PYRODUCT = ROOT_DIR + "/test";
 
             shellHook = ''
+              export PYRO_DAEMON_DIR="''${ROOT_DIR:-$PWD}/test/"
+              mkdir -p "$PYRO_DAEMON_DIR"
+              export PYRODUCT_ROOT="''${ROOT_DIR:-$PWD}/test/"
+
               ${lib.optionalString pkgs.stdenv.isLinux ''
                 export LD_LIBRARY_PATH="${lib.makeLibraryPath [ pkgs.systemd ]}:''${LD_LIBRARY_PATH:-}"
               ''}
               ${lib.optionalString pkgs.stdenv.isDarwin ''
                 unset DEVELOPER_DIR
                 echo "  - SDKROOT: ''${SDKROOT:-default}"
-              ''}`
+              ''}
 
               echo "Development shell loaded!"
               echo ""
               echo "Available commands:"
-              echo "  pyroduct"
+              echo "  pyroduct prepare-pyro test-rust dev-gui process-compose"
               echo ""
             '';
           }

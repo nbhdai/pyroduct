@@ -150,17 +150,17 @@ impl<'a> PrimitiveValueList<'a> {
     }
 
     pub fn is_number(&self) -> bool {
-        match self {
-            PrimitiveValueList::U8(_) => true,
-            PrimitiveValueList::U16(_) => true,
-            PrimitiveValueList::U32(_) => true,
-            PrimitiveValueList::U64(_) => true,
-            PrimitiveValueList::I8(_) => true,
-            PrimitiveValueList::I16(_) => true,
-            PrimitiveValueList::I32(_) => true,
-            PrimitiveValueList::I64(_) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            PrimitiveValueList::U8(_)
+                | PrimitiveValueList::U16(_)
+                | PrimitiveValueList::U32(_)
+                | PrimitiveValueList::U64(_)
+                | PrimitiveValueList::I8(_)
+                | PrimitiveValueList::I16(_)
+                | PrimitiveValueList::I32(_)
+                | PrimitiveValueList::I64(_)
+        )
     }
 
     pub fn iter_floats(&self) -> Option<PrimitiveFloatIterator<'_>> {
@@ -173,12 +173,10 @@ impl<'a> PrimitiveValueList<'a> {
     }
 
     pub fn is_float(&self) -> bool {
-        match self {
-            PrimitiveValueList::F16(_) => true,
-            PrimitiveValueList::F32(_) => true,
-            PrimitiveValueList::F64(_) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            PrimitiveValueList::F16(_) | PrimitiveValueList::F32(_) | PrimitiveValueList::F64(_)
+        )
     }
 
     /// Returns an iterator that yields all values as `i128`.
@@ -263,7 +261,7 @@ impl<'a> Iterator for PrimitiveFloatIterator<'a> {
         match self {
             PrimitiveFloatIterator::F16(iter) => iter.next().map(|x| x.to_f64()),
             PrimitiveFloatIterator::F32(iter) => iter.next().map(|&x| x as f64),
-            PrimitiveFloatIterator::F64(iter) => iter.next().map(|&x| x),
+            PrimitiveFloatIterator::F64(iter) => iter.next().copied(),
         }
     }
 }
@@ -360,7 +358,7 @@ impl<'a> Iterator for PrimitiveForceFloatIterator<'a> {
             PrimitiveForceFloatIterator::I64(iter) => iter.next().map(|&x| x as f64),
             PrimitiveForceFloatIterator::F16(iter) => iter.next().map(|x| x.to_f64()),
             PrimitiveForceFloatIterator::F32(iter) => iter.next().map(|&x| x as f64),
-            PrimitiveForceFloatIterator::F64(iter) => iter.next().map(|&x| x),
+            PrimitiveForceFloatIterator::F64(iter) => iter.next().copied(),
         }
     }
 }
@@ -593,7 +591,7 @@ impl<'a> PyroRow<'a> {
                     (PyroType::Group(inner_fields), PyroValue::Group(inner_row)) => {
                         new_vec.push(RowItem {
                             key: item.key.clone(),
-                            value: PyroValue::Group(inner_row.project(&inner_fields)?),
+                            value: PyroValue::Group(inner_row.project(inner_fields)?),
                         });
                     }
 

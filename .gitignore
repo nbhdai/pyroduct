@@ -19,9 +19,19 @@ examples/**/logs
 **/test/capabilities
 **/test/interfaces
 **/test/modules
+**/test/playbooks
+**/test/data
+**/test/control
 **/test/0
 **/test/1
 **/test/2
 **/test/3
 *.pyrolog
+*.pyrolog.idx
 *.pyrowal
+*.db
+lib/pyroduct/errors.md
+
+# Node/NPM build files and dependencies
+**/node_modules/
+**/dist/

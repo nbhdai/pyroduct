@@ -1,0 +1,16 @@
+[capability]
+author = "nbhdai"
+package = "llm"
+version = "0.1.0"
+
+[pyroduct]
+path = "../../lib/pyroduct/"
+
+[dependencies.host]
+reqwest = { version = "0.13.1", features = [ "json" ] }
+tokio = { version = "1.49.0", features = ["full"] }
+
+[dependencies.module]
+
+[dependencies.shared]
+serde = { version = "1.0.228", features = ["derive"] }

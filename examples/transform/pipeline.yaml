@@ -1,7 +1,0 @@
-pipeline:
-  prefix:
-    module: ../../modules/cap_config/
-    configurations:
-      config:
-        uppercase: true
-        suffix: "!!!"

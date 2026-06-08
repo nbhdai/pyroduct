@@ -1,13 +1,12 @@
 [module]
-name = "cap_state"
+package = "cap_state"
 version = "0.1.0"
 author = "nbhdai"
 
 [pyroduct]
-version = "0.1.0"
+path = "../../lib/pyroduct/"
 
 [capabilities]
-state = { package = "state", author = "nbhdai", version = "0.1.0" }
-
+state = { package = "state", author = "nbhdai", version = "0.1.0", configuration = { type = "capabilityconfig", classes = { counter = { max_value = 1000 } } } }
 
 [dependencies]

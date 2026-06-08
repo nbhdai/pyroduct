@@ -34,6 +34,16 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+/// The kind of module execution model
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ModuleKind {
+    #[default]
+    Normal,
+    Session,
+    SessionDiff,
+}
+
 /// Documentation for the main function of a module
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ModuleFunc<'a> {
@@ -41,6 +51,8 @@ pub struct ModuleFunc<'a> {
     pub description: Option<Cow<'a, str>>,
     pub input: PyroSchema<'a>,
     pub output: PyroSchema<'a>,
+    #[serde(default)]
+    pub kind: ModuleKind,
 }
 
 /// The root specification object.
@@ -52,6 +64,9 @@ pub struct InterfaceSpec<'a> {
     pub description: Option<Cow<'a, str>>,
 
     pub classes: Vec<ClassSpec<'a>>,
+
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub structs: BTreeMap<Cow<'a, str>, PyroSchema<'a>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -330,12 +345,8 @@ impl<'a> PyroSchema<'a> {
     /// Convert to an fully owned schema (useful for inference results).
     pub fn into_owned(self) -> PyroSchema<'static> {
         PyroSchema {
-            documentation: None,
-            fields: self
-                .fields
-                .into_iter()
-                .map(|f| f.clone().into_owned())
-                .collect(),
+            documentation: self.documentation.map(|d| Cow::Owned(d.into_owned())),
+            fields: self.fields.iter().map(|f| f.clone().into_owned()).collect(),
         }
     }
 
@@ -381,7 +392,7 @@ pub fn coerce_pyro_types<'a>(a: &PyroType<'a>, b: &PyroType<'a>) -> Option<PyroT
         // --- List coercion (merge nullability) ---
         (List(inner_a, null_a), List(inner_b, null_b)) => {
             let merged_null = *null_a || *null_b;
-            coerce_pyro_types(&inner_a, &inner_b).map(|c| List(Box::new(c), merged_null))
+            coerce_pyro_types(inner_a, inner_b).map(|c| List(Box::new(c), merged_null))
         }
 
         // --- PrimitiveList coercion ---

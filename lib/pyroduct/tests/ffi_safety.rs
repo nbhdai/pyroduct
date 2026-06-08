@@ -18,13 +18,6 @@ struct UserData {
     payload: String,
 }
 
-#[magma(derive(Debug, Clone, PartialEq))]
-#[derive(Debug, Clone, PartialEq)]
-struct UserError {
-    code: u16,
-    msg: String,
-}
-
 // =============================================================================
 // execute_safe
 // =============================================================================
@@ -260,13 +253,15 @@ fn test_serialize_output_option_none() {
 #[tracing_test::traced_test]
 #[test]
 fn test_serialize_result_ok() {
-    let vec = serialize_result::<UserData, UserError>(Ok(UserData {
+    let vec = serialize_result::<UserData>(Ok(UserData {
         id: 200,
         payload: "ok".into(),
     }));
     assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
 
-    let typed = <Result<UserData, UserError>>::expose(vec).unwrap().unwrap();
+    let typed = <Result<UserData, CapturedError>>::expose(vec)
+        .unwrap()
+        .unwrap();
     assert_eq!(typed.id, 200);
     assert_eq!(typed.payload.as_str(), "ok");
 }
@@ -274,17 +269,13 @@ fn test_serialize_result_ok() {
 #[tracing_test::traced_test]
 #[test]
 fn test_serialize_result_err() {
-    let vec = serialize_result::<UserData, UserError>(Err(UserError {
-        code: 404,
-        msg: "not found".into(),
-    }));
+    let vec = serialize_result::<UserData>(Err(CapturedError::new("new!")));
     assert_eq!(vec.status(), Ok(DataStatus::RkyvError));
 
-    let typed = <Result<UserData, UserError>>::expose(vec)
+    let typed = <Result<UserData, CapturedError>>::expose(vec)
         .unwrap()
         .unwrap_err();
-    assert_eq!(typed.code, 404);
-    assert_eq!(typed.msg.as_str(), "not found");
+    assert_eq!(typed.message, "new!");
 }
 
 // =============================================================================
@@ -337,26 +328,6 @@ fn test_full_roundtrip_user_data() {
     let recovered = receiver.receive(&typed).unwrap();
     assert_eq!(original, recovered);
 }
-
-#[tracing_test::traced_test]
-#[test]
-fn test_full_roundtrip_user_error() {
-    let original = UserError {
-        code: 500,
-        msg: "Internal error".into(),
-    };
-
-    let vec = unsafe {
-        PyroView::from_ptr(execute_safe(|| serialize_output(original.clone()), 0, 0)).unwrap()
-    };
-    assert_eq!(vec.status(), Ok(DataStatus::RkyvValid));
-
-    let typed = UserError::expose(vec).unwrap();
-    let mut receiver = typed.receiver();
-    let recovered = receiver.receive(&typed).unwrap();
-    assert_eq!(original, recovered);
-}
-
 
 // =============================================================================
 // Panic hook idempotency

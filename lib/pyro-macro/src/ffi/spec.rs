@@ -7,6 +7,7 @@
 
 use std::borrow::Cow;
 
+use heck::AsSnakeCase;
 use pyro_spec::{CapabilityFunc, ClassSpec, InterfaceSpec, PyroField, PyroSchema, PyroType};
 use syn::{Attribute, Expr, Lit, Meta};
 
@@ -19,11 +20,8 @@ use crate::struct_doc::SchemaBuilder;
 // SpecBuilder
 // =============================================================================
 
-pub fn build_class_spec<'b>(
-    cap: &CapabilityImpl,
-    builder: &'b SchemaBuilder,
-) -> ClassSpec<'static> {
-    let capability = cap.ident.state_tn.to_string();
+pub fn build_class_spec(cap: &CapabilityImpl, builder: &SchemaBuilder) -> ClassSpec<'static> {
+    let capability = AsSnakeCase(cap.ident.state_tn.to_string()).to_string();
     let description = extract_doc_string(&cap.attrs);
 
     let methods = cap
@@ -74,7 +72,7 @@ pub fn build_class_spec<'b>(
     }
 }
 
-pub fn build_spec(file: &syn::File) -> InterfaceSpec<'static> {
+pub fn build_spec(name: &str, file: &syn::File) -> InterfaceSpec<'static> {
     // Pass 1: collect all MagmaDocumentation from structs in the file.
     let builder = SchemaBuilder::from_file(file);
 
@@ -98,15 +96,20 @@ pub fn build_spec(file: &syn::File) -> InterfaceSpec<'static> {
         }
     }
 
-    let (capability, description) = classes
-        .first()
-        .map(|c| (c.name.clone(), c.description.clone()))
-        .unwrap_or_else(|| (Cow::Borrowed(""), None));
+    let description = extract_doc_string(&file.attrs);
+
+    let mut structs = std::collections::BTreeMap::new();
+    for struct_name in builder.struct_names() {
+        if let Some(schema) = builder.schema_for(&struct_name) {
+            structs.insert(Cow::Owned(struct_name), schema.into_owned());
+        }
+    }
 
     InterfaceSpec {
-        capability,
-        description,
+        capability: name.to_string().into(),
+        description: description.map(|s| s.into()),
         classes,
+        structs,
     }
 }
 
@@ -117,14 +120,12 @@ pub fn build_spec(file: &syn::File) -> InterfaceSpec<'static> {
 fn extract_doc_string(attrs: &[Attribute]) -> Option<String> {
     let mut lines = Vec::new();
     for attr in attrs {
-        if attr.path().is_ident("doc") {
-            if let Meta::NameValue(nv) = &attr.meta {
-                if let Expr::Lit(expr_lit) = &nv.value {
-                    if let Lit::Str(lit_str) = &expr_lit.lit {
-                        lines.push(lit_str.value().trim().to_string());
-                    }
-                }
-            }
+        if attr.path().is_ident("doc")
+            && let Meta::NameValue(nv) = &attr.meta
+            && let Expr::Lit(expr_lit) = &nv.value
+            && let Lit::Str(lit_str) = &expr_lit.lit
+        {
+            lines.push(lit_str.value().trim().to_string());
         }
     }
     if lines.is_empty() {
@@ -138,11 +139,7 @@ fn fn_output_to_pyro_type(
     output: &super::paths::FnOutput,
     builder: &SchemaBuilder,
 ) -> PyroType<'static> {
-    match output {
-        super::paths::FnOutput::None => PyroType::Null,
-        super::paths::FnOutput::Single(ty) => builder.resolve_type(ty),
-        super::paths::FnOutput::Result(ok_ty, _err_ty) => builder.resolve_type(ok_ty),
-    }
+    builder.resolve_type(&output.ok_type)
 }
 
 #[cfg(test)]
@@ -171,31 +168,31 @@ mod tests {
         impl MyServer {
             type Client = MyClient;
 
-            fn new() -> Self { Self }
-            fn reset(&mut self) {}
-            fn register(&self, c: &MyClient) {}
+            fn new() -> Result<Self, CapturedError> { Ok(Self) }
+            fn reset(&mut self) -> Result<(), CapturedError> { Ok(()) }
+            fn register(&self, c: &MyClient) -> Result<(), CapturedError> { Ok(()) }
 
             /// Calculates a value
-            fn calculate(&self, c: &MyClient, input: f32) -> f32 {
-                input * 2.0
+            fn calculate(&self, c: &MyClient, input: f32) -> Result<f32, CapturedError> {
+                Ok(input * 2.0)
             }
 
             /// Processes the data
-            fn process(&self, c: &MyClient, data: Option<Vec<u8>>) -> Result<InputStruct, MyError> {
+            fn process(&self, c: &MyClient, data: Option<Vec<u8>>) -> Result<InputStruct, CapturedError> {
                 todo!()
             }
         }
     }).unwrap();
 
-        let output = build_spec(&file);
+        let output = build_spec("MyServer", &file);
 
         let expected: InterfaceSpec<'static> = serde_json::from_str(
             r#"{
             "capability": "MyServer",
-            "description": "The Server Implementation",
+            "description": null,
             "classes": [
                 {
-                    "name": "MyServer",
+                    "name": "my_server",
                     "description": "The Server Implementation",
                     "client": {
                         "name": "MyClient",
@@ -260,7 +257,37 @@ mod tests {
                         }
                     ]
                 }
-            ]
+            ],
+            "structs": {
+                "InputStruct": {
+                    "documentation": null,
+                    "fields": [
+                        {
+                            "name": "foo",
+                            "documentation": null,
+                            "data_type": { "PrimitiveList": "U8" },
+                            "nullable": false
+                        }
+                    ]
+                },
+                "MyClient": {
+                    "documentation": "The Client State",
+                    "fields": [
+                        {
+                            "name": "id",
+                            "documentation": "The id",
+                            "data_type": { "PrimitiveScalar": "U32" },
+                            "nullable": false
+                        },
+                        {
+                            "name": "name",
+                            "documentation": null,
+                            "data_type": "Str",
+                            "nullable": false
+                        }
+                    ]
+                }
+            }
         }"#,
         )
         .unwrap();

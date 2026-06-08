@@ -356,13 +356,13 @@ impl<'a> PyroValue<'a> {
 
         // 2. Generic List logic (try to pack into primitive)
         if let PyroValue::List(list) = self {
-            if let Some(size) = fixed_len {
-                if list.len() != size {
-                    return Err(ScalarRepairError::OutOfBounds(
-                        format!("FixedSizeList len {} != {}", list.len(), size),
-                        PyroType::PrimitiveFixedList(inner_type, size),
-                    ));
-                }
+            if let Some(size) = fixed_len
+                && list.len() != size
+            {
+                return Err(ScalarRepairError::OutOfBounds(
+                    format!("FixedSizeList len {} != {}", list.len(), size),
+                    PyroType::PrimitiveFixedList(inner_type, size),
+                ));
             }
 
             // Pack into PrimitiveList (might own new data)

@@ -6,6 +6,7 @@ use std::{
 };
 
 use libloading::Library;
+use pyro_artifacts::cargo::CapabilityIdent;
 use tokio::sync::oneshot;
 
 use crate::{
@@ -19,18 +20,18 @@ use crate::{
     module::capability::LogEntry,
 };
 
-pub struct ForeignClass {
+pub struct CapabilityClass {
     name: String,
-    lib_name: String,
+    lib_ident: CapabilityIdent,
     _library: Option<Arc<Library>>,
     methods: Vec<ForeignMethod>,
     init: ClassInitFn,
     reset: ClassResetFn,
     register: ClientRegisterFn,
 }
-impl fmt::Debug for ForeignClass {
+impl fmt::Debug for CapabilityClass {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ForeignClass")
+        f.debug_struct("CapabilityClass")
             .field("name", &self.name)
             .field("library", &self._library)
             .field("methods", &self.methods.len())
@@ -65,7 +66,7 @@ impl ForeignMethod {
     }
 }
 
-impl ForeignClass {
+impl CapabilityClass {
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -74,16 +75,19 @@ impl ForeignClass {
         self.methods.iter().map(|m| m.name.as_str())
     }
 
+    /// # Safety
+    ///
+    /// ClassExport needs to be correctly formed.
     pub unsafe fn from_export(
-        lib_name: String,
+        lib_ident: CapabilityIdent,
         library: Arc<Library>,
         export: ClassExport,
     ) -> Result<Self, CapturedError> {
-        unsafe { Self::from_export_inter(lib_name, Some(library), export) }
+        unsafe { Self::from_export_inter(lib_ident, Some(library), export) }
     }
 
     pub(crate) unsafe fn from_export_inter(
-        lib_name: String,
+        lib_ident: CapabilityIdent,
         library: Option<Arc<Library>>,
         export: ClassExport,
     ) -> Result<Self, CapturedError> {
@@ -110,7 +114,7 @@ impl ForeignClass {
 
         Ok(Self {
             name,
-            lib_name,
+            lib_ident,
             methods,
             _library: library,
             init: export.init,
@@ -124,7 +128,7 @@ impl ForeignClass {
         config: PyroRef<'_>,
         object_id: u64,
         mut log_channel: tokio::sync::mpsc::Receiver<LogEntry>,
-    ) -> Result<ForeignObject, PyroError> {
+    ) -> Result<CapabilityObject, PyroError> {
         let obj = match self.init {
             ClassInitFn::Sync(f) => unsafe { (f)(config.as_ptr(), object_id) }.process(),
             ClassInitFn::Async(f) => {
@@ -166,7 +170,7 @@ impl ForeignClass {
             }
         });
 
-        Ok(ForeignObject {
+        Ok(CapabilityObject {
             obj: Arc::new(obj),
             class: self.clone(),
             log_buffer,
@@ -182,31 +186,31 @@ impl ForeignClass {
 }
 
 #[derive(Clone)]
-pub struct ForeignObject {
-    class: Arc<ForeignClass>,
+pub struct CapabilityObject {
+    class: Arc<CapabilityClass>,
     obj: Arc<PyroObject>,
     pub log_buffer: Arc<Mutex<Vec<String>>>,
     // Wrapped in Option so we can take() it to send the signal,
-    // and Arc<Mutex> so ForeignObject remains Cloneable.
+    // and Arc<Mutex> so CapabilityObject remains Cloneable.
     _log_task: Arc<LogTaskHandle>,
 }
 
-impl fmt::Debug for ForeignObject {
+impl fmt::Debug for CapabilityObject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ForeignClass")
+        f.debug_struct("CapabilityClass")
             .field("class", &self.class)
             .field("obj", &self.obj.object_id)
             .finish()
     }
 }
 
-impl ForeignObject {
+impl CapabilityObject {
     pub fn name(&self) -> &str {
         &self.class.name
     }
 
-    pub fn lib_name(&self) -> &str {
-        &self.class.lib_name
+    pub fn lib_ident(&self) -> &CapabilityIdent {
+        &self.class.lib_ident
     }
 
     pub fn method_names(&self) -> impl Iterator<Item = &str> {

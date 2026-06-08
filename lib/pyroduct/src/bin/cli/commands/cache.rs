@@ -7,3 +7,10 @@ pub async fn init() -> Result<()> {
     println!("Cache initialized successfully.");
     Ok(())
 }
+
+pub async fn purge() -> Result<()> {
+    let cache = CacheManager::from_env().await?;
+    cache.purge().await?;
+    println!("Cache purged successfully.");
+    Ok(())
+}

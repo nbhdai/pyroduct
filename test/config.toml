@@ -1,4 +1,4 @@
 target = "../target"
-
+author = "test_anon"
 pyroduct.path = "../lib/pyroduct"
 build_slots = 4

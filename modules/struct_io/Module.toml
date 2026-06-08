@@ -1,12 +1,12 @@
 [module]
 author = "nbhdai"
-name = "struct_io"
+package = "struct_io"
 version = "0.1.0"
 
 [pyroduct]
-version = "0.1.0"
+path = "../../lib/pyroduct/"
 
 [capabilities]
-httpc = { package = "httpc", author = "nbhdai", version = "0.1.0" }
+httpc = { package = "httpc", author = "nbhdai", version = "0.1.0", configuration = { type = "capabilityconfig", classes = { http_server = { timeout_ms = 5000, allowed_endpoints = [ { url = "https://google.com/*", methods = ["GET", "POST"] } ] } } } }
 
 [dependencies]

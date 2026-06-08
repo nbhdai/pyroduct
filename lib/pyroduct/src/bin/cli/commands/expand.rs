@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
 use fs_err as fs;
 use pyro_artifacts::{
-    artifacts::{Artifact, Artifacts, Module}, cache::CacheManager, debug::CapSymbols, environment::Environment
+    artifacts::{Artifact, Artifacts, Playbook},
+    cache::CacheManager,
+    debug::CapSymbols,
+    environment::Environment,
 };
 use pyro_macro::{ffi::generate_capability, module::generate_module};
 use std::path::Path;
@@ -76,10 +79,10 @@ pub async fn expand_single(path: &Path, no_compile: bool) -> Result<bool> {
     let env = Environment::new(path.to_path_buf(), cache).await?;
     let artifacts = if no_compile {
         // Try to load artifacts from target/release
-        let target_dir = Environment::get_target_dir(&path).await?;
+        let target_dir = Environment::get_target_dir(path).await?;
         env.load_artifacts_from_target(&target_dir).await?
     } else {
-        env.package(false).await?
+        env.pack(false).await?
     };
     for artifact in &artifacts {
         artifact.write_to_directory(&output_dir).await?;
@@ -119,7 +122,7 @@ pub async fn expand_single(path: &Path, no_compile: bool) -> Result<bool> {
 
                 let code = generate_capability(
                     &source.src_lib_rs,
-                    &source.manifest.capability.name,
+                    &source.manifest.capability.package,
                     &source.manifest.capability.version,
                 )
                 .context("Capability code")?;
@@ -127,13 +130,13 @@ pub async fn expand_single(path: &Path, no_compile: bool) -> Result<bool> {
                 fs::create_dir_all(&output_dir)?;
                 fs::write(output_dir.join("cap.rs"), code)?;
             }
-            Artifacts::Module(Module::Source(source)) => {
+            Artifacts::Playbook(Playbook::Source(source)) => {
                 let code = generate_module(&source.source).context("Module code")?;
                 let code = prettyplease::unparse(&code);
                 fs::create_dir_all(&output_dir)?;
                 fs::write(output_dir.join("cap.rs"), code)?;
             }
-            Artifacts::Module(Module::Binary(binary)) => match pyro_artifacts::debug::wat(binary) {
+            Artifacts::Playbook(Playbook::Binary(binary)) => match pyro_artifacts::debug::wat(binary) {
                 Ok(wat) => fs::write(output_dir.join("mod.wat"), wat)?,
                 Err(error) => {
                     tracing::error!(error, "Unable to create wat");

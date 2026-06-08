@@ -1,4 +1,10 @@
-use crate::artifacts::{Artifact, Artifacts, Module, ModuleBinary, ModuleSource, Playbook};
+use crate::artifacts::{
+    Artifact, Artifacts, Playbook, PlaybookBinary, PlaybookIdent, PlaybookSource,
+};
+
+#[cfg(feature = "compiler")]
+use crate::build::AnonPlaybook;
+use crate::cargo::CapabilityIdent;
 
 use cargo_toml::Dependency;
 use std::path::{Path, PathBuf};
@@ -6,54 +12,91 @@ use std::{collections::HashMap, io};
 use tokio::fs;
 
 #[derive(Debug, thiserror::Error)]
-#[error("{context}: {error}")]
-pub struct CacheError {
-    pub context: String,
-    #[source]
-    pub error: std::io::Error,
+pub enum CacheError {
+    #[error("Not found: {0}")]
+    NotFound(String),
+    #[error("{context}: {error}")]
+    Io {
+        context: String,
+        #[source]
+        error: std::io::Error,
+    },
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct PyroductConfig {
-    pub author: Option<String>,
+    pub author: String,
     pub target: Option<PathBuf>,
     pub pyroduct: Option<Dependency>,
     pub build_slots: Option<usize>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum RemoteAddress {
+    Tcp(String),
+    Unix(std::path::PathBuf),
+}
+
 /// A loaded playbook where all the libraries are on disk and the binary is loaded
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct LoadedPlaybook {
-    pub binary: ModuleBinary,
-    /// Per-class capability configuration. Keys are class names.
+    pub binary: PlaybookBinary,
+    pub remote: HashMap<CapabilityIdent, RemoteAddress>,
     #[serde(default)]
-    pub configurations: HashMap<String, Option<serde_json::Value>>,
-    #[serde(default)]
-    pub paths: HashMap<String, PathBuf>,
+    pub paths: HashMap<CapabilityIdent, PathBuf>,
+
+    pub log_dir: std::path::PathBuf,
+    pub input_dir: std::path::PathBuf,
+    pub output_dir: std::path::PathBuf,
 }
 
 // The lock file is automatically unlocked when `_lock_file` is dropped (fs2 behavior).
 
 pub struct CacheManager {
     pub root: PathBuf,
+    pub pyroduct: Option<Dependency>,
+    pub author: String,
 }
 
 impl CacheManager {
-    pub async fn new(root: &Path) -> Result<Self, CacheError> {
+    #[tracing::instrument(skip(root), fields(root = %root.display()))]
+    pub async fn new(
+        root: &Path,
+        pyroduct: Option<Dependency>,
+        author: String,
+    ) -> Result<Self, CacheError> {
+        tracing::debug!("Creating CacheManager instance");
         if !root.exists() {
-            fs::create_dir_all(&root).await.map_err(|e| CacheError {
-                context: "Failed to create cache root".to_string(),
-                error: e,
+            fs::create_dir_all(&root).await.map_err(|e| {
+                let err = CacheError::Io {
+                    context: "Failed to create cache root".to_string(),
+                    error: e,
+                };
+                tracing::error!(error = ?err, "Cache root directory creation failed");
+                err
             })?;
         }
+
+        let pyroduct = if let Some(mut dep) = pyroduct {
+            crate::cache::resolve_dependency_path(&mut dep, root);
+            Some(dep.clone())
+        } else {
+            None
+        };
+
         let manager = Self {
             root: root.to_path_buf(),
+            pyroduct,
+            author,
         };
 
         Ok(manager)
     }
 
+    #[tracing::instrument]
     pub async fn from_env() -> Result<Self, CacheError> {
+        tracing::debug!("Loading CacheManager from environment");
         let root = std::env::var("PYRODUCT")
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
@@ -63,46 +106,123 @@ impl CacheManager {
                     .unwrap_or_else(|_| PathBuf::from("."));
                 home.join(".pyroduct")
             });
+        let config_path = root.join("config.toml");
+        let content = fs::read_to_string(&config_path)
+            .await
+            .map_err(|error| {
+                let err = CacheError::Io {
+                    context: "Failed to read the configuration".to_string(),
+                    error,
+                };
+                tracing::error!(error = ?err, "Failed to read CacheManager config file at {:?}", config_path);
+                err
+            })?;
+        let config = toml::from_str::<PyroductConfig>(&content).map_err(|error| {
+            let err = CacheError::Io {
+                context: "Failed to parse the configuration".to_string(),
+                error: io::Error::new(io::ErrorKind::InvalidData, error),
+            };
+            tracing::error!(error = ?err, "Failed to parse CacheManager config toml");
+            err
+        })?;
 
-        Self::new(&root).await
+        Self::new(&root, config.pyroduct, config.author).await
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn init(&self) -> Result<(), CacheError> {
+        tracing::debug!("Initializing CacheManager directories");
         fs::create_dir_all(self.capabilities_base_dir())
             .await
-            .map_err(|error| CacheError {
-                context: format!(
-                    "Failed to create capabilities cache dir in {:?}",
-                    self.capabilities_base_dir()
-                ),
-                error,
+            .map_err(|error| {
+                let err = CacheError::Io {
+                    context: format!(
+                        "Failed to create capabilities cache dir in {:?}",
+                        self.capabilities_base_dir()
+                    ),
+                    error,
+                };
+                tracing::error!(error = ?err, "Failed to initialize capabilities dir");
+                err
             })?;
 
         fs::create_dir_all(self.interfaces_base_dir())
             .await
-            .map_err(|error| CacheError {
-                context: "Failed to create interfaces cache dir".to_string(),
-                error,
+            .map_err(|error| {
+                let err = CacheError::Io {
+                    context: "Failed to create interfaces cache dir".to_string(),
+                    error,
+                };
+                tracing::error!(error = ?err, "Failed to initialize interfaces dir");
+                err
             })?;
 
         let module_dir = self.root.join("modules");
-        fs::create_dir_all(&module_dir)
-            .await
-            .map_err(|error| CacheError {
+        fs::create_dir_all(&module_dir).await.map_err(|error| {
+            let err = CacheError::Io {
                 context: "Failed to create modules cache dir".to_string(),
                 error,
-            })?;
-
-        let anon_dir = self.root.join("anon");
-        fs::create_dir_all(&anon_dir)
-            .await
-            .map_err(|error| CacheError {
-                context: "Failed to create anon cache dir".to_string(),
-                error,
-            })?;
+            };
+            tracing::error!(error = ?err, "Failed to initialize modules dir");
+            err
+        })?;
 
         Ok(())
     }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn purge(&self) -> Result<(), CacheError> {
+        tracing::debug!("Purging CacheManager directories");
+        let dirs = [
+            self.capabilities_base_dir(),
+            self.interfaces_base_dir(),
+            self.root.join("modules"),
+        ];
+        for dir in dirs {
+            if dir.exists() {
+                fs::remove_dir_all(&dir).await.map_err(|e| CacheError::Io {
+                    context: format!("Failed to remove cache dir {}", dir.display()),
+                    error: e,
+                })?;
+            }
+        }
+        self.init().await?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn purge_capabilities(&self) -> Result<(), CacheError> {
+        tracing::debug!("Purging Capabilities from CacheManager");
+        let dirs = [
+            self.capabilities_base_dir(),
+            self.interfaces_base_dir(),
+        ];
+        for dir in dirs {
+            if dir.exists() {
+                fs::remove_dir_all(&dir).await.map_err(|e| CacheError::Io {
+                    context: format!("Failed to remove capabilities cache dir {}", dir.display()),
+                    error: e,
+                })?;
+            }
+        }
+        self.init().await?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn purge_modules(&self) -> Result<(), CacheError> {
+        tracing::debug!("Purging Modules from CacheManager");
+        let dir = self.root.join("modules");
+        if dir.exists() {
+            fs::remove_dir_all(&dir).await.map_err(|e| CacheError::Io {
+                context: format!("Failed to remove modules cache dir {}", dir.display()),
+                error: e,
+            })?;
+        }
+        self.init().await?;
+        Ok(())
+    }
+
 
     pub async fn list_available_capabilities(
         &self,
@@ -113,12 +233,12 @@ impl CacheManager {
         }
 
         let mut results = Vec::new();
-        let mut authors = fs::read_dir(&base).await.map_err(|e| CacheError {
+        let mut authors = fs::read_dir(&base).await.map_err(|e| CacheError::Io {
             context: "Failed to read capabilities base dir".to_string(),
             error: e,
         })?;
 
-        while let Some(author_entry) = authors.next_entry().await.map_err(|e| CacheError {
+        while let Some(author_entry) = authors.next_entry().await.map_err(|e| CacheError::Io {
             context: "Failed to read author entry".to_string(),
             error: e,
         })? {
@@ -128,12 +248,14 @@ impl CacheManager {
             }
             let author_name = author_entry.file_name().to_string_lossy().to_string();
 
-            let mut names = fs::read_dir(&author_path).await.map_err(|e| CacheError {
-                context: format!("Failed to read author dir: {}", author_path.display()),
-                error: e,
-            })?;
+            let mut names = fs::read_dir(&author_path)
+                .await
+                .map_err(|e| CacheError::Io {
+                    context: format!("Failed to read author dir: {}", author_path.display()),
+                    error: e,
+                })?;
 
-            while let Some(name_entry) = names.next_entry().await.map_err(|e| CacheError {
+            while let Some(name_entry) = names.next_entry().await.map_err(|e| CacheError::Io {
                 context: "Failed to read name entry".to_string(),
                 error: e,
             })? {
@@ -143,13 +265,13 @@ impl CacheManager {
                 }
                 let cap_name = name_entry.file_name().to_string_lossy().to_string();
 
-                let mut versions = fs::read_dir(&name_path).await.map_err(|e| CacheError {
+                let mut versions = fs::read_dir(&name_path).await.map_err(|e| CacheError::Io {
                     context: format!("Failed to read name dir: {}", name_path.display()),
                     error: e,
                 })?;
 
                 while let Some(version_entry) =
-                    versions.next_entry().await.map_err(|e| CacheError {
+                    versions.next_entry().await.map_err(|e| CacheError::Io {
                         context: "Failed to read version entry".to_string(),
                         error: e,
                     })?
@@ -210,12 +332,12 @@ impl CacheManager {
         }
 
         let mut results = Vec::new();
-        let mut authors = fs::read_dir(&base).await.map_err(|e| CacheError {
+        let mut authors = fs::read_dir(&base).await.map_err(|e| CacheError::Io {
             context: "Failed to read modules base dir".to_string(),
             error: e,
         })?;
 
-        while let Some(author_entry) = authors.next_entry().await.map_err(|e| CacheError {
+        while let Some(author_entry) = authors.next_entry().await.map_err(|e| CacheError::Io {
             context: "Failed to read author entry".to_string(),
             error: e,
         })? {
@@ -225,12 +347,14 @@ impl CacheManager {
             }
             let author_name = author_entry.file_name().to_string_lossy().to_string();
 
-            let mut names = fs::read_dir(&author_path).await.map_err(|e| CacheError {
-                context: format!("Failed to read author dir: {}", author_path.display()),
-                error: e,
-            })?;
+            let mut names = fs::read_dir(&author_path)
+                .await
+                .map_err(|e| CacheError::Io {
+                    context: format!("Failed to read author dir: {}", author_path.display()),
+                    error: e,
+                })?;
 
-            while let Some(name_entry) = names.next_entry().await.map_err(|e| CacheError {
+            while let Some(name_entry) = names.next_entry().await.map_err(|e| CacheError::Io {
                 context: "Failed to read name entry".to_string(),
                 error: e,
             })? {
@@ -240,13 +364,13 @@ impl CacheManager {
                 }
                 let mod_name = name_entry.file_name().to_string_lossy().to_string();
 
-                let mut versions = fs::read_dir(&name_path).await.map_err(|e| CacheError {
+                let mut versions = fs::read_dir(&name_path).await.map_err(|e| CacheError::Io {
                     context: format!("Failed to read name dir: {}", name_path.display()),
                     error: e,
                 })?;
 
                 while let Some(version_entry) =
-                    versions.next_entry().await.map_err(|e| CacheError {
+                    versions.next_entry().await.map_err(|e| CacheError::Io {
                         context: "Failed to read version entry".to_string(),
                         error: e,
                     })?
@@ -280,10 +404,12 @@ impl CacheManager {
         let path = self
             .capabilities_dir(author, name, version)
             .join("interface.json");
-        fs::read_to_string(&path).await.map_err(|error| CacheError {
-            context: format!("Failed to read interface.json from {}", path.display()),
-            error,
-        })
+        fs::read_to_string(&path)
+            .await
+            .map_err(|error| CacheError::Io {
+                context: format!("Failed to read interface.json from {}", path.display()),
+                error,
+            })
     }
 
     pub async fn capability_binary_path(
@@ -305,10 +431,10 @@ impl CacheManager {
 
         let path = base_dir.join(lib_file);
         if !path.exists() {
-            Err(CacheError {
-                context: format!("Missing {} binary for this system", path.display()),
-                error: io::Error::new(io::ErrorKind::NotFound, "Not Found"),
-            })
+            Err(CacheError::NotFound(format!(
+                "Missing {} binary for this system",
+                path.display()
+            )))
         } else {
             Ok(path)
         }
@@ -326,7 +452,7 @@ impl CacheManager {
         if path.exists() {
             let content = fs::read_to_string(&path)
                 .await
-                .map_err(|error| CacheError {
+                .map_err(|error| CacheError::Io {
                     context: format!("Failed to read config.json from {}", path.display()),
                     error,
                 })?;
@@ -336,270 +462,314 @@ impl CacheManager {
         }
     }
 
-    pub async fn get_binary(&self, hash: &str) -> Result<ModuleBinary, CacheError> {
-        let path = self.root.join("anon").join(hash);
+    #[tracing::instrument(skip(self))]
+    pub async fn remove_module(
+        &self,
+        author: &str,
+        name: &str,
+        version: &str,
+    ) -> Result<(), CacheError> {
+        tracing::debug!("Removing module from cache");
+        let path = self.module_dir(author, name, version);
         if path.exists() {
-            let binary = ModuleBinary::from_dir(&path)
-                .await
-                .map_err(|error| CacheError {
-                    context: "Unable to load binary".to_string(),
+            tokio::fs::remove_dir_all(&path).await.map_err(|error| {
+                let err = CacheError::Io {
+                    context: "Unable to remove module".to_string(),
                     error,
-                })?;
-            Ok(binary)
-        } else {
-            Err(CacheError {
-                context: format!("Missing {} binary", path.display()),
-                error: io::Error::new(io::ErrorKind::NotFound, "Not Found"),
-            })
+                };
+                tracing::error!(error = ?err, "Failed to remove playbook at {:?}", path);
+                err
+            })?;
         }
-    }
-
-    pub async fn get_source(&self, hash: &str) -> Result<ModuleSource, CacheError> {
-        let path = self.root.join("anon").join(hash);
-        if path.exists() {
-            let source = ModuleSource::from_dir(&path)
-                .await
-                .map_err(|error| CacheError {
-                    context: "Unable to load source".to_string(),
-                    error,
-                })?;
-            Ok(source)
-        } else {
-            Err(CacheError {
-                context: format!("Missing {} source", path.display()),
-                error: io::Error::new(io::ErrorKind::NotFound, "Not Found"),
-            })
-        }
+        Ok(())
     }
 
     // --- Named module lookup ---
 
+    #[tracing::instrument(skip(self))]
     pub async fn get_named_binary(
         &self,
         author: &str,
-        name: &str,
+        package: &str,
         version: &str,
-    ) -> Result<ModuleBinary, CacheError> {
-        let path = self.module_dir(author, name, version);
+    ) -> Result<PlaybookBinary, CacheError> {
+        tracing::debug!("Retrieving named playbook binary");
+        let path = self.module_dir(author, package, version);
         if path.exists() {
-            let binary = ModuleBinary::from_dir(&path)
-                .await
-                .map_err(|error| CacheError {
+            let binary = PlaybookBinary::from_dir(&path).await.map_err(|error| {
+                let err = CacheError::Io {
                     context: "Unable to load named module binary".to_string(),
                     error,
-                })?;
+                };
+                tracing::error!(error = ?err, "Failed to load named module binary from {:?}", path);
+                err
+            })?;
             Ok(binary)
         } else {
-            Err(CacheError {
-                context: format!(
-                    "Missing named module binary for {}/{}/{}",
-                    author, name, version
-                ),
-                error: io::Error::new(io::ErrorKind::NotFound, "Not Found"),
-            })
+            let err = CacheError::NotFound(format!(
+                "Missing named module binary for {}/{}/{}",
+                author, package, version
+            ));
+            tracing::debug!("Named module binary not found at {:?}", path);
+            Err(err)
         }
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn get_named_source(
         &self,
         author: &str,
-        name: &str,
+        package: &str,
         version: &str,
-    ) -> Result<ModuleSource, CacheError> {
-        let path = self.module_dir(author, name, version);
+    ) -> Result<PlaybookSource, CacheError> {
+        tracing::debug!("Retrieving named playbook source");
+        let path = self.module_dir(author, package, version);
         if path.exists() {
-            let source = ModuleSource::from_dir(&path)
-                .await
-                .map_err(|error| CacheError {
+            let mut source = PlaybookSource::from_dir(&path).await.map_err(|error| {
+                let err = CacheError::Io {
                     context: "Unable to load named module source".to_string(),
                     error,
-                })?;
+                };
+                tracing::error!(error = ?err, "Failed to load named module source from {:?}", path);
+                err
+            })?;
+            source.manifest.module = crate::cargo::CapabilityIdent {
+                author: author.to_string(),
+                package: package.to_string(),
+                version: version.to_string(),
+            };
             Ok(source)
         } else {
-            Err(CacheError {
-                context: format!(
-                    "Missing named module source for {}/{}/{}",
-                    author, name, version
-                ),
-                error: io::Error::new(io::ErrorKind::NotFound, "Not Found"),
-            })
+            let err = CacheError::NotFound(format!(
+                "Missing named module source for {}/{}/{}",
+                author, package, version
+            ));
+            tracing::debug!("Named module source not found at {:?}", path);
+            Err(err)
         }
     }
 
+    #[tracing::instrument(skip(self, artifacts))]
     pub async fn write_artifacts(&self, artifacts: &Artifacts) -> Result<(), CacheError> {
-        match &artifacts {
-            Artifacts::CapabilityBinary(capability) => {
-                let path = self.capabilities_dir(
-                    &capability.ident.author,
-                    &capability.ident.name,
-                    &capability.ident.version,
-                );
-                capability
-                    .write_to_directory(&path)
-                    .await
-                    .map_err(|e| CacheError {
-                        context: format!("Failed to write artifacts to {}", path.display()),
-                        error: e,
-                    })
-            }
-            Artifacts::CapabilitySource(capability) => {
-                let path = self.capabilities_dir(
-                    &capability.manifest.capability.author,
-                    &capability.manifest.capability.name,
-                    &capability.manifest.capability.version,
-                );
-                capability
-                    .write_to_directory(&path)
-                    .await
-                    .map_err(|e| CacheError {
-                        context: format!("Failed to write artifacts to {}", path.display()),
-                        error: e,
-                    })
-            }
-            Artifacts::Interface(interface) => {
-                let path = self.interface_dir(
-                    &interface.manifest.capability.author,
-                    &interface.manifest.capability.name,
-                    &interface.manifest.capability.version,
-                );
-                fs::create_dir_all(&path).await.map_err(|e| CacheError {
-                    context: format!("Failed to create  {}", path.display()),
-                    error: e,
-                })?;
-                let manifest = interface.manifest.clone();
-                let cargo_path = path.join("Cargo.toml");
-                let cargo = manifest.clone().to_interface_manifest();
-                let cargo = toml::to_string_pretty(&cargo).map_err(|e| CacheError {
-                    context: format!("Failed to serialize Cargo.toml to {}", cargo_path.display()),
-                    error: io::Error::new(io::ErrorKind::InvalidData, e),
-                })?;
-                fs::write(&cargo_path, cargo)
-                    .await
-                    .map_err(|e| CacheError {
-                        context: format!("Failed to write Cargo.toml to {}", cargo_path.display()),
-                        error: e,
-                    })?;
-                interface
-                    .write_to_directory(&path)
-                    .await
-                    .map_err(|e| CacheError {
-                        context: format!("Failed to write artifacts to {}", path.display()),
-                        error: e,
-                    })
-            }
-            Artifacts::Module(Module::Binary(binary)) => {
-                if let Some(ref ident) = binary.ident {
-                    // Named module: store at modules/$author/$name/$version
-                    let path = self.module_dir(&ident.author, &ident.name, &ident.version);
-                    fs::create_dir_all(&path).await.map_err(|e| CacheError {
-                        context: format!("Failed to create module dir {}", path.display()),
-                        error: e,
-                    })?;
-                    binary
+        tracing::debug!("Writing artifacts to CacheManager");
+        let res = async {
+            match &artifacts {
+                Artifacts::CapabilityBinary(capability) => {
+                    let path = self.capabilities_dir(
+                        &capability.ident.author,
+                        &capability.ident.package,
+                        &capability.ident.version,
+                    );
+                    capability
                         .write_to_directory(&path)
                         .await
-                        .map_err(|e| CacheError {
-                            context: format!("Failed to write artifacts to {}", path.display()),
-                            error: e,
-                        })
-                } else {
-                    // Anonymous module: store at anon/$hash
-                    let path = self.root.join("anon").join(&binary.spec.hash);
-                    binary
-                        .write_to_directory(&path)
-                        .await
-                        .map_err(|e| CacheError {
+                        .map_err(|e| CacheError::Io {
                             context: format!("Failed to write artifacts to {}", path.display()),
                             error: e,
                         })
                 }
-            }
-            Artifacts::Module(Module::Source(source)) => {
-                if let Some(ref ident) = source.ident {
-                    // Named module: store at modules/$author/$name/$version
-                    let path = self.module_dir(&ident.author, &ident.name, &ident.version);
-                    fs::create_dir_all(&path).await.map_err(|e| CacheError {
-                        context: format!("Failed to create module dir {}", path.display()),
-                        error: e,
-                    })?;
-                    source
+                Artifacts::CapabilitySource(capability) => {
+                    let path = self.capabilities_dir(
+                        &capability.manifest.capability.author,
+                        &capability.manifest.capability.package,
+                        &capability.manifest.capability.version,
+                    );
+                    capability
                         .write_to_directory(&path)
                         .await
-                        .map_err(|e| CacheError {
+                        .map_err(|e| CacheError::Io {
                             context: format!("Failed to write artifacts to {}", path.display()),
                             error: e,
                         })
-                } else {
-                    // Anonymous module: store at anon/$hash
-                    let hash = source.hash();
-                    let path = self.root.join("anon").join(hash);
+                }
+                Artifacts::Interface(interface) => {
+                    let path = self.interface_dir(
+                        &interface.manifest.capability.author,
+                        &interface.manifest.capability.package,
+                        &interface.manifest.capability.version,
+                    );
+                    fs::create_dir_all(&path)
+                        .await
+                        .map_err(|e| CacheError::Io {
+                            context: format!("Failed to create  {}", path.display()),
+                            error: e,
+                        })?;
+                    let mut manifest = interface.manifest.clone();
+                    if let Some(pyroduct) = &self.pyroduct {
+                        manifest.pyroduct = pyroduct.clone();
+                    }
+                    let cargo_path = path.join("Cargo.toml");
+                    let cargo = manifest.clone().to_interface_manifest();
+                    let cargo = toml::to_string_pretty(&cargo).map_err(|e| CacheError::Io {
+                        context: format!(
+                            "Failed to serialize Cargo.toml to {}",
+                            cargo_path.display()
+                        ),
+                        error: io::Error::new(io::ErrorKind::InvalidData, e),
+                    })?;
+                    fs::write(&cargo_path, cargo)
+                        .await
+                        .map_err(|e| CacheError::Io {
+                            context: format!(
+                                "Failed to write Cargo.toml to {}",
+                                cargo_path.display()
+                            ),
+                            error: e,
+                        })?;
+                    interface
+                        .write_to_directory(&path)
+                        .await
+                        .map_err(|e| CacheError::Io {
+                            context: format!("Failed to write artifacts to {}", path.display()),
+                            error: e,
+                        })
+                }
+                Artifacts::Playbook(Playbook::Binary(binary)) => {
+                    let ident = &binary.spec.ident;
+                    let path = self.module_dir(&ident.author, &ident.package, &ident.version);
+                    fs::create_dir_all(&path)
+                        .await
+                        .map_err(|e| CacheError::Io {
+                            context: format!("Failed to create module dir {}", path.display()),
+                            error: e,
+                        })?;
+                    binary
+                        .write_to_directory(&path)
+                        .await
+                        .map_err(|e| CacheError::Io {
+                            context: format!("Failed to write artifacts to {}", path.display()),
+                            error: e,
+                        })
+                }
+                Artifacts::Playbook(Playbook::Source(source)) => {
+                    let ident = source.ident();
+                    let path = self.module_dir(&ident.author, &ident.package, &ident.version);
+                    fs::create_dir_all(&path)
+                        .await
+                        .map_err(|e| CacheError::Io {
+                            context: format!("Failed to create module dir {}", path.display()),
+                            error: e,
+                        })?;
                     source
                         .write_to_directory(&path)
                         .await
-                        .map_err(|e| CacheError {
+                        .map_err(|e| CacheError::Io {
                             context: format!("Failed to write artifacts to {}", path.display()),
                             error: e,
                         })
                 }
             }
         }
-    }
+        .await;
 
-    pub async fn load_playbook(&self, playbook: Playbook) -> Result<LoadedPlaybook, CacheError> {
-        let binary = self.get_binary(&playbook.hash).await?;
-        let mut paths = HashMap::new();
-
-        for cap in &binary.spec.capabilities {
-            let path = self
-                .capability_binary_path(&cap.author, &cap.package, &cap.version)
-                .await?;
-            paths.insert(cap.package.clone(), path);
+        if let Err(ref e) = res {
+            tracing::error!(error = ?e, "Failed to write artifacts to cache");
+        } else {
+            tracing::debug!("Successfully wrote artifacts to cache");
         }
-
-        Ok(LoadedPlaybook {
-            binary,
-            configurations: playbook.configurations,
-            paths,
-        })
+        res
     }
 
-    /// Load a named module by author/name/version and return a LoadedPlaybook.
-    pub async fn load_named_playbook(
+    #[tracing::instrument(skip(self, remotes, log_dir, input_dir, output_dir), fields(author = playbook.author, name = playbook.package, version = playbook.version))]
+    pub async fn load_playbook(
         &self,
-        author: &str,
-        name: &str,
-        version: &str,
+        playbook: PlaybookIdent,
+        remotes: HashMap<CapabilityIdent, RemoteAddress>,
+        log_dir: impl AsRef<Path>,
+        input_dir: impl AsRef<Path>,
+        output_dir: impl AsRef<Path>,
     ) -> Result<LoadedPlaybook, CacheError> {
-        let binary = self.get_named_binary(author, name, version).await?;
-        let mut paths = HashMap::new();
+        tracing::debug!("Loading playbook");
+        let res = async {
+            let binary = self.get_named_binary(&playbook.author, &playbook.package, &playbook.version).await?;
+            let mut paths = HashMap::new();
+            let mut remote = HashMap::new();
 
-        for cap in &binary.spec.capabilities {
-            let path = self
-                .capability_binary_path(&cap.author, &cap.package, &cap.version)
-                .await?;
-            paths.insert(cap.package.clone(), path);
+            tracing::debug!(capabilities = ?binary.spec.capabilities, "Loading playbook capabilities");
+            tracing::debug!(
+                config_keys = ?binary
+                    .configurations
+                    .iter()
+                    .map(|c| &c.package)
+                    .collect::<Vec<_>>(),
+                "Loaded playbook configuration keys"
+            );
+
+            for cap in &binary.spec.capabilities {
+                if let Some(addr) = remotes.get(cap) {
+                    remote.insert(cap.clone(), addr.clone());
+                } else if binary
+                    .configurations
+                    .iter()
+                    .any(|c| c.package == cap.package)
+                {
+                    let path = self
+                        .capability_binary_path(&cap.author, &cap.package, &cap.version)
+                        .await?;
+                    paths.insert(cap.clone(), path);
+                } else {
+                    return Err(CacheError::NotFound(format!("Capability {} not found", cap.package)));
+                }
+            }
+
+            Ok(LoadedPlaybook {
+                binary,
+                remote,
+                paths,
+                log_dir: log_dir.as_ref().to_path_buf(),
+                input_dir: input_dir.as_ref().to_path_buf(),
+                output_dir: output_dir.as_ref().to_path_buf(),
+            })
+        }.await;
+
+        if let Err(ref e) = res {
+            tracing::error!(error = ?e, "Failed to load playbook");
+        } else {
+            tracing::debug!("Successfully loaded playbook");
         }
+        res
+    }
 
-        Ok(LoadedPlaybook {
-            binary,
-            configurations: Default::default(),
-            paths,
-        })
+    #[cfg(feature = "compiler")]
+    pub fn convert_anon_playbook(&self, playbook: AnonPlaybook) -> PlaybookSource {
+        let author = self.author.clone();
+        let mut resolved_capabilities = Vec::new();
+        for cap in &playbook.configurations {
+            resolved_capabilities.push(CapabilityIdent {
+                author: cap.author.clone(),
+                package: cap.package.clone(),
+                version: cap.version.clone(),
+            });
+        }
+        PlaybookSource::new(
+            crate::artifacts::PlaybookIdent {
+                author,
+                package: playbook.package,
+                version: "0.1.0".to_string(),
+            },
+            crate::artifacts::ModuleDependencies {
+                dependencies: playbook.dependencies,
+                capabilities: resolved_capabilities,
+            },
+            playbook.configurations,
+            playbook.source,
+            playbook.interconnect,
+        )
     }
 }
 
 pub(crate) fn resolve_dependency_path(dep: &mut Dependency, base: &std::path::Path) {
-    if let Dependency::Detailed(detail) = dep {
-        if let Some(ref mut p) = detail.path {
-            let path = std::path::Path::new(p.as_str());
-            if path.is_relative() {
-                let absolute = base.join(&path);
-                *p = absolute
-                    .canonicalize()
-                    .unwrap_or(absolute)
-                    .to_string_lossy()
-                    .into_owned();
-            }
+    if let Dependency::Detailed(detail) = dep
+        && let Some(ref mut p) = detail.path
+    {
+        let path = std::path::Path::new(p.as_str());
+        if path.is_relative() {
+            let absolute = base.join(path);
+            *p = absolute
+                .canonicalize()
+                .unwrap_or(absolute)
+                .to_string_lossy()
+                .into_owned();
         }
     }
 }

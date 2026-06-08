@@ -29,7 +29,7 @@ impl PyroError {
                 let mut err_vec = CapturedError::new(msg)
                     .with_location(Location::caller())
                     .encode();
-                err_vec.set_status(DataStatus::CodeError);
+                err_vec.set_status(DataStatus::RemoteNotFound);
                 err_vec
             }
             PyroError::Header(error) => {
@@ -40,16 +40,18 @@ impl PyroError {
                 err_vec
             }
             PyroError::Pyro { kind, .. } => {
-                let error: Option<&Box<CapturedError>> = match kind {
+                let error: Option<&CapturedError> = match kind {
                     ErrorKind::Serialization(error_payload) => Some(error_payload),
                     ErrorKind::Deserialization(error_payload) => Some(error_payload),
                     ErrorKind::Validation(error_payload) => Some(error_payload),
                     ErrorKind::Transport(error_payload) => Some(error_payload),
-                    ErrorKind::Io(io_payload) => Some(io_payload.into()),
-                    ErrorKind::Utf8(utf8_payload) => Some(utf8_payload.into()),
+                    ErrorKind::Io(io_payload) => Some(io_payload),
+                    ErrorKind::Utf8(utf8_payload) => Some(utf8_payload),
                     ErrorKind::InvalidHeader => None,
                     ErrorKind::LayoutError => None,
                     ErrorKind::UnexpectedEof => None,
+                    ErrorKind::NotFound(_) => None,
+                    ErrorKind::NotPermitted(_) => None,
                 };
                 let status_code = kind.to_status().to_remote();
 
@@ -65,6 +67,13 @@ impl PyroError {
             PyroError::HeaderFfi(captured_error) => {
                 let mut vec = captured_error.encode();
                 vec.set_status(DataStatus::PyroFfiFail);
+                vec
+            }
+            PyroError::NotPermitted(msg) => {
+                let mut vec = CapturedError::new(msg)
+                    .with_location(Location::caller())
+                    .encode();
+                vec.set_status(DataStatus::RemoteNotPermitted);
                 vec
             }
         }

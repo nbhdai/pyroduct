@@ -161,7 +161,7 @@ impl PyroObject {
     // }
 
     /// Safety: Needs to be a pointer to a O within the same binary.
-    pub fn as_ref<O: 'static + Send + Sync>(&self) -> &mut O {
+    pub fn as_ref<O: 'static + Send + Sync>(&mut self) -> &mut O {
         unsafe { &mut *(self.state.as_ptr() as *mut O) }
     }
 }
@@ -215,7 +215,7 @@ impl PyroObjectRef {
     // }
 
     /// Safety: Needs to be a pointer to a O within the same binary.
-    pub fn as_ref<O: 'static + Send + Sync>(&self) -> &'_ mut O {
+    pub fn as_ref<O: 'static + Send + Sync>(&mut self) -> &'_ mut O {
         unsafe { &mut *(self.state.as_ptr() as *mut O) }
     }
 }
@@ -249,7 +249,7 @@ impl InitResult {
             state: PyroObjectPtr {
                 state: state_ptr,
                 dropper: typed_dropper::<S>,
-                object_id: object_id,
+                object_id,
             },
             error: PyroVec::ok().view().into_ptr(),
         }
@@ -261,7 +261,7 @@ impl InitResult {
             state: PyroObjectPtr {
                 state: std::ptr::null_mut(),
                 dropper: typed_dropper::<()>,
-                object_id: object_id,
+                object_id,
             },
             error: err.encode().view().into_ptr(),
         }

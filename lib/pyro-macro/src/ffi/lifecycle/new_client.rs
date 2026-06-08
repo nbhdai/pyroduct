@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Error, FnArg, GenericArgument, Ident, ImplItemFn, PathArguments, ReturnType, Type};
+use syn::{Error, FnArg, Ident, ImplItemFn, Type, parse_quote};
 
 use crate::{
     ffi::paths::{CapabilityIdent, FnName},
@@ -58,7 +58,7 @@ impl NewClientFn {
                 ));
             }
             None => {
-                return Err(Error::new_spanned(&sig, "fn register must take &self"));
+                return Err(Error::new_spanned(sig, "fn register must take &self"));
             }
         }
 
@@ -91,19 +91,17 @@ impl NewClientFn {
             }
         };
 
-        // 5. Validate return type: () or Result<(), ErrorType>
-        let error_type = match &sig.output {
-            ReturnType::Default => None,
-            ReturnType::Type(_, ty) => {
-                let ty_str = quote!(#ty).to_string().replace(" ", "");
-                if ty_str == "()" {
-                    None
-                } else {
-                    // Must be Result<(), ErrorType>
-                    extract_result_error_type(ty)?
-                }
-            }
-        };
+        // 5. Validate return type: Result<(), CapturedError> or Result<()>
+        let (ok_ty, _err_ty) = crate::ffi::paths::verify_result_return_type(&sig.output)?;
+        let ok_str = quote!(#ok_ty).to_string().replace(" ", "");
+        if ok_str != "()" {
+            return Err(Error::new_spanned(
+                &sig.output,
+                "fn register must return Result<(), CapturedError> or Result<()>",
+            ));
+        }
+
+        let error_type = Some(parse_quote!(::pyroduct::CapturedError));
 
         Ok(Self {
             fn_name: FnName(format_ident!("register")),
@@ -122,15 +120,9 @@ impl NewClientFn {
         let body = &self.body;
         let client = &self.client_type;
 
-        let return_type = if let Some(err) = &self.error_type {
-            quote!(-> Result<(), #err>)
-        } else {
-            quote!()
-        };
-
         quote! {
             #(#attrs)*
-            pub fn new_client(&self, client: &#client) #return_type #body
+            pub fn new_client(&self, client: &#client) -> Result<(), ::pyroduct::CapturedError> #body
         }
     }
 
@@ -150,9 +142,12 @@ impl NewClientFn {
         let client_type = &self.client_type;
         let state_type = &self.class.state_tn;
 
-        // Helper to deserialize the client and call the method
-        let body = if let Some(_) = &self.error_type {
-            quote! {
+        quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn #fn_ffi_name(
+                capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
+                client_state_ptr: ::pyroduct::format::PyroRefPtr,
+            ) -> ::pyroduct::format::PyroViewPtr {
                 let client: #client_type = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
                     Ok(v) => v,
                     Err(e) => return e.encode().view().into_ptr(),
@@ -164,29 +159,6 @@ impl NewClientFn {
                     let state = unsafe { &*(capability_state_ptr.state as *const #state_type) };
                     ::pyroduct::ffi::guest::serialize_result(state.new_client(&client))
                 }, capability_state_ptr.object_id, mux_id)
-            }
-        } else {
-            quote! {
-                let client: #client_type = match ::pyroduct::ffi::guest::deserialize_input(client_state_ptr) {
-                    Ok(v) => v,
-                    Err(e) => return e.encode().view().into_ptr(),
-                };
-
-                let (_client_id, mux_id, _class_id, _fn_id) = ::pyroduct::format::get_ref_ids(client_state_ptr);
-                ::pyroduct::ffi::guest::execute_safe(|| {
-                    let state = unsafe { &*(capability_state_ptr.state as *const #state_type) };
-                    ::pyroduct::ffi::guest::serialize_output(state.new_client(&client))
-                }, capability_state_ptr.object_id, mux_id)
-            }
-        };
-
-        quote! {
-            #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn #fn_ffi_name(
-                capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
-                client_state_ptr: ::pyroduct::format::PyroRefPtr,
-            ) -> ::pyroduct::format::PyroViewPtr {
-                #body
             }
         }
     }
@@ -221,63 +193,12 @@ impl NewClientFn {
         let client_type = &self.client_type;
         let wasm_call = self.generate_wasm_call(module);
 
-        let return_type = if let Some(err) = &self.error_type {
-            quote!(Result<::pyroduct::wasm::Client<Self>, #err>)
-        } else {
-            quote!(::pyroduct::wasm::Client<Self>)
-        };
-
-        let result_handling = if let Some(error_ty) = &self.error_type {
-            quote! {
-
-                ::pyroduct::wasm::Client::<Self>::__register_result::<#error_ty, _>(self, |ptr| unsafe { #wasm_call(ptr) })
-            }
-        } else {
-            quote! {
-                ::pyroduct::wasm::Client::<Self>::__register(self, |ptr| unsafe { #wasm_call(ptr) })
-            }
-        };
-
         quote! {
             impl #client_type {
-                pub fn register(self) -> #return_type {
-                    #result_handling
+                pub fn register(self) -> Result<::pyroduct::wasm::Client<Self>, ::pyroduct::CapturedError> {
+                    ::pyroduct::wasm::Client::<Self>::__register_result(self, |ptr| unsafe { #wasm_call(ptr) })
                 }
             }
         }
     }
-}
-
-/// Extract the error type from Result<(), ErrorType>
-fn extract_result_error_type(ty: &Type) -> syn::Result<Option<Type>> {
-    if let Type::Path(tp) = ty {
-        if let Some(segment) = tp.path.segments.last() {
-            if segment.ident == "Result" {
-                if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if args.args.len() == 2 {
-                        // Validate first arg is ()
-                        if let GenericArgument::Type(ok_ty) = &args.args[0] {
-                            let ok_str = quote!(#ok_ty).to_string().replace(" ", "");
-                            if ok_str != "()" {
-                                return Err(Error::new_spanned(
-                                    ok_ty,
-                                    "new_client must return Result<(), Error>, not Result<T, Error>",
-                                ));
-                            }
-                        }
-
-                        // Extract error type
-                        if let GenericArgument::Type(err_ty) = &args.args[1] {
-                            return Ok(Some(err_ty.clone()));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Err(Error::new_spanned(
-        ty,
-        "Return type must be () or Result<(), ErrorType>",
-    ))
 }

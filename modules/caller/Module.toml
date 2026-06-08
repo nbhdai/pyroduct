@@ -1,0 +1,14 @@
+[module]
+author = "nbhdai"
+package = "caller"
+version = "0.1.0"
+
+[pyroduct]
+path = "../../lib/pyroduct/"
+
+[capabilities]
+
+[dependencies]
+
+[interconnect]
+target = { author = "nbhdai", package = "counter", version = "0.1.0" }

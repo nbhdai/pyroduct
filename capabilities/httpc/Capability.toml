@@ -1,10 +1,10 @@
 [capability]
 author = "nbhdai"
-name = "httpc"
+package = "httpc"
 version = "0.1.0"
 
 [pyroduct]
-version = "0.1.0"
+path = "../../lib/pyroduct/"
   
 [dependencies.host]
 reqwest = { version = "0.13.1", features = [ "json" ] }

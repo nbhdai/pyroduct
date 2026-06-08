@@ -14,29 +14,33 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use pyro_artifacts::cache::{CacheError, LoadedPlaybook};
+use pyro_artifacts::artifacts::{CapabilityConfig, PlaybookSpec};
 use pyro_artifacts::build::BuildError;
+use pyro_artifacts::cache::{CacheError, LoadedPlaybook, RemoteAddress};
+use pyro_artifacts::cargo::CapabilityIdent;
 use pyro_artifacts::environment::EnvironmentError;
-use wasmtime::{
-    Caller, Engine, FuncType, Instance, Linker, Memory, Store, TypedFunc, Val, ValType,
-};
+use wasmtime::{Caller, Engine, Instance, Linker, Memory, Store, TypedFunc};
 
-use crate::ffi::host::ForeignObject;
 use crate::format::Bridgeable;
 use crate::format::{
     ParseError, PyroFailure, PyroLogs, PyroRow, PyroSuccess, PyroView,
     header::{DataStatus, PyroData, PyroHeader},
 };
 use crate::module::call::PyroCallIo;
+use crate::module::capability::ForeignCapability;
+use crate::module::interconnect::PlaybookInterconnect;
+use crate::transport::socket::capability::RemoteCapability;
 use crate::{CapturedError, PyroError};
 
-mod call;
+pub(crate) mod call;
 pub mod capability;
+pub mod interconnect;
+pub mod sessions;
 mod state;
 // #[cfg(all(test, feature = "module"))]
 // mod tests;
 
-use capability::CapabilityLibrary;
+use capability::{CapabilityError, CapabilityLibrary};
 pub use state::{PyroModule, PyroState};
 
 use thiserror::Error;
@@ -64,6 +68,9 @@ pub enum WasmError {
 
     #[error("Build Error: {0}")]
     Environment(#[from] EnvironmentError),
+
+    #[error("Capability Error: {0}")]
+    Capability(#[from] CapabilityError),
 
     #[error("Wasm module is missing required export: '{0}'")]
     MissingExport(String),
@@ -97,35 +104,36 @@ pub enum WasmError {
 // PyroInstance — owns Store + Instance, drives host↔wasm IO
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Default)]
+pub(crate) struct SessionState {
+    pub(crate) input_len: u32,
+    pub(crate) output_len: u32,
+}
+
 /// A linker pre-configured to use `PyroState<T>` as store data.
 ///
 /// Host functions registered through `define_async` / `define_sync` receive
 /// a clean `(&T, PyroView)` signature — all wasm memory plumbing is hidden.
 pub struct PyroFactory {
-    configurations: HashMap<String, Option<serde_json::Value>>,
+    spec: Arc<PlaybookSpec>,
+    configurations: HashMap<CapabilityIdent, CapabilityConfig>,
     libraries: Vec<Arc<CapabilityLibrary>>,
     module: PyroModule,
+    remote: HashMap<CapabilityIdent, RemoteAddress>,
+    interconnect: Option<Arc<dyn PlaybookInterconnect>>,
 }
 
 impl PyroFactory {
-    /// Create a new linker for the given engine.
-    pub fn new(
-        libraries: Vec<Arc<CapabilityLibrary>>,
-        configurations: HashMap<String, Option<serde_json::Value>>,
-        module: PyroModule,
-    ) -> Result<Self, WasmError> {
-        let mut config = wasmtime::Config::new();
-        config.async_support(true);
+    pub fn spec(&self) -> &PlaybookSpec {
+        &self.spec
+    }
 
-        Ok(Self {
-            libraries,
-            configurations,
-            module,
-        })
+    pub fn set_interconnect(&mut self, interconnect: Arc<dyn PlaybookInterconnect>) {
+        self.interconnect = Some(interconnect);
     }
 
     pub fn from_playbook(playbook: &LoadedPlaybook) -> Result<Self, WasmError> {
-        tracing::debug!("Loading module from hash: {}", playbook.binary.hash());
+        tracing::info!(hash = %playbook.binary.hash(), "Loading module from playbook");
         let wasmtime_module = wasmtime::Module::from_binary(&DEFAULT_ENGINE, &playbook.binary.wasm)
             .map_err(|e| {
                 WasmError::InstantiationFailed(format!("Failed to compile WASM: {}", e))
@@ -134,8 +142,9 @@ impl PyroFactory {
 
         let mut libs = Vec::new();
 
-        for (name, path) in playbook.paths.iter() {
-            let library = CapabilityLibrary::load(name.clone(), path).map_err(|e| {
+        for (cap, path) in playbook.paths.iter() {
+            tracing::debug!(name = %cap.package, path = %path.display(), "Loading capability library");
+            let library = CapabilityLibrary::load(cap.clone(), path).map_err(|e| {
                 WasmError::InstantiationFailed(format!(
                     "Failed to load capability library at {}: {}",
                     path.display(),
@@ -145,84 +154,137 @@ impl PyroFactory {
             libs.push(library);
         }
 
+        let spec = Arc::new(playbook.binary.spec.clone());
+        let mut configurations = HashMap::new();
+        for cap in &playbook.binary.configurations {
+            configurations.insert(cap.ident(), cap.configuration.clone());
+        }
+
         Ok(PyroFactory {
+            spec,
             libraries: libs,
-            configurations: playbook.configurations.clone(),
+            configurations,
             module: pyro_module,
+            remote: playbook.remote.clone(),
+            interconnect: None,
         })
     }
 
     // Todo: make this more robust.
-    async fn create_capabilities(&self) -> Result<HashMap<String, ForeignObject>, WasmError> {
-        let mut objects = HashMap::new();
-        for (class, config) in &self.configurations {
-            for library in self.libraries.iter() {
-                if let Ok(object) = library.instantiate_class(class, config.as_ref()).await {
-                    objects.insert(class.clone(), object);
+    async fn create_capabilities(
+        &self,
+    ) -> Result<HashMap<CapabilityIdent, Box<dyn ForeignCapability>>, WasmError> {
+        tracing::debug!("Creating capabilities");
+        let mut caps: HashMap<CapabilityIdent, Box<dyn ForeignCapability>> = HashMap::new();
+
+        // 1. Validate that all configured libraries are loaded (unless remote)
+        for lib_ident in self.configurations.keys() {
+            if !self.remote.contains_key(lib_ident)
+                && !self.libraries.iter().any(|l| l.ident == *lib_ident)
+            {
+                return Err(WasmError::InstantiationFailed(format!(
+                    "Capability library '{}' not found",
+                    lib_ident
+                )));
+            }
+        }
+
+        // 2. Validate that all configured classes exist in their respective loaded libraries
+        for library in &self.libraries {
+            let lib_ident = &library.ident;
+            if let Some(cap_config) = self.configurations.get(lib_ident) {
+                for class_name in cap_config.classes.keys() {
+                    if !library.capabilities.contains_key(class_name) {
+                        return Err(WasmError::InstantiationFailed(format!(
+                            "Capability library '{}' does not contain class '{}'",
+                            lib_ident, class_name
+                        )));
+                    }
                 }
             }
         }
 
-        Ok(objects)
+        // 3. Handle remote capabilities
+        for (lib_ident, remote_addr) in self.remote.iter() {
+            tracing::info!(
+                lib = ?lib_ident,
+                addr = ?remote_addr,
+                "Connecting to remote capability library"
+            );
+            let remote_cap = match remote_addr {
+                RemoteAddress::Unix(path) => {
+                    RemoteCapability::connect_unix(lib_ident.clone(), path).await
+                }
+                RemoteAddress::Tcp(addr) => {
+                    RemoteCapability::connect_tcp(lib_ident.clone(), addr).await
+                }
+            }
+            .map_err(|e| {
+                WasmError::InstantiationFailed(format!(
+                    "Failed to connect to remote capability library '{}': {}",
+                    lib_ident, e
+                ))
+            })?;
+
+            tracing::info!(
+                lib = %lib_ident,
+                "Successfully connected to remote capability library"
+            );
+
+            caps.insert(lib_ident.clone(), Box::new(remote_cap));
+        }
+
+        // 4. Handle local capability libraries
+        for library in &self.libraries {
+            let lib_ident = &library.ident;
+            if let Some(cap_config) = self.configurations.get(lib_ident) {
+                tracing::debug!(
+                    lib = %library.ident,
+                    classes = ?library.capabilities.keys(),
+                    configs = ?cap_config.classes.keys(),
+                    "Linking local capability library"
+                );
+                // If it maps to a remote address, it was already handled above.
+                if self.remote.contains_key(lib_ident) {
+                    tracing::debug!("Capability library is remote, skipping instantiation");
+                    continue;
+                }
+
+                let cap = library.instantiate_from_config(&cap_config).await?;
+                caps.insert(lib_ident.clone(), Box::new(cap));
+            } else {
+                tracing::debug!(lib = %lib_ident, "No configuration found for local capability library");
+            }
+        }
+
+        Ok(caps)
     }
 
     pub async fn instantiate(&self) -> Result<PyroInstance, WasmError> {
-        let pyro_state = PyroState::new();
+        tracing::info!("Instantiating PyroInstance");
+        if !self.spec.interconnect.is_empty() {
+            let interconnect = self.interconnect.as_ref().ok_or_else(|| {
+                WasmError::InstantiationFailed("Interconnect was expected but none was provided".to_string())
+            })?;
+            for name in self.spec.interconnect.keys() {
+                if !interconnect.playbooks().contains_key(name) {
+                    return Err(WasmError::InstantiationFailed(format!(
+                        "Expected playbook '{}' was not found in the interconnect collection",
+                        name
+                    )));
+                }
+            }
+        }
+
+        let pyro_state = PyroState::new(self.interconnect.clone());
         let mut store = Store::new(&DEFAULT_ENGINE, pyro_state);
         let objects = self.create_capabilities().await?;
         let mut linker = Linker::new(&DEFAULT_ENGINE);
 
         Self::link_logger(&mut linker)?;
         Self::link_capabilities(&mut linker, &objects)?;
-
-        for (class_name, object) in objects.iter() {
-            for method_name in object.method_names() {
-                // Check what the linker actually holds for this class & method
-                if let Some(ext) = linker.get(&mut store, class_name, &method_name) {
-                    if let Some(func) = ext.into_func() {
-                        let ty = func.ty(&store);
-
-                        // Print the actual signature Wasmtime is about to use
-                        tracing::debug!(
-                            "LINKER CHECK: {}::{} -> {:?}",
-                            class_name,
-                            method_name,
-                            ty
-                        );
-
-                        // Catch the ghost 4-parameter signature
-                        if ty.params().len() != 2 {
-                            tracing::error!(
-                                class_name,
-                                method_name,
-                                ?ty,
-                                "Incorrectly registered in the linker. Need 2 parameters right before instantiation! ",
-                            );
-                        }
-                        if ty.results().len() != 1 {
-                            tracing::error!(
-                                class_name,
-                                method_name,
-                                ?ty,
-                                "Incorrectly registered in the linker. Need 1 result right before instantiation! ",
-                            );
-                        }
-                    } else {
-                        tracing::error!(
-                            "LINKER CHECK: {}::{} is registered, but it's NOT a function!",
-                            class_name,
-                            method_name
-                        );
-                    }
-                } else {
-                    tracing::error!(
-                        "LINKER CHECK: {}::{} is completely MISSING from the linker!",
-                        class_name,
-                        method_name
-                    );
-                }
-                tracing::debug!("LINKER CHECK: {}::{} PASSED", class_name, method_name);
-            }
+        if let Some(interconnect) = &self.interconnect {
+            interconnect::link_interconnect(&mut linker, interconnect.clone())?;
         }
 
         let instance = linker
@@ -235,12 +297,22 @@ impl PyroFactory {
 
         // Link the PyroState methods to the instance exports
         PyroState::link(&mut store, &instance)?;
-        Ok(PyroInstance {
+
+        let mut pyro_instance = PyroInstance {
+            spec: self.spec.clone(),
             store,
             instance,
             memory,
             objects,
-        })
+            session_states: HashMap::new(),
+        };
+
+        if let Some(interconnect) = &self.interconnect {
+            interconnect::add_playbooks(interconnect.playbooks(), &mut pyro_instance).await?;
+        }
+
+        tracing::info!("PyroInstance instantiated successfully");
+        Ok(pyro_instance)
     }
 
     fn link_logger(linker: &mut Linker<PyroState>) -> Result<(), WasmError> {
@@ -267,117 +339,41 @@ impl PyroFactory {
     /// Links all capabilities from the provided libraries into the linker.
     fn link_capabilities(
         linker: &mut Linker<PyroState>,
-        objects: &HashMap<String, ForeignObject>,
+        capabilities: &HashMap<CapabilityIdent, Box<dyn ForeignCapability>>,
     ) -> Result<(), WasmError> {
-        for (class_name, object) in objects.iter() {
-            // Capture lib for the closures (Arc clone is cheap)
-
-            for method_name in object.method_names() {
-                let method_name = method_name.to_string();
-                let class_name = class_name.clone();
-                let fn_name = method_name.clone();
-                let object = object.clone();
-
-                let ty = FuncType::new(
-                    linker.engine(),
-                    [ValType::I32, ValType::I32],
-                    [ValType::I32],
-                );
-
-                linker
-                    .func_new_async(
-                        &class_name,
-                        &method_name,
-                        ty,
-                        move |caller, params, results| {
-                            let client_ptr = params[0].unwrap_i32();
-                            let input_ptr = params[1].unwrap_i32();
-
-                            let object = object.clone();
-                            let fn_name = fn_name.clone();
-
-                            Box::new(async move {
-                                tracing::debug!(
-                                    class_name = object.name(),
-                                    fn_name,
-                                    "Calling function"
-                                );
-
-                                let mut io = PyroCallIo::from_caller(caller)?;
-                                let client_view = io.borrow_argument(client_ptr).await?;
-                                let input_view = io.borrow_argument(input_ptr).await?;
-
-                                let output_view =
-                                    object.call(&fn_name, client_view, input_view).await?;
-                                output_view.parse_as_error()?;
-
-                                let ptr = io.new_input(&output_view).await?;
-
-                                results[0] = Val::I32(ptr);
-
-                                Ok(())
-                            })
-                        },
-                    )
-                    .map_err(|e| {
-                        WasmError::LinkFunctionFailed(
-                            class_name,
-                            method_name,
-                            format!("Error: {:#}\nBacktrace: {}", e, e.backtrace()),
-                        )
-                    })?;
-            }
-
-            let class_name = class_name.clone();
-            let object = object.clone();
-            let ty = FuncType::new(linker.engine(), [ValType::I32], [ValType::I32]);
-            linker
-                .func_new_async(
-                    &class_name,
-                    "register",
-                    ty,
-                    move |caller, params, results| {
-                        let object = object.clone();
-                        Box::new(async move {
-                            let mut io = PyroCallIo::from_caller(caller)?;
-                            let client_ptr = params[0].unwrap_i32();
-
-                            // Read input and get state — both are &self borrows.
-                            let client_view = io.borrow_argument(client_ptr).await?;
-
-                            // Call user function — consumes both borrows on return.
-                            let output_view = object.register(client_view).await?;
-                            output_view.parse_as_error()?;
-
-                            // Write output back into wasm memory.
-                            let ptr = io.new_input(&output_view).await?;
-                            results[0] = Val::I32(ptr);
-                            Ok(())
-                        })
-                    },
-                )
-                .map_err(|e| {
-                    WasmError::LinkFunctionFailed(class_name, "register".to_string(), e.to_string())
-                })?;
+        for (ident, cap) in capabilities.iter() {
+            tracing::debug!(lib = %ident, "Linking capability");
+            cap.link(linker)?;
         }
         Ok(())
     }
 }
 
 pub struct PyroInstance {
-    store: Store<PyroState>,
-    instance: Instance,
-    memory: Memory,
-    objects: HashMap<String, ForeignObject>,
+    pub(crate) spec: Arc<PlaybookSpec>,
+    pub(crate) store: Store<PyroState>,
+    pub(crate) instance: Instance,
+    pub(crate) memory: Memory,
+    pub(crate) objects: HashMap<CapabilityIdent, Box<dyn ForeignCapability>>,
+    pub(crate) session_states: HashMap<u32, SessionState>,
 }
 
 impl PyroInstance {
-    pub async fn call(&mut self, input: &PyroRow<'_>) -> Result<PyroSuccess, PyroFailure> {
+    pub fn spec(&self) -> &PlaybookSpec {
+        &self.spec
+    }
+
+    pub async fn call(
+        &mut self,
+        row_index: u32,
+        input: &PyroRow<'_>,
+    ) -> Result<PyroSuccess, PyroFailure> {
+        tracing::debug!("Calling wasm module");
         // Ship the input row via rkyv into a PyroVec
         let input_row_owned = input.to_static();
         let input_vec = input_row_owned
             .ship()
-            .map_err(|err| self.pack_pyro_error(err))?;
+            .map_err(|err| self.pack_pyro_error(row_index, err))?;
         let input_view: PyroView = input_vec.view();
 
         // 1. Write Input using PyroCallIo
@@ -385,7 +381,7 @@ impl PyroInstance {
         let input_ptr = io
             .new_input(&input_view)
             .await
-            .map_err(|err| self.pack_pyro_error(err))?;
+            .map_err(|err| self.pack_pyro_error(row_index, err))?;
 
         tracing::debug!("input_ptr = {:#x}", input_ptr);
 
@@ -398,14 +394,33 @@ impl PyroInstance {
                     CapturedError::new(format!("Missing main function: {}", e)).into(),
                 )
             })
-            .map_err(|err| self.pack_pyro_error(err))?;
+            .map_err(|err| self.pack_pyro_error(row_index, err))?;
 
         tracing::debug!("calling call_extern...");
-        let output_ptr = entry
-            .call_async(&mut self.store, input_ptr)
-            .await
-            .map_err(classify_error)
-            .map_err(|err| self.pack_pyro_error(err))?;
+        let output_ptr = match entry.call_async(&mut self.store, input_ptr).await {
+            Ok(ptr) => ptr,
+            Err(e) => {
+                let mut io = PyroCallIo::new(&mut self.store, self.memory);
+                if let Ok(Some(err_vec)) = io.get_panic_error().await {
+                    match err_vec.status() {
+                        Ok(DataStatus::RkyvError) => match serde_json::from_slice(&err_vec) {
+                            Ok(error) => return Err(self.pack_user_error(row_index, error)),
+                            Err(error) => {
+                                return Err(self.pack_pyro_error(
+                                    row_index,
+                                    PyroError::capture_json(error, &err_vec),
+                                ));
+                            }
+                        },
+                        _ => match err_vec.parse_as_error() {
+                            Ok(_) => return Err(self.pack_pyro_error(row_index, classify_error(e))),
+                            Err(err) => return Err(self.pack_pyro_error(row_index, err)),
+                        },
+                    }
+                }
+                return Err(self.pack_pyro_error(row_index, classify_error(e)));
+            }
+        };
         tracing::debug!("output_ptr = {:#x}", output_ptr);
 
         // 3. Read Output using PyroCallIo
@@ -414,32 +429,46 @@ impl PyroInstance {
         let output_vec = io
             .get_output(output_ptr)
             .await
-            .map_err(|err| self.pack_pyro_error(err))?;
+            .map_err(|err| self.pack_pyro_error(row_index, err))?;
         tracing::debug!("output_vec received");
 
         // 4. Parse the result (Zero-copy view of the host-owned vector)
         let result_view = output_vec.view();
         result_view
             .parse_as_error()
-            .map_err(|err| self.pack_pyro_error(err))?;
+            .map_err(|err| self.pack_pyro_error(row_index, err))?;
 
         let pyref = result_view.py_ref();
         match result_view.status() {
             Ok(DataStatus::RkyvValid) => {
-                let row = PyroRow::expose_view(pyref).map_err(|err| self.pack_pyro_error(err))?;
-                Ok(self.pack_success(PyroRow::from(&*row).to_static()))
+                tracing::debug!("Result status: RkyvValid");
+                let row = PyroRow::expose_view(pyref)
+                    .map_err(|err| self.pack_pyro_error(row_index, err))?;
+                Ok(self.pack_success(row_index, PyroRow::from(&*row).to_static()))
             }
-            Ok(DataStatus::RkyvError) => match serde_json::from_slice(&result_view) {
-                Ok(error) => Err(self.pack_user_error(error)),
-                Err(error) => {
-                    Err(self.pack_pyro_error(PyroError::capture_json(error, &*result_view)))
+            Ok(DataStatus::RkyvError) => {
+                tracing::debug!("Result status: RkyvError");
+                match serde_json::from_slice(&result_view) {
+                    Ok(error) => Err(self.pack_user_error(row_index, error)),
+                    Err(error) => Err(self
+                        .pack_pyro_error(row_index, PyroError::capture_json(error, &result_view))),
                 }
-            },
-            _ => Err(
-                self.pack_pyro_error(PyroError::Header(ParseError::UnknownStatus(
-                    result_view.status_u8(),
-                ))),
-            ),
+            }
+            Ok(DataStatus::CodeError) => {
+                tracing::debug!("Result status: CodeError");
+                match serde_json::from_slice(&result_view) {
+                    Ok(error) => Err(self.pack_user_error(row_index, error)),
+                    Err(error) => Err(self
+                        .pack_pyro_error(row_index, PyroError::capture_json(error, &result_view))),
+                }
+            }
+            _ => {
+                tracing::debug!(status = result_view.status_u8(), "Result status: Unknown");
+                Err(self.pack_pyro_error(
+                    row_index,
+                    PyroError::Header(ParseError::UnknownStatus(result_view.status_u8())),
+                ))
+            }
         }
     }
 
@@ -452,22 +481,33 @@ impl PyroInstance {
         }
     }
 
-    pub fn pack_pyro_error(&self, error: impl std::error::Error) -> PyroFailure {
+    pub fn pack_pyro_error(&self, row_index: u32, error: impl std::error::Error) -> PyroFailure {
         PyroFailure {
+            row_index,
             result: Err(error.to_string()),
             logs: self.unpack_logs(),
         }
     }
 
-    pub fn pack_user_error(&self, error: CapturedError) -> PyroFailure {
+    pub fn pack_setup_pyro_error(row_index: u32, error: impl std::error::Error) -> PyroFailure {
         PyroFailure {
+            row_index,
+            result: Err(error.to_string()),
+            logs: PyroLogs::empty(),
+        }
+    }
+
+    pub fn pack_user_error(&self, row_index: u32, error: CapturedError) -> PyroFailure {
+        PyroFailure {
+            row_index,
             result: Ok(error),
             logs: self.unpack_logs(),
         }
     }
 
-    pub fn pack_success(&self, row: PyroRow<'static>) -> PyroSuccess {
+    pub fn pack_success(&self, row_index: u32, row: PyroRow<'static>) -> PyroSuccess {
         PyroSuccess {
+            row_index,
             row,
             logs: self.unpack_logs(),
         }
@@ -477,10 +517,10 @@ impl PyroInstance {
         let mut logs = HashMap::new();
         for object in self.objects.values() {
             let object_logs = object.take_logs();
-            logs.insert(
-                (object.lib_name().to_string(), object.name().to_string()),
-                object_logs,
-            );
+            let lib_ident_str = object.lib_ident().to_string();
+            for (class_name, class_logs) in object_logs {
+                logs.insert((lib_ident_str.clone(), class_name), class_logs);
+            }
         }
 
         logs
@@ -488,7 +528,7 @@ impl PyroInstance {
 }
 
 /// Attempts to downcast an anyhow::Error into specific pyro error types.
-fn classify_error(error: anyhow::Error) -> WasmError {
+pub(crate) fn classify_error(error: anyhow::Error) -> WasmError {
     if error.is::<WasmError>() {
         return error.downcast().unwrap();
     }

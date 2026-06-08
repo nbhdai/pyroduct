@@ -2,10 +2,7 @@ use std::marker::PhantomData;
 
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::format::{
-    PyroRef, PyroVec, PyroView,
-    format::{PyroFormat, UserHeaderValues},
-};
+use crate::format::{PyroRef, PyroVec, PyroView, format::PyroFormat};
 
 use super::{JsonHeader, JsonParser, JsonWriter};
 
@@ -20,7 +17,7 @@ pub struct Json<T> {
 
 impl<T> PyroFormat<T> for Json<T>
 where
-    T: UserHeaderValues + Serialize + DeserializeOwned + Clone,
+    T: Serialize + DeserializeOwned + Clone,
 {
     const WIRE_FORMAT: u8 = 1; // Json isn't going to change.
 

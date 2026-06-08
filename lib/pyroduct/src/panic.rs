@@ -5,7 +5,7 @@ use std::sync::Once;
 use tracing::{debug, error};
 
 thread_local! {
-    static LAST_FFI_PANIC: RefCell<Option<Box<CapturedError>>> = RefCell::new(None);
+    static LAST_FFI_PANIC: RefCell<Option<CapturedError>> = const { RefCell::new(None) };
 }
 
 static REGISTER_PANIC_HOOK: Once = Once::new();
@@ -32,7 +32,7 @@ pub fn register_ffi_panic_hook() {
 
             error!(?error, "FFI Panic Hook captured a panic");
             LAST_FFI_PANIC.with(|slot| {
-                *slot.borrow_mut() = Some(Box::new(error));
+                *slot.borrow_mut() = Some(error);
             });
 
             default_hook(info);
@@ -40,13 +40,13 @@ pub fn register_ffi_panic_hook() {
     });
 }
 
-pub fn recover_panic_info() -> Box<CapturedError> {
+pub fn recover_panic_info() -> CapturedError {
     LAST_FFI_PANIC.with(|slot| {
         slot.borrow_mut().take().unwrap_or_else(|| {
             error!("recover_panic_info: panic detected but no details found in TLS");
-            Box::new(CapturedError::new(
+            CapturedError::new(
                 "Panic caught via catch_unwind, but TLS was empty.",
-            ))
+            )
         })
     })
 }

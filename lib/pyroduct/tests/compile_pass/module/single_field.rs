@@ -1,5 +1,5 @@
 #[pyroduct::module(output = message)]
-fn call(input: &str) -> anyhow::Result<String> {
+fn call(input: &str) -> Result<String> {
     Ok(format!("Hello, {}", input))
 }
 

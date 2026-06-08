@@ -1,9 +1,9 @@
 error[E0277]: the trait bound `&[CallMessageRef<'_>]: TryFrom<PyroValue<'_>>` is not satisfied
-  --> tests/compile_fail/module/struct_sans_lifetime.rs:13:23
+  --> tests/compile_fail/module/struct_sans_lifetime.rs:14:23
    |
-12 | #[module(output = (output, messages))]
+13 | #[module(output = (output, messages))]
    | -------------------------------------- required by a bound introduced by this call
-13 | fn process<'a>(input: &[CallMessageRef]) -> Result<(String, Vec<CallMessage>), String> {
+14 | fn process<'a>(input: &[CallMessageRef]) -> Result<(String, Vec<CallMessage>)> {
    |                       ^^^^^^^^^^^^^^^^^ the trait `From<PyroValue<'_>>` is not implemented for `&[CallMessageRef<'_>]`
    |
    = help: the following other types implement trait `From<T>`:

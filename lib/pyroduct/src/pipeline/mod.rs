@@ -1,9 +1,21 @@
-pub mod pipeline;
-pub mod wasm_execute;
+pub mod callback;
+pub mod data;
+pub mod factory;
+pub mod interconnect;
+pub mod normal;
+pub mod server;
+pub mod session;
+pub mod session_diff;
 
-pub use pipeline::{PipelineConfig, PipelineFactory};
+#[cfg(feature = "sql")]
+pub mod sql;
+
+pub use callback::Callback;
+pub use factory::{PipelineConfig, PipelineFactory};
+pub use interconnect::PlaybookCollection;
+pub use normal::{ExecutionRecord, Failure, Pipeline, PipelinePool};
+pub use server::{PipelineServer, ServerExecutionRecord, ServerPipeline};
 use thiserror::Error;
-pub use wasm_execute::{Failure, Pipeline, PipelinePool};
 
 use crate::PyroError;
 use crate::module::{WasmError, capability::CapabilityError};

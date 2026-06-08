@@ -7,14 +7,10 @@ pub mod host;
 #[cfg(feature = "capability")]
 pub mod guest;
 
-use crate::format::format::UserHeaderValues;
-
-impl UserHeaderValues for serde_json::Value {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ffi::host::ForeignClass;
+    use crate::ffi::host::CapabilityClass;
     use crate::format::header::{PyroData, PyroHeader};
     use crate::format::vec_buf::PyroRefPtr;
     use crate::format::{PyroVec, PyroViewPtr};
@@ -24,7 +20,7 @@ mod tests {
     use std::ptr;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
-    const NAME: &'static str = "TestName";
+    const NAME: &str = "TestName";
 
     /// Holds the actual flags for a specific test instance.
     /// This will be Boxed and passed as the `state` (*mut c_void) of the PyroObject.
@@ -37,7 +33,7 @@ mod tests {
     // Thread local storage to safely pass the state pointer into `mock_init`
     // without requiring argument threading. This works perfectly with parallel cargo tests.
     thread_local! {
-        static NEXT_OBJ_STATE: RefCell<Option<*mut c_void>> = RefCell::new(None);
+        static NEXT_OBJ_STATE: RefCell<Option<*mut c_void>> = const { RefCell::new(None) };
     }
 
     unsafe extern "C" fn mock_dropper(ptr: *mut c_void) {
@@ -97,7 +93,7 @@ mod tests {
 
         /// The raw pointer to the TestContext.
         /// For PyroObject::new() tests, pass this directly.
-        /// For ForeignClass tests, this is auto-injected via TLS when init is called.
+        /// For CapabilityClass tests, this is auto-injected via TLS when init is called.
         pub state_ptr: *mut c_void,
 
         // The function pointers to use in ClassExport
@@ -196,7 +192,18 @@ mod tests {
         };
 
         let class = Arc::new(
-            unsafe { ForeignClass::from_export_inter("test".to_string(), None, export) }.unwrap(),
+            unsafe {
+                CapabilityClass::from_export_inter(
+                    pyro_artifacts::cargo::CapabilityIdent {
+                        author: "test".to_string(),
+                        package: "test".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    None,
+                    export,
+                )
+            }
+            .unwrap(),
         );
         let log_channel = create_log(0, 0, 100);
 
@@ -232,7 +239,18 @@ mod tests {
         };
 
         let class = Arc::new(
-            unsafe { ForeignClass::from_export_inter("test".to_string(), None, export) }.unwrap(),
+            unsafe {
+                CapabilityClass::from_export_inter(
+                    pyro_artifacts::cargo::CapabilityIdent {
+                        author: "test".to_string(),
+                        package: "test".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    None,
+                    export,
+                )
+            }
+            .unwrap(),
         );
         let log_channel = create_log(0, 0, 100);
 
@@ -265,7 +283,18 @@ mod tests {
         let log_channel = create_log(0, 0, 100);
 
         let class = Arc::new(
-            unsafe { ForeignClass::from_export_inter("test".to_string(), None, export) }.unwrap(),
+            unsafe {
+                CapabilityClass::from_export_inter(
+                    pyro_artifacts::cargo::CapabilityIdent {
+                        author: "test".to_string(),
+                        package: "test".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    None,
+                    export,
+                )
+            }
+            .unwrap(),
         );
         let config = PyroVec::ok();
         let handle = class

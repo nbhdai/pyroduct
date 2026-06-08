@@ -5,7 +5,7 @@ use tracing::trace;
 
 use crate::format::{
     PyroVec,
-    format::{MutWrapper, UserHeaderValues, Wrapper, Writer},
+    format::{MutWrapper, Wrapper, Writer},
     header::MutPyroData,
 };
 use crate::{CapturedError, PyroError, PyroResult};
@@ -35,7 +35,7 @@ impl<BD: MutPyroData, T> MutWrapper for JsonWriter<BD, T> {
 
 impl<T> Writer<PyroVec, T> for JsonWriter<PyroVec, T>
 where
-    T: UserHeaderValues + Serialize,
+    T: Serialize,
 {
     type HeaderValues = super::JsonHeader;
 

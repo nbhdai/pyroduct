@@ -1,3 +1,4 @@
+use crate::captured::CapturedErrorInner;
 use crate::error::ErrorKind;
 use crate::format::PyroRef;
 use crate::format::vec_buf::PyroRefPtr;
@@ -70,6 +71,8 @@ define_data_status! {
     LocalInvalidHeader   = 106,
     LocalLayoutError     = 107,
     LocalUnexpectedEof   = 108,
+    LocalNotFound          = 109,
+    LocalNotPermitted      = 110,
 
     // --- Remote Errors (150-199) ---
     RemoteSerialization   = 150,
@@ -81,6 +84,8 @@ define_data_status! {
     RemoteInvalidHeader   = 156,
     RemoteLayoutError     = 157,
     RemoteUnexpectedEof   = 158,
+    RemoteNotFound          = 159,
+    RemoteNotPermitted      = 160,
 }
 
 /// Errors that occur when parsing or validating a PyroVec header.
@@ -133,33 +138,19 @@ impl PyroParser {
     pub const OFFSET_FN_ID: usize = 11;
     pub const OFFSET_MUX_ID: usize = 12;
 
-    pub fn check_strict(slice: &[u8]) -> Result<(), ParseError> {
-        Self::check(slice)?;
-
-        let len = Self::read_u32(slice, Self::OFFSET_LEN);
-        if len as usize > slice.len() {
-            return Err(ParseError::LengthExceedsCapacity);
-        }
-
-        let wire = slice[Self::OFFSET_WIRE];
-        if wire != PROTOCOL_VERSION {
-            return Err(ParseError::UnsupportedWireFormat);
-        }
-        // Todo: check status codes aren't an error
-
-        Ok(())
-    }
-
     pub fn check(slice: &[u8]) -> Result<(), ParseError> {
         if slice.len() < Self::HEADER_SIZE {
+            tracing::error!("Slice Too Small");
             return Err(ParseError::SliceTooSmall);
         }
-        if (slice.as_ptr() as usize) % Self::ALIGN != 0 {
+        if !(slice.as_ptr() as usize).is_multiple_of(Self::ALIGN) {
+            tracing::error!("Misaligned Pointer");
             return Err(ParseError::MisalignedPointer);
         }
 
         let len = Self::read_u32(slice, Self::OFFSET_LEN);
         if len as usize > slice.len() {
+            tracing::error!("LengthExceedsCapacity");
             return Err(ParseError::LengthExceedsCapacity);
         }
 
@@ -168,9 +159,11 @@ impl PyroParser {
 
     pub unsafe fn check_raw(ptr: *const u8) -> Result<(), ParseError> {
         if ptr.is_null() {
+            tracing::error!("Null Pointer");
             return Err(ParseError::NullPointer);
         }
-        if (ptr as usize) % Self::ALIGN != 0 {
+        if !(ptr as usize).is_multiple_of(Self::ALIGN) {
+            tracing::error!("Misaligned Pointer");
             return Err(ParseError::MisalignedPointer);
         }
 
@@ -179,19 +172,23 @@ impl PyroParser {
 
     pub unsafe fn check_strict_raw(ptr: *const u8, capacity: usize) -> Result<(), ParseError> {
         if ptr.is_null() {
+            tracing::error!("Null Pointer");
             return Err(ParseError::NullPointer);
         }
-        if (ptr as usize) % Self::ALIGN != 0 {
+        if !(ptr as usize).is_multiple_of(Self::ALIGN) {
+            tracing::error!("Misaligned Pointer");
             return Err(ParseError::MisalignedPointer);
         }
 
         let len = unsafe { ptr::read(ptr.add(Self::OFFSET_LEN) as *const u32) };
         if len as usize > capacity {
+            tracing::error!("LengthExceedsCapacity");
             return Err(ParseError::LengthExceedsCapacity);
         }
 
         let wire = unsafe { ptr::read(ptr.add(Self::OFFSET_WIRE) as *const u8) };
         if wire != PROTOCOL_VERSION {
+            tracing::error!("UnsupportedWireFormat");
             return Err(ParseError::UnsupportedWireFormat);
         }
 
@@ -377,25 +374,38 @@ pub trait PyroData: private::Sealed + Deref<Target = [u8]> + Sized {
                 Ok(DataStatus::LocalInvalidHeader) => PyroError::local(ErrorKind::InvalidHeader),
                 Ok(DataStatus::LocalLayoutError) => PyroError::local(ErrorKind::LayoutError),
                 Ok(DataStatus::LocalUnexpectedEof) => PyroError::local(ErrorKind::UnexpectedEof),
+                Ok(DataStatus::LocalNotFound) => {
+                    PyroError::local(ErrorKind::NotFound("not found".into()))
+                }
+                Ok(DataStatus::RemoteNotFound) => {
+                    PyroError::remote(ErrorKind::NotFound("not found".into()))
+                }
+                Ok(DataStatus::LocalNotPermitted) => {
+                    PyroError::not_permitted(self.extract_captured_error().message.clone())
+                }
+                Ok(DataStatus::RemoteNotPermitted) => {
+                    PyroError::not_permitted(self.extract_captured_error().message.clone())
+                }
             },
         )
     }
 
     /// Helper to deserialize a CapturedError from the payload (JSON).
     /// Falls back to a generic error if JSON deserialization fails.
-    fn extract_captured_error(&self) -> Box<CapturedError> {
-        if let Ok(captured) = serde_json::from_slice::<CapturedError>(&*self) {
-            Box::new(captured)
+    fn extract_captured_error(&self) -> CapturedError {
+        if let Ok(captured) = serde_json::from_slice::<CapturedError>(self) {
+            captured
         } else {
-            Box::new(CapturedError {
-                message: String::from_utf8_lossy(&*self).to_string(),
+            CapturedErrorInner {
+                message: String::from_utf8_lossy(self).to_string(),
                 file: "unknown".to_string(),
                 line: 0,
                 column: 0,
                 error: Some("Failed to deserialize error details".into()),
                 stack_trace: None,
                 library: None,
-            })
+            }
+            .into()
         }
     }
 }

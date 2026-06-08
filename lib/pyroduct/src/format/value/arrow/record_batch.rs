@@ -111,7 +111,7 @@ impl Rowable for RecordBatch {
         }) {
             let row = array.scalar(index).ok();
             if let Some(row) = row {
-                val.insert(key.to_string(), PyroValue::from(row));
+                val.insert(key.to_string(), row);
             } else {
                 return Ok(None);
             }
@@ -149,7 +149,7 @@ impl Rowable for StructArray {
         {
             let row = array.scalar(index).ok();
             if let Some(row) = row {
-                val.insert(key.to_string(), PyroValue::from(row));
+                val.insert(key.to_string(), row);
             } else {
                 return Ok(None);
             }
@@ -216,6 +216,10 @@ pub struct PreBatch {
 }
 
 impl PreBatch {
+    pub fn get(&self, index: usize) -> Option<&PyroRow<'static>> {
+        self.rows.get(index)
+    }
+
     pub fn from_iter<'a>(mut iter: impl Iterator<Item = PyroRow<'a>>) -> Option<Self> {
         let first = iter.next()?;
         let schema = first.schema().ok()?;
@@ -238,6 +242,10 @@ impl PreBatch {
 
     pub fn schema(&self) -> &PyroSchema<'static> {
         &self.schema
+    }
+
+    pub fn arrow_schema(&self) -> SchemaRef {
+        self.arrow_schema.clone()
     }
 
     pub fn len(&self) -> usize {
@@ -282,6 +290,30 @@ impl PreBatch {
         let batch = RecordBatch::try_new(self.arrow_schema.clone(), columns)?;
 
         self.rows.clear();
+        Ok(Some(batch))
+    }
+
+    pub fn to_record_batch(&self) -> Result<Option<RecordBatch>, ValueError> {
+        if self.rows.is_empty() {
+            return Ok(None);
+        }
+
+        let columns = self
+            .arrow_schema
+            .fields()
+            .iter()
+            .map(|field| {
+                let col_values: Vec<PyroValue> = self
+                    .rows
+                    .iter()
+                    .map(|row| row.get(field.name()).cloned().unwrap_or(PyroValue::Null))
+                    .collect();
+                build_array(field.data_type(), &col_values)
+            })
+            .collect::<Result<Vec<ArrayRef>, ValueError>>()?;
+
+        let batch = RecordBatch::try_new(self.arrow_schema.clone(), columns)?;
+
         Ok(Some(batch))
     }
 }
@@ -339,6 +371,88 @@ fn build_array(data_type: &DataType, values: &[PyroValue]) -> Result<ArrayRef, V
             }
             Ok(Arc::new(builder.finish()))
         }
+        DataType::Timestamp(unit, tz) => match unit {
+            TimeUnit::Second => {
+                let mut builder = TimestampSecondBuilder::with_capacity(values.len());
+                for v in values {
+                    match v {
+                        PyroValue::Timestamp(time_val) => {
+                            let secs = (time_val.0 / 1_000_000_000) as i64;
+                            builder.append_value(secs);
+                        }
+                        PyroValue::Null => builder.append_null(),
+                        _ => return Err(ValueError::invalid(v)),
+                    }
+                }
+                let array = builder.finish();
+                let array = if let Some(tz_str) = tz {
+                    array.with_timezone(tz_str.clone())
+                } else {
+                    array
+                };
+                Ok(Arc::new(array))
+            }
+            TimeUnit::Millisecond => {
+                let mut builder = TimestampMillisecondBuilder::with_capacity(values.len());
+                for v in values {
+                    match v {
+                        PyroValue::Timestamp(time_val) => {
+                            let msecs = (time_val.0 / 1_000_000) as i64;
+                            builder.append_value(msecs);
+                        }
+                        PyroValue::Null => builder.append_null(),
+                        _ => return Err(ValueError::invalid(v)),
+                    }
+                }
+                let array = builder.finish();
+                let array = if let Some(tz_str) = tz {
+                    array.with_timezone(tz_str.clone())
+                } else {
+                    array
+                };
+                Ok(Arc::new(array))
+            }
+            TimeUnit::Microsecond => {
+                let mut builder = TimestampMicrosecondBuilder::with_capacity(values.len());
+                for v in values {
+                    match v {
+                        PyroValue::Timestamp(time_val) => {
+                            let usecs = (time_val.0 / 1_000) as i64;
+                            builder.append_value(usecs);
+                        }
+                        PyroValue::Null => builder.append_null(),
+                        _ => return Err(ValueError::invalid(v)),
+                    }
+                }
+                let array = builder.finish();
+                let array = if let Some(tz_str) = tz {
+                    array.with_timezone(tz_str.clone())
+                } else {
+                    array
+                };
+                Ok(Arc::new(array))
+            }
+            TimeUnit::Nanosecond => {
+                let mut builder = TimestampNanosecondBuilder::with_capacity(values.len());
+                for v in values {
+                    match v {
+                        PyroValue::Timestamp(time_val) => {
+                            let nsecs = time_val.0 as i64;
+                            builder.append_value(nsecs);
+                        }
+                        PyroValue::Null => builder.append_null(),
+                        _ => return Err(ValueError::invalid(v)),
+                    }
+                }
+                let array = builder.finish();
+                let array = if let Some(tz_str) = tz {
+                    array.with_timezone(tz_str.clone())
+                } else {
+                    array
+                };
+                Ok(Arc::new(array))
+            }
+        },
 
         DataType::Struct(fields) => {
             // Transpose Row-based PyroValues into Column-based arrays recursively

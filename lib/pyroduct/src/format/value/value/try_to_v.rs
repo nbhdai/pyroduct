@@ -69,6 +69,23 @@ macro_rules! impl_try_from_cow_slice_primitive {
     };
 }
 
+/// For any type T that implements TryFrom<PyroValue<'a>>,
+/// implement TryFrom<PyroRow<'a>> by delegating to T::try_from if the row contains exactly one value.
+macro_rules! impl_try_from_row {
+    ($target:ty) => {
+        impl<'a> TryFrom<PyroRow<'a>> for $target {
+            type Error = PyroValue<'a>;
+
+            fn try_from(row: PyroRow<'a>) -> Result<Self, Self::Error> {
+                if row.len() == 1 {
+                    return <$target>::try_from((row.0)[0].value.clone());
+                }
+                Err(PyroValue::Group(row))
+            }
+        }
+    };
+}
+
 // =============================================================================
 // Null
 // =============================================================================
@@ -358,41 +375,41 @@ where
         // SAFETY: We rely on `Typeable::primitive_data_type()` correctly identifying T.
         // If `pdt` matches the variant, `cow` contains `Vec<Prim>`.
         // Since `T` corresponds to `Prim` (via Typeable contract), we can cast `Vec<Prim>` to `Vec<T>`.
-        if !T::is_nullable() {
-            if let (Some(pdt), PyroValue::PrimitiveList(pl)) = (T::primitive_data_type(), &value) {
-                // Macro to generate match arms: checks if runtime variant matches metadata, then casts.
-                macro_rules! try_cast_primitive {
-                    ($variant:ident, $prim_type:ty) => {
-                        if let (PrimitiveDataType::$variant, PrimitiveValueList::$variant(cow)) =
-                            (pdt, pl)
-                        {
-                            let vec_prim: Vec<$prim_type> = cow.clone().into_owned();
+        if !T::is_nullable()
+            && let (Some(pdt), PyroValue::PrimitiveList(pl)) = (T::primitive_data_type(), &value)
+        {
+            // Macro to generate match arms: checks if runtime variant matches metadata, then casts.
+            macro_rules! try_cast_primitive {
+                ($variant:ident, $prim_type:ty) => {
+                    if let (PrimitiveDataType::$variant, PrimitiveValueList::$variant(cow)) =
+                        (pdt, pl)
+                    {
+                        let vec_prim: Vec<$prim_type> = cow.clone().into_owned();
 
-                            // Transform Vec<$prim_type> -> Vec<T>
-                            // T is semantically identical to $prim_type here.
-                            let mut v = ManuallyDrop::new(vec_prim);
-                            let (ptr, len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
+                        // Transform Vec<$prim_type> -> Vec<T>
+                        // T is semantically identical to $prim_type here.
+                        let mut v = ManuallyDrop::new(vec_prim);
+                        let (ptr, len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
 
-                            // Safe because we verified T's identity via Typeable
-                            let vec_t = unsafe { Vec::from_raw_parts(ptr as *mut T, len, cap) };
-                            return Ok(vec_t);
-                        }
-                    };
-                }
-
-                try_cast_primitive!(Bool, bool);
-                try_cast_primitive!(I8, i8);
-                try_cast_primitive!(I16, i16);
-                try_cast_primitive!(I32, i32);
-                try_cast_primitive!(I64, i64);
-                try_cast_primitive!(U8, u8);
-                try_cast_primitive!(U16, u16);
-                try_cast_primitive!(U32, u32);
-                try_cast_primitive!(U64, u64);
-                try_cast_primitive!(F16, f16);
-                try_cast_primitive!(F32, f32);
-                try_cast_primitive!(F64, f64);
+                        // Safe because we verified T's identity via Typeable
+                        let vec_t = unsafe { Vec::from_raw_parts(ptr as *mut T, len, cap) };
+                        return Ok(vec_t);
+                    }
+                };
             }
+
+            try_cast_primitive!(Bool, bool);
+            try_cast_primitive!(I8, i8);
+            try_cast_primitive!(I16, i16);
+            try_cast_primitive!(I32, i32);
+            try_cast_primitive!(I64, i64);
+            try_cast_primitive!(U8, u8);
+            try_cast_primitive!(U16, u16);
+            try_cast_primitive!(U32, u32);
+            try_cast_primitive!(U64, u64);
+            try_cast_primitive!(F16, f16);
+            try_cast_primitive!(F32, f32);
+            try_cast_primitive!(F64, f64);
         }
 
         // 2. SLOW PATH: Generic List iteration.
@@ -415,6 +432,90 @@ where
             // This maintains strictness parity with the original macros.
             Err(value)
         }
+    }
+}
+
+// =============================================================================
+// TryFrom<PyroRow<'a>> Implementations
+// =============================================================================
+
+impl_try_from_row!(());
+impl_try_from_row!(usize);
+impl_try_from_row!(isize);
+impl_try_from_row!(bool);
+impl_try_from_row!(i8);
+impl_try_from_row!(i16);
+impl_try_from_row!(i32);
+impl_try_from_row!(i64);
+impl_try_from_row!(u8);
+impl_try_from_row!(u16);
+impl_try_from_row!(u32);
+impl_try_from_row!(u64);
+impl_try_from_row!(f16);
+impl_try_from_row!(f32);
+impl_try_from_row!(f64);
+
+impl_try_from_row!(String);
+impl_try_from_row!(Cow<'a, str>);
+impl_try_from_row!(&'a str);
+
+impl_try_from_row!(Time);
+impl_try_from_row!(DateTime<Utc>);
+
+impl_try_from_row!(PrimitiveValueList<'a>);
+
+impl_try_from_row!(&'a [bool]);
+impl_try_from_row!(&'a [i8]);
+impl_try_from_row!(&'a [i16]);
+impl_try_from_row!(&'a [i32]);
+impl_try_from_row!(&'a [i64]);
+impl_try_from_row!(&'a [u8]);
+impl_try_from_row!(&'a [u16]);
+impl_try_from_row!(&'a [u32]);
+impl_try_from_row!(&'a [u64]);
+impl_try_from_row!(&'a [f16]);
+impl_try_from_row!(&'a [f32]);
+impl_try_from_row!(&'a [f64]);
+
+impl_try_from_row!(Cow<'a, [bool]>);
+impl_try_from_row!(Cow<'a, [i8]>);
+impl_try_from_row!(Cow<'a, [i16]>);
+impl_try_from_row!(Cow<'a, [i32]>);
+impl_try_from_row!(Cow<'a, [i64]>);
+impl_try_from_row!(Cow<'a, [u8]>);
+impl_try_from_row!(Cow<'a, [u16]>);
+impl_try_from_row!(Cow<'a, [u32]>);
+impl_try_from_row!(Cow<'a, [u64]>);
+impl_try_from_row!(Cow<'a, [f16]>);
+impl_try_from_row!(Cow<'a, [f32]>);
+impl_try_from_row!(Cow<'a, [f64]>);
+
+impl<'a, T> TryFrom<PyroRow<'a>> for Vec<T>
+where
+    T: TryFrom<PyroValue<'a>, Error = PyroValue<'a>> + Typeable,
+{
+    type Error = PyroValue<'a>;
+
+    fn try_from(row: PyroRow<'a>) -> Result<Self, Self::Error> {
+        if row.len() == 1 {
+            return Vec::<T>::try_from((row.0)[0].value.clone());
+        }
+        Err(PyroValue::Group(row))
+    }
+}
+
+impl<'a, K, V> TryFrom<PyroRow<'a>> for HashMap<K, V>
+where
+    K: TryFrom<PyroValue<'a>, Error = PyroValue<'a>> + Eq + Hash,
+    V: TryFrom<PyroValue<'a>, Error = PyroValue<'a>>,
+{
+    type Error = PyroValue<'a>;
+
+    fn try_from(row: PyroRow<'a>) -> Result<Self, Self::Error> {
+        if row.len() == 1 {
+            return HashMap::<K, V>::try_from((row.0)[0].value.clone());
+        }
+        Err(PyroValue::Group(row))
     }
 }
 
@@ -498,5 +599,35 @@ mod tests {
         let v = PyroValue::PrimitiveList(PrimitiveValueList::I32(Cow::Owned(vec![1])));
         let res = Vec::<Option<i32>>::try_from(v);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_try_from_row_i32() {
+        let mut row = PyroRow::new();
+        row.insert("val".to_string(), PyroValue::I32(42));
+        assert_eq!(i32::try_from(row), Ok(42));
+    }
+
+    #[test]
+    fn test_try_from_row_i32_fails_empty() {
+        let row = PyroRow::new();
+        let res = i32::try_from(row);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_try_from_row_i32_fails_multi() {
+        let mut row = PyroRow::new();
+        row.insert("v1".to_string(), PyroValue::I32(42));
+        row.insert("v2".to_string(), PyroValue::I32(43));
+        let res = i32::try_from(row);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_try_from_row_string() {
+        let mut row = PyroRow::new();
+        row.insert("val".to_string(), PyroValue::Str(Cow::Borrowed("hello")));
+        assert_eq!(String::try_from(row), Ok("hello".to_string()));
     }
 }
