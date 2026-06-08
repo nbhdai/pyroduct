@@ -101,8 +101,6 @@
           }
         );
 
-        ROOT_DIR = (builtins.getEnv "ROOT_DIR");
-
         microvmTests = import ./nix/microvm-test.nix { inherit pkgs; };
         miriTests = import ./nix/miri-tests.nix {
           inherit pkgs miriToolchain;
@@ -204,12 +202,11 @@
             RUST_ANALYZER_PATH = "${wasmToolchain}/bin/rust-analyzer";
             CARGO = "${wasmToolchain}/bin/cargo";
             RUSTUP_TOOLCHAIN = "${wasmToolchain}";
-            PYRODUCT = ROOT_DIR + "/test";
 
             shellHook = ''
-              export PYRO_DAEMON_DIR="''${ROOT_DIR:-$PWD}/test/"
-              mkdir -p "$PYRO_DAEMON_DIR"
-              export PYRODUCT_ROOT="''${ROOT_DIR:-$PWD}/test/"
+              export PYRODUCT="$PWD/test"
+              export PYRO_DAEMON_DIR="$PWD/test/"
+              export PYRODUCT_ROOT="$PWD/test/"
 
               ${lib.optionalString pkgs.stdenv.isLinux ''
                 export LD_LIBRARY_PATH="${lib.makeLibraryPath [ pkgs.systemd ]}:''${LD_LIBRARY_PATH:-}"
