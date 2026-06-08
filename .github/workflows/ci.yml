@@ -3,21 +3,17 @@ name: CI
 on:
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+  # Remove pull_request entirely, or gate it:
+  # pull_request_target requires explicit approval for forks
 
 jobs:
   test:
     name: Build & Test
     runs-on: self-hosted
     steps:
-      - name: Checkout repository
-        run: |
-          git config --global --add safe.directory "$PWD"
-          git init
-          git remote add origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} || true
-          git fetch --depth=1 origin ${{ github.sha }}
-          git checkout -f FETCH_HEAD
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
 
       - name: Build & Test in Nix DevShell
         run: |
