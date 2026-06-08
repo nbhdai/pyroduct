@@ -3,8 +3,8 @@ name: CI
 on:
   push:
     branches: [ "main" ]
-  # Remove pull_request entirely, or gate it:
-  # pull_request_target requires explicit approval for forks
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   test:
