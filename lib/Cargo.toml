@@ -33,12 +33,12 @@ homepage = "https://nbhd.ai"
 
 
 [workspace.dependencies]
-pyro-macro = { path = "pyro-macro" }
-pyro-derive = { path = "pyro-derive" }
-pyroduct = { path = "pyroduct" }
-pyro-file = { path = "pyro-file" }
-pyro-spec = { path = "pyro-spec" }
-pyro-artifacts = { path = "pyro-artifacts" }
+pyro-macro = { path = "pyro-macro", version = "0.2.0" }
+pyro-derive = { path = "pyro-derive", version = "0.2.0" }
+pyroduct = { path = "pyroduct", version = "0.2.0" }
+pyro-file = { path = "pyro-file", version = "0.2.0" }
+pyro-spec = { path = "pyro-spec", version = "0.2.0" }
+pyro-artifacts = { path = "pyro-artifacts", version = "0.2.0" }
 
 # Errors and reporting
 anyhow = "1.0.100"
