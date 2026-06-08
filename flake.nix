@@ -179,6 +179,8 @@
         devShells.default = craneLibWasm.devShell (
           wasmEnv
           // {
+            buildInputs = commonPyroArgs.buildInputs;
+            nativeBuildInputs = commonPyroArgs.nativeBuildInputs;
             packages = [
               wasmToolchain
               pyroduct
