@@ -4,7 +4,7 @@ let
   # =========================================================================
   # NixOS VM test: validates the pyro-daemon NixOS module
   # =========================================================================
-  nixosTest = pkgs.nixosTest {
+  nixosTest = pkgs.testers.nixosTest {
     name = "pyro-daemon-nixos-test";
 
     nodes.machine = { pkgs, ... }: {
@@ -69,9 +69,9 @@ let
 
   # =========================================================================
   # Install script test: validates install.sh in a minimal NixOS VM
-  # Uses pre-built binaries (stubbed) to test the setup logic
+  # Uses a pre-built stub binary to test the setup logic
   # =========================================================================
-  installScriptTest = pkgs.nixosTest {
+  installScriptTest = pkgs.testers.nixosTest {
     name = "pyro-daemon-install-script-test";
 
     nodes.machine = { pkgs, ... }: {
@@ -81,77 +81,54 @@ let
         gnugrep
         gnused
         gawk
-        systemd
-        shadow   # useradd, usermod, etc.
-        curl
-        file
       ];
 
       # The install script needs a user to run as
       users.users.installer = {
         isNormalUser = true;
         password = "test";
-        extraGroups = [ "wheel" ];
+        shell = pkgs.bash;
       };
-
-      security.sudo.wheelNeedsPassword = false;
     };
 
     testScript = let
-      # Create a minimal fake repo with stubbed binaries
-      fakeRepo = pkgs.runCommand "fake-pyroduct-repo" {} ''
-        mkdir -p $out/lib/pyroduct $out/lib/pyro-daemon
+      # Create a fake release tarball directory with a stub pyroduct binary
+      fakeRelease = pkgs.runCommand "fake-pyroduct-release" {} ''
+        mkdir -p $out
 
-        # Create stub Cargo.tomls so the script thinks it's a repo
-        echo '[package]' > $out/lib/pyroduct/Cargo.toml
-        echo 'name = "pyroduct"' >> $out/lib/pyroduct/Cargo.toml
-        echo '[package]' > $out/lib/pyro-daemon/Cargo.toml
-        echo 'name = "pyro-daemon"' >> $out/lib/pyro-daemon/Cargo.toml
+        # Create a stub pyroduct binary (simulates pre-built release binary)
+        echo '#!/bin/sh' > $out/pyroduct
+        echo 'echo "pyroduct 0.2.1 (stub)"' >> $out/pyroduct
+        chmod +x $out/pyroduct
 
         # Copy the install script
         cp ${../install.sh} $out/install.sh
         chmod +x $out/install.sh
-
-        # Create stub binaries that the script will "find"
-        mkdir -p $out/stub-bin
-        echo '#!/bin/sh' > $out/stub-bin/pyro-daemond
-        echo 'echo "pyro-daemond stub"' >> $out/stub-bin/pyro-daemond
-        chmod +x $out/stub-bin/pyro-daemond
-        echo '#!/bin/sh' > $out/stub-bin/pyroduct
-        echo 'echo "pyroduct stub"' >> $out/stub-bin/pyroduct
-        chmod +x $out/stub-bin/pyroduct
-        echo '#!/bin/sh' > $out/stub-bin/cargo
-        echo 'echo "cargo install stub — skipping"' >> $out/stub-bin/cargo
-        chmod +x $out/stub-bin/cargo
-        echo '#!/bin/sh' > $out/stub-bin/rustc
-        echo 'echo "rustc 1.90.0 (stub)"' >> $out/stub-bin/rustc
-        chmod +x $out/stub-bin/rustc
       '';
     in ''
       machine.wait_for_unit("multi-user.target")
 
-      # Copy fake repo and put stub binaries on PATH
-      machine.succeed("cp -r ${fakeRepo} /tmp/pyroduct && chmod -R u+w /tmp/pyroduct")
-      machine.succeed("cp ${fakeRepo}/stub-bin/* /usr/local/bin/ 2>/dev/null || cp ${fakeRepo}/stub-bin/* /run/current-system/sw/bin/ 2>/dev/null || true")
-      machine.succeed("export PATH='${fakeRepo}/stub-bin:$PATH' && cd /tmp/pyroduct && ./install.sh -d")
+      # Copy fake release to a writable location and run as installer user
+      machine.succeed("cp -r ${fakeRelease} /tmp/pyroduct-release && chmod -R u+w /tmp/pyroduct-release")
+      machine.succeed("chown -R installer:users /tmp/pyroduct-release")
 
-      # Verify the pyroduct system user was created
-      machine.succeed("id pyroduct")
+      # Run install script as the installer user
+      machine.succeed("su - installer -c 'cd /tmp/pyroduct-release && ./install.sh'")
 
-      # Verify directory structure
-      machine.succeed("test -d /var/lib/pyro-daemon")
-      machine.succeed("test -d /var/lib/pyro-daemon/cache")
-      machine.succeed("test -f /var/lib/pyro-daemon/cache/config.toml")
+      # Verify the pyroduct binary was installed
+      machine.succeed("su - installer -c 'test -x /home/installer/.local/bin/pyroduct'")
+      machine.succeed("su - installer -c '/home/installer/.local/bin/pyroduct --version'")
 
-      # Verify environment files
-      machine.succeed("test -f /etc/pyroduct.env")
-      machine.succeed("test -f /etc/profile.d/pyroduct.sh")
-      machine.succeed("grep -q '/var/lib/pyro-daemon/cache' /etc/pyroduct.env")
+      # Verify ~/.pyroduct directory was created
+      machine.succeed("su - installer -c 'test -d /home/installer/.pyroduct'")
+      machine.succeed("su - installer -c 'test -f /home/installer/.pyroduct/config.toml'")
+      machine.succeed("su - installer -c 'grep -q installer /home/installer/.pyroduct/config.toml'")
+      machine.succeed("su - installer -c 'grep -q build_slots /home/installer/.pyroduct/config.toml'")
 
-      # Verify systemd service file was created
-      machine.succeed("test -f /etc/systemd/system/pyro-daemon.service")
-      machine.succeed("grep -q 'User=pyroduct' /etc/systemd/system/pyro-daemon.service")
-      machine.succeed("grep -q 'ProtectSystem=strict' /etc/systemd/system/pyro-daemon.service")
+      # Verify environment variables were added to shell rc
+      machine.succeed("su - installer -c 'grep -q PYRODUCT /home/installer/.bashrc'")
+      machine.succeed("su - installer -c 'grep -q PYRO_DAEMON_DIR /home/installer/.bashrc'")
+      machine.succeed("su - installer -c 'grep -q .pyroduct /home/installer/.bashrc'")
     '';
   };
 
