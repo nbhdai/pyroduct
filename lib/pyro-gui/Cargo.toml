@@ -24,5 +24,9 @@ pyro-artifacts.workspace = true
 pyroduct.workspace = true
 arrow.workspace = true
 
+[features]
+default = []
+embedded-daemon = []
+
 [build-dependencies]
 tauri-build = { version = "2.1", features = [] }
