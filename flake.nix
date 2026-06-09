@@ -107,7 +107,7 @@
           }
         );
 
-        microvmTests = import ./nix/microvm-test.nix { inherit pkgs; };
+        installTests = import ./nix/install-tests.nix { inherit pkgs pyroduct; };
         miriTests = import ./nix/miri-tests.nix {
           inherit pkgs miriToolchain;
           craneLib = craneLibMiri;
@@ -118,10 +118,6 @@
           craneLib = craneLibNative;
           commonArgs = commonPyroArgs;
           pyroduct = pyroduct;
-        };
-        socketTests = import ./nix/socket.nix {
-          inherit pkgs craneLibNative craneLibWasm pyroduct;
-          pyroductSrc = pyroSrc;
         };
 
         devGui = pkgs.writeShellScriptBin "dev-gui" ''
@@ -141,10 +137,10 @@
         };
 
         checks = {
-          microvm-test = microvmTests.check;
+          nixos-module-test = installTests.nixos-module-check;
+          install-script-test = installTests.install-script-check;
           miri-tests = miriTests.check;
           rust-tests = rustTests.check;
-          socket-test = socketTests.check;
         };
 
         apps = {
@@ -190,7 +186,7 @@
             packages = [
               wasmToolchain
               pyroduct
-              microvmTests.bin
+              installTests.bin
               miriTests.bin
               rustTests.bin
               rustTests.prepare
