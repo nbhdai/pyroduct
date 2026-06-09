@@ -70,9 +70,12 @@
 
         # Build the harness
         pyroSrc = lib.cleanSourceWith {
-          src = craneLibNative.cleanCargoSource ./lib;
+          src = ./lib;
           filter =
-            path: type: (craneLibNative.filterCargoSources path type) || (lib.hasSuffix ".stderr" path);
+            path: type:
+            (craneLibNative.filterCargoSources path type)
+            || (lib.hasSuffix "tauri.conf.json" path)
+            || (lib.hasSuffix ".png" path);
         };
         commonPyroArgs = {
           src = pyroSrc;
@@ -107,6 +110,48 @@
           }
         );
 
+        pyro-daemon = craneLibNative.buildPackage (
+          commonPyroArgs
+          // {
+            pname = "pyro-daemon";
+            version = "0.1.0";
+            cargoArtifacts = pyroductDeps;
+            doCheck = false;
+            cargoExtraArgs = "-p pyro-daemon";
+          }
+        );
+
+        guiFrontend = pkgs.buildNpmPackage {
+          pname = "pyro-gui-ui";
+          version = "0.1.0";
+          src = ./lib/pyro-gui/ui;
+          npmDepsHash = "sha256-/MxPvw1RUVSKvaRbx1+PABX36H3dc3bAAoAe8p/8fc8=";
+          installPhase = ''
+            mkdir -p $out
+            cp -r dist/* $out/
+          '';
+        };
+
+        pyro-gui = craneLibNative.buildPackage (
+          commonPyroArgs
+          // {
+            pname = "pyro-gui";
+            version = "0.1.0";
+            cargoArtifacts = null;
+            doCheck = false;
+            cargoExtraArgs = "-p pyro-gui";
+            preBuild = ''
+              mkdir -p pyro-gui/ui/dist
+              cp -r ${guiFrontend}/* pyro-gui/ui/dist/
+              chmod -R u+w pyro-gui/ui/dist
+            '';
+          }
+        );
+
+        guiBuild = import ./nix/gui-build.nix {
+          inherit pkgs process-compose-flake pyro-daemon pyro-gui;
+        };
+
         installTests = import ./nix/install-tests.nix { inherit pkgs pyroduct; };
         miriTests = import ./nix/miri-tests.nix {
           inherit pkgs miriToolchain;
@@ -129,10 +174,27 @@
 
       in
       {
+        lib = {
+          makeProcessCompose = args: import ./nix/gui-dev.nix ({
+            inherit pkgs process-compose-flake;
+          } // args);
+
+          makeGuiDev = args: import ./nix/gui-dev.nix ({
+            inherit pkgs process-compose-flake;
+          } // args);
+
+          makeGuiBuild = args: import ./nix/gui-build.nix ({
+            inherit pkgs process-compose-flake pyro-daemon pyro-gui;
+          } // args);
+        };
+
         packages = {
           inherit pyroduct;
+          pyro-daemon = pyro-daemon;
+          pyro-gui = pyro-gui;
           dev-gui = devGui;
           process-compose = guiDev;
+          gui-build = guiBuild;
           default = pyroduct;
         };
 
