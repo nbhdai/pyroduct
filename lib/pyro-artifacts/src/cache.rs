@@ -108,10 +108,24 @@ impl CacheManager {
         let root = std::env::var("PYRODUCT")
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
+                // Check the standard systemd service cache location (Linux)
+                let system_cache = PathBuf::from("/var/lib/pyro-daemon/cache");
+                if system_cache.join("config.toml").exists() {
+                    return system_cache;
+                }
+
                 let home = std::env::var("HOME")
                     .or_else(|_| std::env::var("USERPROFILE"))
                     .map(PathBuf::from)
                     .unwrap_or_else(|_| PathBuf::from("."));
+
+                // Check macOS Application Support location
+                let macos_cache = home.join("Library/Application Support/pyro-daemon/cache");
+                if macos_cache.join("config.toml").exists() {
+                    return macos_cache;
+                }
+
+                // Fallback to user-local directory
                 home.join(".pyroduct")
             });
         let config_path = root.join("config.toml");

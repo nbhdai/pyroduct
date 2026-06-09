@@ -3,9 +3,9 @@
 # Pyroduct Installer
 #
 # Installs the pyroduct CLI and pyro-daemond binary, and optionally sets up
-# a systemd service running under a dedicated 'pyroduct' system user.
+# a background daemon service.
 #
-# Supports: Ubuntu/Debian, Arch Linux/Manjaro
+# Supports: Ubuntu/Debian, Arch Linux/Manjaro, macOS
 # Usage:    ./install.sh [-d|--default]
 #
 
@@ -28,9 +28,27 @@ err()   { echo -e "${RED}❌${NC} $*" >&2; }
 step()  { echo -e "\n${BOLD}==> $*${NC}"; }
 
 # =============================================================================
-# Distro detection
+# OS & distro detection
 # =============================================================================
-detect_distro() {
+detect_platform() {
+    OS="$(uname -s)"
+    case "$OS" in
+        Darwin)
+            PLATFORM="macos"
+            DISTRO="macos"
+            ;;
+        Linux)
+            PLATFORM="linux"
+            detect_linux_distro
+            ;;
+        *)
+            PLATFORM="unknown"
+            DISTRO="unknown"
+            ;;
+    esac
+}
+
+detect_linux_distro() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
         case "$ID" in
@@ -64,6 +82,11 @@ install_deps() {
     step "Installing system dependencies ($DISTRO)"
 
     case "$DISTRO" in
+        macos)
+            info "macOS detected — skipping automatic dependency installation"
+            info "Ensure you have the following installed (e.g. via brew or nix):"
+            info "  openssl, sqlite, pkg-config"
+            ;;
         debian)
             sudo apt-get update -qq
             sudo apt-get install -y -qq \
@@ -96,7 +119,7 @@ install_deps() {
             ;;
     esac
 
-    ok "System dependencies installed"
+    ok "System dependencies ready"
 }
 
 # =============================================================================
@@ -143,7 +166,7 @@ install_binaries() {
 }
 
 # =============================================================================
-# Create pyroduct system user & group
+# Linux: Create pyroduct system user & group
 # =============================================================================
 create_system_user() {
     step "Creating pyroduct system user and group"
@@ -173,9 +196,9 @@ create_system_user() {
 }
 
 # =============================================================================
-# Set up daemon working directory and shared cache
+# Linux: Set up daemon working directory and shared cache
 # =============================================================================
-setup_directories() {
+setup_directories_linux() {
     step "Setting up daemon working directory and shared cache"
 
     local DAEMON_DIR="/var/lib/pyro-daemon"
@@ -216,9 +239,9 @@ EOF
 }
 
 # =============================================================================
-# Set up environment variables
+# Linux: Set up environment variables
 # =============================================================================
-setup_environment() {
+setup_environment_linux() {
     step "Setting up environment variables"
 
     # Create the environment file for systemd
@@ -239,7 +262,7 @@ PROFILE
 }
 
 # =============================================================================
-# Install systemd service
+# Linux: Install systemd service
 # =============================================================================
 install_systemd_service() {
     step "Installing systemd service"
@@ -249,7 +272,6 @@ install_systemd_service() {
     DAEMOND_PATH="$(command -v pyro-daemond 2>/dev/null || echo "")"
 
     if [ -z "$DAEMOND_PATH" ]; then
-        # Check common cargo install paths
         for candidate in \
             "$HOME/.cargo/bin/pyro-daemond" \
             "/usr/local/bin/pyro-daemond" \
@@ -318,6 +340,169 @@ EOF
 }
 
 # =============================================================================
+# macOS: Set up daemon directories (user-local)
+# =============================================================================
+setup_directories_macos() {
+    step "Setting up daemon directories"
+
+    local DAEMON_DIR="$HOME/Library/Application Support/pyro-daemon"
+    local CACHE_DIR="$DAEMON_DIR/cache"
+
+    mkdir -p "$DAEMON_DIR"
+    mkdir -p "$DAEMON_DIR/data"
+    mkdir -p "$CACHE_DIR"
+
+    for subdir in capabilities interfaces modules; do
+        mkdir -p "$CACHE_DIR/$subdir"
+    done
+
+    cat > "$CACHE_DIR/config.toml" <<EOF
+author = "$AUTHOR_NAME"
+build_slots = $NUM_ENVS
+EOF
+
+    ok "Daemon directory created at $DAEMON_DIR"
+    ok "Shared cache created at $CACHE_DIR"
+}
+
+# =============================================================================
+# macOS: Set up environment variables
+# =============================================================================
+setup_environment_macos() {
+    step "Setting up environment variables"
+
+    local DAEMON_DIR="$HOME/Library/Application Support/pyro-daemon"
+    local CACHE_DIR="$DAEMON_DIR/cache"
+
+    local SHELL_NAME
+    SHELL_NAME="$(basename "$SHELL")"
+
+    local RC_FILE
+    case "$SHELL_NAME" in
+        zsh)  RC_FILE="$HOME/.zshrc" ;;
+        bash) RC_FILE="$HOME/.bashrc" ;;
+        fish) RC_FILE="$HOME/.config/fish/config.fish" ;;
+        *)    RC_FILE="$HOME/.profile" ;;
+    esac
+
+    # Check if already configured
+    if grep -q "PYRO_DAEMON_DIR" "$RC_FILE" 2>/dev/null; then
+        info "Environment variables already configured in $RC_FILE"
+        return
+    fi
+
+    if [ "$SHELL_NAME" = "fish" ]; then
+        cat >> "$RC_FILE" <<EOF
+
+# Pyroduct environment variables
+set -gx PYRODUCT "$CACHE_DIR"
+set -gx PYRO_DAEMON_DIR "$DAEMON_DIR"
+EOF
+    else
+        cat >> "$RC_FILE" <<EOF
+
+# Pyroduct environment variables
+export PYRODUCT="$CACHE_DIR"
+export PYRO_DAEMON_DIR="$DAEMON_DIR"
+EOF
+    fi
+
+    ok "Environment variables added to $RC_FILE"
+    warn "Run 'source $RC_FILE' or open a new terminal for changes to take effect"
+}
+
+# =============================================================================
+# macOS: Install launchd service (user agent)
+# =============================================================================
+install_launchd_service() {
+    step "Installing launchd user agent"
+
+    local DAEMON_DIR="$HOME/Library/Application Support/pyro-daemon"
+
+    # Locate the installed binary
+    local DAEMOND_PATH
+    DAEMOND_PATH="$(command -v pyro-daemond 2>/dev/null || echo "")"
+
+    if [ -z "$DAEMOND_PATH" ]; then
+        for candidate in \
+            "$HOME/.cargo/bin/pyro-daemond" \
+            "/usr/local/bin/pyro-daemond" \
+            "/opt/homebrew/bin/pyro-daemond"; do
+            if [ -x "$candidate" ]; then
+                DAEMOND_PATH="$candidate"
+                break
+            fi
+        done
+    fi
+
+    if [ -z "$DAEMOND_PATH" ]; then
+        err "Could not find pyro-daemond binary. Skipping service installation."
+        return 1
+    fi
+
+    info "Using daemon binary: $DAEMOND_PATH"
+
+    local PLIST_DIR="$HOME/Library/LaunchAgents"
+    local PLIST_PATH="$PLIST_DIR/com.pyroduct.daemon.plist"
+    local LOG_DIR="$HOME/Library/Logs/pyro-daemon"
+
+    mkdir -p "$PLIST_DIR"
+    mkdir -p "$LOG_DIR"
+
+    cat > "$PLIST_PATH" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pyroduct.daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>$DAEMOND_PATH</string>
+        <string>--working-dir</string>
+        <string>$DAEMON_DIR</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYRODUCT</key>
+        <string>$DAEMON_DIR/cache</string>
+        <key>PYRO_DAEMON_DIR</key>
+        <string>$DAEMON_DIR</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>$LOG_DIR/stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>$LOG_DIR/stderr.log</string>
+</dict>
+</plist>
+EOF
+
+    ok "LaunchAgent plist created at $PLIST_PATH"
+
+    # Load the service
+    launchctl bootout "gui/$(id -u)" "$PLIST_PATH" 2>/dev/null || true
+    launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH"
+    ok "Service loaded and started"
+
+    info "Check status with: launchctl print gui/$(id -u)/com.pyroduct.daemon"
+    info "View logs at:      $LOG_DIR/"
+    info "Stop with:         launchctl bootout gui/$(id -u) $PLIST_PATH"
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 main() {
@@ -345,11 +530,18 @@ main() {
         shift
     done
 
-    # Detect distro
-    detect_distro
-    info "Detected distribution: $DISTRO"
+    # Detect platform & distro
+    detect_platform
+    info "Detected platform: $PLATFORM ($DISTRO)"
 
     # Collect user input
+    local DAEMON_PROMPT
+    if [ "$PLATFORM" = "macos" ]; then
+        DAEMON_PROMPT="Install launchd daemon service?"
+    else
+        DAEMON_PROMPT="Install systemd daemon service?"
+    fi
+
     if [ "$USE_DEFAULTS" = true ]; then
         info "Running in default mode (skipping prompts)"
         AUTHOR_NAME="${USER:-pyroduct}"
@@ -367,7 +559,7 @@ main() {
             exit 1
         fi
 
-        read -rp "$(echo -e "${CYAN}?${NC}") Install systemd daemon service? [Y/n]: " INPUT_DAEMON
+        read -rp "$(echo -e "${CYAN}?${NC}") $DAEMON_PROMPT [Y/n]: " INPUT_DAEMON
         case "$INPUT_DAEMON" in
             [Nn]*) INSTALL_DAEMON=false ;;
             *)     INSTALL_DAEMON=true ;;
@@ -391,10 +583,16 @@ main() {
 
     # Step 4: Optionally set up the daemon
     if [ "$INSTALL_DAEMON" = true ]; then
-        create_system_user
-        setup_directories
-        setup_environment
-        install_systemd_service
+        if [ "$PLATFORM" = "macos" ]; then
+            setup_directories_macos
+            setup_environment_macos
+            install_launchd_service
+        else
+            create_system_user
+            setup_directories_linux
+            setup_environment_linux
+            install_systemd_service
+        fi
     else
         # Even without daemon, create user-local cache
         step "Setting up user-local cache"
@@ -419,18 +617,30 @@ EOF
     echo "  Available commands:"
     echo "    pyroduct        CLI for building and managing playbooks"
     if [ "$INSTALL_DAEMON" = true ]; then
-        echo "    pyro-daemond    Background daemon (running as systemd service)"
+        echo "    pyro-daemond    Background daemon (running as service)"
         echo ""
-        echo "  Daemon paths:"
-        echo "    Working dir:    /var/lib/pyro-daemon"
-        echo "    Shared cache:   /var/lib/pyro-daemon/cache"
-        echo "    Control socket: /var/lib/pyro-daemon/control"
-        echo ""
-        echo "  Environment variables (set via /etc/profile.d/pyroduct.sh):"
-        echo "    PYRODUCT=/var/lib/pyro-daemon/cache"
-        echo "    PYRO_DAEMON_DIR=/var/lib/pyro-daemon"
-        echo ""
-        warn "Log out and back in for group membership and environment changes to take effect."
+        if [ "$PLATFORM" = "macos" ]; then
+            local DAEMON_DIR="$HOME/Library/Application Support/pyro-daemon"
+            echo "  Daemon paths:"
+            echo "    Working dir:    $DAEMON_DIR"
+            echo "    Shared cache:   $DAEMON_DIR/cache"
+            echo "    Control socket: $DAEMON_DIR/control"
+            echo ""
+            echo "  Manage service:"
+            echo "    launchctl print gui/$(id -u)/com.pyroduct.daemon"
+            echo ""
+        else
+            echo "  Daemon paths:"
+            echo "    Working dir:    /var/lib/pyro-daemon"
+            echo "    Shared cache:   /var/lib/pyro-daemon/cache"
+            echo "    Control socket: /var/lib/pyro-daemon/control"
+            echo ""
+            echo "  Environment variables (set via /etc/profile.d/pyroduct.sh):"
+            echo "    PYRODUCT=/var/lib/pyro-daemon/cache"
+            echo "    PYRO_DAEMON_DIR=/var/lib/pyro-daemon"
+            echo ""
+            warn "Log out and back in for group membership and environment changes to take effect."
+        fi
     fi
     echo ""
 }

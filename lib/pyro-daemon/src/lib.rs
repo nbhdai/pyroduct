@@ -65,15 +65,30 @@ pub struct PyroDaemon {
 
 impl PyroDaemon {
     pub fn default_working_dir() -> PathBuf {
-        std::env::var("PYRO_DAEMON_DIR")
+        // 1. Explicit env var always wins
+        if let Ok(dir) = std::env::var("PYRO_DAEMON_DIR") {
+            return PathBuf::from(dir);
+        }
+
+        // 2. Check the standard systemd service location (Linux)
+        let system_dir = PathBuf::from("/var/lib/pyro-daemon");
+        if system_dir.join("control").exists() {
+            return system_dir;
+        }
+
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
             .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                let home = std::env::var("HOME")
-                    .or_else(|_| std::env::var("USERPROFILE"))
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|_| PathBuf::from("."));
-                home.join(".pyro-daemon")
-            })
+            .unwrap_or_else(|_| PathBuf::from("."));
+
+        // 3. Check macOS Application Support location
+        let macos_dir = home.join("Library/Application Support/pyro-daemon");
+        if macos_dir.join("control").exists() {
+            return macos_dir;
+        }
+
+        // 4. Fallback to user-local directory
+        home.join(".pyro-daemon")
     }
 
     pub fn new(working_dir: PathBuf) -> Self {

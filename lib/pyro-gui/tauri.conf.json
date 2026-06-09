@@ -29,6 +29,17 @@
     "withGlobalTauri": true
   },
   "bundle": {
-    "active": false
+    "active": true,
+    "targets": ["deb", "appimage"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Pyroduct Control Panel",
+    "longDescription": "GUI for managing the Pyroduct daemon, playbooks, and data pipelines."
   }
 }
