@@ -16,7 +16,8 @@
 
 let
   processComposeLib = import process-compose-flake.lib { inherit pkgs; };
-  configFile = pkgs.writeText "pyroduct-config.toml" (pkgs.lib.generators.toTOML { } configSettings);
+  tomlFormat = pkgs.formats.toml { };
+  configFile = tomlFormat.generate "pyroduct-config.toml" configSettings;
 in
 processComposeLib.makeProcessCompose {
   modules = [
