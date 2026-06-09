@@ -347,6 +347,7 @@ async fn test_load_playbook() {
             "",
             "",
             "",
+            4,
         )
         .await
         .unwrap();

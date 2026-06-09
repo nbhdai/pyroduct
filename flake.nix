@@ -26,6 +26,11 @@
       process-compose-flake,
       ...
     }:
+    {
+      nixosModules.pyro-daemon = import ./nix/pyro-daemon-module.nix;
+      nixosModules.default = import ./nix/pyro-daemon-module.nix;
+    }
+    //
     flake-utils.lib.eachDefaultSystem (
       system:
       let
@@ -72,7 +77,15 @@
         commonPyroArgs = {
           src = pyroSrc;
           strictDeps = true;
-          buildInputs = with pkgs; [ openssl ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.systemd ];
+          buildInputs = with pkgs; [ openssl ] ++ lib.optionals pkgs.stdenv.isLinux [
+            pkgs.systemd
+            pkgs.glib
+            pkgs.gtk3
+            pkgs.webkitgtk_4_1
+            pkgs.libsoup_3
+            pkgs.librsvg
+            pkgs.bzip2
+          ];
           nativeBuildInputs = with pkgs; [ pkg-config ];
         };
 
@@ -93,8 +106,6 @@
             cargoExtraArgs = "-p pyroduct --features cli";
           }
         );
-
-        ROOT_DIR = (builtins.getEnv "ROOT_DIR");
 
         microvmTests = import ./nix/microvm-test.nix { inherit pkgs; };
         miriTests = import ./nix/miri-tests.nix {
@@ -174,6 +185,8 @@
         devShells.default = craneLibWasm.devShell (
           wasmEnv
           // {
+            buildInputs = commonPyroArgs.buildInputs;
+            nativeBuildInputs = commonPyroArgs.nativeBuildInputs;
             packages = [
               wasmToolchain
               pyroduct
@@ -189,21 +202,21 @@
               pkgs.nodejs
               pkgs.cargo-tauri
               pkgs.bacon
+              pkgs.pkg-config
             ]
             ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.valgrind ];
             RUST_SRC_PATH = "${wasmToolchain}/lib/rustlib/src/rust/library";
             RUST_ANALYZER_PATH = "${wasmToolchain}/bin/rust-analyzer";
             CARGO = "${wasmToolchain}/bin/cargo";
             RUSTUP_TOOLCHAIN = "${wasmToolchain}";
-            PYRODUCT = ROOT_DIR + "/test";
 
             shellHook = ''
-              export PYRO_DAEMON_DIR="''${ROOT_DIR:-$PWD}/test/"
-              mkdir -p "$PYRO_DAEMON_DIR"
-              export PYRODUCT_ROOT="''${ROOT_DIR:-$PWD}/test/"
+              export PYRODUCT="$PWD/test"
+              export PYRO_DAEMON_DIR="$PWD/test/"
+              export PYRODUCT_ROOT="$PWD/test/"
 
               ${lib.optionalString pkgs.stdenv.isLinux ''
-                export LD_LIBRARY_PATH="${lib.makeLibraryPath [ pkgs.systemd ]}:''${LD_LIBRARY_PATH:-}"
+                export LD_LIBRARY_PATH="${lib.makeLibraryPath commonPyroArgs.buildInputs}:''${LD_LIBRARY_PATH:-}"
               ''}
               ${lib.optionalString pkgs.stdenv.isDarwin ''
                 unset DEVELOPER_DIR

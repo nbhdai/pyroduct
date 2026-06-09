@@ -49,6 +49,14 @@ pub struct LoadedPlaybook {
     pub log_dir: std::path::PathBuf,
     pub input_dir: std::path::PathBuf,
     pub output_dir: std::path::PathBuf,
+
+    /// Number of worker shards for concurrent processing.
+    #[serde(default = "default_num_workers")]
+    pub num_workers: usize,
+}
+
+fn default_num_workers() -> usize {
+    4
 }
 
 // The lock file is automatically unlocked when `_lock_file` is dropped (fs2 behavior).
@@ -100,10 +108,24 @@ impl CacheManager {
         let root = std::env::var("PYRODUCT")
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
+                // Check the standard systemd service cache location (Linux)
+                let system_cache = PathBuf::from("/var/lib/pyro-daemon/cache");
+                if system_cache.join("config.toml").exists() {
+                    return system_cache;
+                }
+
                 let home = std::env::var("HOME")
                     .or_else(|_| std::env::var("USERPROFILE"))
                     .map(PathBuf::from)
                     .unwrap_or_else(|_| PathBuf::from("."));
+
+                // Check macOS Application Support location
+                let macos_cache = home.join("Library/Application Support/pyro-daemon/cache");
+                if macos_cache.join("config.toml").exists() {
+                    return macos_cache;
+                }
+
+                // Fallback to user-local directory
                 home.join(".pyroduct")
             });
         let config_path = root.join("config.toml");
@@ -678,6 +700,7 @@ impl CacheManager {
         log_dir: impl AsRef<Path>,
         input_dir: impl AsRef<Path>,
         output_dir: impl AsRef<Path>,
+        num_workers: usize,
     ) -> Result<LoadedPlaybook, CacheError> {
         tracing::debug!("Loading playbook");
         let res = async {
@@ -719,6 +742,7 @@ impl CacheManager {
                 log_dir: log_dir.as_ref().to_path_buf(),
                 input_dir: input_dir.as_ref().to_path_buf(),
                 output_dir: output_dir.as_ref().to_path_buf(),
+                num_workers,
             })
         }.await;
 

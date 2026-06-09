@@ -54,7 +54,10 @@ async fn test_socket_session_server_client() {
         source: SIMPLE_SESSION_MODULE.to_string(),
         interconnect: std::collections::BTreeMap::new(),
     };
-    cache.remove_module("anon", "test_socket_session", "0.1.0").await.unwrap();
+    cache
+        .remove_module("anon", "test_socket_session", "0.1.0")
+        .await
+        .unwrap();
 
     let binary = builder
         .compile_anon(&source)
@@ -72,6 +75,7 @@ async fn test_socket_session_server_client() {
         wal_capacity: 1000,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
+        num_workers: 4,
         input_dir: tmp_path.clone(),
         output_dir: tmp_path.clone(),
         log_dir: tmp_path.clone(),

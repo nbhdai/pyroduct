@@ -36,6 +36,8 @@ pub struct PipelineConfig {
     pub success_log_retention_secs: u64,
     #[serde(default = "default_error_retention")]
     pub error_log_retention_secs: u64,
+    #[serde(default = "default_num_workers")]
+    pub num_workers: usize,
     pub log_dir: std::path::PathBuf,
     pub input_dir: std::path::PathBuf,
     pub output_dir: std::path::PathBuf,
@@ -50,6 +52,9 @@ fn default_success_retention() -> u64 {
 fn default_error_retention() -> u64 {
     86400 * 7
 }
+fn default_num_workers() -> usize {
+    4
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct LoadedPipelineConfig {
@@ -57,6 +62,7 @@ pub struct LoadedPipelineConfig {
     pub wal_capacity: usize,
     pub success_log_retention_secs: u64,
     pub error_log_retention_secs: u64,
+    pub num_workers: usize,
 }
 
 impl PipelineConfig {
@@ -68,6 +74,7 @@ impl PipelineConfig {
                 self.log_dir,
                 self.input_dir,
                 self.output_dir,
+                self.num_workers,
             )
             .await?;
         Ok(LoadedPipelineConfig {
@@ -75,6 +82,7 @@ impl PipelineConfig {
             wal_capacity: self.wal_capacity,
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,
+            num_workers: self.num_workers,
         })
     }
 }
@@ -86,6 +94,7 @@ impl LoadedPipelineConfig {
             wal_capacity: self.wal_capacity,
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,
+            num_workers: self.num_workers,
             log_dir: self.playbook.log_dir.clone(),
             input_dir: self.playbook.input_dir.clone(),
             output_dir: self.playbook.output_dir.clone(),
@@ -106,6 +115,7 @@ pub struct PipelineFactory {
     pub wal_capacity: usize,
     pub success_log_retention_secs: u64,
     pub error_log_retention_secs: u64,
+    pub num_workers: usize,
 }
 
 impl PipelineFactory {
@@ -125,25 +135,29 @@ impl PipelineFactory {
     ///
     /// Compiles and instantiates the single wasm module, configuring it with WAL.
     pub async fn build(&self) -> Result<Pipeline, PipelineError> {
-        tracing::debug!("Building wasm module for playbook");
-        let instance = self.factory.instantiate().await?;
+        tracing::debug!(num_workers = self.num_workers, "Building wasm module(s) for playbook");
+        let mut shards = Vec::with_capacity(self.num_workers);
+        for _ in 0..self.num_workers {
+            let instance = self.factory.instantiate().await?;
+            shards.push(tokio::sync::Mutex::new(instance));
+        }
         let input_schema = self.factory.spec().func.input.clone();
         let output_schema = self.factory.spec().func.output.clone();
 
         Ok(Pipeline {
-            step: instance,
+            shards,
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,
-            log_manager: LogWal::open(self.log_dir.clone(), self.wal_capacity)
+            log_manager: tokio::sync::Mutex::new(LogWal::open(self.log_dir.clone(), self.wal_capacity)
                 .await
                 .map_err(|io| {
                     PyroError::local_io(
                         CapturedError::new("Unable to make the log wal").with_source(io),
                     )
-                })?,
+                })?),
             input_manager: super::data::DataManager::new(self.input_dir.clone(), input_schema),
             output_manager: super::data::DataManager::new(self.output_dir.clone(), output_schema),
-            callbacks: Vec::new(),
+            callbacks: tokio::sync::Mutex::new(Vec::new()),
         })
     }
 
@@ -151,8 +165,12 @@ impl PipelineFactory {
     ///
     /// Compiles and instantiates the single wasm module, configuring it with WAL.
     pub async fn build_session(&self) -> Result<SessionPipeline, PipelineError> {
-        tracing::debug!("Building wasm module for playbook");
-        let instance = self.factory.instantiate().await?;
+        tracing::debug!(num_workers = self.num_workers, "Building wasm module(s) for session playbook");
+        let mut shards = Vec::with_capacity(self.num_workers);
+        for _ in 0..self.num_workers {
+            let instance = self.factory.instantiate().await?;
+            shards.push(tokio::sync::Mutex::new(instance));
+        }
         let input_schema = self.factory.spec().func.input.clone();
         let output_schema_from_func = self.factory.spec().func.output.clone();
 
@@ -198,24 +216,26 @@ impl PipelineFactory {
             )]);
 
         let session_status_manager = SessionStatusManager::new(&self.output_dir)?;
+        let spec = self.factory.spec().clone();
 
         Ok(SessionPipeline {
-            step: instance,
+            shards,
+            spec: std::sync::Arc::new(spec),
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,
-            log_manager: LogWal::open(self.log_dir.clone(), self.wal_capacity)
+            log_manager: tokio::sync::Mutex::new(LogWal::open(self.log_dir.clone(), self.wal_capacity)
                 .await
                 .map_err(|io| {
                     PyroError::local_io(
                         CapturedError::new("Unable to make the log wal").with_source(io),
                     )
-                })?,
+                })?),
             output_manager: super::data::DataManager::new(self.output_dir.clone(), output_schema),
             log_dir: self.log_dir.clone(),
             output_dir: self.output_dir.clone(),
             wal_capacity: self.wal_capacity,
-            active_sessions: std::collections::HashMap::new(),
-            callbacks: Vec::new(),
+            active_sessions: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+            callbacks: tokio::sync::Mutex::new(Vec::new()),
             session_status_manager,
         })
     }
@@ -224,8 +244,12 @@ impl PipelineFactory {
     ///
     /// Compiles and instantiates the single wasm module, configuring it with WAL.
     pub async fn build_session_diff(&self) -> Result<SessionDiffPipeline, PipelineError> {
-        tracing::debug!("Building wasm module for playbook");
-        let instance = self.factory.instantiate().await?;
+        tracing::debug!(num_workers = self.num_workers, "Building wasm module(s) for session_diff playbook");
+        let mut shards = Vec::with_capacity(self.num_workers);
+        for _ in 0..self.num_workers {
+            let instance = self.factory.instantiate().await?;
+            shards.push(tokio::sync::Mutex::new(instance));
+        }
         let input_schema = self.factory.spec().func.input.clone();
         let output_schema = self.factory.spec().func.output.clone();
 
@@ -270,18 +294,20 @@ impl PipelineFactory {
         ]);
 
         let session_status_manager = SessionStatusManager::new(&self.output_dir)?;
+        let spec = self.factory.spec().clone();
 
         Ok(SessionDiffPipeline {
-            step: instance,
+            shards,
+            spec: std::sync::Arc::new(spec),
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,
-            log_manager: LogWal::open(self.log_dir.clone(), self.wal_capacity)
+            log_manager: tokio::sync::Mutex::new(LogWal::open(self.log_dir.clone(), self.wal_capacity)
                 .await
                 .map_err(|io| {
                     PyroError::local_io(
                         CapturedError::new("Unable to make the log wal").with_source(io),
                     )
-                })?,
+                })?),
             output_manager: super::data::DataManager::new(
                 self.output_dir.clone(),
                 overall_output_schema,
@@ -289,8 +315,8 @@ impl PipelineFactory {
             log_dir: self.log_dir.clone(),
             output_dir: self.output_dir.clone(),
             wal_capacity: self.wal_capacity,
-            active_sessions: std::collections::HashMap::new(),
-            callbacks: Vec::new(),
+            active_sessions: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+            callbacks: tokio::sync::Mutex::new(Vec::new()),
             session_status_manager,
         })
     }

@@ -411,6 +411,7 @@ impl PlaybooksManager {
             wal_capacity: 1000,
             success_log_retention_secs: 3600,
             error_log_retention_secs: 86400 * 7,
+            num_workers: 4,
             log_dir,
             input_dir,
             output_dir,

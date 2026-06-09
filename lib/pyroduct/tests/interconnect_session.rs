@@ -115,6 +115,7 @@ async fn test_interconnect_session_lifecycle() {
         wal_capacity: 5,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
+        num_workers: 4,
         input_dir: target_path.clone(),
         output_dir: target_path.clone(),
         log_dir: target_path.clone(),
@@ -129,6 +130,7 @@ async fn test_interconnect_session_lifecycle() {
         wal_capacity: 5,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
+        num_workers: 4,
         input_dir: caller_path.clone(),
         output_dir: caller_path.clone(),
         log_dir: caller_path.clone(),
@@ -149,7 +151,7 @@ async fn test_interconnect_session_lifecycle() {
         .factory()
         .unwrap()
         .with_interconnect(interconnect);
-    let mut caller_pipeline = caller_factory.build_session().await.unwrap();
+    let caller_pipeline = caller_factory.build_session().await.unwrap();
 
     let session_id = 42;
     caller_pipeline

@@ -76,14 +76,15 @@ async fn test_pipeline_success_callbacks() {
         input_dir: tmp_path.clone(),
         output_dir: tmp_path.clone(),
         log_dir: tmp_path.clone(),
+        num_workers: 1,
     };
 
     let loaded = config.load(&cache).await.unwrap();
     let factory = loaded.factory().unwrap();
-    let mut pipeline = factory.build().await.unwrap();
+    let pipeline = factory.build().await.unwrap();
 
     // Register our function pointer callback wrapped via Callback::function
-    pipeline.callbacks.push((
+    pipeline.callbacks.lock().await.push((
         uuid::Uuid::new_v4(),
         pyroduct::pipeline::Callback::function(|idx, row| {
             let row_static = row.to_static();
@@ -94,7 +95,7 @@ async fn test_pipeline_success_callbacks() {
     ));
 
     // Register our enum callback
-    pipeline.callbacks.push((
+    pipeline.callbacks.lock().await.push((
         uuid::Uuid::new_v4(),
         pyroduct::pipeline::Callback::function(|idx, row| {
             let row_static = row.to_static();
@@ -106,9 +107,16 @@ async fn test_pipeline_success_callbacks() {
 
     // Also register a socket and HTTP callback to verify the connection and HTTP constructors
     if let Ok(cb) = pyroduct::pipeline::Callback::connect_socket_tcp("127.0.0.1:9876").await {
-        pipeline.callbacks.push((uuid::Uuid::new_v4(), cb));
+        pipeline
+            .callbacks
+            .lock()
+            .await
+            .push((uuid::Uuid::new_v4(), cb));
     }
-    pipeline.callbacks.push((uuid::Uuid::new_v4(), pyroduct::pipeline::Callback::http("http://127.0.0.1:9876/callback")));
+    pipeline.callbacks.lock().await.push((
+        uuid::Uuid::new_v4(),
+        pyroduct::pipeline::Callback::http("http://127.0.0.1:9876/callback"),
+    ));
 
     // Test Success
     let input_success = PyroRow::from([("input", "hello".into())]);

@@ -93,6 +93,7 @@ async fn test_interconnect_lifecycle() {
         wal_capacity: 5,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
+        num_workers: 4,
         input_dir: tmp_path.clone(),
         output_dir: tmp_path.clone(),
         log_dir: tmp_path.clone(),
@@ -107,6 +108,7 @@ async fn test_interconnect_lifecycle() {
         wal_capacity: 5,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
+        num_workers: 4,
         input_dir: tmp_path.clone(),
         output_dir: tmp_path.clone(),
         log_dir: tmp_path.clone(),
@@ -127,7 +129,7 @@ async fn test_interconnect_lifecycle() {
         .factory()
         .unwrap()
         .with_interconnect(interconnect);
-    let mut caller_pipeline = caller_factory.build().await.unwrap();
+    let caller_pipeline = caller_factory.build().await.unwrap();
 
     // Call caller server
     let input = PyroRow::from([("input", "World".into())]);

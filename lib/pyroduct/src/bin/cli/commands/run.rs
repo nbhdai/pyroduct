@@ -11,8 +11,8 @@ use pyro_artifacts::cache::CacheManager;
 use pyroduct::pipeline::factory::LoadedPipelineConfig;
 use pyroduct::{
     PyroRow,
-    format::value::arrow::PreBatch,
-    pipeline::{ExecutionRecord, Pipeline, PipelineConfig, PipelinePool},
+    format::value::arrow::{PreBatch, Rowable},
+    pipeline::{ExecutionRecord, PipelineConfig, PipelineServer, ServerExecutionRecord},
 };
 
 use pyro_file::{
@@ -59,16 +59,18 @@ async fn load_config(config_path: &Path) -> Result<LoadedPipelineConfig> {
 /// Processes a single row from a JSON string and prints the result to stdout.
 pub async fn run(config_path: &Path, input_json: &str) -> Result<()> {
     let loaded = load_config(config_path).await?;
-    let factory = loaded.factory()?;
-    let mut pipeline = factory.build().await?;
+    let pipeline = PipelineServer::new(&loaded.playbook)
+        .await
+        .map_err(|e| anyhow!("Failed to build PipelineServer: {:?}", e))?;
 
-    process_and_print(&mut pipeline, input_json).await
+    process_and_print(&pipeline, input_json).await
 }
 
 pub async fn run_socket(config_path: &Path, socket_addr: &str) -> Result<()> {
     let loaded = load_config(config_path).await?;
-    let factory = loaded.factory()?;
-    let mut pipeline = factory.build().await?;
+    let pipeline = PipelineServer::new(&loaded.playbook)
+        .await
+        .map_err(|e| anyhow!("Failed to build PipelineServer: {:?}", e))?;
 
     if let Ok(addr) = socket_addr.parse::<std::net::SocketAddr>() {
         let listener = TcpListener::bind(addr)
@@ -88,7 +90,7 @@ pub async fn run_socket(config_path: &Path, socket_addr: &str) -> Result<()> {
                 continue;
             }
 
-            if let Err(e) = process_and_print(&mut pipeline, &buffer).await {
+            if let Err(e) = process_and_print(&pipeline, &buffer).await {
                 tracing::error!("Failed to process input from socket: {}", e);
             }
         }
@@ -113,40 +115,92 @@ pub async fn run_socket(config_path: &Path, socket_addr: &str) -> Result<()> {
                 continue;
             }
 
-            if let Err(e) = process_and_print(&mut pipeline, &buffer).await {
+            if let Err(e) = process_and_print(&pipeline, &buffer).await {
                 tracing::error!("Failed to process input from socket: {}", e);
             }
         }
     }
 }
 
-async fn process_and_print(pipeline: &mut Pipeline, input_json: &str) -> Result<()> {
+async fn process_and_print(pipeline: &PipelineServer, input_json: &str) -> Result<()> {
     tracing::debug!("Parsing input JSON directly to PyroRow");
     let input_row: PyroRow<'static> =
         serde_json::from_str(input_json).context("Failed to deserialize input JSON to PyroRow")?;
 
     tracing::info!("Executing pipeline...");
-    let result_row = pipeline.process(0, &input_row).await?;
+    let result_record = pipeline
+        .call(input_row)
+        .await
+        .map_err(|e| anyhow!("Pipeline call failed: {:?}", e))?;
 
-    match &result_row {
-        ExecutionRecord::Failure { failure, input, .. } => {
-            println!("Pipeline Failed!");
-            match failure {
-                Ok(err) => println!("Error: {:?}", err),
-                Err(err) => println!("Error: {}", err),
+    let (is_success, success_row, failure_msg, partial_data, logs) = match &result_record {
+        ServerExecutionRecord::Normal(rec) => match rec {
+            ExecutionRecord::Success { success, logs, .. } => {
+                (true, Some(success.clone()), None, None, logs.clone())
             }
+            ExecutionRecord::Failure {
+                failure,
+                input,
+                logs,
+                ..
+            } => {
+                let msg = match failure {
+                    Ok(e) => format!("{:?}", e),
+                    Err(e) => e.clone(),
+                };
+                (false, None, Some(msg), Some(input.clone()), logs.clone())
+            }
+        },
+        ServerExecutionRecord::Session(rec) => match rec {
+            pyroduct::pipeline::session::SessionExecutionRecord::Success {
+                success, logs, ..
+            } => (true, Some(success.clone()), None, None, logs.clone()),
+            pyroduct::pipeline::session::SessionExecutionRecord::Failure {
+                failure,
+                input,
+                logs,
+                ..
+            } => {
+                let msg = match failure {
+                    Ok(e) => format!("{:?}", e),
+                    Err(e) => e.clone(),
+                };
+                (false, None, Some(msg), Some(input.clone()), logs.clone())
+            }
+        },
+        ServerExecutionRecord::SessionDiff(rec) => match rec {
+            pyroduct::pipeline::session_diff::SessionDiffExecutionRecord::Success {
+                success,
+                logs,
+                ..
+            } => (true, Some(success.clone()), None, None, logs.clone()),
+            pyroduct::pipeline::session_diff::SessionDiffExecutionRecord::Failure {
+                failure,
+                input,
+                logs,
+                ..
+            } => {
+                let msg = match failure {
+                    Ok(e) => format!("{:?}", e),
+                    Err(e) => e.clone(),
+                };
+                (false, None, Some(msg), Some(input.clone()), logs.clone())
+            }
+        },
+    };
+
+    if is_success {
+        println!("Pipeline Succeeded!");
+        println!("Result:\n{:#?}", success_row.as_ref().unwrap());
+    } else {
+        println!("Pipeline Failed!");
+        if let Some(err) = &failure_msg {
+            println!("Error: {}", err);
+        }
+        if let Some(input) = &partial_data {
             println!("Partial Data:\n{:#?}", input);
         }
-        ExecutionRecord::Success { success, .. } => {
-            println!("Pipeline Succeeded!");
-            println!("Result:\n{:#?}", success);
-        }
     }
-
-    let logs = match &result_row {
-        ExecutionRecord::Success { logs, .. } => logs,
-        ExecutionRecord::Failure { logs, .. } => logs,
-    };
 
     let has_logs = !logs.module_logs.is_empty() || !logs.capability_logs.is_empty();
 
@@ -172,6 +226,14 @@ async fn process_and_print(pipeline: &mut Pipeline, input_json: &str) -> Result<
     Ok(())
 }
 
+struct RunBatchResult {
+    row_index: usize,
+    input: PyroRow<'static>,
+    success: Option<PyroRow<'static>>,
+    failure_msg: Option<String>,
+    logs: pyroduct::format::PyroLogs,
+}
+
 /// Processes a file of data using a thread pool and batch semantics.
 pub async fn run_batch(
     config_path: &Path,
@@ -180,32 +242,130 @@ pub async fn run_batch(
     format: OutputFormat,
 ) -> Result<()> {
     let config = load_config(config_path).await?;
-    let factory = config.factory()?;
-    let pipeline = factory.build().await?;
-    let pool = PipelinePool::new(vec![pipeline]);
+    let pipeline = PipelineServer::new(&config.playbook)
+        .await
+        .map_err(|e| anyhow!("Failed to build PipelineServer: {:?}", e))?;
 
     tracing::info!("Reading input file: {:?}", input_file);
     let filename = input_file.file_name().unwrap_or_default().to_string_lossy();
     let bytes = fs::read(input_file).context("Failed to read input file")?;
 
     let input_batch = parse_data_to_batch(bytes, &filename).await?;
+    let batch = input_batch[0].clone().to_batch();
 
-    tracing::info!("Processing {} rows...", input_batch[0].num_rows());
+    tracing::info!("Processing {} rows...", batch.num_rows());
 
-    let (successes, failures) = pool
-        .process_batch(&input_batch[0].clone().to_batch())
-        .await?;
+    let mut results = Vec::new();
 
-    for exec in successes.iter().chain(failures.iter()) {
-        let logs = match exec {
-            ExecutionRecord::Success { logs, .. } => logs,
-            ExecutionRecord::Failure { logs, .. } => logs,
+    for (row_idx, row_res) in batch.rows().enumerate() {
+        let row = row_res.context("Failed to parse row from record batch")?;
+        let input_row_owned = row.clone().into_owned();
+
+        let result_record_res = pipeline.call_session(row_idx as u32, row).await;
+
+        let res = match result_record_res {
+            Ok(result_record) => match result_record {
+                ServerExecutionRecord::Normal(rec) => match rec {
+                    ExecutionRecord::Success { success, logs, .. } => RunBatchResult {
+                        row_index: row_idx,
+                        input: input_row_owned,
+                        success: Some(success),
+                        failure_msg: None,
+                        logs,
+                    },
+                    ExecutionRecord::Failure { failure, logs, .. } => {
+                        let msg = match failure {
+                            Ok(e) => format!("{:?}", e),
+                            Err(e) => e,
+                        };
+                        RunBatchResult {
+                            row_index: row_idx,
+                            input: input_row_owned,
+                            success: None,
+                            failure_msg: Some(msg),
+                            logs,
+                        }
+                    }
+                },
+                ServerExecutionRecord::Session(rec) => match rec {
+                    pyroduct::pipeline::session::SessionExecutionRecord::Success {
+                        success,
+                        logs,
+                        ..
+                    } => RunBatchResult {
+                        row_index: row_idx,
+                        input: input_row_owned,
+                        success: Some(success),
+                        failure_msg: None,
+                        logs,
+                    },
+                    pyroduct::pipeline::session::SessionExecutionRecord::Failure {
+                        failure,
+                        logs,
+                        ..
+                    } => {
+                        let msg = match failure {
+                            Ok(e) => format!("{:?}", e),
+                            Err(e) => e,
+                        };
+                        RunBatchResult {
+                            row_index: row_idx,
+                            input: input_row_owned,
+                            success: None,
+                            failure_msg: Some(msg),
+                            logs,
+                        }
+                    }
+                },
+                ServerExecutionRecord::SessionDiff(rec) => match rec {
+                    pyroduct::pipeline::session_diff::SessionDiffExecutionRecord::Success {
+                        success,
+                        logs,
+                        ..
+                    } => RunBatchResult {
+                        row_index: row_idx,
+                        input: input_row_owned,
+                        success: Some(success),
+                        failure_msg: None,
+                        logs,
+                    },
+                    pyroduct::pipeline::session_diff::SessionDiffExecutionRecord::Failure {
+                        failure,
+                        logs,
+                        ..
+                    } => {
+                        let msg = match failure {
+                            Ok(e) => format!("{:?}", e),
+                            Err(e) => e,
+                        };
+                        RunBatchResult {
+                            row_index: row_idx,
+                            input: input_row_owned,
+                            success: None,
+                            failure_msg: Some(msg),
+                            logs,
+                        }
+                    }
+                },
+            },
+            Err(e) => RunBatchResult {
+                row_index: row_idx,
+                input: input_row_owned,
+                success: None,
+                failure_msg: Some(e.to_string()),
+                logs: pyroduct::format::PyroLogs::empty(),
+            },
         };
+        results.push(res);
+    }
+
+    for res in &results {
+        let logs = &res.logs;
 
         if !logs.module_logs.is_empty() || !logs.capability_logs.is_empty() {
             let logs_dir = output_dir
                 .join("logs")
-                .join(format!("row_{}", exec.row_index()));
+                .join(format!("row_{}", res.row_index));
             fs::create_dir_all(&logs_dir)?;
 
             if !logs.module_logs.is_empty() {
@@ -223,6 +383,7 @@ pub async fn run_batch(
         }
     }
 
+    let failures: Vec<&RunBatchResult> = results.iter().filter(|r| r.success.is_none()).collect();
     if !failures.is_empty() {
         if !output_dir.exists() {
             fs::create_dir_all(output_dir)?;
@@ -235,42 +396,27 @@ pub async fn run_batch(
         let mut writer = BufWriter::new(f);
 
         for fail in failures {
-            let (error_msg, partial_data) = match &fail {
-                ExecutionRecord::Failure { failure, input, .. } => {
-                    let msg = match &failure {
-                        Ok(cap_err) => cap_err.to_string(),
-                        Err(wasm_err) => wasm_err.to_string(),
-                    };
-                    (msg, input.clone())
-                }
-                _ => unreachable!(),
-            };
-
             let entry = serde_json::json!({
-                "row_index": fail.row_index(),
-                "error": error_msg,
-                "partial_data": partial_data
+                "row_index": fail.row_index,
+                "error": fail.failure_msg.as_deref().unwrap_or("Unknown failure"),
+                "partial_data": fail.input
             });
             serde_json::to_writer(&mut writer, &entry)?;
             writeln!(writer)?;
         }
     }
 
+    let successes: Vec<&RunBatchResult> = results.iter().filter(|r| r.success.is_some()).collect();
     if !successes.is_empty() {
         if !output_dir.exists() {
             fs::create_dir_all(output_dir)?;
         }
-        let schema = match &successes[0] {
-            ExecutionRecord::Success { success, .. } => success.schema()?,
-            _ => unreachable!(),
-        };
+        let schema = successes[0].success.as_ref().unwrap().schema()?;
         let mut prebatch = PreBatch::new(schema);
         for row in successes {
-            if let ExecutionRecord::Success { success, .. } = row {
-                prebatch
-                    .push(success)
-                    .map_err(|e| anyhow!("Row reconstruction failed: {:?}", e))?;
-            }
+            prebatch
+                .push(row.success.clone().unwrap())
+                .map_err(|e| anyhow!("Row reconstruction failed: {:?}", e))?;
         }
 
         let output_batch = prebatch

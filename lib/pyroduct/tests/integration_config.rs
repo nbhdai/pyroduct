@@ -82,13 +82,14 @@ async fn test_capability_configuration_respect() {
         wal_capacity: 2,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
+        num_workers: 4,
         input_dir: tmp_path.clone(),
         output_dir: tmp_path.clone(),
         log_dir: tmp_path.clone(),
     };
     let config = config.load(&cache).await.unwrap();
     let factory = config.factory().unwrap();
-    let mut pipeline = factory.build().await.unwrap();
+    let pipeline = factory.build().await.unwrap();
 
     for i in 0..5 {
         let input = PyroRow::from([("input", format!("hello {}", i).into())]);

@@ -9,7 +9,7 @@ use crate::module::PyroFactory;
 use crate::module::interconnect::PlaybookInterconnect;
 use crate::pipeline::{
     Pipeline, PipelineError,
-    session::{SessionPipeline, SessionStatusManager, SessionStatusFilter},
+    session::{SessionPipeline, SessionStatusFilter, SessionStatusManager},
     session_diff::SessionDiffPipeline,
 };
 use crate::{CapturedError, PyroError};
@@ -65,6 +65,9 @@ impl ServerExecutionRecord {
 
 /// A reusable server pipeline that routes incoming rows to the correct underlying
 /// execution engine based on the playbook type (Normal, Session, SessionDiff).
+///
+/// For Session and SessionDiff pipelines, per-shard locking enables concurrent
+/// session execution without holding the top-level lock during WASM calls.
 #[derive(Clone)]
 pub struct PipelineServer {
     pipeline: Arc<Mutex<ServerPipeline>>,
@@ -93,25 +96,34 @@ impl PipelineServer {
         if let Some(ic) = interconnect {
             factory.set_interconnect(ic);
         }
-        let instance = factory.instantiate().await?;
-        let spec = instance.spec.clone();
+        let spec = Arc::new(factory.spec().clone());
         let input_schema = factory.spec().func.input.clone();
         let output_schema = factory.spec().func.output.clone();
         let kind = factory.spec().func.kind;
 
+        let num_workers = playbook.num_workers;
+        let mut shards = Vec::with_capacity(num_workers);
+        for _ in 0..num_workers {
+            let instance = factory.instantiate().await?;
+            shards.push(tokio::sync::Mutex::new(instance));
+        }
+
         let server_pipeline = match kind {
             pyro_spec::ModuleKind::Normal => {
                 let pipeline = Pipeline {
-                    step: instance,
+                    shards,
                     success_log_retention_secs: 3600,
                     error_log_retention_secs: 86400 * 7,
-                    log_manager: LogWal::open(playbook.log_dir.clone(), 1000).await.map_err(
-                        |io| {
-                            PyroError::local_io(
-                                CapturedError::new("Unable to make the log wal").with_source(io),
-                            )
-                        },
-                    )?,
+                    log_manager: tokio::sync::Mutex::new(
+                        LogWal::open(playbook.log_dir.clone(), 1000)
+                            .await
+                            .map_err(|io| {
+                                PyroError::local_io(
+                                    CapturedError::new("Unable to make the log wal")
+                                        .with_source(io),
+                                )
+                            })?,
+                    ),
                     input_manager: crate::pipeline::data::DataManager::new(
                         playbook.input_dir.clone(),
                         input_schema,
@@ -120,23 +132,27 @@ impl PipelineServer {
                         playbook.output_dir.clone(),
                         output_schema,
                     ),
-                    callbacks: Vec::new(),
+                    callbacks: tokio::sync::Mutex::new(Vec::new()),
                 };
                 ServerPipeline::Normal(pipeline)
             }
             pyro_spec::ModuleKind::Session => {
                 let session_status_manager = SessionStatusManager::new(&playbook.output_dir)?;
                 let pipeline = SessionPipeline {
-                    step: instance,
+                    shards,
+                    spec: spec.clone(),
                     success_log_retention_secs: 3600,
                     error_log_retention_secs: 86400 * 7,
-                    log_manager: LogWal::open(playbook.log_dir.clone(), 1000).await.map_err(
-                        |io| {
-                            PyroError::local_io(
-                                CapturedError::new("Unable to make the log wal").with_source(io),
-                            )
-                        },
-                    )?,
+                    log_manager: tokio::sync::Mutex::new(
+                        LogWal::open(playbook.log_dir.clone(), 1000)
+                            .await
+                            .map_err(|io| {
+                                PyroError::local_io(
+                                    CapturedError::new("Unable to make the log wal")
+                                        .with_source(io),
+                                )
+                            })?,
+                    ),
                     output_manager: crate::pipeline::data::DataManager::new(
                         playbook.output_dir.clone(),
                         output_schema,
@@ -144,8 +160,8 @@ impl PipelineServer {
                     log_dir: playbook.log_dir.clone(),
                     output_dir: playbook.output_dir.clone(),
                     wal_capacity: 1000,
-                    active_sessions: std::collections::HashMap::new(),
-                    callbacks: Vec::new(),
+                    active_sessions: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+                    callbacks: tokio::sync::Mutex::new(Vec::new()),
                     session_status_manager,
                 };
                 ServerPipeline::Session(pipeline)
@@ -153,16 +169,20 @@ impl PipelineServer {
             pyro_spec::ModuleKind::SessionDiff => {
                 let session_status_manager = SessionStatusManager::new(&playbook.output_dir)?;
                 let pipeline = SessionDiffPipeline {
-                    step: instance,
+                    shards,
+                    spec: spec.clone(),
                     success_log_retention_secs: 3600,
                     error_log_retention_secs: 86400 * 7,
-                    log_manager: LogWal::open(playbook.log_dir.clone(), 1000).await.map_err(
-                        |io| {
-                            PyroError::local_io(
-                                CapturedError::new("Unable to make the log wal").with_source(io),
-                            )
-                        },
-                    )?,
+                    log_manager: tokio::sync::Mutex::new(
+                        LogWal::open(playbook.log_dir.clone(), 1000)
+                            .await
+                            .map_err(|io| {
+                                PyroError::local_io(
+                                    CapturedError::new("Unable to make the log wal")
+                                        .with_source(io),
+                                )
+                            })?,
+                    ),
                     output_manager: crate::pipeline::data::DataManager::new(
                         playbook.output_dir.clone(),
                         output_schema,
@@ -170,8 +190,8 @@ impl PipelineServer {
                     log_dir: playbook.log_dir.clone(),
                     output_dir: playbook.output_dir.clone(),
                     wal_capacity: 1000,
-                    active_sessions: std::collections::HashMap::new(),
-                    callbacks: Vec::new(),
+                    active_sessions: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+                    callbacks: tokio::sync::Mutex::new(Vec::new()),
                     session_status_manager,
                 };
                 ServerPipeline::SessionDiff(pipeline)
@@ -186,21 +206,39 @@ impl PipelineServer {
 
     /// Add a callback dynamically to the running pipeline.
     pub async fn add_callback(&self, uuid: uuid::Uuid, callback: crate::pipeline::Callback) {
-        let mut pipeline = self.pipeline.lock().await;
-        match &mut *pipeline {
-            ServerPipeline::Normal(p) => p.callbacks.push((uuid, callback)),
-            ServerPipeline::Session(p) => p.callbacks.push((uuid, callback)),
-            ServerPipeline::SessionDiff(p) => p.callbacks.push((uuid, callback)),
+        let pipeline = self.pipeline.lock().await;
+        match &*pipeline {
+            ServerPipeline::Normal(p) => {
+                let mut cbs = p.callbacks.lock().await;
+                cbs.push((uuid, callback));
+            }
+            ServerPipeline::Session(p) => {
+                let mut cbs = p.callbacks.lock().await;
+                cbs.push((uuid, callback));
+            }
+            ServerPipeline::SessionDiff(p) => {
+                let mut cbs = p.callbacks.lock().await;
+                cbs.push((uuid, callback));
+            }
         }
     }
 
     /// Delete a callback dynamically from the running pipeline by UUID.
     pub async fn delete_callback(&self, uuid: uuid::Uuid) {
-        let mut pipeline = self.pipeline.lock().await;
-        match &mut *pipeline {
-            ServerPipeline::Normal(p) => p.callbacks.retain(|(u, _)| *u != uuid),
-            ServerPipeline::Session(p) => p.callbacks.retain(|(u, _)| *u != uuid),
-            ServerPipeline::SessionDiff(p) => p.callbacks.retain(|(u, _)| *u != uuid),
+        let pipeline = self.pipeline.lock().await;
+        match &*pipeline {
+            ServerPipeline::Normal(p) => {
+                let mut cbs = p.callbacks.lock().await;
+                cbs.retain(|(u, _)| *u != uuid);
+            }
+            ServerPipeline::Session(p) => {
+                let mut cbs = p.callbacks.lock().await;
+                cbs.retain(|(u, _)| *u != uuid);
+            }
+            ServerPipeline::SessionDiff(p) => {
+                let mut cbs = p.callbacks.lock().await;
+                cbs.retain(|(u, _)| *u != uuid);
+            }
         }
     }
 
@@ -213,9 +251,9 @@ impl PipelineServer {
     pub async fn len(&self) -> usize {
         let pipeline = self.pipeline.lock().await;
         match &*pipeline {
-            ServerPipeline::Normal(p) => p.input_manager.len(),
-            ServerPipeline::Session(p) => p.output_manager.len(),
-            ServerPipeline::SessionDiff(p) => p.output_manager.len(),
+            ServerPipeline::Normal(p) => p.input_manager.len().await,
+            ServerPipeline::Session(p) => p.output_manager.len().await,
+            ServerPipeline::SessionDiff(p) => p.output_manager.len().await,
         }
     }
 
@@ -227,7 +265,7 @@ impl PipelineServer {
     ) -> Result<Option<arrow::array::RecordBatch>, PyroError> {
         let pipeline = self.pipeline.lock().await;
         match &*pipeline {
-            ServerPipeline::Normal(p) => p.input_manager.get_batch_slice(offset, limit),
+            ServerPipeline::Normal(p) => p.input_manager.get_batch_slice(offset, limit).await,
             ServerPipeline::Session(_) => Ok(None),
             ServerPipeline::SessionDiff(_) => Ok(None),
         }
@@ -241,14 +279,17 @@ impl PipelineServer {
     ) -> Result<Option<arrow::array::RecordBatch>, PyroError> {
         let pipeline = self.pipeline.lock().await;
         match &*pipeline {
-            ServerPipeline::Normal(p) => p.output_manager.get_batch_slice(offset, limit),
-            ServerPipeline::Session(p) => p.output_manager.get_batch_slice(offset, limit),
-            ServerPipeline::SessionDiff(p) => p.output_manager.get_batch_slice(offset, limit),
+            ServerPipeline::Normal(p) => p.output_manager.get_batch_slice(offset, limit).await,
+            ServerPipeline::Session(p) => p.output_manager.get_batch_slice(offset, limit).await,
+            ServerPipeline::SessionDiff(p) => p.output_manager.get_batch_slice(offset, limit).await,
         }
     }
 
     /// List all sessions for this pipeline (only for Session and SessionDiff pipelines).
-    pub async fn list_sessions(&self, filter: Option<SessionStatusFilter>) -> Result<Vec<(u32, String)>, PyroError> {
+    pub async fn list_sessions(
+        &self,
+        filter: Option<SessionStatusFilter>,
+    ) -> Result<Vec<(u32, String)>, PyroError> {
         let pipeline = self.pipeline.lock().await;
         match &*pipeline {
             ServerPipeline::Normal(_) => Ok(Vec::new()),
@@ -288,7 +329,7 @@ impl PipelineServer {
                 Err(e) => Err(CapturedError::new(e.to_string())),
             },
             ServerPipeline::Session(p) => {
-                let session_id = p.next_session_id();
+                let session_id = p.next_session_id().await;
                 if let Err(e) = p.prep_session(session_id, &[]).await {
                     let captured = match e.result {
                         Ok(captured) => captured,
@@ -310,7 +351,7 @@ impl PipelineServer {
                 }
             }
             ServerPipeline::SessionDiff(p) => {
-                let session_id = p.next_session_id();
+                let session_id = p.next_session_id().await;
                 if let Err(e) = p.prep_session(session_id, &[], &[]).await {
                     let captured = match e.result {
                         Ok(captured) => captured,
@@ -346,7 +387,11 @@ impl PipelineServer {
                 Err(e) => Err(CapturedError::new(e.to_string())),
             },
             ServerPipeline::Session(p) => {
-                if !p.active_sessions.contains_key(&client_id) {
+                let has_active = {
+                    let active = p.active_sessions.lock().await;
+                    active.contains_key(&client_id)
+                };
+                if !has_active {
                     if let Err(e) = p.prep_session(client_id, &[]).await {
                         let captured = match e.result {
                             Ok(captured) => captured,
@@ -368,7 +413,11 @@ impl PipelineServer {
                 }
             }
             ServerPipeline::SessionDiff(p) => {
-                if !p.active_sessions.contains_key(&client_id) {
+                let has_active = {
+                    let active = p.active_sessions.lock().await;
+                    active.contains_key(&client_id)
+                };
+                if !has_active {
                     if let Err(e) = p.prep_session(client_id, &[], &[]).await {
                         let captured = match e.result {
                             Ok(captured) => captured,

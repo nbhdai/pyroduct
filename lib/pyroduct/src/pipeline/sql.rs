@@ -72,15 +72,18 @@ pub struct DataManagerSql {
 
 impl DataManagerSql {
     pub fn new(providers: Vec<Arc<DataManagerTableProvider>>) -> Self {
-        assert!(providers.len() <= 3, "DataManagerSql supports up to 3 providers");
+        assert!(
+            providers.len() <= 3,
+            "DataManagerSql supports up to 3 providers"
+        );
         Self { providers }
     }
 
     fn validate_sql_query(sql: &str) -> Result<(), crate::PyroError> {
+        use crate::captured::CapturedError;
+        use sqlparser::ast::{SetExpr, Statement, TableFactor};
         use sqlparser::dialect::GenericDialect;
         use sqlparser::parser::Parser;
-        use sqlparser::ast::{Statement, SetExpr, TableFactor};
-        use crate::captured::CapturedError;
 
         let dialect = GenericDialect {};
         let mut statements = Parser::parse_sql(&dialect, sql).map_err(|e| {
@@ -89,7 +92,7 @@ impl DataManagerSql {
 
         if statements.len() != 1 {
             return Err(crate::PyroError::validation(CapturedError::new(
-                "SQL statement must contain exactly one query".to_string()
+                "SQL statement must contain exactly one query".to_string(),
             )));
         }
 
@@ -98,7 +101,7 @@ impl DataManagerSql {
             Statement::Query(q) => q,
             _ => {
                 return Err(crate::PyroError::validation(CapturedError::new(
-                    "Only SELECT queries are allowed".to_string()
+                    "Only SELECT queries are allowed".to_string(),
                 )));
             }
         };
@@ -107,14 +110,14 @@ impl DataManagerSql {
             SetExpr::Select(s) => s,
             _ => {
                 return Err(crate::PyroError::validation(CapturedError::new(
-                    "Only SELECT queries are allowed".to_string()
+                    "Only SELECT queries are allowed".to_string(),
                 )));
             }
         };
 
         if select.from.len() != 1 {
             return Err(crate::PyroError::validation(CapturedError::new(
-                "Query must select from exactly one table: 'pipeline'".to_string()
+                "Query must select from exactly one table: 'pipeline'".to_string(),
             )));
         }
 
@@ -122,7 +125,7 @@ impl DataManagerSql {
 
         if !table_with_joins.joins.is_empty() {
             return Err(crate::PyroError::validation(CapturedError::new(
-                "Query cannot contain JOIN clauses".to_string()
+                "Query cannot contain JOIN clauses".to_string(),
             )));
         }
 
@@ -138,7 +141,7 @@ impl DataManagerSql {
             }
             _ => {
                 return Err(crate::PyroError::validation(CapturedError::new(
-                    "Query must select from a table".to_string()
+                    "Query must select from a table".to_string(),
                 )));
             }
         }
@@ -146,9 +149,12 @@ impl DataManagerSql {
         Ok(())
     }
 
-    pub async fn execute(&self, sql: &str) -> Result<Vec<arrow::array::RecordBatch>, crate::PyroError> {
-        use datafusion::prelude::SessionContext;
+    pub async fn execute(
+        &self,
+        sql: &str,
+    ) -> Result<Vec<arrow::array::RecordBatch>, crate::PyroError> {
         use crate::captured::CapturedError;
+        use datafusion::prelude::SessionContext;
 
         // Perform strict SQL validation first
         Self::validate_sql_query(sql)?;
@@ -160,7 +166,10 @@ impl DataManagerSql {
                 crate::PyroError::validation(CapturedError::new(format!("SQL query failed: {}", e)))
             })?;
             return df.collect().await.map_err(|e| {
-                crate::PyroError::validation(CapturedError::new(format!("SQL collection failed: {}", e)))
+                crate::PyroError::validation(CapturedError::new(format!(
+                    "SQL collection failed: {}",
+                    e
+                )))
             });
         }
 
@@ -168,9 +177,13 @@ impl DataManagerSql {
         let mut prefixes = Vec::new();
         for (idx, provider) in self.providers.iter().enumerate() {
             let table_name = format!("__t{}", idx);
-            ctx.register_table(&table_name, provider.clone()).map_err(|e| {
-                crate::PyroError::validation(CapturedError::new(format!("Failed to register table {}: {}", table_name, e)))
-            })?;
+            ctx.register_table(&table_name, provider.clone())
+                .map_err(|e| {
+                    crate::PyroError::validation(CapturedError::new(format!(
+                        "Failed to register table {}: {}",
+                        table_name, e
+                    )))
+                })?;
             prefixes.push(provider.metadata_prefix.clone());
         }
 
@@ -216,7 +229,10 @@ impl DataManagerSql {
         }
 
         ctx.sql(&view_sql).await.map_err(|e| {
-            crate::PyroError::validation(CapturedError::new(format!("Failed to create joined view: {}", e)))
+            crate::PyroError::validation(CapturedError::new(format!(
+                "Failed to create joined view: {}",
+                e
+            )))
         })?;
 
         // Execute user SQL against the view
@@ -229,7 +245,6 @@ impl DataManagerSql {
         })
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -263,8 +278,8 @@ mod tests {
     async fn test_sql_provider_scan() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
-        let mut manager = DataManager::new(dir.path(), schema);
-        manager.set_capacities(2, 2);
+        let manager = DataManager::new(dir.path(), schema);
+        manager.set_capacities(2, 2).await;
 
         // Push 1 record into the WAL (active in-memory)
         manager
@@ -273,7 +288,7 @@ mod tests {
             .unwrap();
 
         // Get the provider
-        let provider = manager.sql_provider().unwrap();
+        let provider = manager.sql_provider().await.unwrap();
 
         // Register in DataFusion
         let ctx = SessionContext::new();
@@ -293,8 +308,8 @@ mod tests {
     async fn test_sql_provider_ipc_guard_deferred_deletion() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
-        let mut manager = DataManager::new(dir.path(), schema);
-        manager.set_capacities(2, 2);
+        let manager = DataManager::new(dir.path(), schema);
+        manager.set_capacities(2, 2).await;
 
         // 1. Push 2 records to trigger flush_wal (creates 1 IPC file)
         manager
@@ -307,12 +322,16 @@ mod tests {
             .unwrap();
 
         // Verify we have 1 IPC file path
-        assert_eq!(manager.ipc_file_paths.len(), 1);
-        let ipc_path = manager.ipc_file_paths[0].clone();
-        assert!(ipc_path.exists());
+        let ipc_path = {
+            let s = manager.state.lock().await;
+            assert_eq!(s.ipc_file_paths.len(), 1);
+            let p = s.ipc_file_paths[0].clone();
+            assert!(p.exists());
+            p
+        };
 
         // 2. Call sql_provider() to lock the IPC file with a guard
-        let provider = manager.sql_provider().unwrap();
+        let provider = manager.sql_provider().await.unwrap();
 
         // Verify the file is registered in active_readers
         {
@@ -322,7 +341,7 @@ mod tests {
         }
 
         // 3. Roll out to parquet. Since the provider holds the guard, the file should NOT be deleted!
-        manager.rollout_to_parquet().unwrap();
+        manager.rollout_to_parquet().await.unwrap();
 
         // The file must still exist on disk
         assert!(ipc_path.exists());
@@ -347,12 +366,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_sql_provider_metadata() {
+    #[tokio::test]
+    async fn test_sql_provider_metadata() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
         let manager = DataManager::new(dir.path(), schema);
-        let provider = manager.sql_provider().unwrap();
+        let provider = manager.sql_provider().await.unwrap();
 
         // 1. Verify schema()
         let provider_schema = provider.schema();
@@ -379,8 +398,8 @@ mod tests {
 
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
-        let mut manager = DataManager::new(dir.path(), schema);
-        manager.set_capacities(2, 2);
+        let manager = DataManager::new(dir.path(), schema);
+        manager.set_capacities(2, 2).await;
 
         // 1. Push 4 records -> triggers two WAL flushes and one Parquet rollout (records 0..=3)
         manager
@@ -423,17 +442,23 @@ mod tests {
             .unwrap();
 
         // Verify storage status
-        assert_eq!(manager.parquet_file_paths.len(), 1);
-        assert_eq!(manager.ipc_file_paths.len(), 1);
-        assert!(manager.get_active_batch().unwrap().is_some());
+        {
+            let s = manager.state.lock().await;
+            assert_eq!(s.parquet_file_paths.len(), 1);
+            assert_eq!(s.ipc_file_paths.len(), 1);
+        }
+        assert!(manager.get_active_batch().await.unwrap().is_some());
 
         // 4. Retrieve SQL provider and register in DataFusion
-        let provider = manager.sql_provider().unwrap();
+        let provider = manager.sql_provider().await.unwrap();
         let ctx = SessionContext::new();
         ctx.register_table("data", Arc::new(provider)).unwrap();
 
         // 5. Query and order by id
-        let df = ctx.sql("SELECT id, name FROM data ORDER BY id").await.unwrap();
+        let df = ctx
+            .sql("SELECT id, name FROM data ORDER BY id")
+            .await
+            .unwrap();
         let results = df.collect().await.unwrap();
 
         // 6. Verify total rows and contents across all batches
@@ -476,7 +501,7 @@ mod tests {
         let schema = setup_schema();
         let manager = DataManager::new(dir.path(), schema);
 
-        let provider = manager.sql_provider().unwrap();
+        let provider = manager.sql_provider().await.unwrap();
         let ctx = SessionContext::new();
         ctx.register_table("data", Arc::new(provider)).unwrap();
 
@@ -502,15 +527,13 @@ mod tests {
             ),
             PyroField::new("value", PyroType::Str, true),
         ]);
-        let output_schema = PyroSchema::new(vec![
-            PyroField::new("result", PyroType::Str, true),
-        ]);
+        let output_schema = PyroSchema::new(vec![PyroField::new("result", PyroType::Str, true)]);
 
-        let mut input_manager = DataManager::new(dir_input.path(), input_schema);
-        input_manager.set_metadata_prefix("_input_meta");
+        let input_manager = DataManager::new(dir_input.path(), input_schema);
+        input_manager.set_metadata_prefix("_input_meta").await;
 
-        let mut output_manager = DataManager::new(dir_output.path(), output_schema);
-        output_manager.set_metadata_prefix("_output_meta");
+        let output_manager = DataManager::new(dir_output.path(), output_schema);
+        output_manager.set_metadata_prefix("_output_meta").await;
 
         // Push records to input_manager
         let input_row_0 = PyroRow::from([
@@ -525,22 +548,20 @@ mod tests {
         input_manager.push_record(1, &input_row_1).await.unwrap();
 
         // Push matching records to output_manager
-        let output_row_0 = PyroRow::from([
-            ("result", PyroValue::from("HELLO")),
-        ]);
-        let output_row_1 = PyroRow::from([
-            ("result", PyroValue::from("WORLD")),
-        ]);
+        let output_row_0 = PyroRow::from([("result", PyroValue::from("HELLO"))]);
+        let output_row_1 = PyroRow::from([("result", PyroValue::from("WORLD"))]);
         output_manager.push_record(0, &output_row_0).await.unwrap();
         output_manager.push_record(1, &output_row_1).await.unwrap();
 
         // Retrieve SQL providers
-        let input_provider = input_manager.sql_provider().unwrap();
-        let output_provider = output_manager.sql_provider().unwrap();
+        let input_provider = input_manager.sql_provider().await.unwrap();
+        let output_provider = output_manager.sql_provider().await.unwrap();
 
         let ctx = SessionContext::new();
-        ctx.register_table("inputs", Arc::new(input_provider)).unwrap();
-        ctx.register_table("outputs", Arc::new(output_provider)).unwrap();
+        ctx.register_table("inputs", Arc::new(input_provider))
+            .unwrap();
+        ctx.register_table("outputs", Arc::new(output_provider))
+            .unwrap();
 
         // Join using the nested metadata index field
         let df = ctx
@@ -605,15 +626,13 @@ mod tests {
             ),
             PyroField::new("value", PyroType::Str, true),
         ]);
-        let output_schema = PyroSchema::new(vec![
-            PyroField::new("result", PyroType::Str, true),
-        ]);
+        let output_schema = PyroSchema::new(vec![PyroField::new("result", PyroType::Str, true)]);
 
-        let mut input_manager = DataManager::new(dir_input.path(), input_schema);
-        input_manager.set_metadata_prefix("_input_meta");
+        let input_manager = DataManager::new(dir_input.path(), input_schema);
+        input_manager.set_metadata_prefix("_input_meta").await;
 
-        let mut output_manager = DataManager::new(dir_output.path(), output_schema);
-        output_manager.set_metadata_prefix("_output_meta");
+        let output_manager = DataManager::new(dir_output.path(), output_schema);
+        output_manager.set_metadata_prefix("_output_meta").await;
 
         // Push records
         let input_row_0 = PyroRow::from([
@@ -627,18 +646,14 @@ mod tests {
         input_manager.push_record(0, &input_row_0).await.unwrap();
         input_manager.push_record(1, &input_row_1).await.unwrap();
 
-        let output_row_0 = PyroRow::from([
-            ("result", PyroValue::from("HELLO")),
-        ]);
-        let output_row_1 = PyroRow::from([
-            ("result", PyroValue::from("WORLD")),
-        ]);
+        let output_row_0 = PyroRow::from([("result", PyroValue::from("HELLO"))]);
+        let output_row_1 = PyroRow::from([("result", PyroValue::from("WORLD"))]);
         output_manager.push_record(0, &output_row_0).await.unwrap();
         output_manager.push_record(1, &output_row_1).await.unwrap();
 
         // Construct DataManagerSql
-        let input_provider = Arc::new(input_manager.sql_provider().unwrap());
-        let output_provider = Arc::new(output_manager.sql_provider().unwrap());
+        let input_provider = Arc::new(input_manager.sql_provider().await.unwrap());
+        let output_provider = Arc::new(output_manager.sql_provider().await.unwrap());
 
         let dm_sql = DataManagerSql::new(vec![input_provider, output_provider]);
 
@@ -688,22 +703,36 @@ mod tests {
     async fn test_data_manager_sql_validation() {
         let dir_input = TempDir::new().unwrap();
         let input_schema = setup_schema();
-        let mut input_manager = DataManager::new(dir_input.path(), input_schema);
-        input_manager.set_metadata_prefix("_input_meta");
+        let input_manager = DataManager::new(dir_input.path(), input_schema);
+        input_manager.set_metadata_prefix("_input_meta").await;
 
-        let input_provider = Arc::new(input_manager.sql_provider().unwrap());
+        let input_provider = Arc::new(input_manager.sql_provider().await.unwrap());
         let dm_sql = DataManagerSql::new(vec![input_provider]);
 
         // 1. Valid simple query (case-insensitive table relation)
-        assert!(dm_sql.execute("SELECT id, name FROM PIPELINE WHERE id > 10").await.is_ok());
-        assert!(dm_sql.execute("SELECT id, name FROM pipeline").await.is_ok());
+        assert!(
+            dm_sql
+                .execute("SELECT id, name FROM PIPELINE WHERE id > 10")
+                .await
+                .is_ok()
+        );
+        assert!(
+            dm_sql
+                .execute("SELECT id, name FROM pipeline")
+                .await
+                .is_ok()
+        );
 
         // 2. Rejecting multiple statements
-        let res_mult = dm_sql.execute("SELECT id FROM pipeline; SELECT name FROM pipeline;").await;
+        let res_mult = dm_sql
+            .execute("SELECT id FROM pipeline; SELECT name FROM pipeline;")
+            .await;
         assert!(res_mult.is_err());
 
         // 3. Rejecting non-SELECT query
-        let res_insert = dm_sql.execute("INSERT INTO pipeline (id, name) VALUES (1, 'val')").await;
+        let res_insert = dm_sql
+            .execute("INSERT INTO pipeline (id, name) VALUES (1, 'val')")
+            .await;
         assert!(res_insert.is_err());
 
         // 4. Rejecting selecting from wrong table
@@ -711,9 +740,9 @@ mod tests {
         assert!(res_wrong_table.is_err());
 
         // 5. Rejecting select with joins
-        let res_join = dm_sql.execute("SELECT p1.id FROM pipeline p1 JOIN pipeline p2 ON p1.id = p2.id").await;
+        let res_join = dm_sql
+            .execute("SELECT p1.id FROM pipeline p1 JOIN pipeline p2 ON p1.id = p2.id")
+            .await;
         assert!(res_join.is_err());
     }
 }
-
-

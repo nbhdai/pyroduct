@@ -63,6 +63,7 @@ async fn test_playbook_server_client() {
         wal_capacity: 1000,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
+        num_workers: 4,
         input_dir: std::env::current_dir().unwrap(),
         output_dir: std::env::current_dir().unwrap(),
         log_dir: std::env::current_dir().unwrap(),

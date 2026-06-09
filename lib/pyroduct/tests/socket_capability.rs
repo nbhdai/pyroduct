@@ -124,6 +124,7 @@ async fn test_socket_capability_remote() {
         wal_capacity: 10,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
+        num_workers: 4,
         input_dir: tmp_path.clone(),
         output_dir: tmp_path.clone(),
         log_dir: tmp_path.clone(),
@@ -132,7 +133,7 @@ async fn test_socket_capability_remote() {
     let loaded_config = config.load(&cache).await.unwrap();
 
     let factory = loaded_config.factory().unwrap();
-    let mut pipeline = factory.build().await.unwrap();
+    let pipeline = factory.build().await.unwrap();
 
     let input = PyroRow::from([("input", "hello".into())]);
     let result = pipeline.process(0, &input).await.unwrap();

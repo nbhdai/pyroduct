@@ -1,0 +1,261 @@
+name: Release
+
+on:
+  push:
+    tags: [ "v*" ]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ===========================================================================
+  # Build CLI + daemon release binaries
+  # ===========================================================================
+  build-cli:
+    name: CLI + Daemon (${{ matrix.arch }})
+    runs-on: self-hosted
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: linux
+            arch: x86_64
+          - target: aarch64-unknown-linux-gnu
+            os: linux
+            arch: aarch64
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+
+      - name: Build release binaries
+        run: |
+          nix develop --command bash -c "
+            set -e
+
+            echo '==> Building pyroduct CLI (release)...'
+            cargo build --manifest-path lib/Cargo.toml \
+              --release \
+              -p pyroduct --features cli
+
+            echo '==> Building pyro-daemond (release)...'
+            cargo build --manifest-path lib/Cargo.toml \
+              --release \
+              -p pyro-daemon
+
+            echo '==> Build complete'
+            ls -lh lib/target/release/pyroduct lib/target/release/pyro-daemond
+          "
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Package tarball
+        id: package
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ARCHIVE_NAME="pyroduct-${VERSION}-${{ matrix.arch }}-${{ matrix.os }}"
+          STAGING_DIR="$(mktemp -d)"
+
+          mkdir -p "${STAGING_DIR}/${ARCHIVE_NAME}"
+
+          # Copy binaries
+          cp lib/target/release/pyroduct   "${STAGING_DIR}/${ARCHIVE_NAME}/"
+          cp lib/target/release/pyro-daemond "${STAGING_DIR}/${ARCHIVE_NAME}/"
+
+          # Strip debug symbols to reduce size
+          strip "${STAGING_DIR}/${ARCHIVE_NAME}/pyroduct" || true
+          strip "${STAGING_DIR}/${ARCHIVE_NAME}/pyro-daemond" || true
+
+          # Include install helper and license
+          cp install.sh "${STAGING_DIR}/${ARCHIVE_NAME}/"
+          cp LICENSE     "${STAGING_DIR}/${ARCHIVE_NAME}/"
+          cp README.md   "${STAGING_DIR}/${ARCHIVE_NAME}/"
+
+          # Create tarball
+          tar -czf "${ARCHIVE_NAME}.tar.gz" -C "${STAGING_DIR}" "${ARCHIVE_NAME}"
+
+          echo "archive_name=${ARCHIVE_NAME}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "==> Created ${ARCHIVE_NAME}.tar.gz"
+          ls -lh "${ARCHIVE_NAME}.tar.gz"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.archive_name }}
+          path: ${{ steps.package.outputs.archive_name }}
+          retention-days: 1
+
+  # ===========================================================================
+  # Build Tauri GUI bundles (.deb, .AppImage)
+  # ===========================================================================
+  build-gui:
+    name: GUI (${{ matrix.arch }})
+    runs-on: self-hosted
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            arch: x86_64
+          - target: aarch64-unknown-linux-gnu
+            arch: aarch64
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+
+      - name: Build Tauri GUI
+        run: |
+          nix develop --command bash -c "
+            set -e
+
+            # Install frontend dependencies
+            cd lib/pyro-gui/ui
+            npm ci
+            cd ../../..
+
+            # Build the Tauri application (produces .deb and .AppImage)
+            cd lib/pyro-gui
+            cargo tauri build
+            cd ../..
+
+            echo '==> Tauri build complete'
+            find lib/target/release/bundle -type f \( -name '*.deb' -o -name '*.AppImage' \) -ls
+          "
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Collect GUI artifacts
+        id: collect
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+          OUTDIR="gui-artifacts"
+          mkdir -p "$OUTDIR"
+
+          # Copy .deb bundle
+          DEB_FILE=$(find lib/target/release/bundle/deb -name '*.deb' -type f | head -1)
+          if [ -n "$DEB_FILE" ]; then
+            DEB_NAME="pyroduct-gui_${VERSION}_${ARCH}.deb"
+            cp "$DEB_FILE" "${OUTDIR}/${DEB_NAME}"
+            echo "deb_name=${DEB_NAME}" >> "$GITHUB_OUTPUT"
+            echo "==> Packaged: ${DEB_NAME}"
+          fi
+
+          # Copy .AppImage bundle
+          APPIMAGE_FILE=$(find lib/target/release/bundle/appimage -name '*.AppImage' -type f | head -1)
+          if [ -n "$APPIMAGE_FILE" ]; then
+            APPIMAGE_NAME="Pyroduct_GUI-${VERSION}-${ARCH}.AppImage"
+            cp "$APPIMAGE_FILE" "${OUTDIR}/${APPIMAGE_NAME}"
+            echo "appimage_name=${APPIMAGE_NAME}" >> "$GITHUB_OUTPUT"
+            echo "==> Packaged: ${APPIMAGE_NAME}"
+          fi
+
+          ls -lh "${OUTDIR}/"
+
+      - name: Upload GUI .deb
+        if: steps.collect.outputs.deb_name != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.collect.outputs.deb_name }}
+          path: gui-artifacts/${{ steps.collect.outputs.deb_name }}
+          retention-days: 1
+
+      - name: Upload GUI .AppImage
+        if: steps.collect.outputs.appimage_name != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.collect.outputs.appimage_name }}
+          path: gui-artifacts/${{ steps.collect.outputs.appimage_name }}
+          retention-days: 1
+
+  # ===========================================================================
+  # Create GitHub Release with all artifacts
+  # ===========================================================================
+  release:
+    name: Create Release
+    needs: [build-cli, build-gui]
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lhR artifacts/
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum *.tar.gz *.deb *.AppImage 2>/dev/null > SHA256SUMS || true
+          cat SHA256SUMS
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Pyroduct ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.deb
+            artifacts/*.AppImage
+            artifacts/SHA256SUMS
+          body: |
+            ## Installation
+
+            ### CLI + Daemon (quick install)
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/nbhdai/pyroduct/${{ github.ref_name }}/install.sh | bash -s -- --default
+            ```
+
+            ### CLI + Daemon (manual)
+            ```bash
+            # x86_64 Linux
+            curl -fsSL -o pyroduct.tar.gz \
+              https://github.com/nbhdai/pyroduct/releases/download/${{ github.ref_name }}/pyroduct-${{ steps.version.outputs.version }}-x86_64-linux.tar.gz
+            tar xzf pyroduct.tar.gz
+            sudo cp pyroduct-*/pyroduct pyroduct-*/pyro-daemond /usr/local/bin/
+            ```
+
+            ### GUI (Debian/Ubuntu)
+            ```bash
+            curl -fsSL -o pyroduct-gui.deb \
+              https://github.com/nbhdai/pyroduct/releases/download/${{ github.ref_name }}/pyroduct-gui_${{ steps.version.outputs.version }}_x86_64.deb
+            sudo dpkg -i pyroduct-gui.deb
+            ```
+
+            ### GUI (AppImage — any Linux)
+            ```bash
+            curl -fsSL -o Pyroduct_GUI.AppImage \
+              https://github.com/nbhdai/pyroduct/releases/download/${{ github.ref_name }}/Pyroduct_GUI-${{ steps.version.outputs.version }}-x86_64.AppImage
+            chmod +x Pyroduct_GUI.AppImage
+            ./Pyroduct_GUI.AppImage
+            ```
+
+            ### Verify checksums
+            ```bash
+            sha256sum -c SHA256SUMS
+            ```
