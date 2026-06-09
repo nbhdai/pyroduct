@@ -7,9 +7,7 @@
   configSettings ? {
     target = "../target";
     author = "test_anon";
-    pyroduct = {
-      path = "../lib/pyroduct";
-    };
+    pyroduct = "0.2.1";
     build_slots = 4;
   },
 }:
