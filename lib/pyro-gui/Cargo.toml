@@ -11,7 +11,7 @@ edition = { workspace = true }
 rust-version = { workspace = true }
 
 [dependencies]
-tauri = { version = "2.1" }
+tauri = { version = "2.1", features = [] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
@@ -25,4 +25,4 @@ pyroduct.workspace = true
 arrow.workspace = true
 
 [build-dependencies]
-tauri-build = { version = "2.1" }
+tauri-build = { version = "2.1", features = [] }
