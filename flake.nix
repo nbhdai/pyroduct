@@ -26,6 +26,11 @@
       process-compose-flake,
       ...
     }:
+    {
+      nixosModules.pyro-daemon = import ./nix/pyro-daemon-module.nix;
+      nixosModules.default = import ./nix/pyro-daemon-module.nix;
+    }
+    //
     flake-utils.lib.eachDefaultSystem (
       system:
       let
