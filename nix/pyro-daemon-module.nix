@@ -35,7 +35,13 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
-      description = "The pyroduct package to use (must provide pyro-daemond binary).";
+      description = "The pyro-daemon package (must provide pyro-daemond binary).";
+    };
+
+    cliPackage = lib.mkOption {
+      type = lib.types.nullOr lib.types.package;
+      default = null;
+      description = "The pyroduct CLI package. If set, it is added to systemPackages.";
     };
 
     authorName = lib.mkOption {
@@ -153,6 +159,6 @@ in
     # -------------------------------------------------------------------------
     # Make the pyroduct CLI available system-wide
     # -------------------------------------------------------------------------
-    environment.systemPackages = [ cfg.package ];
+    environment.systemPackages = [ cfg.package ] ++ lib.optional (cfg.cliPackage != null) cfg.cliPackage;
   };
 }

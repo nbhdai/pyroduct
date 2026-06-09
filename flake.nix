@@ -122,6 +122,7 @@
         );
 
         installTests = import ./nix/install-tests.nix { inherit pkgs pyroduct; };
+        moduleTests = import ./nix/module-tests.nix { inherit pkgs pyroduct pyro-daemon; };
         miriTests = import ./nix/miri-tests.nix {
           inherit pkgs miriToolchain;
           craneLib = craneLibMiri;
@@ -166,7 +167,7 @@
         };
 
         checks = {
-          nixos-module-test = installTests.nixos-module-check;
+          nixos-module-test = moduleTests.check;
           install-script-test = installTests.install-script-check;
           miri-tests = miriTests.check;
           rust-tests = rustTests.check;
