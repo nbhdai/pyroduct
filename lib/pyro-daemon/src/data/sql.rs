@@ -1,13 +1,17 @@
 use super::DaemonDataManager;
 use crate::Result;
-use pyroduct::Capture;
 use datafusion::prelude::SessionContext;
 use pyro_artifacts::cache::CacheManager;
+use pyroduct::Capture;
 use pyroduct::pipeline::data::DataManager;
 use pyroduct::pipeline::factory::PipelineConfig;
 
 impl DaemonDataManager {
-    pub async fn query_playbook_data(&self, playbook_name: &str, sql_query: &str) -> Result<Vec<u8>> {
+    pub async fn query_playbook_data(
+        &self,
+        playbook_name: &str,
+        sql_query: &str,
+    ) -> Result<Vec<u8>> {
         // 1. Locate the playbook configuration in ROOT/playbooks/{playbook_name}/config.toml
         let config_path = self
             .playbooks_manager
@@ -46,15 +50,22 @@ impl DaemonDataManager {
             .load(&cache)
             .await
             .map_err(|e| pyroduct::capture!("{:?}", e))?;
-        let factory = loaded.factory().map_err(|e| pyroduct::capture!("{:?}", e))?;
+        let factory = loaded
+            .factory()
+            .map_err(|e| pyroduct::capture!("{:?}", e))?;
         let output_schema = factory.factory.spec().func.output.clone();
 
         // 4. Create and restore DataManager for output_dir
-        let mut dm = DataManager::new(factory.output_dir, output_schema);
-        dm.restore().map_err(|e| pyroduct::capture!("{:?}", e))?;
+        let dm = DataManager::new(factory.output_dir, output_schema);
+        dm.restore()
+            .await
+            .map_err(|e| pyroduct::capture!("{:?}", e))?;
 
         // 5. Get SQL Provider and execute query
-        let provider = dm.sql_provider().map_err(|e| pyroduct::capture!("{:?}", e))?;
+        let provider = dm
+            .sql_provider()
+            .await
+            .map_err(|e| pyroduct::capture!("{:?}", e))?;
         let ctx = SessionContext::new();
         ctx.register_table("data", std::sync::Arc::new(provider))
             .capture("Failed to register table in DataFusion")?;

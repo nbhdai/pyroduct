@@ -79,6 +79,7 @@ async fn test_pipeline_get_record() {
         wal_capacity: 5,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
+        num_workers: 1,
         input_dir: tmp_path.clone(),
         output_dir: tmp_path.clone(),
         log_dir: tmp_path.clone(),
@@ -86,7 +87,7 @@ async fn test_pipeline_get_record() {
 
     let config = config.load(&cache).await.unwrap();
     let factory = config.factory().unwrap();
-    let mut pipeline = factory.build().await.unwrap();
+    let pipeline = factory.build().await.unwrap();
 
     // 1. Prepare and push input records to input_manager
     let input_0 = PyroRow::from([("input", "10".into())]);
@@ -104,7 +105,7 @@ async fn test_pipeline_get_record() {
     assert!(matches!(proc_2, ExecutionRecord::Success { .. }));
 
     // Flush to ensure all logs and records are written out if buffered
-    pipeline.log_manager.flush().await.unwrap();
+    pipeline.log_manager.lock().await.flush().await.unwrap();
 
     // 3. Test get_record with log WAL active
     let rec_0 = pipeline.get_record(0).await.unwrap();
@@ -159,7 +160,13 @@ async fn test_pipeline_get_record() {
     tracing::info!("Clearing log");
 
     // 4. Clean/delete all log WAL files (.pyrolog) to simulate rotation/cleanup
-    pipeline.log_manager.delete_older_than(0).await.unwrap();
+    pipeline
+        .log_manager
+        .lock()
+        .await
+        .delete_older_than(0)
+        .await
+        .unwrap();
 
     tracing::info!("Getting 0");
 

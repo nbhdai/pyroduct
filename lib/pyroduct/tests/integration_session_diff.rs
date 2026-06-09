@@ -76,6 +76,7 @@ async fn test_session_lifecycle() {
         wal_capacity: 2,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
+        num_workers: 4,
         input_dir: tmp_path.clone(),
         output_dir: tmp_path.clone(),
         log_dir: tmp_path.clone(),
@@ -83,7 +84,7 @@ async fn test_session_lifecycle() {
 
     let loaded = config.load(&cache).await.unwrap();
     let pipeline_factory = loaded.factory().unwrap();
-    let mut pipeline = pipeline_factory.build_session_diff().await.unwrap();
+    let pipeline = pipeline_factory.build_session_diff().await.unwrap();
 
     let session_id = 42;
     pipeline
@@ -188,7 +189,7 @@ async fn test_session_lifecycle() {
     );
 
     // Verify active_sessions and get_session
-    let active = pipeline.active_sessions();
+    let active = pipeline.active_sessions().await;
     assert!(
         active.is_empty(),
         "Expected no active sessions at this point, got {:?}",
@@ -217,7 +218,7 @@ async fn test_session_lifecycle() {
         .expect("Call s2");
 
     // Assert that active_sessions returns these two active sessions
-    let active = pipeline.active_sessions();
+    let active = pipeline.active_sessions().await;
     assert_eq!(active, vec![s1, s2]);
 
     // Assert get on active session retrieves correct row history (using get)

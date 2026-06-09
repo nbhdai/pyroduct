@@ -74,6 +74,7 @@ async fn test_session_callbacks() {
         wal_capacity: 2,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
+        num_workers: 4,
         input_dir: tmp_path.clone(),
         output_dir: tmp_path.clone(),
         log_dir: tmp_path.clone(),
@@ -84,8 +85,8 @@ async fn test_session_callbacks() {
 
     // 1. Test SessionPipeline Callbacks
     {
-        let mut pipeline = pipeline_factory.build_session().await.unwrap();
-        pipeline.callbacks.push((
+        let pipeline = pipeline_factory.build_session().await.unwrap();
+        pipeline.callbacks.lock().await.push((
             uuid::Uuid::new_v4(),
             pyroduct::pipeline::Callback::function(|idx, row| {
                 let row_static = row.to_static();
@@ -132,8 +133,8 @@ async fn test_session_callbacks() {
 
     // 2. Test SessionDiffPipeline Callbacks
     {
-        let mut pipeline = pipeline_factory.build_session_diff().await.unwrap();
-        pipeline.callbacks.push((
+        let pipeline = pipeline_factory.build_session_diff().await.unwrap();
+        pipeline.callbacks.lock().await.push((
             uuid::Uuid::new_v4(),
             pyroduct::pipeline::Callback::function(|idx, row| {
                 let row_static = row.to_static();

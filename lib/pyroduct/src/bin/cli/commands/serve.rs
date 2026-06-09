@@ -161,6 +161,7 @@ pub async fn serve_playbook(serve_config: &ServeConfig) -> Result<()> {
                 wal_capacity: serve_config.wal_capacity,
                 success_log_retention_secs: serve_config.success_log_retention_secs,
                 error_log_retention_secs: serve_config.error_log_retention_secs,
+                num_workers: 4,
                 log_dir,
                 input_dir,
                 output_dir,

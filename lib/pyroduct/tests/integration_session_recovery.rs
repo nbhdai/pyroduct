@@ -107,6 +107,7 @@ async fn test_session_recovery_lifecycle() {
         wal_capacity: 2,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
+        num_workers: 4,
         input_dir: tmp_path.clone(),
         output_dir: tmp_path.clone(),
         log_dir: tmp_path.clone(),
@@ -114,7 +115,7 @@ async fn test_session_recovery_lifecycle() {
 
     let loaded = config.load(&cache).await.unwrap();
     let pipeline_factory = loaded.factory().unwrap();
-    let mut pipeline = pipeline_factory.build_session().await.unwrap();
+    let pipeline = pipeline_factory.build_session().await.unwrap();
 
     // =========================================================================
     // Scenario 1: Successful multi-turn session (Active -> Succeeded)
@@ -135,9 +136,7 @@ async fn test_session_recovery_lifecycle() {
     assert!(matches!(result1, SessionExecutionRecord::Success { .. }));
 
     // Verify state is "active" in SQLite status
-    let status_active = pipeline
-        .get_session_status(session_id_1 as usize)
-        .unwrap();
+    let status_active = pipeline.get_session_status(session_id_1 as usize).unwrap();
     assert_eq!(status_active, Some("active".to_string()));
 
     // Verify get_record returns Success
@@ -168,9 +167,7 @@ async fn test_session_recovery_lifecycle() {
     assert!(matches!(result2, SessionExecutionRecord::Success { .. }));
 
     // Verify state is "succeeded" in SQLite status
-    let status_success = pipeline
-        .get_session_status(session_id_1 as usize)
-        .unwrap();
+    let status_success = pipeline.get_session_status(session_id_1 as usize).unwrap();
     assert_eq!(status_success, Some("succeeded".to_string()));
 
     // Verify get_record returns Success with rolled-up state
@@ -207,9 +204,7 @@ async fn test_session_recovery_lifecycle() {
     assert!(result_err.is_err());
 
     // Verify state is "failed" in SQLite status
-    let status_failed_err = pipeline
-        .get_session_status(session_id_2 as usize)
-        .unwrap();
+    let status_failed_err = pipeline.get_session_status(session_id_2 as usize).unwrap();
     assert_eq!(status_failed_err, Some("failed".to_string()));
 
     // Verify get_record returns Failure containing error description
@@ -248,9 +243,7 @@ async fn test_session_recovery_lifecycle() {
     assert!(result_panic.is_err());
 
     // Verify state is "failed" in SQLite status
-    let status_failed_panic = pipeline
-        .get_session_status(session_id_3 as usize)
-        .unwrap();
+    let status_failed_panic = pipeline.get_session_status(session_id_3 as usize).unwrap();
     assert_eq!(status_failed_panic, Some("failed".to_string()));
 
     // Verify get_record returns Failure containing panic details
@@ -320,6 +313,7 @@ async fn test_session_diff_recovery_lifecycle() {
         wal_capacity: 2,
         success_log_retention_secs: 3600,
         error_log_retention_secs: 86400 * 7,
+        num_workers: 4,
         input_dir: tmp_path.clone(),
         output_dir: tmp_path.clone(),
         log_dir: tmp_path.clone(),
@@ -327,7 +321,7 @@ async fn test_session_diff_recovery_lifecycle() {
 
     let loaded = config.load(&cache).await.unwrap();
     let pipeline_factory = loaded.factory().unwrap();
-    let mut pipeline = pipeline_factory.build_session_diff().await.unwrap();
+    let pipeline = pipeline_factory.build_session_diff().await.unwrap();
 
     // =========================================================================
     // Scenario 1: Successful multi-turn session diff (Active -> Succeeded)
@@ -351,9 +345,7 @@ async fn test_session_diff_recovery_lifecycle() {
     ));
 
     // Verify state is "active" in SQLite status
-    let status_active = pipeline
-        .get_session_status(session_id_1 as usize)
-        .unwrap();
+    let status_active = pipeline.get_session_status(session_id_1 as usize).unwrap();
     assert_eq!(status_active, Some("active".to_string()));
 
     // Verify get_record returns Success
@@ -389,9 +381,7 @@ async fn test_session_diff_recovery_lifecycle() {
     ));
 
     // Verify state is "succeeded" in SQLite status
-    let status_success = pipeline
-        .get_session_status(session_id_1 as usize)
-        .unwrap();
+    let status_success = pipeline.get_session_status(session_id_1 as usize).unwrap();
     assert_eq!(status_success, Some("succeeded".to_string()));
 
     // Verify get_record returns Success with rolled-up state
@@ -430,9 +420,7 @@ async fn test_session_diff_recovery_lifecycle() {
     assert!(result_err.is_err());
 
     // Verify state is "failed" in SQLite status
-    let status_failed_err = pipeline
-        .get_session_status(session_id_2 as usize)
-        .unwrap();
+    let status_failed_err = pipeline.get_session_status(session_id_2 as usize).unwrap();
     assert_eq!(status_failed_err, Some("failed".to_string()));
 
     // Verify get_record returns Failure containing error description
@@ -473,9 +461,7 @@ async fn test_session_diff_recovery_lifecycle() {
     assert!(result_panic.is_err());
 
     // Verify state is "failed" in SQLite status
-    let status_failed_panic = pipeline
-        .get_session_status(session_id_3 as usize)
-        .unwrap();
+    let status_failed_panic = pipeline.get_session_status(session_id_3 as usize).unwrap();
     assert_eq!(status_failed_panic, Some("failed".to_string()));
 
     // Verify get_record returns Failure containing panic details

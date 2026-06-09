@@ -79,7 +79,7 @@
             pkgs.webkitgtk_4_1
             pkgs.libsoup_3
             pkgs.librsvg
-            pkgs.bzip2.out
+            pkgs.bzip2
           ];
           nativeBuildInputs = with pkgs; [ pkg-config ];
         };

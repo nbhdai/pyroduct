@@ -1,5 +1,4 @@
 pub mod commands;
-pub mod tui;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -95,15 +94,6 @@ enum Commands {
         #[arg(long)]
         socket: Option<String>,
     },
-    Tui {
-        /// Path to the pipeline config YAML file
-        #[arg(value_name = "CONFIG", default_value = "pipeline.yaml")]
-        config: PathBuf,
-
-        /// Input: a file path for batch processing
-        #[arg(value_name = "INPUT")]
-        input: PathBuf,
-    },
     /// Starts a playbook server or capability server.
     Serve {
         /// Path to JSON configuration file
@@ -136,7 +126,10 @@ enum Commands {
 
         /// Remote capability mappings in format "author:package:version=addr"
         #[arg(long, value_parser = parse_remote_mapping)]
-        remote: Vec<(pyro_artifacts::cargo::CapabilityIdent, pyro_artifacts::cache::RemoteAddress)>,
+        remote: Vec<(
+            pyro_artifacts::cargo::CapabilityIdent,
+            pyro_artifacts::cache::RemoteAddress,
+        )>,
 
         /// WAL capacity
         #[arg(long)]
@@ -187,10 +180,7 @@ pub fn start_logging() {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    match &args.command {
-        Commands::Tui { .. } => {}
-        _ => start_logging(),
-    }
+    start_logging();
 
     match args.command {
         Commands::Init { path, cap } => commands::init::init(path, cap),
@@ -222,7 +212,6 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Tui { config, input } => tui::run_tui(&config, &input).await,
         Commands::Serve {
             config,
             config_json,

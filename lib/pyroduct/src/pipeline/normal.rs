@@ -60,38 +60,47 @@ impl ExecutionRecord {
 // =============================================================================
 
 pub struct Pipeline {
-    pub step: PyroInstance,
+    pub shards: Vec<Mutex<PyroInstance>>,
     pub success_log_retention_secs: u64,
     pub error_log_retention_secs: u64,
-    pub log_manager: LogWal,
+    pub log_manager: Mutex<LogWal>,
     pub input_manager: DataManager,
     pub output_manager: DataManager,
-    pub callbacks: Vec<(uuid::Uuid, crate::pipeline::Callback)>,
+    pub callbacks: Mutex<Vec<(uuid::Uuid, crate::pipeline::Callback)>>,
 }
 
 impl Pipeline {
-    pub async fn call(&mut self, input: &PyroRow<'_>) -> Result<ExecutionRecord, PyroError> {
-        let index = self.input_manager.len();
+    /// Returns the shard mutex for a given row index.
+    fn shard(&self, row_index: usize) -> &Mutex<PyroInstance> {
+        &self.shards[row_index % self.shards.len()]
+    }
+
+    pub async fn call(&self, input: &PyroRow<'_>) -> Result<ExecutionRecord, PyroError> {
+        let index = self.input_manager.len().await;
         self.process(index, input).await
     }
 
     /// Run the input through the single step.
     #[instrument(skip(self, input), fields(row_index = row_index))]
     pub async fn process(
-        &mut self,
+        &self,
         row_index: usize,
         input: &PyroRow<'_>,
     ) -> Result<ExecutionRecord, PyroError> {
         debug!(row_index, "Processing row");
         self.input_manager.push_record(row_index, input).await?;
 
-        match self.step.call(row_index as u32, input).await {
+        let mut shard = self.shard(row_index).lock().await;
+        match shard.call(row_index as u32, input).await {
             Ok(output) => {
                 debug!(row_index, "Step succeeded");
-
+                drop(shard);
                 // Execute callbacks
-                for (_, cb) in &mut self.callbacks {
-                    cb.execute(row_index, &output.row).await;
+                {
+                    let mut cbs = self.callbacks.lock().await;
+                    for (_, cb) in cbs.iter_mut() {
+                        cb.execute(row_index, &output.row).await;
+                    }
                 }
 
                 self.output_manager
@@ -104,7 +113,7 @@ impl Pipeline {
                     capability_logs: output.logs.capability_logs.clone(),
                     failure: None,
                 };
-                self.log_manager.append(&log_entry).await?;
+                self.log_manager.lock().await.append(&log_entry).await?;
                 let record = ExecutionRecord::Success {
                     row_index,
                     input: input.clone().into_owned(),
@@ -114,6 +123,7 @@ impl Pipeline {
                 Ok(record)
             }
             Err(f) => {
+                drop(shard);
                 match &f.result {
                     Ok(error) => {
                         warn!(row_index, "Pipeline Step: Module returned error: {}", error)
@@ -126,7 +136,7 @@ impl Pipeline {
                     capability_logs: f.logs.capability_logs.clone(),
                     failure: Some(f.result.clone()),
                 };
-                self.log_manager.append(&log_entry).await?;
+                self.log_manager.lock().await.append(&log_entry).await?;
                 let record = ExecutionRecord::Failure {
                     row_index,
                     input: input.clone().into_owned(),
@@ -141,11 +151,13 @@ impl Pipeline {
     /// Retrieve a single record by its global index.
     pub async fn get_record(&self, index: usize) -> Result<ExecutionRecord, PyroError> {
         debug!(index, "Retrieving record");
-        let input_row = self.input_manager.get_record(index)?;
+        let input_row = self.input_manager.get_record(index).await?;
 
         // Try to read from LogWal in O(1)
         let log_entry = self
             .log_manager
+            .lock()
+            .await
             .get(index)
             .await
             .map_err(|e| PyroError::local_io(CapturedError::new(e)))?;
@@ -159,7 +171,6 @@ impl Pipeline {
 
             if let Some(err) = entry.failure {
                 debug!(index, "Record is a failure");
-                debug_assert!(self.output_manager.get_record(index).is_err());
                 Ok(ExecutionRecord::Failure {
                     row_index: index,
                     input: input_row,
@@ -167,9 +178,8 @@ impl Pipeline {
                     logs,
                 })
             } else {
-                debug_assert!(self.output_manager.get_record(index).is_ok());
                 debug!(index, "Record is a success");
-                let success_row = self.output_manager.get_record(index)?;
+                let success_row = self.output_manager.get_record(index).await?;
                 Ok(ExecutionRecord::Success {
                     row_index: index,
                     input: input_row,
@@ -183,7 +193,7 @@ impl Pipeline {
                 "Logs cleaned/missing, attempting fallback search in output manager"
             );
             // Logs cleaned/missing, return blank logs
-            if let Ok(success_row) = self.output_manager.get_record(index) {
+            if let Ok(success_row) = self.output_manager.get_record(index).await {
                 debug!(index, "Fallback search found matching record");
                 Ok(ExecutionRecord::Success {
                     row_index: index,
@@ -216,13 +226,15 @@ pub struct Failure {
 }
 
 // =============================================================================
-// PipelinePool
+// PipelinePool (deprecated — sharding is now built into Pipeline)
 // =============================================================================
 
+#[deprecated(note = "Sharding is now built into Pipeline via the `shards` field. Use Pipeline directly.")]
 pub struct PipelinePool {
     pipelines: Arc<Mutex<Vec<Pipeline>>>,
 }
 
+#[allow(deprecated)]
 impl PipelinePool {
     pub fn new(pipelines: Vec<Pipeline>) -> Self {
         Self {
@@ -260,7 +272,7 @@ impl PipelinePool {
         let chunk_size = min(total_rows.div_ceil(num_pipelines), 1000);
         let mut handles = Vec::with_capacity(num_pipelines);
 
-        for (i, mut pipeline) in pipelines.into_iter().enumerate() {
+        for (i, pipeline) in pipelines.into_iter().enumerate() {
             let offset = i * chunk_size;
             if offset >= total_rows {
                 handles.push(tokio::spawn(async move { pipeline }));

@@ -49,6 +49,14 @@ pub struct LoadedPlaybook {
     pub log_dir: std::path::PathBuf,
     pub input_dir: std::path::PathBuf,
     pub output_dir: std::path::PathBuf,
+
+    /// Number of worker shards for concurrent processing.
+    #[serde(default = "default_num_workers")]
+    pub num_workers: usize,
+}
+
+fn default_num_workers() -> usize {
+    4
 }
 
 // The lock file is automatically unlocked when `_lock_file` is dropped (fs2 behavior).
@@ -678,6 +686,7 @@ impl CacheManager {
         log_dir: impl AsRef<Path>,
         input_dir: impl AsRef<Path>,
         output_dir: impl AsRef<Path>,
+        num_workers: usize,
     ) -> Result<LoadedPlaybook, CacheError> {
         tracing::debug!("Loading playbook");
         let res = async {
@@ -719,6 +728,7 @@ impl CacheManager {
                 log_dir: log_dir.as_ref().to_path_buf(),
                 input_dir: input_dir.as_ref().to_path_buf(),
                 output_dir: output_dir.as_ref().to_path_buf(),
+                num_workers,
             })
         }.await;
 
