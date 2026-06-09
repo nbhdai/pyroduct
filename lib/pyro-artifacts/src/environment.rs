@@ -226,6 +226,10 @@ impl Environment {
         tracing::debug!("Starting Cargo compilation in environment");
         let mut args = vec!["build", "--release"];
         args.extend_from_slice(extra_args);
+        if matches!(self.manifest, ProjectManifest::Module(_)) {
+            args.push("--target");
+            args.push("wasm32-unknown-unknown");
+        }
         run_command(&self.root, &args, capture).await.map_err(|e| {
             tracing::error!(error = ?e, "Cargo compilation failed");
             EnvironmentError::CommandError(e)
@@ -359,26 +363,29 @@ impl Environment {
                                 .capability_interface_spec(&cap.author, &cap.package, &cap.version)
                                 .await
                             {
-                                if let Ok(spec) = serde_json::from_str::<pyro_spec::InterfaceSpec>(&spec_str) {
+                                if let Ok(spec) =
+                                    serde_json::from_str::<pyro_spec::InterfaceSpec>(&spec_str)
+                                {
                                     dep_interfaces.push(spec);
                                 }
                             }
                         }
 
-                        let spec = pyro_macro::module::generate_module_spec(&src_lib_rs, &dep_interfaces)
-                            .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
-                            .map(|func| crate::artifacts::PlaybookSpec {
-                                ident: source.ident(),
-                                hash,
-                                func,
-                                capabilities: source.dependencies().capabilities,
-                                interconnect: source.manifest.interconnect.clone(),
-                            })
-                            .ok_or_else(|| {
-                                EnvironmentError::InterfaceGeneration(
-                                    "Module main function missing".to_string(),
-                                )
-                            })?;
+                        let spec =
+                            pyro_macro::module::generate_module_spec(&src_lib_rs, &dep_interfaces)
+                                .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
+                                .map(|func| crate::artifacts::PlaybookSpec {
+                                    ident: source.ident(),
+                                    hash,
+                                    func,
+                                    capabilities: source.dependencies().capabilities,
+                                    interconnect: source.manifest.interconnect.clone(),
+                                })
+                                .ok_or_else(|| {
+                                    EnvironmentError::InterfaceGeneration(
+                                        "Module main function missing".to_string(),
+                                    )
+                                })?;
 
                         let binary = crate::artifacts::PlaybookBinary {
                             wasm: fs::read(path).await?,
@@ -503,26 +510,29 @@ impl Environment {
                             .capability_interface_spec(&cap.author, &cap.package, &cap.version)
                             .await
                         {
-                            if let Ok(spec) = serde_json::from_str::<pyro_spec::InterfaceSpec>(&spec_str) {
+                            if let Ok(spec) =
+                                serde_json::from_str::<pyro_spec::InterfaceSpec>(&spec_str)
+                            {
                                 dep_interfaces.push(spec);
                             }
                         }
                     }
 
-                    let spec = pyro_macro::module::generate_module_spec(&src_lib_rs, &dep_interfaces)
-                        .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
-                        .map(|func| crate::artifacts::PlaybookSpec {
-                            ident: source.ident(),
-                            hash,
-                            func,
-                            capabilities: source.dependencies().capabilities,
-                            interconnect: source.manifest.interconnect.clone(),
-                        })
-                        .ok_or_else(|| {
-                            EnvironmentError::InterfaceGeneration(
-                                "Module main function missing".to_string(),
-                            )
-                        })?;
+                    let spec =
+                        pyro_macro::module::generate_module_spec(&src_lib_rs, &dep_interfaces)
+                            .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
+                            .map(|func| crate::artifacts::PlaybookSpec {
+                                ident: source.ident(),
+                                hash,
+                                func,
+                                capabilities: source.dependencies().capabilities,
+                                interconnect: source.manifest.interconnect.clone(),
+                            })
+                            .ok_or_else(|| {
+                                EnvironmentError::InterfaceGeneration(
+                                    "Module main function missing".to_string(),
+                                )
+                            })?;
 
                     let binary = crate::artifacts::PlaybookBinary {
                         wasm: fs::read(wasm_artifact).await?,
@@ -613,23 +623,30 @@ impl Environment {
                         };
                         if let Ok(spec_str) = self
                             .cache_manager
-                            .capability_interface_spec(&cap_ident.author, &cap_ident.package, &cap_ident.version)
+                            .capability_interface_spec(
+                                &cap_ident.author,
+                                &cap_ident.package,
+                                &cap_ident.version,
+                            )
                             .await
                         {
-                            if let Ok(spec) = serde_json::from_str::<pyro_spec::InterfaceSpec>(&spec_str) {
+                            if let Ok(spec) =
+                                serde_json::from_str::<pyro_spec::InterfaceSpec>(&spec_str)
+                            {
                                 dep_interfaces.push(spec);
                             }
                         }
                         resolved_capabilities.push(cap_ident);
                     }
 
-                    let spec = pyro_macro::module::generate_module_spec(&src_lib_rs, &dep_interfaces)
-                        .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
-                        .ok_or_else(|| {
-                            EnvironmentError::InterfaceGeneration(
-                                "Module main function missing".to_string(),
-                            )
-                        })?;
+                    let spec =
+                        pyro_macro::module::generate_module_spec(&src_lib_rs, &dep_interfaces)
+                            .map_err(|e| EnvironmentError::InterfaceGeneration(e.to_string()))?
+                            .ok_or_else(|| {
+                                EnvironmentError::InterfaceGeneration(
+                                    "Module main function missing".to_string(),
+                                )
+                            })?;
 
                     let dummy_ident = crate::artifacts::PlaybookIdent {
                         author: "dummy".to_string(),
@@ -749,10 +766,16 @@ impl Environment {
                     };
                     if let Ok(spec_str) = self
                         .cache_manager
-                        .capability_interface_spec(&cap_ident.author, &cap_ident.package, &cap_ident.version)
+                        .capability_interface_spec(
+                            &cap_ident.author,
+                            &cap_ident.package,
+                            &cap_ident.version,
+                        )
                         .await
                     {
-                        if let Ok(spec) = serde_json::from_str::<pyro_spec::InterfaceSpec>(&spec_str) {
+                        if let Ok(spec) =
+                            serde_json::from_str::<pyro_spec::InterfaceSpec>(&spec_str)
+                        {
                             dep_interfaces.push(spec);
                         }
                     }

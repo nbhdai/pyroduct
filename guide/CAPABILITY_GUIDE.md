@@ -135,20 +135,21 @@ impl HttpServer {
     type Client = HttpClient;
 
     // 1. Lifecycle: Instantiated at daemon/worker startup with optional config
-    async fn new(config: Option<HttpConfig>) -> Self {
+    async fn new(config: Option<HttpConfig>) -> Result<Self, pyroduct::CapturedError> {
         let config = config.unwrap_or(HttpConfig {
             base_url: "https://api.default.org".to_string(),
             timeout_seconds: 30,
         });
-        Self {
+        Ok(Self {
             base_url: config.base_url,
             timeout: std::time::Duration::from_secs(config.timeout_seconds),
-        }
+        })
     }
 
     // 2. Lifecycle: Resets state between pipeline/session runs
-    async fn reset(&mut self) {
+    async fn reset(&mut self) -> Result<(), pyroduct::CapturedError> {
         // Clear caches or connection pools if necessary
+        Ok(())
     }
 
     // 3. Lifecycle: Validates and registers a new client instance
@@ -231,17 +232,18 @@ impl KvServer {
     type Config = KvConfig;
     type Client = KvClient;
 
-    async fn new(config: Option<KvConfig>) -> Self {
+    async fn new(config: Option<KvConfig>) -> Result<Self, pyroduct::CapturedError> {
         let cap = config.map(|c| c.initial_capacity).unwrap_or(128);
-        Self {
+        Ok(Self {
             db: Mutex::new(HashMap::with_capacity(cap)),
-        }
+        })
     }
 
-    async fn reset(&mut self) {
+    async fn reset(&mut self) -> Result<(), pyroduct::CapturedError> {
         if let Ok(mut store) = self.db.lock() {
             store.clear();
         }
+        Ok(())
     }
 
     fn register(&self, client: &KvClient) -> Result<(), pyroduct::CapturedError> {

@@ -11,6 +11,10 @@ This guide serves as a manual for developers and agents to build, configure, and
 2. [Playbook Project Structure](#2-playbook-project-structure)
 3. [Manifest Specification (`Module.toml`)](#3-manifest-specification-moduletoml)
 4. [Writing Playbook Logic in Rust](#4-writing-playbook-logic-in-rust)
+   - [Declaring Inputs & Outputs](#declaring-inputs--outputs)
+   - [Using Capabilities](#using-capabilities)
+   - [Session-Based Playbooks (Stateful Conversations)](#session-based-playbooks-stateful-conversations)
+   - [Inter-Playbook Communication & Chatbot Orchestration (Interconnect)](#inter-playbook-communication--chatbot-orchestration-interconnect)
 5. [Building & Packaging Playbooks](#5-building--packaging-playbooks)
 6. [Concrete Examples](#6-concrete-examples)
 
@@ -147,32 +151,118 @@ fn call(target_url: &str) -> Result<String> {
 }
 ```
 
-### Inter-Playbook Communication (Interconnect)
+### Session-Based Playbooks (Stateful Conversations)
 
-Playbooks can invoke other playbooks directly by name. This is useful for building multi-agent routing steps.
+Pyroduct supports stateful, session-based playbooks. This is highly suitable for building chatbots, conversational agents, or multi-turn interactive workflows.
 
-To call another playbook:
-1. Declare the dependency in `[interconnect]` in `Module.toml`.
-2. Import `pyroduct::call_playbook` and `pyroduct::format::PyroRow`.
-3. Invoke `call_playbook` using the logical name specified in your manifest.
+#### Enabling Sessions
+To specify that a playbook operates within a session, pass the `session` attribute to the `#[pyroduct::module]` macro:
+```rust
+#[pyroduct::module(session, output = ChatMessage)]
+```
+
+#### Return Type
+Session-based playbooks must return a `Result<SessionResponse<T>, PyroError>`. The `SessionResponse` enum is defined as:
+```rust
+pub enum SessionResponse<T> {
+    Continue(T), // Continues the session and yields the output value
+    End(T),      // Concludes the session normally and yields the final output value
+    Terminate,   // Instantly terminates the session, yielding no output value (empty row)
+}
+```
+
+#### Session Types & Input Patterns
+Based on the function's parameter count, Pyroduct automatically compiles the playbook as either a flat **Session** or a split **SessionDiff**:
+
+##### 1. Interleaved Session History (2 Inputs)
+If the function takes exactly **2 inputs**, the first argument accepts a `Vec<T>` containing all prior inputs and outputs interleaved chronologically. The second argument accepts the current input:
+```rust
+#[pyroduct::module(session, output = ChatMessage)]
+fn process(
+    mut prior: Vec<ChatMessage>, // Interleaved history of prior turns (inputs & outputs)
+    input: ChatMessage,          // Current user message
+) -> Result<SessionResponse<ChatMessage>> {
+    prior.push(input);
+    // ... process prior history and input ...
+    let reply = llm.chat(prior)?;
+    Ok(SessionResponse::Continue(reply))
+}
+```
+*Note: The history elements, input parameter, and the returned output value must all share the same type `T` (e.g. `ChatMessage`).*
+
+##### 2. Split Session History (3 Inputs / SessionDiff)
+If the function takes exactly **3 inputs**, Pyroduct separates the history lists. The first parameter receives all prior inputs, the second receives all prior outputs, and the third receives the current input:
+```rust
+#[pyroduct::module(session, output = message)]
+fn process(
+    prior_inputs: Vec<String>,   // History of user inputs
+    prior_outputs: Vec<String>,  // History of assistant replies
+    input: String,               // Current user message
+) -> Result<SessionResponse<String>> {
+    let turn = prior_outputs.len() + 1;
+    // ... process split lists ...
+    Ok(SessionResponse::Continue(format!("Replying to turn {}", turn)))
+}
+```
+
+### Inter-Playbook Communication & Chatbot Orchestration (Interconnect)
+
+Playbooks can invoke other playbooks directly by name. This enables orchestrating multi-agent networks, routers, and session-based chatbot workflows.
+
+#### Stateless Interconnect Calls
+To make a standard, stateless call to another playbook:
+1. Declare the dependency in the `[interconnect]` section of `Module.toml`.
+2. Invoke `pyroduct::call_playbook` with the playbook's alias and the input payload row.
 
 ```rust
 use pyroduct::call_playbook;
 use pyroduct::format::PyroRow;
 
-#[pyroduct::module(output = (input_text, sentiment))]
-fn call(text: String) -> Result<(String, String)> {
-    // Format input row for the target playbook
-    let target_input = PyroRow::from([("input", text.clone().into())]);
+#[pyroduct::module(output = sentiment)]
+fn call(text: String) -> Result<String> {
+    let target_input = PyroRow::from([("input", text.into())]);
     
-    // Execute target playbook "sentiment" (defined in Module.toml [interconnect])
+    // Execute target playbook "sentiment"
     let (_session_id, target_output) = call_playbook("sentiment", &target_input)?;
     
     let sentiment = target_output.get_str("message")
         .unwrap_or("unknown")
         .to_string();
         
-    Ok((text, sentiment))
+    Ok(sentiment)
+}
+```
+
+#### Stateful Interconnect Session Calls
+If the target playbook is a session-based chatbot, you must track and pass its `session_id` to maintain context over multiple turns:
+1. **Initialize Session**: Call `call_playbook` with the target chatbot's alias and the initial user message. This starts a session, returning the initial chatbot reply and a unique `session_id`.
+2. **Continue Session**: For subsequent turns, invoke `call_session` passing the chatbot's alias, the saved `session_id`, and the new user message. This ensures the target chatbot receives its correct historical state.
+
+```rust
+use pyroduct::{call_playbook, call_session, PyroRow};
+
+#[pyroduct::module(output = chatbot_reply)]
+fn orchestrate(user_msg: String, session_id_opt: Option<u64>) -> Result<String> {
+    let input_row = PyroRow::from([
+        ("role", "user".into()),
+        ("content", user_msg.into()),
+    ]);
+
+    let (session_id, reply_row) = match session_id_opt {
+        // Start a new chatbot session
+        None => {
+            let (sid, row) = call_playbook("chatbot", &input_row)?;
+            (sid, row)
+        }
+        // Continue the existing chatbot session
+        Some(sid) => {
+            let row = call_session("chatbot", sid, &input_row)?;
+            (sid, row)
+        }
+    };
+
+    let reply = reply_row.get_str("content").unwrap_or("").to_string();
+    Ok(reply)
 }
 ```
 
@@ -303,6 +393,61 @@ fn call(user_id: i64) -> Result<(i64, String, i64)> {
     let age = db_result.get_i64("age").unwrap_or(0);
 
     Ok((user_id, email, age))
+}
+```
+
+---
+
+### Example 4: Conversational Chatbot Playbook using LLM Capability
+
+This example shows how to write a stateful chatbot playbook that maintains user conversation history and interacts with an LLM.
+
+#### `Module.toml`
+```toml
+[module]
+package = "chat"
+version = "0.1.0"
+author = "agent-alpha"
+
+[pyroduct]
+path = "../../lib/pyroduct"
+
+[capabilities]
+llm = { package = "llm", author = "nbhdai", version = "0.1.0" }
+
+[dependencies]
+```
+
+#### `src/lib.rs`
+```rust
+use llm::{ChatMessage, LlmClient, LlmClientMethods};
+use pyroduct::session::SessionResponse;
+
+/// Processes multi-turn conversation and queries the LLM capability.
+#[pyroduct::module(session, output = ChatMessage)]
+fn process(
+    mut prior: Vec<ChatMessage>,
+    input: ChatMessage,
+) -> Result<SessionResponse<ChatMessage>> {
+    // 1. Register a client with the LLM capability
+    let llm = LlmClient {
+        model: "gemma-4-31B-it-Q8_0".to_string(),
+        temperature: 0.7,
+    }
+    .register()?;
+
+    // 2. Append the current turn input to the history
+    prior.push(input);
+
+    // 3. Query the capability with the complete interleaved history
+    let reply = llm.chat(prior)?;
+
+    // 4. End the session if the user says "goodbye"
+    if reply.content.to_lowercase().contains("goodbye") {
+        Ok(SessionResponse::End(reply))
+    } else {
+        Ok(SessionResponse::Continue(reply))
+    }
 }
 ```
 
