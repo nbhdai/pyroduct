@@ -9,6 +9,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # The self-hosted NixOS runner only ships the node24 external; node20-based
+  # actions (upload/download-artifact v4, gh-release) fail to start without this.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   # ===========================================================================
@@ -93,7 +96,7 @@ jobs:
           retention-days: 1
 
   # ===========================================================================
-  # Build Tauri GUI bundles (.deb, .AppImage)
+  # Build Tauri GUI bundles (.deb, .rpm)
   # ===========================================================================
   build-gui:
     name: GUI (${{ matrix.arch }})
@@ -104,8 +107,12 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             arch: x86_64
-          - target: aarch64-unknown-linux-gnu
-            arch: aarch64
+          # The unlabeled self-hosted pool is x86_64 and the build never used
+          # matrix.target, so this entry produced x86_64 binaries mislabeled
+          # as aarch64. Re-enable once a dedicated ARM64 runner label exists
+          # (cf. the commented-out entry in build-cli above).
+          # - target: aarch64-unknown-linux-gnu
+          #   arch: aarch64
 
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -122,13 +129,15 @@ jobs:
             npm ci
             cd ../../..
 
-            # Build the Tauri application (produces .deb and .AppImage)
+            # Build the Tauri application (produces .deb and .rpm).
+            # AppImage is skipped: tauri's bundler downloads a linuxdeploy
+            # binary that cannot execute on the NixOS runner.
             cd lib/pyro-gui
-            cargo tauri build
+            cargo tauri build --bundles deb,rpm
             cd ../..
 
             echo '==> Tauri build complete'
-            find target/release/bundle -type f \( -name '*.deb' -o -name '*.AppImage' \) -ls
+            find target/release/bundle -type f \( -name '*.deb' -o -name '*.rpm' \) -ls
           "
 
       - name: Extract version from tag
@@ -152,13 +161,13 @@ jobs:
             echo "==> Packaged: ${DEB_NAME}"
           fi
 
-          # Copy .AppImage bundle
-          APPIMAGE_FILE=$(find target/release/bundle/appimage -name '*.AppImage' -type f | head -1)
-          if [ -n "$APPIMAGE_FILE" ]; then
-            APPIMAGE_NAME="Pyroduct_GUI-${VERSION}-${ARCH}.AppImage"
-            cp "$APPIMAGE_FILE" "${OUTDIR}/${APPIMAGE_NAME}"
-            echo "appimage_name=${APPIMAGE_NAME}" >> "$GITHUB_OUTPUT"
-            echo "==> Packaged: ${APPIMAGE_NAME}"
+          # Copy .rpm bundle
+          RPM_FILE=$(find target/release/bundle/rpm -name '*.rpm' -type f | head -1)
+          if [ -n "$RPM_FILE" ]; then
+            RPM_NAME="pyroduct-gui-${VERSION}-1.${ARCH}.rpm"
+            cp "$RPM_FILE" "${OUTDIR}/${RPM_NAME}"
+            echo "rpm_name=${RPM_NAME}" >> "$GITHUB_OUTPUT"
+            echo "==> Packaged: ${RPM_NAME}"
           fi
 
           ls -lh "${OUTDIR}/"
@@ -171,12 +180,12 @@ jobs:
           path: gui-artifacts/${{ steps.collect.outputs.deb_name }}
           retention-days: 1
 
-      - name: Upload GUI .AppImage
-        if: steps.collect.outputs.appimage_name != ''
+      - name: Upload GUI .rpm
+        if: steps.collect.outputs.rpm_name != ''
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.collect.outputs.appimage_name }}
-          path: gui-artifacts/${{ steps.collect.outputs.appimage_name }}
+          name: ${{ steps.collect.outputs.rpm_name }}
+          path: gui-artifacts/${{ steps.collect.outputs.rpm_name }}
           retention-days: 1
 
   # ===========================================================================
@@ -345,7 +354,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum *.tar.gz *.deb *.AppImage *.dmg 2>/dev/null > SHA256SUMS || true
+          sha256sum *.tar.gz *.deb *.rpm *.dmg 2>/dev/null > SHA256SUMS || true
           cat SHA256SUMS
 
       - name: Extract version from tag
@@ -363,7 +372,7 @@ jobs:
           files: |
             artifacts/*.tar.gz
             artifacts/*.deb
-            artifacts/*.AppImage
+            artifacts/*.rpm
             artifacts/*.dmg
             artifacts/SHA256SUMS
           body: |
@@ -390,12 +399,11 @@ jobs:
             sudo dpkg -i pyroduct-gui.deb
             ```
 
-            ### GUI (AppImage — any Linux)
+            ### GUI (Fedora/RHEL — .rpm)
             ```bash
-            curl -fsSL -o Pyroduct_GUI.AppImage \
-              https://github.com/nbhdai/pyroduct/releases/download/${{ github.ref_name }}/Pyroduct_GUI-${{ steps.version.outputs.version }}-x86_64.AppImage
-            chmod +x Pyroduct_GUI.AppImage
-            ./Pyroduct_GUI.AppImage
+            curl -fsSL -o pyroduct-gui.rpm \
+              https://github.com/nbhdai/pyroduct/releases/download/${{ github.ref_name }}/pyroduct-gui-${{ steps.version.outputs.version }}-1.x86_64.rpm
+            sudo rpm -i pyroduct-gui.rpm
             ```
 
             ### macOS (CLI + Daemon)
