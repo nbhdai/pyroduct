@@ -81,14 +81,20 @@ impl PyroDaemon {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("."));
 
-        // 3. Check macOS Application Support location
+        // 3. Check the user-local ~/.pyroduct location (set up by install.sh)
+        let user_dir = home.join(".pyroduct");
+        if user_dir.join("control").exists() {
+            return user_dir;
+        }
+
+        // 4. Check the legacy macOS Application Support location
         let macos_dir = home.join("Library/Application Support/pyro-daemon");
         if macos_dir.join("control").exists() {
             return macos_dir;
         }
 
-        // 4. Fallback to user-local directory
-        home.join(".pyro-daemon")
+        // 5. Fallback to the user-local ~/.pyroduct directory (matches install.sh)
+        home.join(".pyroduct")
     }
 
     pub fn new(working_dir: PathBuf) -> Self {

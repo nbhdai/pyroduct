@@ -119,7 +119,13 @@ impl CacheManager {
                     .map(PathBuf::from)
                     .unwrap_or_else(|_| PathBuf::from("."));
 
-                // Check macOS Application Support location
+                // Check the user-local ~/.pyroduct location (set up by install.sh)
+                let user_cache = home.join(".pyroduct");
+                if user_cache.join("config.toml").exists() {
+                    return user_cache;
+                }
+
+                // Check the legacy macOS Application Support location
                 let macos_cache = home.join("Library/Application Support/pyro-daemon/cache");
                 if macos_cache.join("config.toml").exists() {
                     return macos_cache;
