@@ -18,7 +18,7 @@ Install the following before running the install script:
 
 A [Rust toolchain](https://rustup.rs) is also required. The install script will install it automatically if not present.
 
-Modules are compiled to WebAssembly, so the `wasm32-unknown-unknown` target must also be installed before running `pyroduct package` / `pyroduct ship`:
+Modules are compiled to WebAssembly, so the `wasm32-unknown-unknown` target must also be installed before running `pyroduct ship`:
 
 ```bash
 rustup target add wasm32-unknown-unknown
@@ -108,14 +108,11 @@ pyroduct init --cap my_capability
 # Expand (generate Cargo.toml + FFI glue)
 pyroduct expand my_module
 
-# Package (compile to WASM / dylib)
-pyroduct package my_module
+# Ship (compile to WASM / dylib and place artifacts into the local cache)
+pyroduct ship my_module
 
 # Run a pipeline
 pyroduct run pipeline.yaml data.jsonl -o output/
-
-# Interactive TUI
-pyroduct tui pipeline.yaml data.jsonl
 ```
 
 ## Architecture
@@ -212,10 +209,9 @@ pyroduct init [PATH]            Create a new module project
 pyroduct init --cap [PATH]      Create a new capability project
 pyroduct expand <DIR>           Generate Cargo.toml and FFI glue from manifests
 pyroduct expand -b <DIR>        Convert compiled artifacts to WAT / dump symbols
-pyroduct package <DIR>          Compile module (.wasm) or capability (.dylib/.so)
+pyroduct ship <DIR>             Compile module (.wasm) or capability (.dylib/.so) into the local cache
 pyroduct clean <DIR>            Remove generated files (Cargo.toml, artifacts/, target/)
 pyroduct run <CONFIG> <INPUT>   Run a pipeline (file input = batch mode, JSON string = single row)
-pyroduct tui <CONFIG> <INPUT>   Interactive TUI: edit code, configure capabilities, run pipeline
 ```
 
 All commands support recursive mode: point them at a parent directory and they'll discover all `Module.toml` / `Capability.toml` projects in subdirectories.
