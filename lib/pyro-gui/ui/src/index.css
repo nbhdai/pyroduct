@@ -269,6 +269,8 @@ body {
     font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.3px;
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 
 .badge-online {
@@ -559,6 +561,7 @@ body {
     padding: 22px;
     display: flex;
     flex-direction: column;
+    min-width: 0;
     transition: all var(--transition-speed) ease;
 }
 
@@ -571,12 +574,17 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
+    gap: 12px;
     margin-bottom: 16px;
 }
 
 .playbook-card-header h3 {
     font-size: 18px;
     font-weight: 600;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .playbook-details {
