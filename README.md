@@ -18,18 +18,26 @@ Install the following before running the install script:
 
 A [Rust toolchain](https://rustup.rs) is also required. The install script will install it automatically if not present.
 
+Modules are compiled to WebAssembly, so the `wasm32-unknown-unknown` target must also be installed before running `pyroduct package` / `pyroduct ship`:
+
+```bash
+rustup target add wasm32-unknown-unknown
+```
+
 ### Install Script
 
-Clone the repo and run the install script. It compiles the CLI and daemon from source and optionally sets up a background service:
+Clone the repo and run the install script. It builds the `pyroduct` CLI and the `pyro-daemond` daemon, installs them to `~/.local/bin`, and sets up `~/.pyroduct` as the working directory:
 
 ```bash
 git clone https://github.com/nbhdai/pyroduct.git
 cd pyroduct
-./install.sh            # interactive
-./install.sh -d         # use all defaults (installs daemon)
+./install.sh --build              # build from source and install
+./install.sh --build --service    # also set up the daemon as a launchd service (macOS)
 ```
 
-On **Linux**, the daemon runs as a systemd service under a dedicated `pyroduct` system user. On **macOS**, it runs as a launchd user agent.
+From a release tarball, run `./install.sh` (optionally with `--service`) to install the pre-built binaries instead.
+
+On **macOS**, `--service` registers the daemon as a launchd user agent. On **Linux**, use the NixOS module below, or run `pyro-daemond --working-dir ~/.pyroduct` manually (e.g. via your own systemd unit).
 
 ### NixOS Module
 
@@ -57,7 +65,7 @@ inputs.pyroduct.url = "github:nbhdai/pyroduct";
 ### Daemon Management
 
 <details>
-<summary>Linux (systemd)</summary>
+<summary>Linux (systemd — as configured by the NixOS module)</summary>
 
 ```bash
 systemctl status pyro-daemon          # check status
@@ -82,9 +90,9 @@ launchctl kickstart gui/$(id -u)/com.pyroduct.daemon # restart
 ```
 
 **Paths:**
-- Working dir: `~/Library/Application Support/pyro-daemon`
-- Shared cache: `~/Library/Application Support/pyro-daemon/cache`
-- Control socket: `~/Library/Application Support/pyro-daemon/control`
+- Working dir / cache: `~/.pyroduct`
+- Control socket: `~/.pyroduct/control`
+- Logs: `~/Library/Logs/pyro-daemon/`
 
 </details>
 
