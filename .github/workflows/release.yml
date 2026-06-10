@@ -49,7 +49,7 @@ jobs:
               -p pyro-daemon
 
             echo '==> Build complete'
-            ls -lh lib/target/release/pyroduct lib/target/release/pyro-daemond
+            ls -lh target/release/pyroduct target/release/pyro-daemond
           "
 
       - name: Extract version from tag
@@ -66,8 +66,8 @@ jobs:
           mkdir -p "${STAGING_DIR}/${ARCHIVE_NAME}"
 
           # Copy binaries
-          cp lib/target/release/pyroduct   "${STAGING_DIR}/${ARCHIVE_NAME}/"
-          cp lib/target/release/pyro-daemond "${STAGING_DIR}/${ARCHIVE_NAME}/"
+          cp target/release/pyroduct   "${STAGING_DIR}/${ARCHIVE_NAME}/"
+          cp target/release/pyro-daemond "${STAGING_DIR}/${ARCHIVE_NAME}/"
 
           # Strip debug symbols to reduce size
           strip "${STAGING_DIR}/${ARCHIVE_NAME}/pyroduct" || true
@@ -128,7 +128,7 @@ jobs:
             cd ../..
 
             echo '==> Tauri build complete'
-            find lib/target/release/bundle -type f \( -name '*.deb' -o -name '*.AppImage' \) -ls
+            find target/release/bundle -type f \( -name '*.deb' -o -name '*.AppImage' \) -ls
           "
 
       - name: Extract version from tag
@@ -144,7 +144,7 @@ jobs:
           mkdir -p "$OUTDIR"
 
           # Copy .deb bundle
-          DEB_FILE=$(find lib/target/release/bundle/deb -name '*.deb' -type f | head -1)
+          DEB_FILE=$(find target/release/bundle/deb -name '*.deb' -type f | head -1)
           if [ -n "$DEB_FILE" ]; then
             DEB_NAME="pyroduct-gui_${VERSION}_${ARCH}.deb"
             cp "$DEB_FILE" "${OUTDIR}/${DEB_NAME}"
@@ -153,7 +153,7 @@ jobs:
           fi
 
           # Copy .AppImage bundle
-          APPIMAGE_FILE=$(find lib/target/release/bundle/appimage -name '*.AppImage' -type f | head -1)
+          APPIMAGE_FILE=$(find target/release/bundle/appimage -name '*.AppImage' -type f | head -1)
           if [ -n "$APPIMAGE_FILE" ]; then
             APPIMAGE_NAME="Pyroduct_GUI-${VERSION}-${ARCH}.AppImage"
             cp "$APPIMAGE_FILE" "${OUTDIR}/${APPIMAGE_NAME}"
@@ -180,11 +180,153 @@ jobs:
           retention-days: 1
 
   # ===========================================================================
+  # Build CLI + daemon release binaries (macOS)
+  # ===========================================================================
+  build-cli-macos:
+    name: CLI + Daemon (macOS ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15   # Apple Silicon (arm64)
+            arch: aarch64
+          - runner: macos-15-intel   # Intel (x86_64) — macos-13 was retired Dec 2025; this label is supported until Aug 2027
+            arch: x86_64
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+
+      - name: Ensure Rust toolchain
+        run: |
+          if ! command -v cargo >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          rustc --version
+          cargo --version
+
+      - name: Build release binaries
+        run: |
+          set -e
+          echo '==> Building pyroduct CLI (release)...'
+          cargo build --manifest-path lib/Cargo.toml --release -p pyroduct --features cli
+          echo '==> Building pyro-daemond (release)...'
+          cargo build --manifest-path lib/Cargo.toml --release -p pyro-daemon
+          ls -lh target/release/pyroduct target/release/pyro-daemond
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Package tarball
+        id: package
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ARCHIVE_NAME="pyroduct-${VERSION}-${{ matrix.arch }}-macos"
+          STAGING_DIR="$(mktemp -d)"
+          mkdir -p "${STAGING_DIR}/${ARCHIVE_NAME}"
+
+          cp target/release/pyroduct    "${STAGING_DIR}/${ARCHIVE_NAME}/"
+          cp target/release/pyro-daemond "${STAGING_DIR}/${ARCHIVE_NAME}/"
+
+          strip "${STAGING_DIR}/${ARCHIVE_NAME}/pyroduct" || true
+          strip "${STAGING_DIR}/${ARCHIVE_NAME}/pyro-daemond" || true
+
+          cp install.sh "${STAGING_DIR}/${ARCHIVE_NAME}/"
+          cp LICENSE     "${STAGING_DIR}/${ARCHIVE_NAME}/"
+          cp README.md   "${STAGING_DIR}/${ARCHIVE_NAME}/"
+
+          tar -czf "${ARCHIVE_NAME}.tar.gz" -C "${STAGING_DIR}" "${ARCHIVE_NAME}"
+          echo "archive_name=${ARCHIVE_NAME}.tar.gz" >> "$GITHUB_OUTPUT"
+          ls -lh "${ARCHIVE_NAME}.tar.gz"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.archive_name }}
+          path: ${{ steps.package.outputs.archive_name }}
+          retention-days: 1
+
+  # ===========================================================================
+  # Build Tauri GUI bundle (.dmg) for macOS
+  # ===========================================================================
+  build-gui-macos:
+    name: GUI (macOS ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15   # Apple Silicon (arm64)
+            arch: aarch64
+          - runner: macos-15-intel   # Intel (x86_64) — macos-13 was retired Dec 2025; this label is supported until Aug 2027
+            arch: x86_64
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+
+      - name: Ensure Rust toolchain
+        run: |
+          if ! command -v cargo >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          rustc --version
+          cargo --version
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Build Tauri GUI (.app + .dmg)
+        run: |
+          set -e
+          # Install frontend dependencies
+          ( cd lib/pyro-gui/ui && npm ci )
+          # Build the Tauri application (produces .app and .dmg)
+          ( cd lib/pyro-gui && cargo tauri build --bundles app,dmg )
+          echo '==> Tauri build complete'
+          find target/release/bundle -type f -name '*.dmg' -print
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Collect GUI artifact
+        id: collect
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+          OUTDIR="gui-artifacts"
+          mkdir -p "$OUTDIR"
+
+          DMG_FILE=$(find target/release/bundle/dmg -name '*.dmg' -type f | head -1)
+          if [ -n "$DMG_FILE" ]; then
+            DMG_NAME="Pyroduct_GUI-${VERSION}-${ARCH}-macos.dmg"
+            cp "$DMG_FILE" "${OUTDIR}/${DMG_NAME}"
+            echo "dmg_name=${DMG_NAME}" >> "$GITHUB_OUTPUT"
+            echo "==> Packaged: ${DMG_NAME}"
+          fi
+          ls -lh "${OUTDIR}/"
+
+      - name: Upload GUI .dmg
+        if: steps.collect.outputs.dmg_name != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.collect.outputs.dmg_name }}
+          path: gui-artifacts/${{ steps.collect.outputs.dmg_name }}
+          retention-days: 1
+
+  # ===========================================================================
   # Create GitHub Release with all artifacts
   # ===========================================================================
   release:
     name: Create Release
-    needs: [build-cli, build-gui]
+    needs: [build-cli, build-gui, build-cli-macos, build-gui-macos]
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -203,7 +345,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum *.tar.gz *.deb *.AppImage 2>/dev/null > SHA256SUMS || true
+          sha256sum *.tar.gz *.deb *.AppImage *.dmg 2>/dev/null > SHA256SUMS || true
           cat SHA256SUMS
 
       - name: Extract version from tag
@@ -222,6 +364,7 @@ jobs:
             artifacts/*.tar.gz
             artifacts/*.deb
             artifacts/*.AppImage
+            artifacts/*.dmg
             artifacts/SHA256SUMS
           body: |
             ## Installation
@@ -253,6 +396,22 @@ jobs:
               https://github.com/nbhdai/pyroduct/releases/download/${{ github.ref_name }}/Pyroduct_GUI-${{ steps.version.outputs.version }}-x86_64.AppImage
             chmod +x Pyroduct_GUI.AppImage
             ./Pyroduct_GUI.AppImage
+            ```
+
+            ### macOS (CLI + Daemon)
+            ```bash
+            # Apple Silicon (arm64) — use the x86_64 tarball on Intel Macs
+            curl -fsSL -o pyroduct.tar.gz \
+              https://github.com/nbhdai/pyroduct/releases/download/${{ github.ref_name }}/pyroduct-${{ steps.version.outputs.version }}-aarch64-macos.tar.gz
+            tar xzf pyroduct.tar.gz
+            ./pyroduct-*/install.sh
+            ```
+
+            ### macOS GUI (.dmg)
+            Download `Pyroduct_GUI-${{ steps.version.outputs.version }}-aarch64-macos.dmg`, open it, and drag the app to Applications.
+            The build is unsigned — on first launch right-click the app → **Open**, or run:
+            ```bash
+            xattr -dr com.apple.quarantine "/Applications/Pyroduct GUI.app"
             ```
 
             ### Verify checksums
