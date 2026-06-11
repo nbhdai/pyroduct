@@ -25,6 +25,9 @@ jobs:
   publish:
     name: Publish to Crates.io
     needs: test
+    # Pre-release tags (e.g. v0.2.2-rc1) would still publish the bare crate
+    # version (0.2.2) to crates.io permanently — only publish on final tags.
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -37,23 +40,31 @@ jobs:
         run: |
           nix develop --command bash -c '
             set -e
+            # Note: the previous version probed crates.io with curl first, but
+            # curl is not in the dev shell, so the check always fell through
+            # and re-runs died on "already exists". Publish directly and treat
+            # "already exists" as a graceful skip instead.
             publish_crate() {
               local dir="$1"
               local name="$2"
-              
+              shift 2
+
               local version=$(cargo metadata --manifest-path "$dir/Cargo.toml" --format-version 1 --no-deps | jq -r ".packages[0].version")
-              
-              echo "Checking if $name version $version is already published..."
-              if curl -s --fail "https://crates.io/api/v1/crates/$name/$version" > /dev/null; then
-                echo "$name version $version is already published on crates.io, skipping."
-              else
-                echo "Publishing $name version $version..."
-                (cd "$dir" && cargo publish --token "$CRATES_IO_TOKEN")
+
+              echo "Publishing $name version $version..."
+              local out
+              if out=$( (cd "$dir" && cargo publish --token "$CRATES_IO_TOKEN" "$@") 2>&1 ); then
+                echo "Published $name $version."
                 echo "Sleeping 60 seconds for crates.io indexing..."
                 sleep 60
+              elif echo "$out" | grep -q "already exists"; then
+                echo "$name version $version is already published on crates.io, skipping."
+              else
+                echo "$out"
+                return 1
               fi
             }
-            
+
             # Publish order (topological dependencies first)
             publish_crate "lib/pyro-spec" "pyro-spec"
             publish_crate "lib/pyro-file" "pyro-file"
@@ -62,5 +73,9 @@ jobs:
             publish_crate "lib/pyro-artifacts" "pyro-artifacts"
             publish_crate "lib/pyroduct" "pyroduct"
             publish_crate "lib/pyro-daemon" "pyro-daemon"
-            publish_crate "lib/pyro-gui" "pyro-gui"
+            # tauri-build writes gen/schemas/ into the source dir during the
+            # verification build, which cargo publish rejects ("Source
+            # directory was modified by build.rs"); skip verification here.
+            # This is also why 0.2.1/0.2.2 of pyro-gui never reached crates.io.
+            publish_crate "lib/pyro-gui" "pyro-gui" --no-verify
           '
