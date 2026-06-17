@@ -23,6 +23,8 @@ pub struct PlaybookStatus {
     pub remote_capabilities: Vec<CapabilityIdent>,
     pub spec: ModuleSpec,
     pub processed_rows: usize,
+    #[serde(default)]
+    pub pinned_version: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -45,6 +47,8 @@ pub enum PlaybookRequest {
         input_dir: Option<PathBuf>,
         #[serde(default)]
         output_dir: Option<PathBuf>,
+        #[serde(default)]
+        pinned_version: Option<String>,
     },
     Stop {
         name: String,
@@ -151,6 +155,7 @@ impl PlaybooksManager {
                 playbook_socket,
                 input_dir,
                 output_dir,
+                pinned_version,
             } => {
                 tracing::info!(playbook = %name, playbook = ?pipeline_config, "Received Start request for playbook");
                 match self
@@ -160,6 +165,7 @@ impl PlaybooksManager {
                         playbook_socket,
                         input_dir,
                         output_dir,
+                        pinned_version,
                     )
                     .await
                 {
@@ -399,6 +405,7 @@ impl PlaybooksManager {
         playbook_socket: Option<String>,
         input_dir_override: Option<PathBuf>,
         output_dir_override: Option<PathBuf>,
+        pinned_version: Option<String>,
     ) -> Result<()> {
         if self.workers.lock().await.contains_key(&name) {
             tracing::warn!(playbook = %name, "Name conflict detected: playbook is already running");
@@ -514,6 +521,7 @@ impl PlaybooksManager {
                 "running",
                 &pipeline_config,
                 playbook_socket.as_deref(),
+                pinned_version.as_deref(),
             )
             .await?;
 
@@ -548,7 +556,7 @@ impl PlaybooksManager {
         }
 
         let db_entry = self.db.get_playbook(&name).await?;
-        let (_status, pipeline_config, socket_path) = match db_entry {
+        let (_status, pipeline_config, socket_path, _pinned_version) = match db_entry {
             Some(entry) => entry,
             None => {
                 tracing::error!(playbook = %name, "Playbook does not exist in state store");
@@ -656,6 +664,7 @@ impl PlaybooksManager {
                 remote_capabilities,
                 spec: worker.server.spec(),
                 processed_rows,
+                pinned_version: None, // Populated by caller if needed
             });
         }
         results
@@ -670,8 +679,8 @@ impl PlaybooksManager {
         let playbooks = self.db.list_playbooks().await?;
         let mut to_resume: Vec<String> = playbooks
             .into_iter()
-            .filter(|(_name, status, _config, _socket)| status == "running")
-            .map(|(name, _, _, _)| name)
+            .filter(|(_name, status, _config, _socket, _pinned)| status == "running")
+            .map(|(name, _, _, _, _)| name)
             .collect();
 
         let mut attempts = 0;
@@ -1103,5 +1112,147 @@ impl PlaybooksManager {
         }
 
         Ok(results)
+    }
+
+    /// Check all running (non-pinned) playbooks for newer versions in the cache.
+    /// If a newer version is found, stop the old worker and start a new one.
+    pub async fn check_for_updates(self: &Arc<Self>) {
+        let db_playbooks = match self.db.list_playbooks().await {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!(error = ?e, "Auto-update: failed to list playbooks from DB");
+                return;
+            }
+        };
+
+        let cache = match pyro_artifacts::cache::CacheManager::from_env().await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!(error = ?e, "Auto-update: failed to initialize CacheManager");
+                return;
+            }
+        };
+
+        for (name, status, config, socket_path, pinned_version) in db_playbooks {
+            // Only check running, non-pinned playbooks
+            if status != "running" || pinned_version.is_some() {
+                continue;
+            }
+
+            // Check if there's a newer version in the cache
+            let current = &config.playbook;
+            let latest = match cache
+                .find_latest_version(&current.author, &current.package)
+                .await
+            {
+                Ok(Some(v)) => v,
+                Ok(None) => continue,
+                Err(e) => {
+                    tracing::warn!(
+                        playbook = %name,
+                        error = ?e,
+                        "Auto-update: failed to query latest version"
+                    );
+                    continue;
+                }
+            };
+
+            // Compare using semver
+            let current_ver = match semver::Version::parse(&current.version) {
+                Ok(v) => v,
+                Err(_) => continue, // Can't compare non-semver versions
+            };
+            let latest_ver = match semver::Version::parse(&latest) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            if latest_ver <= current_ver {
+                continue;
+            }
+
+            tracing::info!(
+                playbook = %name,
+                current_version = %current.version,
+                new_version = %latest,
+                "Auto-update: newer version detected, restarting playbook"
+            );
+
+            // Stop the old worker
+            if let Err(e) = self.stop_playbook(&name).await {
+                tracing::error!(
+                    playbook = %name,
+                    error = ?e,
+                    "Auto-update: failed to stop old playbook version"
+                );
+                continue;
+            }
+
+            // Start with the updated version
+            let updated_ident = PlaybookIdent {
+                author: current.author.clone(),
+                package: current.package.clone(),
+                version: latest.clone(),
+            };
+
+            match self
+                .start_playbook(
+                    name.clone(),
+                    updated_ident,
+                    socket_path.clone(),
+                    None, // Keep existing dirs (they're in the config already)
+                    None,
+                    None, // Still not pinned
+                )
+                .await
+            {
+                Ok(()) => {
+                    tracing::info!(
+                        playbook = %name,
+                        version = %latest,
+                        "Auto-update: playbook restarted with new version"
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        playbook = %name,
+                        new_version = %latest,
+                        error = ?e,
+                        "Auto-update: failed to start new version, attempting rollback"
+                    );
+                    // Rollback: try to restart the old version
+                    if let Err(rollback_err) = self
+                        .start_playbook(
+                            name.clone(),
+                            current.clone(),
+                            socket_path,
+                            None,
+                            None,
+                            None,
+                        )
+                        .await
+                    {
+                        tracing::error!(
+                            playbook = %name,
+                            error = ?rollback_err,
+                            "Auto-update: rollback also failed, playbook is stopped"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Run the update check loop on a fixed interval.
+    pub async fn run_update_loop(self: Arc<Self>, interval: std::time::Duration) {
+        let mut ticker = tokio::time::interval(interval);
+        // Skip the first immediate tick
+        ticker.tick().await;
+
+        loop {
+            ticker.tick().await;
+            tracing::debug!("Auto-update: checking for playbook updates");
+            self.check_for_updates().await;
+        }
     }
 }

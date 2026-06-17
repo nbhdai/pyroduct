@@ -76,6 +76,7 @@ async fn test_daemon_bulk_upload() {
         playbook_socket: None,
         input_dir: Some(working_dir.join("input")),
         output_dir: Some(working_dir.join("output")),
+        pinned_version: None,
     });
     client.request(req).await.unwrap();
 

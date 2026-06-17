@@ -413,6 +413,50 @@ impl CacheManager {
         Ok(results)
     }
 
+    /// Find the latest (highest semver) version of a module in the cache.
+    ///
+    /// Returns `None` if no versions exist or none parse as valid semver.
+    pub async fn find_latest_version(
+        &self,
+        author: &str,
+        package: &str,
+    ) -> Result<Option<String>, CacheError> {
+        let package_dir = self.modules_base_dir().join(author).join(package);
+        if !package_dir.exists() {
+            return Ok(None);
+        }
+
+        let mut versions = fs::read_dir(&package_dir)
+            .await
+            .map_err(|e| CacheError::Io {
+                context: format!("Failed to read package dir: {}", package_dir.display()),
+                error: e,
+            })?;
+
+        let mut best: Option<semver::Version> = None;
+        while let Some(entry) = versions.next_entry().await.map_err(|e| CacheError::Io {
+            context: "Failed to read version entry".to_string(),
+            error: e,
+        })? {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            // Only consider directories that contain a spec.json (i.e. valid module versions)
+            if !path.join("spec.json").exists() {
+                continue;
+            }
+            let version_str = entry.file_name().to_string_lossy().to_string();
+            if let Ok(ver) = semver::Version::parse(&version_str) {
+                if best.as_ref().is_none_or(|b| ver > *b) {
+                    best = Some(ver);
+                }
+            }
+        }
+
+        Ok(best.map(|v| v.to_string()))
+    }
+
     pub fn interfaces_base_dir(&self) -> PathBuf {
         self.root.join("interfaces")
     }

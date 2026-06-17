@@ -25,6 +25,14 @@ impl PyroDaemon {
             tracing::error!("Failed to resume active playbooks on startup: {:?}", e);
         }
 
+        // Spawn periodic auto-update loop for non-pinned playbooks
+        let update_manager = self.playbooks_manager.clone();
+        tokio::spawn(async move {
+            update_manager
+                .run_update_loop(std::time::Duration::from_secs(60))
+                .await;
+        });
+
         let listener = if let Some(ref addr) = self.bind_tcp {
             tracing::info!(address = %addr, "PyroDaemon binding control listener to TCP");
             PyroListener::bind_tcp(addr)

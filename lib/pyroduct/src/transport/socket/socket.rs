@@ -42,8 +42,13 @@ struct SocketInner {
     read_closed: AtomicBool,
 }
 
-/// Ensures background read/write tasks are aborted when the last
+/// Ensures background read/write tasks are cleaned up when the last
 /// [`PyroSocket`] handle is dropped, preventing file descriptor leaks.
+///
+/// The read task is aborted immediately (it blocks on I/O and has no
+/// pending work to drain). The write task is **not** aborted — instead,
+/// it exits naturally when the `tx` sender in [`SocketInner`] is dropped,
+/// allowing any already-queued messages to be flushed first.
 struct TaskGuard {
     read_handle: tokio::task::JoinHandle<()>,
     write_handle: tokio::task::JoinHandle<()>,
@@ -52,7 +57,8 @@ struct TaskGuard {
 impl Drop for TaskGuard {
     fn drop(&mut self) {
         self.read_handle.abort();
-        self.write_handle.abort();
+        // Do NOT abort write_handle here — let it drain queued messages
+        // and exit naturally when the tx channel closes.
     }
 }
 
@@ -305,7 +311,7 @@ impl PyroSocket {
 
     /// Returns `true` if the underlying connection has been closed or lost.
     pub fn is_closed(&self) -> bool {
-        self.inner.read_closed.load(Ordering::Acquire)
+        self.inner.read_closed.load(Ordering::Acquire) || self.inner.tx.is_closed()
     }
 
     /// Explicitly shut down this socket, aborting background read/write tasks.

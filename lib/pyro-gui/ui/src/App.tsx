@@ -185,6 +185,7 @@ export function App() {
       socketPath?: string | null;
       inputDir?: string | null;
       outputDir?: string | null;
+      pinnedVersion?: string | null;
     }) => {
       try {
         setStartModalOpen(false);
@@ -198,6 +199,7 @@ export function App() {
           playbookSocket: params.socketPath || null,
           inputDir: params.inputDir || null,
           outputDir: params.outputDir || null,
+          pinnedVersion: params.pinnedVersion || null,
         })) as string;
 
         addLog(msg, "success");

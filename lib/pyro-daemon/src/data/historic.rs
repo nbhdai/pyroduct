@@ -42,7 +42,7 @@ impl DaemonDataManager {
             .db
             .get_playbook(playbook_name)
             .await?;
-        let (_status, pipeline_config, _socket_path) = match db_entry {
+        let (_status, pipeline_config, _socket_path, _pinned_version) = match db_entry {
             Some(entry) => entry,
             None => pyroduct::bail!("Playbook '{}' does not exist in state store", playbook_name),
         };

@@ -30,6 +30,7 @@ thiserror.workspace = true
 tokio.workspace = true
 toml.workspace = true
 tracing.workspace = true
+semver.workspace = true
 
 wasmprinter = "0.244.0"
 object = { version = "0.38.1", features = ["macho", "elf", "pe"] }

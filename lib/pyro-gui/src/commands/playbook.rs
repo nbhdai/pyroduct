@@ -41,6 +41,7 @@ pub async fn start_playbook(
     playbook_socket: Option<String>,
     input_dir: Option<String>,
     output_dir: Option<String>,
+    pinned_version: Option<String>,
 ) -> Result<String, String> {
     info!("Tauri command: start_playbook for '{}'", name);
     let client = super::connect_to_active_daemon().await?;
@@ -51,6 +52,7 @@ pub async fn start_playbook(
         playbook_socket: playbook_socket.clone(),
         input_dir: input_dir.clone().map(std::path::PathBuf::from),
         output_dir: output_dir.clone().map(std::path::PathBuf::from),
+        pinned_version,
     });
     debug!(
         "Sending PlaybookRequest::Start to daemon: name='{}', socket={:?}, input={:?}, output={:?}",

@@ -58,6 +58,7 @@ async fn test_daemon_data_streaming() {
         playbook_socket: None,
         input_dir: Some(working_dir.join("input_a")),
         output_dir: Some(working_dir.join("output_a")),
+        pinned_version: None,
     });
     let resp = client.request(req).await.unwrap();
     match resp {
