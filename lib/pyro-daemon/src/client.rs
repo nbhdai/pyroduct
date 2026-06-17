@@ -20,6 +20,11 @@ impl DaemonClient {
         Ok(Self { socket })
     }
 
+    /// Returns `true` if the underlying connection is still alive.
+    pub fn is_connected(&self) -> bool {
+        !self.socket.is_closed()
+    }
+
     /// Connect to a running PyroDaemon TCP socket
     pub async fn connect_tcp(addr: impl tokio::net::ToSocketAddrs) -> Result<Self> {
         let socket = PyroSocket::connect_tcp(addr)

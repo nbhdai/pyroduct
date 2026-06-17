@@ -1,4 +1,5 @@
 use serde_json::Value;
+use std::sync::OnceLock;
 use tracing::{debug, error, info};
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -50,7 +51,35 @@ impl GuiSettings {
     }
 }
 
+static CACHED_CLIENT: OnceLock<tokio::sync::Mutex<Option<pyro_daemon::client::DaemonClient>>> =
+    OnceLock::new();
+
+fn client_cache() -> &'static tokio::sync::Mutex<Option<pyro_daemon::client::DaemonClient>> {
+    CACHED_CLIENT.get_or_init(|| tokio::sync::Mutex::new(None))
+}
+
 pub async fn connect_to_active_daemon() -> Result<pyro_daemon::client::DaemonClient, String> {
+    let mut guard = client_cache().lock().await;
+
+    // Return cached client if the connection is still alive
+    if let Some(ref client) = *guard {
+        if client.is_connected() {
+            return Ok(client.clone());
+        }
+        debug!("Cached daemon connection is stale, reconnecting");
+    }
+
+    let client = establish_daemon_connection().await?;
+    *guard = Some(client.clone());
+    Ok(client)
+}
+
+/// Invalidate the cached connection (e.g. after settings change).
+pub async fn invalidate_cached_connection() {
+    *client_cache().lock().await = None;
+}
+
+async fn establish_daemon_connection() -> Result<pyro_daemon::client::DaemonClient, String> {
     let settings = GuiSettings::load().await;
     if let Some(selected) = settings.selected_daemon {
         if let Some(conn) = settings.daemons.get(&selected) {
@@ -101,7 +130,10 @@ pub async fn get_gui_settings() -> Result<GuiSettings, String> {
 #[tauri::command]
 pub async fn update_gui_settings(settings: GuiSettings) -> Result<(), String> {
     info!("Tauri command: update_gui_settings: {:?}", settings);
-    settings.save().await
+    settings.save().await?;
+    // Invalidate cached connection since daemon settings may have changed
+    invalidate_cached_connection().await;
+    Ok(())
 }
 
 #[tauri::command]
