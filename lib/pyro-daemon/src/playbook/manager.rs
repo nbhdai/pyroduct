@@ -84,6 +84,11 @@ pub enum PlaybookRequest {
         name: String,
         status: Option<pyroduct::pipeline::session::SessionStatusFilter>,
     },
+    BulkCall {
+        name: String,
+        file_name: String,
+        file_content: Vec<u8>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -106,6 +111,9 @@ pub enum PlaybookResponse {
     },
     CallResult {
         result: pyroduct::pipeline::ServerExecutionRecord,
+    },
+    BulkCallResult {
+        results: Vec<pyroduct::pipeline::ServerExecutionRecord>,
     },
     Sessions {
         sessions: Vec<SessionInfo>,
@@ -248,6 +256,25 @@ impl PlaybooksManager {
                         tracing::error!(playbook = %name, error = ?e, "Failed to call playbook");
                         PlaybookResponse::Error {
                             message: format!("Failed to call playbook: {:?}", e),
+                        }
+                    }
+                }
+            }
+            PlaybookRequest::BulkCall {
+                name,
+                file_name,
+                file_content,
+            } => {
+                tracing::info!(playbook = %name, file = %file_name, "Received BulkCall request for playbook");
+                match self.call_playbook_bulk(&name, &file_name, file_content).await {
+                    Ok(results) => {
+                        tracing::info!(playbook = %name, "Playbook bulk call completed successfully");
+                        PlaybookResponse::BulkCallResult { results }
+                    }
+                    Err(e) => {
+                        tracing::error!(playbook = %name, error = ?e, "Failed to execute bulk playbook call");
+                        PlaybookResponse::Error {
+                            message: format!("Failed to run bulk call: {:?}", e),
                         }
                     }
                 }
@@ -1018,5 +1045,63 @@ impl PlaybooksManager {
         } else {
             worker.call(repaired_row).await
         }
+    }
+
+    pub async fn call_playbook_bulk(
+        &self,
+        name: &str,
+        file_name: &str,
+        file_content: Vec<u8>,
+    ) -> Result<Vec<pyroduct::pipeline::ServerExecutionRecord>> {
+        tracing::debug!(playbook = %name, file = %file_name, "Executing call_playbook_bulk");
+        let worker = {
+            let workers = self.workers.lock().await;
+            workers
+                .get(name)
+                .ok_or_else(|| pyroduct::capture!("Playbook '{}' is not running", name))?
+                .server
+                .clone()
+        };
+        let spec = worker.spec();
+
+        if spec.func.kind == pyro_spec::ModuleKind::Session
+            || spec.func.kind == pyro_spec::ModuleKind::SessionDiff
+        {
+            return Err(pyroduct::capture!("Bulk call is not allowed for session playbooks"));
+        }
+
+        let batches = pyro_file::parse_data_to_batch(file_content, file_name)
+            .await
+            .map_err(|e| pyroduct::capture!("Failed to parse file payload: {:?}", e))?;
+
+        if batches.is_empty() {
+            return Err(pyroduct::capture!("No batches found in file"));
+        }
+
+        let mut results = Vec::new();
+
+        use pyroduct::format::value::arrow::Rowable;
+
+        for batch_ipc in batches {
+            let batch = batch_ipc.to_batch();
+            for i in 0..batch.num_rows() {
+                let pyro_row = batch.row(i).map_err(|e| {
+                    pyroduct::capture!("Row extraction failed at index {}: {:?}", i, e)
+                })?;
+
+                let repaired_row = pyro_row
+                    .project_repair(spec.func.input.fields())
+                    .capture("Failed to repair input according to module spec")?;
+
+                match worker.call(repaired_row).await {
+                    Ok(rec) => results.push(rec),
+                    Err(e) => {
+                        return Err(pyroduct::capture!("Error executing bulk row at index {}: {:?}", i, e));
+                    }
+                }
+            }
+        }
+
+        Ok(results)
     }
 }

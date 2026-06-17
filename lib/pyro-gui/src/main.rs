@@ -76,6 +76,9 @@ fn main() {
 
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            commands::get_gui_settings,
+            commands::update_gui_settings,
+            commands::run_bulk_playbook,
             commands::get_daemon_status,
             commands::get_cache_status,
             commands::purge_cache,

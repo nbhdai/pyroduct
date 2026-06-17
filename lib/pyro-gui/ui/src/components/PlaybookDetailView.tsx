@@ -3,28 +3,29 @@ import { Playbook } from "../types";
 import { CallPlaybookForm } from "./CallPlaybookForm";
 import { PlaybookChat } from "./PlaybookChat";
 import { DataExplorer } from "./DataExplorer";
+import { BulkUploadForm } from "./BulkUploadForm";
 
 function isChatPlaybook(playbook: Playbook): boolean {
   if (!playbook.spec || !playbook.spec.func) return false;
   const func = playbook.spec.func;
-  
+
   if (func.kind !== "session" && func.kind !== "session_diff") return false;
-  
+
   const inputField = func.input?.fields?.find((f: any) => f.name === "input");
   if (!inputField) return false;
-  
+
   const dt = inputField.data_type;
   if (!dt || typeof dt !== "object" || !dt.Group) return false;
-  
+
   const groupFields = dt.Group;
   if (groupFields.length !== 2) return false;
-  
+
   const roleField = groupFields.find((f: any) => f.name === "role");
   const contentField = groupFields.find((f: any) => f.name === "content");
-  
+
   if (!roleField || roleField.data_type !== "Str") return false;
   if (!contentField || contentField.data_type !== "Str") return false;
-  
+
   return true;
 }
 
@@ -38,7 +39,8 @@ export function PlaybookDetailView({ playbook, onBack, onSubmitCall }: PlaybookD
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
   const [prevPlaybookName, setPrevPlaybookName] = useState<string>(playbook.name);
   const chatCompatible = isChatPlaybook(playbook);
-  const [activeSubTab, setActiveSubTab] = useState<"chat" | "form">(chatCompatible ? "chat" : "form");
+  const isSessionPlaybook = playbook.spec?.func?.kind === "session" || playbook.spec?.func?.kind === "session_diff";
+  const [activeSubTab, setActiveSubTab] = useState<"chat" | "form" | "bulk">(chatCompatible ? "chat" : "form");
 
   if (playbook.name !== prevPlaybookName) {
     setPrevPlaybookName(playbook.name);
@@ -49,7 +51,6 @@ export function PlaybookDetailView({ playbook, onBack, onSubmitCall }: PlaybookD
     // Increment refreshTrigger to signal DataExplorer to reload its tables
     setRefreshTrigger((prev) => prev + 1);
   };
-
 
   return (
     <div className="spec-view-container" style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
@@ -115,9 +116,9 @@ export function PlaybookDetailView({ playbook, onBack, onSubmitCall }: PlaybookD
         </div>
       </div>
 
-      {/* Sub Tab Switcher if chat compatible */}
-      {chatCompatible && (
-        <div style={{ display: "flex", gap: "10px", borderBottom: "1px solid var(--bg-card-border)", paddingBottom: "4px" }}>
+      {/* Sub Tab Switcher */}
+      <div style={{ display: "flex", gap: "10px", borderBottom: "1px solid var(--bg-card-border)", paddingBottom: "4px" }}>
+        {chatCompatible && (
           <button
             onClick={() => setActiveSubTab("chat")}
             className={`sub-tab-btn ${activeSubTab === "chat" ? "active" : ""}`}
@@ -145,13 +146,42 @@ export function PlaybookDetailView({ playbook, onBack, onSubmitCall }: PlaybookD
               }} />
             )}
           </button>
+        )}
+        <button
+          onClick={() => setActiveSubTab("form")}
+          className={`sub-tab-btn ${activeSubTab === "form" ? "active" : ""}`}
+          style={{
+            background: "none",
+            border: "none",
+            color: activeSubTab === "form" ? "var(--color-primary)" : "var(--text-muted)",
+            fontSize: "14px",
+            fontWeight: 600,
+            padding: "8px 16px 12px 16px",
+            cursor: "pointer",
+            position: "relative"
+          }}
+        >
+          ⚙️ Execute Form
+          {activeSubTab === "form" && (
+            <span style={{
+              position: "absolute",
+              bottom: "-5px",
+              left: 0,
+              right: 0,
+              height: "2px",
+              backgroundColor: "var(--color-primary)",
+              boxShadow: "0 0 8px var(--color-primary)"
+            }} />
+          )}
+        </button>
+        {!isSessionPlaybook && (
           <button
-            onClick={() => setActiveSubTab("form")}
-            className={`sub-tab-btn ${activeSubTab === "form" ? "active" : ""}`}
+            onClick={() => setActiveSubTab("bulk")}
+            className={`sub-tab-btn ${activeSubTab === "bulk" ? "active" : ""}`}
             style={{
               background: "none",
               border: "none",
-              color: activeSubTab === "form" ? "var(--color-primary)" : "var(--text-muted)",
+              color: activeSubTab === "bulk" ? "var(--color-primary)" : "var(--text-muted)",
               fontSize: "14px",
               fontWeight: 600,
               padding: "8px 16px 12px 16px",
@@ -159,8 +189,8 @@ export function PlaybookDetailView({ playbook, onBack, onSubmitCall }: PlaybookD
               position: "relative"
             }}
           >
-            ⚙️ Execute Form
-            {activeSubTab === "form" && (
+            📁 Bulk Upload
+            {activeSubTab === "bulk" && (
               <span style={{
                 position: "absolute",
                 bottom: "-5px",
@@ -172,15 +202,20 @@ export function PlaybookDetailView({ playbook, onBack, onSubmitCall }: PlaybookD
               }} />
             )}
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* Top Section: Chat or Form */}
+      {/* Top Section: Chat, Form, or Bulk */}
       {activeSubTab === "chat" ? (
         <PlaybookChat
           playbookName={playbook.name}
           playbookSpec={playbook.spec}
           onSubmit={onSubmitCall}
+        />
+      ) : activeSubTab === "bulk" ? (
+        <BulkUploadForm
+          playbookName={playbook.name}
+          onSuccess={handleCallSuccess}
         />
       ) : (
         <CallPlaybookForm

@@ -64,6 +64,15 @@ in
         Members can access the shared cache and connect to the daemon socket.
       '';
     };
+
+    bindTcp = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = ''
+        Bind control API to TCP socket address (e.g. "127.0.0.1:9000").
+        If null, the daemon will only bind to the local UNIX domain socket.
+      '';
+    };
   };
 
   # ===========================================================================
@@ -122,7 +131,8 @@ in
         User = "pyroduct";
         Group = "pyroduct";
 
-        ExecStart = "${cfg.package}/bin/pyro-daemond --working-dir /var/lib/pyro-daemon";
+        ExecStart = "${cfg.package}/bin/pyro-daemond --working-dir /var/lib/pyro-daemon"
+          + lib.optionalString (cfg.bindTcp != null) " --bind-tcp ${cfg.bindTcp}";
 
         # State
         StateDirectory = "pyro-daemon";

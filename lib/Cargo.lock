@@ -4980,6 +4980,7 @@ dependencies = [
  "clap",
  "datafusion",
  "pyro-artifacts",
+ "pyro-file",
  "pyro-spec",
  "pyroduct",
  "rusqlite",

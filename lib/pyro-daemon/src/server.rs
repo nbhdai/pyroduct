@@ -20,22 +20,29 @@ impl PyroDaemon {
             .await
             .capture("Failed to create data directory")?;
 
-        if self.control_socket_path.exists() {
-            fs::remove_file(&self.control_socket_path)
-                .await
-                .capture("Failed to clean up existing control socket file")?;
-        }
-
         // Auto-resume active playbooks on startup
         if let Err(e) = self.playbooks_manager.resume_active_playbooks().await {
             tracing::error!("Failed to resume active playbooks on startup: {:?}", e);
         }
 
-        let listener = PyroListener::bind_unix(&self.control_socket_path)
-            .await
-            .capture("Failed to bind PyroListener Unix control listener")?;
+        let listener = if let Some(ref addr) = self.bind_tcp {
+            tracing::info!(address = %addr, "PyroDaemon binding control listener to TCP");
+            PyroListener::bind_tcp(addr)
+                .await
+                .capture("Failed to bind PyroListener TCP control listener")?
+        } else {
+            if self.control_socket_path.exists() {
+                fs::remove_file(&self.control_socket_path)
+                    .await
+                    .capture("Failed to clean up existing control socket file")?;
+            }
+            tracing::info!(socket = %self.control_socket_path.display(), "PyroDaemon binding control listener to Unix socket");
+            PyroListener::bind_unix(&self.control_socket_path)
+                .await
+                .capture("Failed to bind PyroListener Unix control listener")?
+        };
 
-        tracing::info!(socket = %self.control_socket_path.display(), "PyroDaemon listing for control commands");
+        tracing::info!("PyroDaemon listening for control commands");
 
         loop {
             let socket = match listener.accept().await {

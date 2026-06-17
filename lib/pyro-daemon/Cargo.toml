@@ -13,6 +13,7 @@ rust-version = { workspace = true }
 [dependencies]
 pyroduct = { workspace = true, features = ["host", "transport", "cli", "sql"] }
 pyro-artifacts = { workspace = true }
+pyro-file.workspace = true
 pyro-spec.workspace = true
 arrow.workspace = true
 datafusion.workspace = true

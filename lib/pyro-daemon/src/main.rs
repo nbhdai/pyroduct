@@ -16,6 +16,10 @@ struct Args {
     /// Path to daemon's working directory
     #[arg(short = 'd', long = "working-dir")]
     working_dir: Option<PathBuf>,
+
+    /// Bind control API to TCP socket address (e.g. "127.0.0.1:9000")
+    #[arg(long = "bind-tcp")]
+    bind_tcp: Option<String>,
 }
 
 #[tokio::main]
@@ -36,7 +40,7 @@ async fn main() -> Result<()> {
         .unwrap_or_else(PyroDaemon::default_working_dir);
 
     // 3. Handle termination signals for clean shutdown
-    let daemon = PyroDaemon::new(working_dir);
+    let daemon = PyroDaemon::new(working_dir).with_bind_tcp(args.bind_tcp);
     let control_socket_clone = daemon.control_socket_path.clone();
 
     tokio::spawn(async move {

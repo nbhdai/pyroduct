@@ -5,24 +5,7 @@ use tracing::{debug, error, info, trace};
 #[tauri::command]
 pub async fn list_active_playbooks() -> Result<Value, String> {
     info!("Tauri command: list_active_playbooks");
-    let working_dir = pyro_daemon::PyroDaemon::default_working_dir();
-    let control_socket_path = working_dir.join("control");
-
-    if !control_socket_path.exists() {
-        error!(
-            "Daemon control socket does not exist at {:?}",
-            control_socket_path
-        );
-        return Err("Daemon control socket does not exist (offline)".to_string());
-    }
-
-    debug!("Connecting to daemon at {:?}", control_socket_path);
-    let client = pyro_daemon::client::DaemonClient::connect(&control_socket_path)
-        .await
-        .map_err(|e| {
-            error!("Failed to connect to daemon: {:?}", e);
-            format!("Failed to connect to daemon: {:?}", e)
-        })?;
+    let client = super::connect_to_active_daemon().await?;
 
     let req = pyro_daemon::DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::List);
     debug!("Sending playbook list request to daemon");
@@ -60,15 +43,7 @@ pub async fn start_playbook(
     output_dir: Option<String>,
 ) -> Result<String, String> {
     info!("Tauri command: start_playbook for '{}'", name);
-    let working_dir = pyro_daemon::PyroDaemon::default_working_dir();
-    let control_socket_path = working_dir.join("control");
-
-    let client = pyro_daemon::client::DaemonClient::connect(&control_socket_path)
-        .await
-        .map_err(|e| {
-            error!("Failed to connect to daemon: {:?}", e);
-            format!("Failed to connect to daemon: {:?}", e)
-        })?;
+    let client = super::connect_to_active_daemon().await?;
 
     let req = pyro_daemon::DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Start {
         name: name.clone(),
@@ -112,15 +87,7 @@ pub async fn start_playbook(
 #[tauri::command]
 pub async fn stop_playbook(name: String) -> Result<String, String> {
     info!("Tauri command: stop_playbook for '{}'", name);
-    let working_dir = pyro_daemon::PyroDaemon::default_working_dir();
-    let control_socket_path = working_dir.join("control");
-
-    let client = pyro_daemon::client::DaemonClient::connect(&control_socket_path)
-        .await
-        .map_err(|e| {
-            error!("Failed to connect to daemon: {:?}", e);
-            format!("Failed to connect to daemon: {:?}", e)
-        })?;
+    let client = super::connect_to_active_daemon().await?;
 
     let req = pyro_daemon::DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Stop {
         name: name.clone(),
@@ -160,15 +127,7 @@ pub async fn stop_playbook(name: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn delete_playbook(name: String) -> Result<String, String> {
     info!("Tauri command: delete_playbook for '{}'", name);
-    let working_dir = pyro_daemon::PyroDaemon::default_working_dir();
-    let control_socket_path = working_dir.join("control");
-
-    let client = pyro_daemon::client::DaemonClient::connect(&control_socket_path)
-        .await
-        .map_err(|e| {
-            error!("Failed to connect to daemon: {:?}", e);
-            format!("Failed to connect to daemon: {:?}", e)
-        })?;
+    let client = super::connect_to_active_daemon().await?;
 
     let req =
         pyro_daemon::DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Delete {
@@ -214,15 +173,7 @@ pub async fn call_playbook(
 ) -> Result<pyroduct::pipeline::ServerExecutionRecord, String> {
     info!("Tauri command: call_playbook for '{}'", name);
     trace!("Call playbook payload: {:?}, session_id: {:?}", payload, session_id);
-    let working_dir = pyro_daemon::PyroDaemon::default_working_dir();
-    let control_socket_path = working_dir.join("control");
-
-    let client = pyro_daemon::client::DaemonClient::connect(&control_socket_path)
-        .await
-        .map_err(|e| {
-            error!("Failed to connect to daemon: {:?}", e);
-            format!("Failed to connect to daemon: {:?}", e)
-        })?;
+    let client = super::connect_to_active_daemon().await?;
 
     debug!("Calling playbook record via daemon for '{}' (session: {:?})", name, session_id);
     client
@@ -243,24 +194,7 @@ pub async fn list_sessions(
         "Tauri command: list_sessions for playbook='{}', status={:?}",
         playbook_name, status
     );
-    let working_dir = pyro_daemon::PyroDaemon::default_working_dir();
-    let control_socket_path = working_dir.join("control");
-
-    if !control_socket_path.exists() {
-        error!(
-            "Daemon control socket does not exist at {:?}",
-            control_socket_path
-        );
-        return Err("Daemon control socket does not exist (offline)".to_string());
-    }
-
-    debug!("Connecting to daemon at {:?}", control_socket_path);
-    let client = pyro_daemon::client::DaemonClient::connect(&control_socket_path)
-        .await
-        .map_err(|e| {
-            error!("Failed to connect to daemon: {:?}", e);
-            format!("Failed to connect to daemon: {:?}", e)
-        })?;
+    let client = super::connect_to_active_daemon().await?;
 
     match client.list_sessions(playbook_name, status).await {
         Ok(sessions) => {
