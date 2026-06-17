@@ -13,6 +13,7 @@ impl DaemonClient {
         playbook_socket: Option<String>,
         input_dir: Option<PathBuf>,
         output_dir: Option<PathBuf>,
+        pinned_version: Option<String>,
     ) -> Result<String> {
         let req = DaemonRequest::Playbook(PlaybookRequest::Start {
             name,
@@ -20,6 +21,7 @@ impl DaemonClient {
             playbook_socket,
             input_dir,
             output_dir,
+            pinned_version,
         });
         match self.request(req).await? {
             DaemonResponse::Playbook(PlaybookResponse::Success { message }) => Ok(message),

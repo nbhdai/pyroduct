@@ -38,6 +38,12 @@ impl DbStateStore {
         )
         .capture("Failed to initialize database callbacks table")?;
 
+        // Migration: add pinned_version column if it doesn't exist
+        let _ = conn.execute(
+            "ALTER TABLE playbooks ADD COLUMN pinned_version TEXT",
+            [],
+        );
+
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -49,15 +55,16 @@ impl DbStateStore {
         status: &str,
         config: &PipelineConfig,
         socket_path: Option<&str>,
+        pinned_version: Option<&str>,
     ) -> Result<()> {
         let config_json =
             serde_json::to_string(config).capture("Failed to serialize PipelineConfig to JSON")?;
 
         let conn = self.conn.lock().await;
         conn.execute(
-            "INSERT OR REPLACE INTO playbooks (name, status, config, socket_path)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![name, status, config_json, socket_path],
+            "INSERT OR REPLACE INTO playbooks (name, status, config, socket_path, pinned_version)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![name, status, config_json, socket_path, pinned_version],
         )
         .capture("Failed to save playbook state to database")?;
         Ok(())
@@ -66,10 +73,10 @@ impl DbStateStore {
     pub async fn get_playbook(
         &self,
         name: &str,
-    ) -> Result<Option<(String, PipelineConfig, Option<String>)>> {
+    ) -> Result<Option<(String, PipelineConfig, Option<String>, Option<String>)>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn
-            .prepare("SELECT status, config, socket_path FROM playbooks WHERE name = ?1")
+            .prepare("SELECT status, config, socket_path, pinned_version FROM playbooks WHERE name = ?1")
             .capture("Failed to prepare SELECT statement for playbook")?;
         let mut rows = stmt
             .query(params![name])
@@ -80,11 +87,13 @@ impl DbStateStore {
             let config_json: String = row.get(1).capture("Failed to read config column")?;
             let socket_path: Option<String> =
                 row.get(2).capture("Failed to read socket_path column")?;
+            let pinned_version: Option<String> =
+                row.get(3).capture("Failed to read pinned_version column")?;
 
             let config: PipelineConfig = serde_json::from_str(&config_json)
                 .capture("Failed to deserialize PipelineConfig from JSON")?;
 
-            Ok(Some((status, config, socket_path)))
+            Ok(Some((status, config, socket_path, pinned_version)))
         } else {
             Ok(None)
         }
@@ -169,10 +178,10 @@ impl DbStateStore {
 
     pub async fn list_playbooks(
         &self,
-    ) -> Result<Vec<(String, String, PipelineConfig, Option<String>)>> {
+    ) -> Result<Vec<(String, String, PipelineConfig, Option<String>, Option<String>)>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn
-            .prepare("SELECT name, status, config, socket_path FROM playbooks")
+            .prepare("SELECT name, status, config, socket_path, pinned_version FROM playbooks")
             .capture("Failed to prepare SELECT statement for listing playbooks")?;
         let mut rows = stmt.query([]).capture("Failed to query all playbooks")?;
         let mut list = Vec::new();
@@ -190,9 +199,12 @@ impl DbStateStore {
             let socket_path: Option<String> = row
                 .get(3)
                 .capture("Failed to read playbook socket_path column")?;
+            let pinned_version: Option<String> = row
+                .get(4)
+                .capture("Failed to read playbook pinned_version column")?;
             let config: PipelineConfig = serde_json::from_str(&config_json)
                 .capture("Failed to deserialize PipelineConfig from JSON")?;
-            list.push((name, status, config, socket_path));
+            list.push((name, status, config, socket_path, pinned_version));
         }
         Ok(list)
     }

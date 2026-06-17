@@ -1,24 +1,17 @@
 use serde_json::Value;
-use tracing::{trace, debug, info, error};
+use tracing::{debug, error, info, trace};
 
 #[tauri::command]
-pub async fn get_playbook_data(playbook_name: String, offset: usize, limit: usize) -> Result<Value, String> {
-    info!("Tauri command: get_playbook_data for playbook='{}' offset={} limit={}", playbook_name, offset, limit);
-    let working_dir = pyro_daemon::PyroDaemon::default_working_dir();
-    let control_socket_path = working_dir.join("control");
-
-    if !control_socket_path.exists() {
-        error!("Daemon control socket does not exist at {:?}", control_socket_path);
-        return Err("Daemon control socket does not exist (offline)".to_string());
-    }
-
-    debug!("Connecting to daemon at {:?}", control_socket_path);
-    let client = pyro_daemon::client::DaemonClient::connect(&control_socket_path)
-        .await
-        .map_err(|e| {
-            error!("Failed to connect to daemon: {:?}", e);
-            format!("Failed to connect to daemon: {:?}", e)
-        })?;
+pub async fn get_playbook_data(
+    playbook_name: String,
+    offset: usize,
+    limit: usize,
+) -> Result<Value, String> {
+    info!(
+        "Tauri command: get_playbook_data for playbook='{}' offset={} limit={}",
+        playbook_name, offset, limit
+    );
+    let client = super::connect_to_active_daemon().await?;
 
     debug!("Querying daemon for playbook data");
     let ipc_bytes = client
@@ -86,7 +79,11 @@ pub async fn get_playbook_data(playbook_name: String, offset: usize, limit: usiz
         }
     }
 
-    info!("Successfully retrieved {} rows for playbook '{}'", rows.len(), playbook_name);
+    info!(
+        "Successfully retrieved {} rows for playbook '{}'",
+        rows.len(),
+        playbook_name
+    );
     Ok(serde_json::json!({
         "schema": fields,
         "rows": rows,
@@ -94,23 +91,15 @@ pub async fn get_playbook_data(playbook_name: String, offset: usize, limit: usiz
 }
 
 #[tauri::command]
-pub async fn query_playbook_data(playbook_name: String, sql_query: String) -> Result<Value, String> {
-    info!("Tauri command: query_playbook_data for playbook='{}', query='{}'", playbook_name, sql_query);
-    let working_dir = pyro_daemon::PyroDaemon::default_working_dir();
-    let control_socket_path = working_dir.join("control");
-
-    if !control_socket_path.exists() {
-        error!("Daemon control socket does not exist at {:?}", control_socket_path);
-        return Err("Daemon control socket does not exist (offline)".to_string());
-    }
-
-    debug!("Connecting to daemon at {:?}", control_socket_path);
-    let client = pyro_daemon::client::DaemonClient::connect(&control_socket_path)
-        .await
-        .map_err(|e| {
-            error!("Failed to connect to daemon: {:?}", e);
-            format!("Failed to connect to daemon: {:?}", e)
-        })?;
+pub async fn query_playbook_data(
+    playbook_name: String,
+    sql_query: String,
+) -> Result<Value, String> {
+    info!(
+        "Tauri command: query_playbook_data for playbook='{}', query='{}'",
+        playbook_name, sql_query
+    );
+    let client = super::connect_to_active_daemon().await?;
 
     debug!("Sending SQL query to daemon");
     let ipc_bytes = client
@@ -178,7 +167,11 @@ pub async fn query_playbook_data(playbook_name: String, sql_query: String) -> Re
         }
     }
 
-    info!("Successfully query returned {} rows for playbook '{}'", rows.len(), playbook_name);
+    info!(
+        "Successfully query returned {} rows for playbook '{}'",
+        rows.len(),
+        playbook_name
+    );
     Ok(serde_json::json!({
         "schema": fields,
         "rows": rows,
@@ -187,26 +180,14 @@ pub async fn query_playbook_data(playbook_name: String, sql_query: String) -> Re
 
 #[tauri::command]
 pub async fn get_playbook_failures(playbook_name: String) -> Result<Value, String> {
-    info!("Tauri command: get_playbook_failures for playbook='{}'", playbook_name);
-    let working_dir = pyro_daemon::PyroDaemon::default_working_dir();
-    let control_socket_path = working_dir.join("control");
-
-    if !control_socket_path.exists() {
-        error!("Daemon control socket does not exist at {:?}", control_socket_path);
-        return Err("Daemon control socket does not exist (offline)".to_string());
-    }
-
-    let client = pyro_daemon::client::DaemonClient::connect(&control_socket_path)
-        .await
-        .map_err(|e| {
-            error!("Failed to connect to daemon: {:?}", e);
-            format!("Failed to connect to daemon: {:?}", e)
-        })?;
+    info!(
+        "Tauri command: get_playbook_failures for playbook='{}'",
+        playbook_name
+    );
+    let client = super::connect_to_active_daemon().await?;
 
     match client.get_playbook_failures(playbook_name).await {
-        Ok(failures) => {
-            serde_json::to_value(failures).map_err(|e| e.to_string())
-        }
+        Ok(failures) => serde_json::to_value(failures).map_err(|e| e.to_string()),
         Err(e) => {
             error!("Failed to get playbook failures: {:?}", e);
             Err(e.to_string())
@@ -215,30 +196,57 @@ pub async fn get_playbook_failures(playbook_name: String) -> Result<Value, Strin
 }
 
 #[tauri::command]
-pub async fn get_playbook_execution_record(playbook_name: String, id: u32) -> Result<Value, String> {
-    info!("Tauri command: get_playbook_execution_record for playbook='{}' id={}", playbook_name, id);
-    let working_dir = pyro_daemon::PyroDaemon::default_working_dir();
-    let control_socket_path = working_dir.join("control");
+pub async fn get_playbook_execution_record(
+    playbook_name: String,
+    id: u32,
+) -> Result<Value, String> {
+    info!(
+        "Tauri command: get_playbook_execution_record for playbook='{}' id={}",
+        playbook_name, id
+    );
+    let client = super::connect_to_active_daemon().await?;
 
-    if !control_socket_path.exists() {
-        error!("Daemon control socket does not exist at {:?}", control_socket_path);
-        return Err("Daemon control socket does not exist (offline)".to_string());
-    }
-
-    let client = pyro_daemon::client::DaemonClient::connect(&control_socket_path)
+    match client
+        .get_playbook_execution_record(playbook_name, id)
         .await
-        .map_err(|e| {
-            error!("Failed to connect to daemon: {:?}", e);
-            format!("Failed to connect to daemon: {:?}", e)
-        })?;
-
-    match client.get_playbook_execution_record(playbook_name, id).await {
-        Ok(record) => {
-            serde_json::to_value(record).map_err(|e| e.to_string())
-        }
+    {
+        Ok(record) => serde_json::to_value(record).map_err(|e| e.to_string()),
         Err(e) => {
             error!("Failed to get playbook execution record: {:?}", e);
             Err(e.to_string())
         }
+    }
+}
+
+#[tauri::command]
+pub async fn run_bulk_playbook(
+    playbook_name: String,
+    file_name: String,
+    file_content: Vec<u8>,
+) -> Result<serde_json::Value, String> {
+    info!(
+        "Tauri command: run_bulk_playbook, playbook='{}', file='{}', len={}",
+        playbook_name,
+        file_name,
+        file_content.len()
+    );
+    let client = super::connect_to_active_daemon().await?;
+
+    let req =
+        pyro_daemon::DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::BulkCall {
+            name: playbook_name,
+            file_name,
+            file_content,
+        });
+
+    match client.request(req).await {
+        Ok(pyro_daemon::DaemonResponse::Playbook(
+            pyro_daemon::playbook::PlaybookResponse::BulkCallResult { results },
+        )) => serde_json::to_value(results).map_err(|e| format!("Serialization error: {}", e)),
+        Ok(pyro_daemon::DaemonResponse::Playbook(
+            pyro_daemon::playbook::PlaybookResponse::Error { message },
+        )) => Err(message),
+        Ok(resp) => Err(format!("Unexpected response: {:?}", resp)),
+        Err(e) => Err(e.to_string()),
     }
 }

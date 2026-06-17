@@ -13,6 +13,7 @@ rust-version = { workspace = true }
 [dependencies]
 pyroduct = { workspace = true, features = ["host", "transport", "cli", "sql"] }
 pyro-artifacts = { workspace = true }
+pyro-file.workspace = true
 pyro-spec.workspace = true
 arrow.workspace = true
 datafusion.workspace = true
@@ -25,6 +26,7 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 serde_yaml.workspace = true
 async-trait = "0.1"
 toml.workspace = true
+semver.workspace = true
 tracing-subscriber.workspace = true
 clap.workspace = true
 rusqlite = { workspace = true }

@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use dashmap::DashMap;
 use tokio::io::{BufReader, BufWriter};
@@ -29,6 +29,7 @@ use crate::format::{
 pub struct PyroSocket {
     inner: Arc<SocketInner>,
     unmatched_rx: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<PyroView>>>,
+    _task_guard: Arc<TaskGuard>,
 }
 
 struct SocketInner {
@@ -38,6 +39,27 @@ struct SocketInner {
     unmatched_tx: mpsc::UnboundedSender<PyroView>,
     next_id: AtomicU32,
     settings: PyroStreamSettings,
+    read_closed: AtomicBool,
+}
+
+/// Ensures background read/write tasks are cleaned up when the last
+/// [`PyroSocket`] handle is dropped, preventing file descriptor leaks.
+///
+/// The read task is aborted immediately (it blocks on I/O and has no
+/// pending work to drain). The write task is **not** aborted — instead,
+/// it exits naturally when the `tx` sender in [`SocketInner`] is dropped,
+/// allowing any already-queued messages to be flushed first.
+struct TaskGuard {
+    read_handle: tokio::task::JoinHandle<()>,
+    write_handle: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for TaskGuard {
+    fn drop(&mut self) {
+        self.read_handle.abort();
+        // Do NOT abort write_handle here — let it drain queued messages
+        // and exit naturally when the tx channel closes.
+    }
 }
 
 /// The reading half of a [`PyroSocket`].
@@ -91,12 +113,13 @@ impl PyroSocket {
             unmatched_tx,
             next_id: AtomicU32::new(1),
             settings,
+            read_closed: AtomicBool::new(false),
         });
 
         // Background Read Task
         let inner_read = inner.clone();
         let settings_read = settings;
-        tokio::spawn(async move {
+        let read_handle = tokio::spawn(async move {
             tracing::debug!("READ TASK: started");
             loop {
                 tracing::debug!("READ TASK: waiting for data");
@@ -134,12 +157,13 @@ impl PyroSocket {
                     }
                 }
             }
+            inner_read.read_closed.store(true, Ordering::Release);
             tracing::debug!("READ TASK: exited");
         });
 
         // Background Write Task
         let settings_write = settings;
-        tokio::spawn(async move {
+        let write_handle = tokio::spawn(async move {
             tracing::debug!("WRITE TASK: started");
             while let Some(rec) = rx.recv().await {
                 tracing::trace!("WRITE TASK: writing request, client_id={:?}, class_id={:?}, fn_id={:?}, mux_id={:?}, len={}", rec.client_id, rec.class_id, rec.fn_id, rec.mux_id, rec.inner.len());
@@ -158,6 +182,7 @@ impl PyroSocket {
         Self {
             inner,
             unmatched_rx: Arc::new(tokio::sync::Mutex::new(unmatched_rx)),
+            _task_guard: Arc::new(TaskGuard { read_handle, write_handle }),
         }
     }
 
@@ -282,6 +307,17 @@ impl PyroSocket {
     pub fn close_stream(&self, mux_id: u32) {
         tracing::trace!("PyroSocket::close_stream: closing stream for mux_id={}", mux_id);
         self.inner.streams.remove(&mux_id);
+    }
+
+    /// Returns `true` if the underlying connection has been closed or lost.
+    pub fn is_closed(&self) -> bool {
+        self.inner.read_closed.load(Ordering::Acquire) || self.inner.tx.is_closed()
+    }
+
+    /// Explicitly shut down this socket, aborting background read/write tasks.
+    pub fn shutdown(&self) {
+        self._task_guard.read_handle.abort();
+        self._task_guard.write_handle.abort();
     }
 
     /// Split the socket into read and write halves.

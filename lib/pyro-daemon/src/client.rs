@@ -20,6 +20,19 @@ impl DaemonClient {
         Ok(Self { socket })
     }
 
+    /// Returns `true` if the underlying connection is still alive.
+    pub fn is_connected(&self) -> bool {
+        !self.socket.is_closed()
+    }
+
+    /// Connect to a running PyroDaemon TCP socket
+    pub async fn connect_tcp(addr: impl tokio::net::ToSocketAddrs) -> Result<Self> {
+        let socket = PyroSocket::connect_tcp(addr)
+            .await
+            .capture("Failed to connect to PyroDaemon TCP socket")?;
+        Ok(Self { socket })
+    }
+
     /// Send a request and wait for a response multiplexed
     pub async fn request(&self, req: DaemonRequest) -> Result<DaemonResponse> {
         let req_vec = req.ship().capture("Failed to ship client request")?;

@@ -1,6 +1,7 @@
 export interface DaemonStatus {
   status: "online" | "offline" | "error";
   socket_path?: string;
+  daemon_name?: string;
   active_workers?: number;
   version?: string;
   message?: string;
@@ -112,6 +113,17 @@ export interface PlaybookSpec {
 export interface PyroductConfig {
   author: string;
   build_slots?: number;
+}
+
+export interface DaemonConnection {
+  type: "unix" | "tcp";
+  path?: string;
+  address?: string;
+}
+
+export interface GuiSettings {
+  selected_daemon?: string;
+  daemons: Record<string, DaemonConnection>;
 }
 
 

@@ -16,6 +16,7 @@ interface StartPlaybookModalProps {
     socketPath?: string | null;
     inputDir?: string | null;
     outputDir?: string | null;
+    pinnedVersion?: string | null;
   }) => void;
 }
 
@@ -30,6 +31,7 @@ export function StartPlaybookModal({
   const [socketPath, setSocketPath] = useState("");
   const [inputDir, setInputDir] = useState("");
   const [outputDir, setOutputDir] = useState("");
+  const [pinVersion, setPinVersion] = useState(false);
   
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -40,6 +42,7 @@ export function StartPlaybookModal({
       setSocketPath("");
       setInputDir("");
       setOutputDir("");
+      setPinVersion(false);
       setShowAdvanced(false);
       
       // Default to first available playbook
@@ -90,6 +93,7 @@ export function StartPlaybookModal({
       socketPath: socketPath.trim() || null,
       inputDir: inputDir.trim() || null,
       outputDir: outputDir.trim() || null,
+      pinnedVersion: pinVersion ? selected.version : null,
     });
   };
 
@@ -178,6 +182,18 @@ export function StartPlaybookModal({
                     onChange={(e) => setOutputDir(e.target.value)}
                     placeholder="Defaults to playbook workspace output/"
                   />
+                </div>
+                <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input
+                    type="checkbox"
+                    id="pin-version"
+                    checked={pinVersion}
+                    onChange={(e) => setPinVersion(e.target.checked)}
+                    style={{ width: 'auto' }}
+                  />
+                  <label htmlFor="pin-version" style={{ margin: 0 }}>
+                    Pin version (disable auto-updates)
+                  </label>
                 </div>
               </div>
             )}

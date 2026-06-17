@@ -229,6 +229,7 @@
               pkgs.cargo-tauri
               pkgs.bacon
               pkgs.pkg-config
+              pkgs.cmake
             ]
             ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.valgrind ];
             RUST_SRC_PATH = "${wasmToolchain}/lib/rustlib/src/rust/library";

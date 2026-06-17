@@ -350,6 +350,7 @@ mod tests {
                 None,
                 Some(tmp_dir.path().to_path_buf()),
                 Some(tmp_dir.path().to_path_buf()),
+                None,
             )
             .await
             .expect("Failed to start target playbook");
@@ -362,6 +363,7 @@ mod tests {
                 None,
                 Some(tmp_dir.path().to_path_buf()),
                 Some(tmp_dir.path().to_path_buf()),
+                None,
             )
             .await
             .expect("Failed to start caller playbook");

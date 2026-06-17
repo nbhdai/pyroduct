@@ -61,6 +61,7 @@ pub struct PyroDaemon {
     pub playbooks_manager: std::sync::Arc<PlaybooksManager>,
     pub capability_manager: CapabilityManager,
     pub data_manager: DaemonDataManager,
+    pub bind_tcp: Option<String>,
 }
 
 impl PyroDaemon {
@@ -109,7 +110,13 @@ impl PyroDaemon {
             playbooks_manager,
             capability_manager,
             data_manager,
+            bind_tcp: None,
         }
+    }
+
+    pub fn with_bind_tcp(mut self, bind_tcp: Option<String>) -> Self {
+        self.bind_tcp = bind_tcp;
+        self
     }
 }
 
