@@ -18,6 +18,7 @@ pub struct PlaybookStatus {
     pub name: String,
     pub config_path: PathBuf,
     pub socket_path: String,
+    pub http_address: Option<String>,
     pub active_capabilities: Vec<CapabilityIdent>,
     pub local_capabilities: Vec<CapabilityIdent>,
     pub remote_capabilities: Vec<CapabilityIdent>,
@@ -43,6 +44,8 @@ pub enum PlaybookRequest {
         pipeline_config: PlaybookIdent,
         #[serde(default)]
         playbook_socket: Option<String>,
+        #[serde(default)]
+        http_address: Option<String>,
         #[serde(default)]
         input_dir: Option<PathBuf>,
         #[serde(default)]
@@ -92,6 +95,10 @@ pub enum PlaybookRequest {
         name: String,
         file_name: String,
         file_content: Vec<u8>,
+    },
+    SetHttpAddress {
+        name: String,
+        http_address: Option<String>,
     },
 }
 
@@ -153,6 +160,7 @@ impl PlaybooksManager {
                 name,
                 pipeline_config,
                 playbook_socket,
+                http_address,
                 input_dir,
                 output_dir,
                 pinned_version,
@@ -163,6 +171,7 @@ impl PlaybooksManager {
                         name.clone(),
                         pipeline_config,
                         playbook_socket,
+                        http_address,
                         input_dir,
                         output_dir,
                         pinned_version,
@@ -272,7 +281,10 @@ impl PlaybooksManager {
                 file_content,
             } => {
                 tracing::info!(playbook = %name, file = %file_name, "Received BulkCall request for playbook");
-                match self.call_playbook_bulk(&name, &file_name, file_content).await {
+                match self
+                    .call_playbook_bulk(&name, &file_name, file_content)
+                    .await
+                {
                     Ok(results) => {
                         tracing::info!(playbook = %name, "Playbook bulk call completed successfully");
                         PlaybookResponse::BulkCallResult { results }
@@ -395,6 +407,23 @@ impl PlaybooksManager {
                     },
                 }
             }
+            PlaybookRequest::SetHttpAddress { name, http_address } => {
+                tracing::info!(playbook = %name, http_address = ?http_address, "Received SetHttpAddress request");
+                match self.set_http_address(&name, http_address.as_deref()).await {
+                    Ok(()) => {
+                        tracing::info!(playbook = %name, "HTTP address updated successfully");
+                        PlaybookResponse::Success {
+                            message: "HTTP address updated successfully".to_string(),
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(playbook = %name, error = ?e, "Failed to set HTTP address");
+                        PlaybookResponse::Error {
+                            message: format!("Failed to set HTTP address: {:?}", e),
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -403,6 +432,7 @@ impl PlaybooksManager {
         name: String,
         pipeline_config: PlaybookIdent,
         playbook_socket: Option<String>,
+        http_address: Option<String>,
         input_dir_override: Option<PathBuf>,
         output_dir_override: Option<PathBuf>,
         pinned_version: Option<String>,
@@ -511,6 +541,10 @@ impl PlaybooksManager {
             tracing::debug!(playbook = %name, socket = %socket, "Worker listening to custom socket");
             worker.listen_socket(socket).await?;
         }
+        if let Some(ref addr) = http_address {
+            tracing::debug!(playbook = %name, http_address = %addr, "Worker starting HTTP server");
+            worker.listen_http(addr).await?;
+        }
         let _ = self.register_callbacks_from_db(&name, &worker).await;
 
         // Save state and config in SQLite database
@@ -522,6 +556,7 @@ impl PlaybooksManager {
                 &pipeline_config,
                 playbook_socket.as_deref(),
                 pinned_version.as_deref(),
+                http_address.as_deref(),
             )
             .await?;
 
@@ -556,7 +591,8 @@ impl PlaybooksManager {
         }
 
         let db_entry = self.db.get_playbook(&name).await?;
-        let (_status, pipeline_config, socket_path, _pinned_version) = match db_entry {
+        let (_status, pipeline_config, socket_path, _pinned_version, http_address) = match db_entry
+        {
             Some(entry) => entry,
             None => {
                 tracing::error!(playbook = %name, "Playbook does not exist in state store");
@@ -585,6 +621,10 @@ impl PlaybooksManager {
             tracing::debug!(playbook = %name, socket = %socket, "Resumed worker listening on socket");
             worker.listen_socket(socket).await?;
         }
+        if let Some(ref addr) = http_address {
+            tracing::debug!(playbook = %name, http_address = %addr, "Resumed worker starting HTTP server");
+            worker.listen_http(addr).await?;
+        }
         let _ = self.register_callbacks_from_db(&name, &worker).await;
         tracing::debug!(playbook = %name, "Updating status to running in DB");
         self.db.update_status(&name, "running").await?;
@@ -596,6 +636,19 @@ impl PlaybooksManager {
             pyroduct::bail!("Playbook '{}' was started by another task", name);
         }
         guard.insert(name, worker);
+        Ok(())
+    }
+
+    pub async fn set_http_address(&self, name: &str, addr: Option<&str>) -> Result<()> {
+        let mut guard = self.workers.lock().await;
+        let worker = guard.get_mut(name).ok_or_else(|| {
+            pyroduct::capture!("No active playbook worker found with name: {}", name)
+        })?;
+
+        worker.set_http_address(addr).await?;
+
+        // Persist updated http_address to the database
+        self.db.update_http_address(name, addr).await?;
         Ok(())
     }
 
@@ -659,6 +712,7 @@ impl PlaybooksManager {
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_string(),
+                http_address: worker.http_address.clone(),
                 active_capabilities,
                 local_capabilities,
                 remote_capabilities,
@@ -679,8 +733,8 @@ impl PlaybooksManager {
         let playbooks = self.db.list_playbooks().await?;
         let mut to_resume: Vec<String> = playbooks
             .into_iter()
-            .filter(|(_name, status, _config, _socket, _pinned)| status == "running")
-            .map(|(name, _, _, _, _)| name)
+            .filter(|(_name, status, _config, _socket, _pinned, _http)| status == "running")
+            .map(|(name, _, _, _, _, _)| name)
             .collect();
 
         let mut attempts = 0;
@@ -1076,7 +1130,9 @@ impl PlaybooksManager {
         if spec.func.kind == pyro_spec::ModuleKind::Session
             || spec.func.kind == pyro_spec::ModuleKind::SessionDiff
         {
-            return Err(pyroduct::capture!("Bulk call is not allowed for session playbooks"));
+            return Err(pyroduct::capture!(
+                "Bulk call is not allowed for session playbooks"
+            ));
         }
 
         let batches = pyro_file::parse_data_to_batch(file_content, file_name)
@@ -1105,7 +1161,11 @@ impl PlaybooksManager {
                 match worker.call(repaired_row).await {
                     Ok(rec) => results.push(rec),
                     Err(e) => {
-                        return Err(pyroduct::capture!("Error executing bulk row at index {}: {:?}", i, e));
+                        return Err(pyroduct::capture!(
+                            "Error executing bulk row at index {}: {:?}",
+                            i,
+                            e
+                        ));
                     }
                 }
             }
@@ -1133,7 +1193,7 @@ impl PlaybooksManager {
             }
         };
 
-        for (name, status, config, socket_path, pinned_version) in db_playbooks {
+        for (name, status, config, socket_path, pinned_version, http_address) in db_playbooks {
             // Only check running, non-pinned playbooks
             if status != "running" || pinned_version.is_some() {
                 continue;
@@ -1200,6 +1260,7 @@ impl PlaybooksManager {
                     name.clone(),
                     updated_ident,
                     socket_path.clone(),
+                    http_address.clone(),
                     None, // Keep existing dirs (they're in the config already)
                     None,
                     None, // Still not pinned
@@ -1226,6 +1287,7 @@ impl PlaybooksManager {
                             name.clone(),
                             current.clone(),
                             socket_path,
+                            http_address,
                             None,
                             None,
                             None,

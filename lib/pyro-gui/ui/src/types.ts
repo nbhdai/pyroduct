@@ -36,6 +36,7 @@ export interface Playbook {
   name: string;
   config_path: string;
   socket_path?: string;
+  http_address?: string | null;
   active_capabilities?: PlaybookCapability[];
   local_capabilities?: PlaybookCapability[];
   remote_capabilities?: PlaybookCapability[];

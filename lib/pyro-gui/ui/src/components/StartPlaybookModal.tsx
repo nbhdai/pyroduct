@@ -13,6 +13,7 @@ interface StartPlaybookModalProps {
   onSubmit: (params: {
     name: string;
     playbookIdent: { author: string; package: string; version: string };
+    httpAddress?: string | null;
     socketPath?: string | null;
     inputDir?: string | null;
     outputDir?: string | null;
@@ -28,6 +29,7 @@ export function StartPlaybookModal({
 }: StartPlaybookModalProps) {
   const [selectedPlaybookKey, setSelectedPlaybookKey] = useState("");
   const [name, setName] = useState("");
+  const [httpAddress, setHttpAddress] = useState("");
   const [socketPath, setSocketPath] = useState("");
   const [inputDir, setInputDir] = useState("");
   const [outputDir, setOutputDir] = useState("");
@@ -39,6 +41,7 @@ export function StartPlaybookModal({
   useEffect(() => {
     if (isOpen) {
       setName("");
+      setHttpAddress("");
       setSocketPath("");
       setInputDir("");
       setOutputDir("");
@@ -90,6 +93,7 @@ export function StartPlaybookModal({
         package: selected.name,
         version: selected.version,
       },
+      httpAddress: httpAddress.trim() || null,
       socketPath: socketPath.trim() || null,
       inputDir: inputDir.trim() || null,
       outputDir: outputDir.trim() || null,
@@ -131,6 +135,17 @@ export function StartPlaybookModal({
                   );
                 })}
               </select>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="http-address">HTTP Server Address (Optional)</label>
+              <input
+                type="text"
+                id="http-address"
+                value={httpAddress}
+                onChange={(e) => setHttpAddress(e.target.value)}
+                placeholder="e.g. 127.0.0.1:8080"
+              />
             </div>
 
             <button

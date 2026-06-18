@@ -107,6 +107,7 @@ async fn test_interconnect_persistence() {
         "caller".to_string(),
         caller_binary.spec.ident.clone(),
         None,
+        None,
         Some(working_dir.join("input")),
         Some(working_dir.join("output")),
         None,

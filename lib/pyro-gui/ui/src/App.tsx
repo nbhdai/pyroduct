@@ -182,6 +182,7 @@ export function App() {
       walCapacity?: number;
       successLogRetentionSecs?: number;
       errorLogRetentionSecs?: number;
+      httpAddress?: string | null;
       socketPath?: string | null;
       inputDir?: string | null;
       outputDir?: string | null;
@@ -197,6 +198,7 @@ export function App() {
           name: params.name,
           playbookIdent: params.playbookIdent,
           playbookSocket: params.socketPath || null,
+          httpAddress: params.httpAddress || null,
           inputDir: params.inputDir || null,
           outputDir: params.outputDir || null,
           pinnedVersion: params.pinnedVersion || null,

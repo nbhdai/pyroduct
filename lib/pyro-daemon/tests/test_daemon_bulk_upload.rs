@@ -24,10 +24,10 @@ async fn test_daemon_bulk_upload() {
     let builder = Builder::from_env(cache.clone()).await.unwrap();
 
     let basic_package = "test_bulk_upload_basic";
-    
+
     // Read source from modules/basic/src/lib.rs
-    let basic_source_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../modules/basic/src/lib.rs");
+    let basic_source_path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules/basic/src/lib.rs");
     let basic_source_code = std::fs::read_to_string(basic_source_path)
         .expect("Failed to read modules/basic/src/lib.rs");
 
@@ -74,6 +74,7 @@ async fn test_daemon_bulk_upload() {
         name: "basic".to_string(),
         pipeline_config: basic_binary.spec.ident.clone(),
         playbook_socket: None,
+        http_address: None,
         input_dir: Some(working_dir.join("input")),
         output_dir: Some(working_dir.join("output")),
         pinned_version: None,
@@ -87,23 +88,25 @@ async fn test_daemon_bulk_upload() {
         file_name: "test.csv".to_string(),
         file_content: csv_content,
     });
-    
+
     let resp = client.request(req).await.unwrap();
-    
+
     // 5. Verify the response
     match resp {
-        DaemonResponse::Playbook(pyro_daemon::playbook::PlaybookResponse::BulkCallResult { results }) => {
+        DaemonResponse::Playbook(pyro_daemon::playbook::PlaybookResponse::BulkCallResult {
+            results,
+        }) => {
             assert_eq!(results.len(), 2);
-            
+
             let (idx1, row1) = results[0].clone().into_result().unwrap();
             let (idx2, row2) = results[1].clone().into_result().unwrap();
-            
+
             assert_eq!(idx1, 0);
             assert_eq!(idx2, 1);
-            
+
             let output1 = row1.get_str("output").unwrap();
             let output2 = row2.get_str("output").unwrap();
-            
+
             assert_eq!(output1, "Prefixed: hello");
             assert_eq!(output2, "Prefixed: world");
         }

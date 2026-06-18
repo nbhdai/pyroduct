@@ -42,10 +42,13 @@ impl DaemonDataManager {
             .db
             .get_playbook(playbook_name)
             .await?;
-        let (_status, pipeline_config, _socket_path, _pinned_version) = match db_entry {
-            Some(entry) => entry,
-            None => pyroduct::bail!("Playbook '{}' does not exist in state store", playbook_name),
-        };
+        let (_status, pipeline_config, _socket_path, _pinned_version, _http_address) =
+            match db_entry {
+                Some(entry) => entry,
+                None => {
+                    pyroduct::bail!("Playbook '{}' does not exist in state store", playbook_name)
+                }
+            };
 
         // 3. Load factory to get output schema
         let cache = CacheManager::from_env()

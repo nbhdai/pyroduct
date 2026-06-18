@@ -64,8 +64,8 @@ export function PlaybooksTab({
                     <span className="val code-text">{pb.config_path}</span>
                   </div>
                   <div className="detail-item">
-                    <span className="lbl">Socket</span>
-                    <span className="val code-text">{pb.socket_path || "None"}</span>
+                    <span className="lbl">HTTP Address</span>
+                    <span className="val code-text">{pb.http_address || "None"}</span>
                   </div>
                   <div className="detail-item">
                     <span className="lbl">Active Capabilities</span>
