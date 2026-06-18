@@ -96,6 +96,10 @@ pub enum PlaybookRequest {
         file_name: String,
         file_content: Vec<u8>,
     },
+    SetHttpAddress {
+        name: String,
+        http_address: Option<String>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -400,6 +404,23 @@ impl PlaybooksManager {
                     },
                 }
             }
+            PlaybookRequest::SetHttpAddress { name, http_address } => {
+                tracing::info!(playbook = %name, http_address = ?http_address, "Received SetHttpAddress request");
+                match self.set_http_address(&name, http_address.as_deref()).await {
+                    Ok(()) => {
+                        tracing::info!(playbook = %name, "HTTP address updated successfully");
+                        PlaybookResponse::Success {
+                            message: "HTTP address updated successfully".to_string(),
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(playbook = %name, error = ?e, "Failed to set HTTP address");
+                        PlaybookResponse::Error {
+                            message: format!("Failed to set HTTP address: {:?}", e),
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -611,6 +632,19 @@ impl PlaybooksManager {
             pyroduct::bail!("Playbook '{}' was started by another task", name);
         }
         guard.insert(name, worker);
+        Ok(())
+    }
+
+    pub async fn set_http_address(&self, name: &str, addr: Option<&str>) -> Result<()> {
+        let mut guard = self.workers.lock().await;
+        let worker = guard.get_mut(name).ok_or_else(|| {
+            pyroduct::capture!("No active playbook worker found with name: {}", name)
+        })?;
+
+        worker.set_http_address(addr).await?;
+
+        // Persist updated http_address to the database
+        self.db.update_http_address(name, addr).await?;
         Ok(())
     }
 

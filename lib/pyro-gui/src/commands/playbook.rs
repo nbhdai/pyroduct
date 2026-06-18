@@ -211,3 +211,53 @@ pub async fn list_sessions(
     }
 }
 
+#[tauri::command]
+pub async fn set_http_address(
+    name: String,
+    http_address: Option<String>,
+) -> Result<String, String> {
+    info!(
+        "Tauri command: set_http_address for '{}' -> {:?}",
+        name, http_address
+    );
+    let client = super::connect_to_active_daemon().await?;
+
+    let req = pyro_daemon::DaemonRequest::Playbook(
+        pyro_daemon::playbook::PlaybookRequest::SetHttpAddress {
+            name: name.clone(),
+            http_address: http_address.clone(),
+        },
+    );
+
+    match client.request(req).await {
+        Ok(pyro_daemon::DaemonResponse::Playbook(
+            pyro_daemon::playbook::PlaybookResponse::Success { message },
+        )) => {
+            info!(
+                "HTTP address for '{}' updated to {:?}: {}",
+                name, http_address, message
+            );
+            Ok(message)
+        }
+        Ok(pyro_daemon::DaemonResponse::Playbook(
+            pyro_daemon::playbook::PlaybookResponse::Error { message },
+        )) => {
+            error!(
+                "Daemon returned error on set_http_address for '{}': {}",
+                name, message
+            );
+            Err(message)
+        }
+        Ok(resp) => {
+            error!(
+                "Unexpected response from daemon on set_http_address for '{}': {:?}",
+                name, resp
+            );
+            Err(format!("Unexpected response from daemon: {:?}", resp))
+        }
+        Err(e) => {
+            error!("Failed to set HTTP address for '{}': {:?}", name, e);
+            Err(format!("Failed to set HTTP address: {:?}", e))
+        }
+    }
+}

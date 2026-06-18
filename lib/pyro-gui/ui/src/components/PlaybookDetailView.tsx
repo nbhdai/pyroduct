@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Playbook } from "../types";
 import { CallPlaybookForm } from "./CallPlaybookForm";
 import { PlaybookChat } from "./PlaybookChat";
@@ -41,6 +42,13 @@ export function PlaybookDetailView({ playbook, onBack, onSubmitCall }: PlaybookD
   const chatCompatible = isChatPlaybook(playbook);
   const isSessionPlaybook = playbook.spec?.func?.kind === "session" || playbook.spec?.func?.kind === "session_diff";
   const [activeSubTab, setActiveSubTab] = useState<"chat" | "form" | "bulk">(chatCompatible ? "chat" : "form");
+  const [editingHttpAddr, setEditingHttpAddr] = useState("");
+  const [httpLoading, setHttpLoading] = useState(false);
+
+  // Sync editable address with playbook prop
+  useEffect(() => {
+    setEditingHttpAddr(playbook.http_address || "");
+  }, [playbook.http_address]);
 
   if (playbook.name !== prevPlaybookName) {
     setPrevPlaybookName(playbook.name);
@@ -83,7 +91,70 @@ export function PlaybookDetailView({ playbook, onBack, onSubmitCall }: PlaybookD
           </div>
           <div className="info-row" style={{ paddingBottom: "8px" }}>
             <span className="label">HTTP Address</span>
-            <span className="value code-text">{playbook.http_address || "None"}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flex: 1 }}>
+              <input
+                type="text"
+                value={editingHttpAddr}
+                onChange={(e) => setEditingHttpAddr(e.target.value)}
+                placeholder="e.g. 127.0.0.1:8080"
+                disabled={httpLoading}
+                style={{
+                  flex: 1,
+                  padding: "4px 8px",
+                  fontSize: "12px",
+                  fontFamily: "var(--font-mono)",
+                  background: "var(--bg-input)",
+                  border: "1px solid var(--bg-card-border)",
+                  borderRadius: "4px",
+                  color: "var(--text-primary)",
+                }}
+              />
+              <button
+                className="btn btn-success"
+                disabled={httpLoading}
+                style={{ padding: "4px 12px", fontSize: "11px" }}
+                onClick={async () => {
+                  const addr = editingHttpAddr.trim() || null;
+                  setHttpLoading(true);
+                  try {
+                    await invoke("set_http_address", {
+                      name: playbook.name,
+                      httpAddress: addr,
+                    });
+                  } catch (err) {
+                    alert(`Failed to update HTTP address: ${err}`);
+                    setEditingHttpAddr(playbook.http_address || "");
+                  } finally {
+                    setHttpLoading(false);
+                  }
+                }}
+              >
+                {httpLoading ? "..." : "Set"}
+              </button>
+              {playbook.http_address && (
+                <button
+                  className="btn btn-danger"
+                  disabled={httpLoading}
+                  style={{ padding: "4px 12px", fontSize: "11px" }}
+                  onClick={async () => {
+                    setHttpLoading(true);
+                    try {
+                      await invoke("set_http_address", {
+                        name: playbook.name,
+                        httpAddress: null,
+                      });
+                      setEditingHttpAddr("");
+                    } catch (err) {
+                      alert(`Failed to clear HTTP address: ${err}`);
+                    } finally {
+                      setHttpLoading(false);
+                    }
+                  }}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
           </div>
           <div className="info-row" style={{ paddingBottom: "8px" }}>
             <span className="label">Local Capabilities</span>

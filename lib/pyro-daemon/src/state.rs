@@ -118,6 +118,16 @@ impl DbStateStore {
         Ok(())
     }
 
+    pub async fn update_http_address(&self, name: &str, http_address: Option<&str>) -> Result<()> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "UPDATE playbooks SET http_address = ?1 WHERE name = ?2",
+            params![http_address, name],
+        )
+        .capture("Failed to update playbook HTTP address in database")?;
+        Ok(())
+    }
+
     pub async fn delete_playbook(&self, name: &str) -> Result<()> {
         let conn = self.conn.lock().await;
         let _ = conn.execute(

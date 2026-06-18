@@ -127,6 +127,36 @@ impl PlaybookWorker {
         Ok(())
     }
 
+    /// Set, change, or remove the HTTP address for this playbook.
+    /// If `addr` is Some, the old HTTP listener (if any) is stopped and a new one is started.
+    /// If `addr` is None, the HTTP listener is stopped.
+    pub async fn set_http_address(&mut self, addr: Option<&str>) -> Result<()> {
+        // Stop existing HTTP listener if running
+        if let Some(tx) = self.http_shutdown_tx.take() {
+            let _ = tx.send(());
+            tracing::info!(name = %self.name, "Stopped existing HTTP server");
+        }
+        self.http_address = None;
+
+        // Start new one if requested
+        if let Some(addr) = addr {
+            let socket_addr: std::net::SocketAddr = addr
+                .parse()
+                .map_err(|e| pyroduct::capture!("Invalid HTTP address '{}': {}", addr, e))?;
+
+            let tcp_listener = tokio::net::TcpListener::bind(socket_addr)
+                .await
+                .map_err(|e| pyroduct::capture!("Failed to bind HTTP listener on {}: {}", addr, e))?;
+
+            let shutdown_tx = pyroduct::transport::http::run(self.server.clone(), tcp_listener);
+            tracing::info!(name = %self.name, address = %addr, "HTTP server rebound for playbook");
+
+            self.http_address = Some(addr.to_string());
+            self.http_shutdown_tx = Some(shutdown_tx);
+        }
+        Ok(())
+    }
+
     pub async fn call(
         &self,
         row: pyroduct::PyroRow<'_>,
