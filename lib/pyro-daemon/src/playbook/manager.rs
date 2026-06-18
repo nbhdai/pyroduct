@@ -18,6 +18,7 @@ pub struct PlaybookStatus {
     pub name: String,
     pub config_path: PathBuf,
     pub socket_path: String,
+    pub http_address: Option<String>,
     pub active_capabilities: Vec<CapabilityIdent>,
     pub local_capabilities: Vec<CapabilityIdent>,
     pub remote_capabilities: Vec<CapabilityIdent>,
@@ -43,6 +44,8 @@ pub enum PlaybookRequest {
         pipeline_config: PlaybookIdent,
         #[serde(default)]
         playbook_socket: Option<String>,
+        #[serde(default)]
+        http_address: Option<String>,
         #[serde(default)]
         input_dir: Option<PathBuf>,
         #[serde(default)]
@@ -153,6 +156,7 @@ impl PlaybooksManager {
                 name,
                 pipeline_config,
                 playbook_socket,
+                http_address,
                 input_dir,
                 output_dir,
                 pinned_version,
@@ -163,6 +167,7 @@ impl PlaybooksManager {
                         name.clone(),
                         pipeline_config,
                         playbook_socket,
+                        http_address,
                         input_dir,
                         output_dir,
                         pinned_version,
@@ -403,6 +408,7 @@ impl PlaybooksManager {
         name: String,
         pipeline_config: PlaybookIdent,
         playbook_socket: Option<String>,
+        http_address: Option<String>,
         input_dir_override: Option<PathBuf>,
         output_dir_override: Option<PathBuf>,
         pinned_version: Option<String>,
@@ -511,6 +517,10 @@ impl PlaybooksManager {
             tracing::debug!(playbook = %name, socket = %socket, "Worker listening to custom socket");
             worker.listen_socket(socket).await?;
         }
+        if let Some(ref addr) = http_address {
+            tracing::debug!(playbook = %name, http_address = %addr, "Worker starting HTTP server");
+            worker.listen_http(addr).await?;
+        }
         let _ = self.register_callbacks_from_db(&name, &worker).await;
 
         // Save state and config in SQLite database
@@ -522,6 +532,7 @@ impl PlaybooksManager {
                 &pipeline_config,
                 playbook_socket.as_deref(),
                 pinned_version.as_deref(),
+                http_address.as_deref(),
             )
             .await?;
 
@@ -556,7 +567,7 @@ impl PlaybooksManager {
         }
 
         let db_entry = self.db.get_playbook(&name).await?;
-        let (_status, pipeline_config, socket_path, _pinned_version) = match db_entry {
+        let (_status, pipeline_config, socket_path, _pinned_version, http_address) = match db_entry {
             Some(entry) => entry,
             None => {
                 tracing::error!(playbook = %name, "Playbook does not exist in state store");
@@ -584,6 +595,10 @@ impl PlaybooksManager {
         if let Some(ref socket) = socket_path {
             tracing::debug!(playbook = %name, socket = %socket, "Resumed worker listening on socket");
             worker.listen_socket(socket).await?;
+        }
+        if let Some(ref addr) = http_address {
+            tracing::debug!(playbook = %name, http_address = %addr, "Resumed worker starting HTTP server");
+            worker.listen_http(addr).await?;
         }
         let _ = self.register_callbacks_from_db(&name, &worker).await;
         tracing::debug!(playbook = %name, "Updating status to running in DB");
@@ -659,6 +674,7 @@ impl PlaybooksManager {
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_string(),
+                http_address: worker.http_address.clone(),
                 active_capabilities,
                 local_capabilities,
                 remote_capabilities,
@@ -679,8 +695,8 @@ impl PlaybooksManager {
         let playbooks = self.db.list_playbooks().await?;
         let mut to_resume: Vec<String> = playbooks
             .into_iter()
-            .filter(|(_name, status, _config, _socket, _pinned)| status == "running")
-            .map(|(name, _, _, _, _)| name)
+            .filter(|(_name, status, _config, _socket, _pinned, _http)| status == "running")
+            .map(|(name, _, _, _, _, _)| name)
             .collect();
 
         let mut attempts = 0;
@@ -1133,7 +1149,7 @@ impl PlaybooksManager {
             }
         };
 
-        for (name, status, config, socket_path, pinned_version) in db_playbooks {
+        for (name, status, config, socket_path, pinned_version, http_address) in db_playbooks {
             // Only check running, non-pinned playbooks
             if status != "running" || pinned_version.is_some() {
                 continue;
@@ -1200,6 +1216,7 @@ impl PlaybooksManager {
                     name.clone(),
                     updated_ident,
                     socket_path.clone(),
+                    http_address.clone(),
                     None, // Keep existing dirs (they're in the config already)
                     None,
                     None, // Still not pinned
@@ -1226,6 +1243,7 @@ impl PlaybooksManager {
                             name.clone(),
                             current.clone(),
                             socket_path,
+                            http_address,
                             None,
                             None,
                             None,

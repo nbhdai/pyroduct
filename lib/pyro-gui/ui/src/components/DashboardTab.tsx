@@ -23,7 +23,7 @@ export function DashboardTab({ playbooks, onViewPlaybook }: DashboardTabProps) {
                 <tr>
                   <th>Worker Name</th>
                   <th>Rows Processed</th>
-                  <th>Socket Path</th>
+                  <th>HTTP Address</th>
                   <th>Capabilities</th>
                 </tr>
               </thead>
@@ -54,7 +54,7 @@ export function DashboardTab({ playbooks, onViewPlaybook }: DashboardTabProps) {
                     <td style={{ fontWeight: 600, color: "var(--color-success)" }}>
                       {pb.processed_rows ?? 0}
                     </td>
-                    <td><span className="code-text">{pb.socket_path || "None"}</span></td>
+                    <td><span className="code-text">{pb.http_address || "None"}</span></td>
                     <td>
                       <div className="capability-pills">
                         {(pb.active_capabilities ?? []).length === 0 ? (

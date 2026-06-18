@@ -14,8 +14,10 @@ pub struct PlaybookWorker {
     pub name: String,
     pub config: PipelineConfig,
     pub socket_path: Option<PathBuf>,
+    pub http_address: Option<String>,
     pub capability_processes: Vec<CapabilityProcess>,
     pub shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    pub http_shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     pub server: pyroduct::pipeline::PipelineServer,
 }
 
@@ -77,8 +79,10 @@ impl PlaybookWorker {
             name,
             config: pipeline_config,
             socket_path: None,
+            http_address: None,
             capability_processes,
             shutdown_tx: None,
+            http_shutdown_tx: None,
             server,
         })
     }
@@ -99,6 +103,27 @@ impl PlaybookWorker {
         let shutdown_tx = pyroduct::transport::socket::playbook::run(self.server.clone(), listener);
         self.socket_path = Some(socket_path.to_path_buf());
         self.shutdown_tx = Some(shutdown_tx);
+        Ok(())
+    }
+
+    pub async fn listen_http(&mut self, addr: &str) -> Result<()> {
+        if self.http_shutdown_tx.is_some() {
+            pyroduct::bail!("HTTP listener is already running");
+        }
+
+        let socket_addr: std::net::SocketAddr = addr
+            .parse()
+            .map_err(|e| pyroduct::capture!("Invalid HTTP address '{}': {}", addr, e))?;
+
+        let tcp_listener = tokio::net::TcpListener::bind(socket_addr)
+            .await
+            .map_err(|e| pyroduct::capture!("Failed to bind HTTP listener on {}: {}", addr, e))?;
+
+        let shutdown_tx = pyroduct::transport::http::run(self.server.clone(), tcp_listener);
+        tracing::info!(name = %self.name, address = %addr, "HTTP server started for playbook");
+
+        self.http_address = Some(addr.to_string());
+        self.http_shutdown_tx = Some(shutdown_tx);
         Ok(())
     }
 
@@ -130,6 +155,10 @@ impl PlaybookWorker {
     pub async fn shutdown(self) -> Result<()> {
         if let Some(shutdown_tx) = self.shutdown_tx {
             let _ = shutdown_tx.send(());
+        }
+
+        if let Some(http_shutdown_tx) = self.http_shutdown_tx {
+            let _ = http_shutdown_tx.send(());
         }
 
         // Cleanup socket file if Unix UDS
@@ -348,6 +377,7 @@ mod tests {
                 "target".to_string(),
                 pipeline_config_a,
                 None,
+                None,
                 Some(tmp_dir.path().to_path_buf()),
                 Some(tmp_dir.path().to_path_buf()),
                 None,
@@ -360,6 +390,7 @@ mod tests {
             .start_playbook(
                 "caller".to_string(),
                 pipeline_config_b,
+                None,
                 None,
                 Some(tmp_dir.path().to_path_buf()),
                 Some(tmp_dir.path().to_path_buf()),

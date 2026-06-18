@@ -82,6 +82,10 @@ export function PlaybookDetailView({ playbook, onBack, onSubmitCall }: PlaybookD
             <span className="value code-text">{playbook.socket_path || "None"}</span>
           </div>
           <div className="info-row" style={{ paddingBottom: "8px" }}>
+            <span className="label">HTTP Address</span>
+            <span className="value code-text">{playbook.http_address || "None"}</span>
+          </div>
+          <div className="info-row" style={{ paddingBottom: "8px" }}>
             <span className="label">Local Capabilities</span>
             <div className="capability-pills" style={{ margin: 0 }}>
               {(!playbook.local_capabilities || playbook.local_capabilities.length === 0) ? (

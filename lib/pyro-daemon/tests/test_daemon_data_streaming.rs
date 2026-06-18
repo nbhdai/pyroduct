@@ -56,6 +56,7 @@ async fn test_daemon_data_streaming() {
         name: "integration_error".to_string(),
         pipeline_config: binary_a.spec.ident.clone(),
         playbook_socket: None,
+        http_address: None,
         input_dir: Some(working_dir.join("input_a")),
         output_dir: Some(working_dir.join("output_a")),
         pinned_version: None,

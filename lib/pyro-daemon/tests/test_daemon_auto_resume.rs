@@ -33,6 +33,7 @@ async fn test_daemon_auto_resume() {
         "integration_error".to_string(),
         playbook_ident,
         None,
+        None,
         Some(working_dir.join("input")),
         Some(working_dir.join("output")),
         None,

@@ -39,6 +39,7 @@ pub async fn start_playbook(
     name: String,
     playbook_ident: pyro_artifacts::artifacts::PlaybookIdent,
     playbook_socket: Option<String>,
+    http_address: Option<String>,
     input_dir: Option<String>,
     output_dir: Option<String>,
     pinned_version: Option<String>,
@@ -50,13 +51,14 @@ pub async fn start_playbook(
         name: name.clone(),
         pipeline_config: playbook_ident,
         playbook_socket: playbook_socket.clone(),
+        http_address: http_address.clone(),
         input_dir: input_dir.clone().map(std::path::PathBuf::from),
         output_dir: output_dir.clone().map(std::path::PathBuf::from),
         pinned_version,
     });
     debug!(
-        "Sending PlaybookRequest::Start to daemon: name='{}', socket={:?}, input={:?}, output={:?}",
-        name, playbook_socket, input_dir, output_dir
+        "Sending PlaybookRequest::Start to daemon: name='{}', socket={:?}, http={:?}, input={:?}, output={:?}",
+        name, playbook_socket, http_address, input_dir, output_dir
     );
 
     match client.request(req).await {
