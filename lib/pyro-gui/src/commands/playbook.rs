@@ -43,8 +43,15 @@ pub async fn start_playbook(
     input_dir: Option<String>,
     output_dir: Option<String>,
     pinned_version: Option<String>,
+    configurations: Option<Vec<pyro_artifacts::cargo::ConfiguredCapability>>,
 ) -> Result<String, String> {
-    info!("Tauri command: start_playbook for '{}'", name);
+    info!("Tauri command: start_playbook for '{}'{}", name,
+        if configurations.as_ref().map_or(false, |c| !c.is_empty()) {
+            format!(" with {} configuration overrides", configurations.as_ref().unwrap().len())
+        } else {
+            String::new()
+        }
+    );
     let client = super::connect_to_active_daemon().await?;
 
     let req = pyro_daemon::DaemonRequest::Playbook(pyro_daemon::playbook::PlaybookRequest::Start {
@@ -55,6 +62,7 @@ pub async fn start_playbook(
         input_dir: input_dir.clone().map(std::path::PathBuf::from),
         output_dir: output_dir.clone().map(std::path::PathBuf::from),
         pinned_version,
+        configurations,
     });
     debug!(
         "Sending PlaybookRequest::Start to daemon: name='{}', socket={:?}, http={:?}, input={:?}, output={:?}",

@@ -5,6 +5,7 @@ import { CallPlaybookForm } from "./CallPlaybookForm";
 import { PlaybookChat } from "./PlaybookChat";
 import { DataExplorer } from "./DataExplorer";
 import { BulkUploadForm } from "./BulkUploadForm";
+import { ReplayTab } from "./ReplayTab";
 
 function isChatPlaybook(playbook: Playbook): boolean {
   if (!playbook.spec || !playbook.spec.func) return false;
@@ -41,7 +42,7 @@ export function PlaybookDetailView({ playbook, onBack, onSubmitCall }: PlaybookD
   const [prevPlaybookName, setPrevPlaybookName] = useState<string>(playbook.name);
   const chatCompatible = isChatPlaybook(playbook);
   const isSessionPlaybook = playbook.spec?.func?.kind === "session" || playbook.spec?.func?.kind === "session_diff";
-  const [activeSubTab, setActiveSubTab] = useState<"chat" | "form" | "bulk">(chatCompatible ? "chat" : "form");
+  const [activeSubTab, setActiveSubTab] = useState<"chat" | "form" | "bulk" | "replay">(chatCompatible ? "chat" : "form");
   const [editingHttpAddr, setEditingHttpAddr] = useState("");
   const [httpLoading, setHttpLoading] = useState(false);
 
@@ -278,6 +279,35 @@ export function PlaybookDetailView({ playbook, onBack, onSubmitCall }: PlaybookD
             )}
           </button>
         )}
+        {!isSessionPlaybook && (
+          <button
+            onClick={() => setActiveSubTab("replay")}
+            className={`sub-tab-btn ${activeSubTab === "replay" ? "active" : ""}`}
+            style={{
+              background: "none",
+              border: "none",
+              color: activeSubTab === "replay" ? "var(--color-primary)" : "var(--text-muted)",
+              fontSize: "14px",
+              fontWeight: 600,
+              padding: "8px 16px 12px 16px",
+              cursor: "pointer",
+              position: "relative"
+            }}
+          >
+            ▶ Replay
+            {activeSubTab === "replay" && (
+              <span style={{
+                position: "absolute",
+                bottom: "-5px",
+                left: 0,
+                right: 0,
+                height: "2px",
+                backgroundColor: "var(--color-primary)",
+                boxShadow: "0 0 8px var(--color-primary)"
+              }} />
+            )}
+          </button>
+        )}
       </div>
 
       {/* Top Section: Chat, Form, or Bulk */}
@@ -289,6 +319,11 @@ export function PlaybookDetailView({ playbook, onBack, onSubmitCall }: PlaybookD
         />
       ) : activeSubTab === "bulk" ? (
         <BulkUploadForm
+          playbookName={playbook.name}
+          onSuccess={handleCallSuccess}
+        />
+      ) : activeSubTab === "replay" ? (
+        <ReplayTab
           playbookName={playbook.name}
           onSuccess={handleCallSuccess}
         />

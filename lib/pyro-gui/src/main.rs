@@ -89,6 +89,7 @@ fn main() {
             commands::call_playbook,
             commands::get_capability_interface_spec,
             commands::get_playbook_spec,
+            commands::get_playbook_configurations,
             commands::get_playbook_source,
             commands::get_pyroduct_config,
             commands::update_pyroduct_config,
@@ -99,7 +100,10 @@ fn main() {
             commands::get_playbook_failures,
             commands::get_playbook_execution_record,
             commands::list_sessions,
-            commands::set_http_address
+            commands::set_http_address,
+            commands::start_folder_replay,
+            commands::get_replay_status,
+            commands::stop_folder_replay
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

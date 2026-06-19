@@ -4984,6 +4984,7 @@ dependencies = [
  "pyro-file",
  "pyro-spec",
  "pyroduct",
+ "rand",
  "rusqlite",
  "semver",
  "serde",

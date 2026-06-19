@@ -160,6 +160,29 @@ pub async fn get_playbook_spec(author: String, name: String, version: String) ->
 }
 
 #[tauri::command]
+pub async fn get_playbook_configurations(
+    author: String,
+    name: String,
+    version: String,
+) -> Result<Value, String> {
+    info!("Tauri command: get_playbook_configurations for {}/{}@{}", author, name, version);
+    let mgr = get_cache_manager().await?;
+    let binary = mgr
+        .get_named_binary(&author, &name, &version)
+        .await
+        .map_err(|e| {
+            error!("Failed to load playbook binary for {}/{}@{}: {:?}", author, name, version, e);
+            format!("Failed to load playbook binary: {:?}", e)
+        })?;
+    let configs = serde_json::to_value(&binary.configurations)
+        .map_err(|e| {
+            error!("Failed to serialize configurations: {:?}", e);
+            format!("Failed to serialize configurations: {:?}", e)
+        })?;
+    Ok(configs)
+}
+
+#[tauri::command]
 pub async fn get_playbook_source(
     author: String,
     name: String,

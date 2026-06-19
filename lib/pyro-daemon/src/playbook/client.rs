@@ -24,6 +24,7 @@ impl DaemonClient {
             input_dir,
             output_dir,
             pinned_version,
+            configurations: None,
         });
         match self.request(req).await? {
             DaemonResponse::Playbook(PlaybookResponse::Success { message }) => Ok(message),

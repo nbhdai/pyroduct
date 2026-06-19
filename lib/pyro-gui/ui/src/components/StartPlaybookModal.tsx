@@ -1,4 +1,7 @@
 import React, { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { PlaybookSpec } from "../types";
+import { CapabilityConfigForm, ConfiguredCapability } from "./CapabilityConfigForm";
 
 interface PlaybookItem {
   author: string;
@@ -18,6 +21,7 @@ interface StartPlaybookModalProps {
     inputDir?: string | null;
     outputDir?: string | null;
     pinnedVersion?: string | null;
+    configurations?: ConfiguredCapability[];
   }) => void;
 }
 
@@ -36,6 +40,11 @@ export function StartPlaybookModal({
   const [pinVersion, setPinVersion] = useState(false);
   
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showConfig, setShowConfig] = useState(false);
+
+  // PlaybookSpec fetched for the selected playbook (to get capabilities list)
+  const [playbookSpec, setPlaybookSpec] = useState<PlaybookSpec | null>(null);
+  const [configurations, setConfigurations] = useState<ConfiguredCapability[]>([]);
 
   // Reset form when modal opens
   useEffect(() => {
@@ -47,6 +56,9 @@ export function StartPlaybookModal({
       setOutputDir("");
       setPinVersion(false);
       setShowAdvanced(false);
+      setShowConfig(false);
+      setPlaybookSpec(null);
+      setConfigurations([]);
       
       // Default to first available playbook
       if (availablePlaybooks.length > 0) {
@@ -59,6 +71,37 @@ export function StartPlaybookModal({
       }
     }
   }, [isOpen, availablePlaybooks]);
+
+  // Fetch PlaybookSpec when selection changes
+  useEffect(() => {
+    if (!selectedPlaybookKey) {
+      setPlaybookSpec(null);
+      return;
+    }
+
+    const selected = availablePlaybooks.find(
+      (pb) => `${pb.author}/${pb.name}@${pb.version}` === selectedPlaybookKey
+    );
+    if (!selected) {
+      setPlaybookSpec(null);
+      return;
+    }
+
+    let active = true;
+    invoke("get_playbook_spec", {
+      author: selected.author,
+      name: selected.name,
+      version: selected.version,
+    })
+      .then((res) => {
+        if (active) setPlaybookSpec(res as PlaybookSpec);
+      })
+      .catch(() => {
+        if (active) setPlaybookSpec(null);
+      });
+
+    return () => { active = false; };
+  }, [selectedPlaybookKey, availablePlaybooks]);
 
   const handlePlaybookChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const key = e.target.value;
@@ -98,6 +141,7 @@ export function StartPlaybookModal({
       inputDir: inputDir.trim() || null,
       outputDir: outputDir.trim() || null,
       pinnedVersion: pinVersion ? selected.version : null,
+      configurations: configurations.length > 0 ? configurations : undefined,
     });
   };
 
@@ -106,6 +150,8 @@ export function StartPlaybookModal({
       onClose();
     }
   };
+
+  const hasCapabilities = playbookSpec && playbookSpec.capabilities && playbookSpec.capabilities.length > 0;
 
   return (
     <div className="modal-overlay active" onClick={handleOverlayClick}>
@@ -147,6 +193,29 @@ export function StartPlaybookModal({
                 placeholder="e.g. 127.0.0.1:8080"
               />
             </div>
+
+            {/* Capability Configuration Toggle */}
+            {hasCapabilities && (
+              <>
+                <button
+                  type="button"
+                  className={`advanced-toggle ${showConfig ? "expanded" : ""}`}
+                  onClick={() => setShowConfig(!showConfig)}
+                >
+                  Capability Configuration
+                </button>
+
+                {showConfig && (
+                  <div className="advanced-section">
+                    <CapabilityConfigForm
+                      playbookIdent={playbookSpec!.ident}
+                      capabilities={playbookSpec!.capabilities}
+                      onChange={setConfigurations}
+                    />
+                  </div>
+                )}
+              </>
+            )}
 
             <button
               type="button"

@@ -259,9 +259,41 @@ impl PlaybookSource {
     }
 }
 
+/// Errors from validating a `ConfiguredCapability` against an `InterfaceSpec`.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ConfigValidationError {
+    #[error("Unknown class '{class}' in capability '{capability}' — available: {available:?}")]
+    UnknownClass {
+        capability: String,
+        class: String,
+        available: Vec<String>,
+    },
+    #[error("Unknown config field '{field}' for class '{class}' in capability '{capability}' — available: {available:?}")]
+    UnknownConfigField {
+        capability: String,
+        class: String,
+        field: String,
+        available: Vec<String>,
+    },
+    #[error("Capability '{0}' not found in cache")]
+    CapabilityNotFound(String),
+    #[error("Failed to load interface: {0}")]
+    CacheError(String),
+}
+
 impl PlaybookBinary {
     pub fn hash(&self) -> String {
         self.spec.hash.clone()
+    }
+
+    /// Replace (or insert) a single `ConfiguredCapability` in `self.configurations`,
+    /// matched by package name. If no existing entry matches, the new one is appended.
+    pub fn set_configuration(&mut self, cap: ConfiguredCapability) {
+        if let Some(existing) = self.configurations.iter_mut().find(|c| c.package == cap.package) {
+            *existing = cap;
+        } else {
+            self.configurations.push(cap);
+        }
     }
 }
 

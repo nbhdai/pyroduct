@@ -2,7 +2,7 @@ use crate::Result;
 use crate::playbook::PlaybookWorker;
 use pyro_artifacts::artifacts::PlaybookIdent;
 use pyro_artifacts::cache::CacheManager;
-use pyro_artifacts::cargo::CapabilityIdent;
+use pyro_artifacts::cargo::{CapabilityIdent, ConfiguredCapability};
 use pyroduct::Capture;
 use pyroduct::PyroRow;
 use serde::{Deserialize, Serialize};
@@ -52,6 +52,8 @@ pub enum PlaybookRequest {
         output_dir: Option<PathBuf>,
         #[serde(default)]
         pinned_version: Option<String>,
+        #[serde(default)]
+        configurations: Option<Vec<ConfiguredCapability>>,
     },
     Stop {
         name: String,
@@ -164,6 +166,7 @@ impl PlaybooksManager {
                 input_dir,
                 output_dir,
                 pinned_version,
+                configurations,
             } => {
                 tracing::info!(playbook = %name, playbook = ?pipeline_config, "Received Start request for playbook");
                 match self
@@ -175,6 +178,7 @@ impl PlaybooksManager {
                         input_dir,
                         output_dir,
                         pinned_version,
+                        configurations,
                     )
                     .await
                 {
@@ -436,6 +440,7 @@ impl PlaybooksManager {
         input_dir_override: Option<PathBuf>,
         output_dir_override: Option<PathBuf>,
         pinned_version: Option<String>,
+        configurations: Option<Vec<ConfiguredCapability>>,
     ) -> Result<()> {
         if self.workers.lock().await.contains_key(&name) {
             tracing::warn!(playbook = %name, "Name conflict detected: playbook is already running");
@@ -522,11 +527,22 @@ impl PlaybooksManager {
         let cache = CacheManager::from_env()
             .await
             .capture("Failed to initialize CacheManager")?;
-        let loaded_pipeline = pipeline_config
+        let mut loaded_pipeline = pipeline_config
             .clone()
             .load(&cache)
             .await
             .capture("Failed to load playbook binary")?;
+
+        // Apply configuration overrides (validated against the capability InterfaceSpec)
+        if let Some(config_overrides) = configurations {
+            for cap in config_overrides {
+                cache
+                    .validate_configuration(&cap)
+                    .await
+                    .map_err(|e| pyroduct::capture!("Configuration validation failed: {}", e))?;
+                loaded_pipeline.playbook.binary.set_configuration(cap);
+            }
+        }
 
         tracing::info!(spec = ?loaded_pipeline.playbook.binary.spec, "start_playbook: loaded playbook spec");
         let interconnect = self
@@ -1264,6 +1280,7 @@ impl PlaybooksManager {
                     None, // Keep existing dirs (they're in the config already)
                     None,
                     None, // Still not pinned
+                    None, // No config overrides for auto-update
                 )
                 .await
             {
@@ -1288,6 +1305,7 @@ impl PlaybooksManager {
                             current.clone(),
                             socket_path,
                             http_address,
+                            None,
                             None,
                             None,
                             None,

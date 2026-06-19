@@ -30,6 +30,7 @@ semver.workspace = true
 tracing-subscriber.workspace = true
 clap.workspace = true
 rusqlite = { workspace = true }
+rand.workspace = true
 
 [[bin]]
 name = "pyro-daemond"

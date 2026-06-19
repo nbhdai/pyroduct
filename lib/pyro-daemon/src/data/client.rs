@@ -164,4 +164,58 @@ impl DaemonClient {
 
         Ok(rx)
     }
+
+    pub async fn start_replay(
+        &self,
+        playbook_name: String,
+        folder_path: String,
+        interval_ms: u64,
+        wiggle_ms: u64,
+    ) -> Result<usize> {
+        let req = DaemonRequest::Data(DataRequest::StartReplay {
+            playbook_name,
+            folder_path,
+            interval_ms,
+            wiggle_ms,
+        });
+        match self.request(req).await? {
+            DaemonResponse::Data(DataResponse::ReplayStarted { total_rows }) => Ok(total_rows),
+            DaemonResponse::Data(DataResponse::Error { message }) => {
+                pyroduct::bail!("{}", message)
+            }
+            _ => pyroduct::bail!("Unexpected response from daemon"),
+        }
+    }
+
+    pub async fn get_replay_status(
+        &self,
+        playbook_name: String,
+    ) -> Result<(bool, usize, usize, usize, usize, String)> {
+        let req = DaemonRequest::Data(DataRequest::GetReplayStatus { playbook_name });
+        match self.request(req).await? {
+            DaemonResponse::Data(DataResponse::ReplayStatus {
+                running,
+                total_rows,
+                rows_completed,
+                successes,
+                errors,
+                current_file,
+            }) => Ok((running, total_rows, rows_completed, successes, errors, current_file)),
+            DaemonResponse::Data(DataResponse::Error { message }) => {
+                pyroduct::bail!("{}", message)
+            }
+            _ => pyroduct::bail!("Unexpected response from daemon"),
+        }
+    }
+
+    pub async fn stop_replay(&self, playbook_name: String) -> Result<()> {
+        let req = DaemonRequest::Data(DataRequest::StopReplay { playbook_name });
+        match self.request(req).await? {
+            DaemonResponse::Data(DataResponse::ReplayStopped) => Ok(()),
+            DaemonResponse::Data(DataResponse::Error { message }) => {
+                pyroduct::bail!("{}", message)
+            }
+            _ => pyroduct::bail!("Unexpected response from daemon"),
+        }
+    }
 }

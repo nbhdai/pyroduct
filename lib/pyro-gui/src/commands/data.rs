@@ -250,3 +250,76 @@ pub async fn run_bulk_playbook(
         Err(e) => Err(e.to_string()),
     }
 }
+
+#[tauri::command]
+pub async fn start_folder_replay(
+    playbook_name: String,
+    folder_path: String,
+    interval_ms: u64,
+    wiggle_ms: u64,
+) -> Result<serde_json::Value, String> {
+    info!(
+        "Tauri command: start_folder_replay for playbook='{}', folder='{}', interval={}ms, wiggle={}ms",
+        playbook_name, folder_path, interval_ms, wiggle_ms
+    );
+    let client = super::connect_to_active_daemon().await?;
+
+    match client
+        .start_replay(playbook_name, folder_path, interval_ms, wiggle_ms)
+        .await
+    {
+        Ok(total_rows) => {
+            info!("Replay started with {} total rows", total_rows);
+            Ok(serde_json::json!({ "total_rows": total_rows }))
+        }
+        Err(e) => {
+            error!("Failed to start replay: {:?}", e);
+            Err(e.to_string())
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn get_replay_status(
+    playbook_name: String,
+) -> Result<serde_json::Value, String> {
+    trace!("Tauri command: get_replay_status for playbook='{}'", playbook_name);
+    let client = super::connect_to_active_daemon().await?;
+
+    match client.get_replay_status(playbook_name).await {
+        Ok((running, total_rows, rows_completed, successes, errors, current_file)) => {
+            Ok(serde_json::json!({
+                "running": running,
+                "total_rows": total_rows,
+                "rows_completed": rows_completed,
+                "successes": successes,
+                "errors": errors,
+                "current_file": current_file,
+            }))
+        }
+        Err(e) => {
+            error!("Failed to get replay status: {:?}", e);
+            Err(e.to_string())
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn stop_folder_replay(
+    playbook_name: String,
+) -> Result<String, String> {
+    info!("Tauri command: stop_folder_replay for playbook='{}'", playbook_name);
+    let client = super::connect_to_active_daemon().await?;
+
+    match client.stop_replay(playbook_name).await {
+        Ok(()) => {
+            info!("Replay stopped successfully");
+            Ok("Replay stopped".to_string())
+        }
+        Err(e) => {
+            error!("Failed to stop replay: {:?}", e);
+            Err(e.to_string())
+        }
+    }
+}
+

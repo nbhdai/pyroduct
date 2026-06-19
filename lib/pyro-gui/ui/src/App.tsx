@@ -7,10 +7,11 @@ import { PlaybooksTab } from "./components/PlaybooksTab";
 import { OptionsTab } from "./components/OptionsTab";
 import { LogsTab } from "./components/LogsTab";
 import { StartPlaybookModal } from "./components/StartPlaybookModal";
+import { ReplayTab } from "./components/ReplayTab";
 import { DaemonStatus, CacheStatus, Playbook, LogEntry } from "./types";
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<"dashboard" | "repository" | "playbooks" | "options" | "logs">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "repository" | "playbooks" | "options" | "logs" | "replay">("dashboard");
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus>({ status: "offline" });
   const [cacheStatus, setCacheStatus] = useState<CacheStatus | null>(null);
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
@@ -149,8 +150,6 @@ export function App() {
   // 5. Stop Playbook
   const stopPlaybook = useCallback(
     async (name: string) => {
-      const confirmed = window.confirm(`Are you sure you want to stop playbook worker "${name}"?`);
-      if (!confirmed) return;
 
       try {
         addLog(`Requesting stop for playbook "${name}"...`, "command");
@@ -187,6 +186,7 @@ export function App() {
       inputDir?: string | null;
       outputDir?: string | null;
       pinnedVersion?: string | null;
+      configurations?: any[];
     }) => {
       try {
         setStartModalOpen(false);
@@ -202,6 +202,7 @@ export function App() {
           inputDir: params.inputDir || null,
           outputDir: params.outputDir || null,
           pinnedVersion: params.pinnedVersion || null,
+          configurations: params.configurations || null,
         })) as string;
 
         addLog(msg, "success");
@@ -287,6 +288,8 @@ export function App() {
         return "Repository";
       case "playbooks":
         return "Playbooks";
+      case "replay":
+        return "Data Replay";
       case "options":
         return "Options";
       case "logs":
@@ -326,6 +329,10 @@ export function App() {
 
         {activeTab === "repository" && (
           <RepositoryTab cacheStatus={cacheStatus} />
+        )}
+
+        {activeTab === "replay" && (
+          <ReplayTab playbooks={playbooks} />
         )}
 
         {activeTab === "playbooks" && (

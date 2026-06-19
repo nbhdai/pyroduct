@@ -133,6 +133,7 @@ async fn test_daemon_control_protocol() {
         input_dir: Some(working_dir.join("input_a")),
         output_dir: Some(working_dir.join("output_a")),
         pinned_version: None,
+        configurations: None,
     });
     let resp = client.request(req).await.unwrap();
     match resp {
@@ -149,6 +150,7 @@ async fn test_daemon_control_protocol() {
         input_dir: Some(working_dir.join("input_b")),
         output_dir: Some(working_dir.join("output_b")),
         pinned_version: None,
+        configurations: None,
     });
     let resp = client.request(req).await.unwrap();
     match resp {

@@ -484,6 +484,83 @@ impl CacheManager {
             })
     }
 
+    /// Load and parse the `InterfaceSpec` for a capability from the cache.
+    pub async fn get_capability_interface(
+        &self,
+        author: &str,
+        name: &str,
+        version: &str,
+    ) -> Result<pyro_spec::InterfaceSpec<'static>, CacheError> {
+        let json = self.capability_interface_spec(author, name, version).await?;
+        serde_json::from_str(&json).map_err(|e| CacheError::Io {
+            context: format!(
+                "Failed to parse interface.json for {}/{}/{}",
+                author, name, version
+            ),
+            error: std::io::Error::new(std::io::ErrorKind::InvalidData, e),
+        })
+    }
+
+    /// Validate a `ConfiguredCapability` against the cached `InterfaceSpec`.
+    ///
+    /// Checks that every class name in the configuration exists in the interface,
+    /// and that config field names (if provided) match the class's config schema.
+    pub async fn validate_configuration(
+        &self,
+        cap: &crate::cargo::ConfiguredCapability,
+    ) -> Result<(), crate::artifacts::ConfigValidationError> {
+        use crate::artifacts::ConfigValidationError;
+
+        let interface = self
+            .get_capability_interface(&cap.author, &cap.package, &cap.version)
+            .await
+            .map_err(|e| ConfigValidationError::CacheError(e.to_string()))?;
+
+        let available_classes: Vec<String> = interface
+            .classes
+            .iter()
+            .map(|c| c.name.to_string())
+            .collect();
+
+        for (class_name, config_value) in &cap.configuration.classes {
+            let class_spec = interface
+                .classes
+                .iter()
+                .find(|c| c.name.as_ref() == class_name)
+                .ok_or_else(|| ConfigValidationError::UnknownClass {
+                    capability: cap.package.clone(),
+                    class: class_name.clone(),
+                    available: available_classes.clone(),
+                })?;
+
+            // If the class defines a config schema and the user provided a JSON object,
+            // validate that the top-level keys match schema field names.
+            if let (Some(schema), Some(Some(json_val))) =
+                (&class_spec.config, config_value.as_ref().map(Some).or(Some(None)))
+            {
+                if let Some(obj) = json_val.as_object() {
+                    let schema_fields: Vec<String> = schema
+                        .fields()
+                        .iter()
+                        .map(|f| f.name.to_string())
+                        .collect();
+                    for key in obj.keys() {
+                        if !schema_fields.iter().any(|f| f == key) {
+                            return Err(ConfigValidationError::UnknownConfigField {
+                                capability: cap.package.clone(),
+                                class: class_name.clone(),
+                                field: key.clone(),
+                                available: schema_fields.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn capability_binary_path(
         &self,
         author: &str,
