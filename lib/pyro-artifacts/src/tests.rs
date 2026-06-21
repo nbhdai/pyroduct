@@ -97,7 +97,7 @@ pub fn test_config() -> PyroductConfig {
 async fn ship_httpc_capability_to_cache() {
     let dir = TempDir::new().unwrap();
     let cache = Arc::new(
-        CacheManager::new(dir.path(), None, "anon".to_string())
+        CacheManager::new(dir.path(), "anon".to_string())
             .await
             .unwrap(),
     );
@@ -124,7 +124,6 @@ async fn ship_httpc_capability_to_cache() {
 
     let iface_dir = cache.interface_dir("nbhdai", "httpc", "0.1.0");
     assert!(iface_dir.join("Capability.toml").exists());
-    assert!(iface_dir.join("Cargo.toml").exists());
     assert!(iface_dir.join("src/lib.rs").exists());
     assert!(iface_dir.join("interface.json").exists());
 
@@ -142,7 +141,7 @@ async fn test_anon_compile_with_interface() {
     let config = test_config();
 
     let cache = Arc::new(
-        CacheManager::new(dir.path(), config.pyroduct.clone(), "anon".to_string())
+        CacheManager::new(dir.path(), "anon".to_string())
             .await
             .unwrap(),
     );
@@ -192,7 +191,7 @@ async fn test_anon_compile_with_interface() {
 async fn test_module_wasm_exact_match() {
     let dir = TempDir::new().unwrap();
     let cache = Arc::new(
-        CacheManager::new(dir.path(), None, "anon".to_string())
+        CacheManager::new(dir.path(), "anon".to_string())
             .await
             .unwrap(),
     );
@@ -235,7 +234,7 @@ async fn test_module_wasm_exact_match() {
 async fn test_capability_lib_exact_match() {
     let dir = TempDir::new().unwrap();
     let cache = Arc::new(
-        CacheManager::new(dir.path(), None, "anon".to_string())
+        CacheManager::new(dir.path(), "anon".to_string())
             .await
             .unwrap(),
     );
@@ -277,7 +276,7 @@ async fn test_load_playbook() {
     let config = test_config();
 
     let cache = Arc::new(
-        CacheManager::new(dir.path(), config.pyroduct.clone(), "anon".to_string())
+        CacheManager::new(dir.path(), "anon".to_string())
             .await
             .unwrap(),
     );

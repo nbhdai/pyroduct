@@ -124,7 +124,7 @@ impl PyroDaemon {
         // PYRODUCT may not survive the full process chain
         // (process-compose → bacon → cargo → daemon binary).
         let config_path = working_dir.join("config.toml");
-        let (author, pyroduct_dep) = match tokio::fs::read_to_string(&config_path).await {
+        let author = match tokio::fs::read_to_string(&config_path).await {
             Ok(content) => {
                 match toml::from_str::<pyro_artifacts::cache::PyroductConfig>(&content) {
                     Ok(cfg) => {
@@ -133,7 +133,7 @@ impl PyroDaemon {
                             author = %cfg.author,
                             "Loaded pyroduct config from working directory"
                         );
-                        (cfg.author, cfg.pyroduct)
+                        cfg.author
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -141,7 +141,7 @@ impl PyroDaemon {
                             error = ?e,
                             "Failed to parse config.toml, using defaults"
                         );
-                        ("anon".to_string(), None)
+                        "anon".to_string()
                     }
                 }
             }
@@ -150,12 +150,12 @@ impl PyroDaemon {
                     config_path = %config_path.display(),
                     "No config.toml found in working directory, using defaults"
                 );
-                ("anon".to_string(), None)
+                "anon".to_string()
             }
         };
 
         let cache_manager = Arc::new(
-            CacheManager::new(&working_dir, pyroduct_dep, author)
+            CacheManager::new(&working_dir, author)
                 .await
                 .expect("Failed to create CacheManager from working directory"),
         );

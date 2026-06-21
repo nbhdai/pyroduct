@@ -326,10 +326,24 @@ name = "mod_slot"
         for (dep_name, dep) in source.dependencies().dependencies.iter() {
             manifest.dependencies.insert(dep_name.clone(), dep.clone());
         }
-        for cap in source.dependencies().capabilities.iter() {
-            let path = self
-                .cache_manager
-                .interface_dir(&cap.author, &cap.package, &cap.version)
+        // Copy interfaces into the build slot with the builder's pyroduct dep
+        let build_ifaces_dir = build_dir.join(".pyro_interfaces");
+        let caps = source.dependencies().capabilities.clone();
+        self.cache_manager
+            .prepare_build_interfaces(&build_ifaces_dir, &self.pyroduct_dep, &caps)
+            .await
+            .map_err(|e| {
+                let err =
+                    BuildError::Manifest(format!("Failed to prepare build interfaces: {}", e));
+                tracing::error!(error = ?err);
+                err
+            })?;
+
+        for cap in caps.iter() {
+            let path: String = build_ifaces_dir
+                .join(&cap.author)
+                .join(&cap.package)
+                .join(&cap.version)
                 .to_string_lossy()
                 .into();
             let dep = Dependency::Detailed(Box::new(cargo_toml::DependencyDetail {

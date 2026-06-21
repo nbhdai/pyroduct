@@ -42,10 +42,10 @@ impl ProjectManifest {
         }
     }
 
-    pub fn to_cargo_manifest(self, cache_manager: Option<&crate::cache::CacheManager>) -> Manifest {
+    pub fn to_cargo_manifest(self, interfaces_dir: Option<&Path>) -> Manifest {
         match self {
             ProjectManifest::Capability(c) => c.to_capability_manifest(),
-            ProjectManifest::Module(m) => m.to_cargo(cache_manager),
+            ProjectManifest::Module(m) => m.to_cargo(interfaces_dir),
         }
     }
 
@@ -326,13 +326,13 @@ impl CapabilityManifest {
 }
 
 impl ModuleManifest {
-    pub fn to_cargo(self, cache_manager: Option<&crate::cache::CacheManager>) -> Manifest {
+    pub fn to_cargo(self, interfaces_dir: Option<&Path>) -> Manifest {
         let mut final_deps = BTreeMap::new();
         let mut pyro_dep = self.pyroduct.clone();
         pyro_dep.detail_mut().features.push("module".to_string());
         final_deps.insert("pyroduct".to_string(), pyro_dep);
         final_deps.extend(self.dependencies.clone());
-        self.augment_deps(&mut final_deps, &self.capabilities, cache_manager);
+        self.augment_deps(&mut final_deps, &self.capabilities, interfaces_dir);
 
         #[allow(deprecated)]
         Manifest {
@@ -360,11 +360,13 @@ impl ModuleManifest {
         &self,
         target_map: &mut DepsSet,
         capabilities: &BTreeMap<String, ConfiguredCapability>,
-        cache_manager: Option<&crate::cache::CacheManager>,
+        interfaces_dir: Option<&Path>,
     ) {
         for (name, cap) in capabilities.iter() {
-            let path = if let Some(cm) = cache_manager {
-                cm.interface_dir(&cap.author, &cap.package, &cap.version)
+            let path: String = if let Some(dir) = interfaces_dir {
+                dir.join(&cap.author)
+                    .join(&cap.package)
+                    .join(&cap.version)
                     .to_string_lossy()
                     .into()
             } else {

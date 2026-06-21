@@ -69,6 +69,9 @@ pub struct Environment {
     pub target_dir: PathBuf,
     pub manifest: crate::cargo::ProjectManifest,
     pub cache_manager: Arc<CacheManager>,
+    /// Temporary directory containing copied interfaces with the module's
+    /// pyroduct dep injected.  Cleaned up on drop.
+    build_interfaces: Option<PathBuf>,
 }
 
 impl Environment {
@@ -76,15 +79,41 @@ impl Environment {
     #[tracing::instrument(skip(root, cache_manager), fields(root = %root.display()))]
     pub async fn new(root: PathBuf, cache_manager: Arc<CacheManager>) -> EnvResult<Self> {
         tracing::debug!("Creating Environment instance");
+        let root = tokio::fs::canonicalize(&root).await.unwrap_or(root);
         let res = async {
             let manifest = Self::load_manifest(&root).await?;
-            Self::ensure_cargo_toml(&root, &manifest, &cache_manager).await?;
+
+            // For modules, copy interfaces from cache into a build-local dir
+            // and generate Cargo.toml with the module's own pyroduct dep.
+            let build_interfaces = if let ProjectManifest::Module(m) = &manifest {
+                let dir = root.join(".pyro_interfaces");
+                let caps: Vec<crate::cargo::CapabilityIdent> = m
+                    .capabilities
+                    .values()
+                    .map(|c| crate::cargo::CapabilityIdent {
+                        author: c.author.clone(),
+                        package: c.package.clone(),
+                        version: c.version.clone(),
+                    })
+                    .collect();
+                let mut pyroduct_dep = m.pyroduct.clone();
+                crate::cache::resolve_dependency_path(&mut pyroduct_dep, &root);
+                cache_manager
+                    .prepare_build_interfaces(&dir, &pyroduct_dep, &caps)
+                    .await?;
+                Some(dir)
+            } else {
+                None
+            };
+
+            Self::ensure_cargo_toml(&root, &manifest, build_interfaces.as_deref()).await?;
             let target_dir = Self::get_target_dir(&root).await?;
             Ok(Self {
                 root,
                 target_dir,
                 manifest,
                 cache_manager,
+                build_interfaces,
             })
         }
         .await;
@@ -98,11 +127,11 @@ impl Environment {
     }
 
     /// Write Cargo.toml from Module.toml or Capability.toml if it doesn't exist
-    #[tracing::instrument(skip(root, manifest, cache_manager), fields(root = %root.display()))]
+    #[tracing::instrument(skip(root, manifest, interfaces_dir), fields(root = %root.display()))]
     async fn ensure_cargo_toml(
         root: &Path,
         manifest: &crate::cargo::ProjectManifest,
-        cache_manager: &CacheManager,
+        interfaces_dir: Option<&Path>,
     ) -> EnvResult<()> {
         let cargo_toml_path = root.join("Cargo.toml");
         if cargo_toml_path.exists() {
@@ -110,8 +139,9 @@ impl Environment {
             return Ok(());
         }
         tracing::debug!("Cargo.toml not found, generating from Pyroduct manifest");
+        let relative_interfaces_dir = interfaces_dir.map(|d| d.strip_prefix(root).unwrap_or(d));
         let contents =
-            toml::to_string_pretty(&manifest.clone().to_cargo_manifest(Some(cache_manager)))
+            toml::to_string_pretty(&manifest.clone().to_cargo_manifest(relative_interfaces_dir))
                 .map_err(|e| {
                     let err = EnvironmentError::ParseManifest(e.to_string());
                     tracing::error!(error = ?err, "Failed to serialize generated Cargo.toml");
@@ -829,6 +859,14 @@ impl Environment {
             }
         };
         res
+    }
+}
+
+impl Drop for Environment {
+    fn drop(&mut self) {
+        if let Some(ref dir) = self.build_interfaces {
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 }
 

@@ -63,17 +63,12 @@ fn default_num_workers() -> usize {
 
 pub struct CacheManager {
     pub root: PathBuf,
-    pub pyroduct: Option<Dependency>,
     pub author: String,
 }
 
 impl CacheManager {
     #[tracing::instrument(skip(root), fields(root = %root.display()))]
-    pub async fn new(
-        root: &Path,
-        pyroduct: Option<Dependency>,
-        author: String,
-    ) -> Result<Self, CacheError> {
+    pub async fn new(root: &Path, author: String) -> Result<Self, CacheError> {
         tracing::debug!("Creating CacheManager instance");
         if !root.exists() {
             fs::create_dir_all(&root).await.map_err(|e| {
@@ -86,16 +81,8 @@ impl CacheManager {
             })?;
         }
 
-        let pyroduct = if let Some(mut dep) = pyroduct {
-            crate::cache::resolve_dependency_path(&mut dep, root);
-            Some(dep.clone())
-        } else {
-            None
-        };
-
         let manager = Self {
             root: root.to_path_buf(),
-            pyroduct,
             author,
         };
 
@@ -161,7 +148,7 @@ impl CacheManager {
             err
         })?;
 
-        Self::new(&root, config.pyroduct, config.author).await
+        Self::new(&root, config.author).await
     }
 
     #[tracing::instrument(skip(self))]
@@ -746,28 +733,6 @@ impl CacheManager {
                             context: format!("Failed to create  {}", path.display()),
                             error: e,
                         })?;
-                    let mut manifest = interface.manifest.clone();
-                    if let Some(pyroduct) = &self.pyroduct {
-                        manifest.pyroduct = pyroduct.clone();
-                    }
-                    let cargo_path = path.join("Cargo.toml");
-                    let cargo = manifest.clone().to_interface_manifest();
-                    let cargo = toml::to_string_pretty(&cargo).map_err(|e| CacheError::Io {
-                        context: format!(
-                            "Failed to serialize Cargo.toml to {}",
-                            cargo_path.display()
-                        ),
-                        error: io::Error::new(io::ErrorKind::InvalidData, e),
-                    })?;
-                    fs::write(&cargo_path, cargo)
-                        .await
-                        .map_err(|e| CacheError::Io {
-                            context: format!(
-                                "Failed to write Cargo.toml to {}",
-                                cargo_path.display()
-                            ),
-                            error: e,
-                        })?;
                     interface
                         .write_to_directory(&path)
                         .await
@@ -910,7 +875,112 @@ impl CacheManager {
             playbook.interconnect,
         )
     }
+
+    /// Copy interface directories from the cache into `build_dir` and generate
+    /// a `Cargo.toml` for each with the given `pyroduct` dependency.  The
+    /// returned path is `build_dir` itself; interfaces live at
+    /// `<build_dir>/<author>/<package>/<version>/`.
+    pub async fn prepare_build_interfaces(
+        &self,
+        build_dir: &Path,
+        pyroduct: &Dependency,
+        capabilities: &[crate::cargo::CapabilityIdent],
+    ) -> Result<PathBuf, CacheError> {
+        for cap in capabilities {
+            let cache_path = self.interface_dir(&cap.author, &cap.package, &cap.version);
+            let dest = build_dir
+                .join(&cap.author)
+                .join(&cap.package)
+                .join(&cap.version);
+            fs::create_dir_all(&dest)
+                .await
+                .map_err(|e| CacheError::Io {
+                    context: format!("Failed to create build interface dir {}", dest.display()),
+                    error: e,
+                })?;
+
+            // Copy Capability.toml, src/lib.rs, interface.json
+            for name in &["Capability.toml", "interface.json"] {
+                let src = cache_path.join(name);
+                if src.exists() {
+                    fs::copy(&src, dest.join(name))
+                        .await
+                        .map_err(|e| CacheError::Io {
+                            context: format!("Failed to copy {} to build dir", name),
+                            error: e,
+                        })?;
+                }
+            }
+            let src_dir = cache_path.join("src");
+            if src_dir.exists() {
+                let dest_src = dest.join("src");
+                fs::create_dir_all(&dest_src)
+                    .await
+                    .map_err(|e| CacheError::Io {
+                        context: "Failed to create build interface src dir".to_string(),
+                        error: e,
+                    })?;
+                let lib_rs = src_dir.join("lib.rs");
+                if lib_rs.exists() {
+                    fs::copy(&lib_rs, dest_src.join("lib.rs"))
+                        .await
+                        .map_err(|e| CacheError::Io {
+                            context: "Failed to copy src/lib.rs to build dir".to_string(),
+                            error: e,
+                        })?;
+                }
+            }
+
+            // Read the cached Capability.toml and generate Cargo.toml with the
+            // module's pyroduct dependency.
+            let cap_toml_path = dest.join("Capability.toml");
+            let cap_toml_str =
+                fs::read_to_string(&cap_toml_path)
+                    .await
+                    .map_err(|e| CacheError::Io {
+                        context: format!(
+                            "Failed to read Capability.toml from {}",
+                            cap_toml_path.display()
+                        ),
+                        error: e,
+                    })?;
+            let mut manifest: crate::cargo::CapabilityManifest =
+                toml::from_str(&cap_toml_str).map_err(|e| CacheError::Io {
+                    context: format!(
+                        "Failed to parse Capability.toml at {}",
+                        cap_toml_path.display()
+                    ),
+                    error: io::Error::new(io::ErrorKind::InvalidData, e),
+                })?;
+            manifest.pyroduct = pyroduct.clone();
+            let cargo = manifest.to_interface_manifest();
+            let cargo_str = toml::to_string_pretty(&cargo).map_err(|e| CacheError::Io {
+                context: "Failed to serialize build interface Cargo.toml".to_string(),
+                error: io::Error::new(io::ErrorKind::InvalidData, e),
+            })?;
+            fs::write(dest.join("Cargo.toml"), cargo_str)
+                .await
+                .map_err(|e| CacheError::Io {
+                    context: format!(
+                        "Failed to write build interface Cargo.toml to {}",
+                        dest.display()
+                    ),
+                    error: e,
+                })?;
+        }
+
+        Ok(build_dir.to_path_buf())
+    }
+
+    /// Remove the build interfaces directory created by
+    /// [`Self::prepare_build_interfaces`].
+    pub async fn cleanup_build_interfaces(dir: &Path) {
+        if dir.exists() {
+            let _ = fs::remove_dir_all(dir).await;
+        }
+    }
 }
+
 
 pub(crate) fn resolve_dependency_path(dep: &mut Dependency, base: &std::path::Path) {
     if let Dependency::Detailed(detail) = dep

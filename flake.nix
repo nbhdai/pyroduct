@@ -121,17 +121,6 @@
           }
         );
 
-        pyro-gui = craneLibNative.buildPackage (
-          commonPyroArgs
-          // {
-            pname = "pyro-gui";
-            version = "0.2.3";
-            cargoArtifacts = pyroductDeps;
-            doCheck = false;
-            cargoExtraArgs = "-p pyro-gui";
-          }
-        );
-
         installTests = import ./nix/install-tests.nix { inherit pkgs pyroduct; };
         moduleTests = import ./nix/module-tests.nix { inherit pkgs pyroduct pyro-daemon; };
         miriTests = import ./nix/miri-tests.nix {
@@ -228,7 +217,6 @@
               wasmToolchain
               pyroduct
               pyro-daemon
-              pyro-gui
               installTests.bin
               miriTests.bin
               rustTests.bin
