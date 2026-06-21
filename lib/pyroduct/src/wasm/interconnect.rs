@@ -10,6 +10,7 @@ use crate::format::value::PyroRow;
 static INTERCONNECT_SPECS: Mutex<Option<HashMap<String, ModuleFunc<'static>>>> = Mutex::new(None);
 
 #[cfg(target_arch = "wasm32")]
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn call_interconnect(name_ptr: *const u8, name_len: usize, input_ptr: *const u8) -> *mut u8;
 }
