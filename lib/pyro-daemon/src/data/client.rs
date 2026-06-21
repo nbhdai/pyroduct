@@ -187,6 +187,26 @@ impl DaemonClient {
         }
     }
 
+    pub async fn start_parallel_replay(
+        &self,
+        playbook_name: String,
+        folder_path: String,
+        concurrency: usize,
+    ) -> Result<usize> {
+        let req = DaemonRequest::Data(DataRequest::StartParallelReplay {
+            playbook_name,
+            folder_path,
+            concurrency,
+        });
+        match self.request(req).await? {
+            DaemonResponse::Data(DataResponse::ReplayStarted { total_rows }) => Ok(total_rows),
+            DaemonResponse::Data(DataResponse::Error { message }) => {
+                pyroduct::bail!("{}", message)
+            }
+            _ => pyroduct::bail!("Unexpected response from daemon"),
+        }
+    }
+
     pub async fn get_replay_status(
         &self,
         playbook_name: String,

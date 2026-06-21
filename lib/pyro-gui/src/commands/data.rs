@@ -280,6 +280,33 @@ pub async fn start_folder_replay(
 }
 
 #[tauri::command]
+pub async fn start_parallel_folder_replay(
+    playbook_name: String,
+    folder_path: String,
+    concurrency: usize,
+) -> Result<serde_json::Value, String> {
+    info!(
+        "Tauri command: start_parallel_folder_replay for playbook='{}', folder='{}', concurrency={}",
+        playbook_name, folder_path, concurrency
+    );
+    let client = super::connect_to_active_daemon().await?;
+
+    match client
+        .start_parallel_replay(playbook_name, folder_path, concurrency)
+        .await
+    {
+        Ok(total_rows) => {
+            info!("Parallel replay started with {} total rows", total_rows);
+            Ok(serde_json::json!({ "total_rows": total_rows }))
+        }
+        Err(e) => {
+            error!("Failed to start parallel replay: {:?}", e);
+            Err(e.to_string())
+        }
+    }
+}
+
+#[tauri::command]
 pub async fn get_replay_status(
     playbook_name: String,
 ) -> Result<serde_json::Value, String> {

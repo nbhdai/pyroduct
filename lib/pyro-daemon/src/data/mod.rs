@@ -42,6 +42,11 @@ pub enum DataRequest {
         interval_ms: u64,
         wiggle_ms: u64,
     },
+    StartParallelReplay {
+        playbook_name: String,
+        folder_path: String,
+        concurrency: usize,
+    },
     GetReplayStatus {
         playbook_name: String,
     },
@@ -158,6 +163,19 @@ impl DaemonDataManager {
                 Ok(total_rows) => DataResponse::ReplayStarted { total_rows },
                 Err(e) => DataResponse::Error {
                     message: format!("Failed to start replay: {:?}", e),
+                },
+            },
+            DataRequest::StartParallelReplay {
+                playbook_name,
+                folder_path,
+                concurrency,
+            } => match self
+                .start_parallel_replay(&playbook_name, &folder_path, concurrency)
+                .await
+            {
+                Ok(total_rows) => DataResponse::ReplayStarted { total_rows },
+                Err(e) => DataResponse::Error {
+                    message: format!("Failed to start parallel replay: {:?}", e),
                 },
             },
             DataRequest::GetReplayStatus { playbook_name } => {

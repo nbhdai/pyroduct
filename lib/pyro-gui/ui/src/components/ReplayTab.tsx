@@ -19,8 +19,10 @@ interface ReplayTabProps {
 
 export function ReplayTab({ playbooks, playbookName, onSuccess }: ReplayTabProps) {
   const [folderPath, setFolderPath] = useState("");
+  const [mode, setMode] = useState<"timed" | "parallel">("timed");
   const [intervalMs, setIntervalMs] = useState(100);
   const [wiggleMs, setWiggleMs] = useState(20);
+  const [concurrency, setConcurrency] = useState(4);
   const [starting, setStarting] = useState(false);
   const [status, setStatus] = useState<ReplayStatus | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -87,12 +89,18 @@ export function ReplayTab({ playbooks, playbookName, onSuccess }: ReplayTabProps
     setStarting(true);
     setErrorMsg(null);
     try {
-      const res = (await invoke("start_folder_replay", {
-        playbookName: selectedPlaybookName,
-        folderPath: folderPath.trim(),
-        intervalMs,
-        wiggleMs,
-      })) as { total_rows: number };
+      let res = mode === "parallel"
+        ? ((await invoke("start_parallel_folder_replay", {
+            playbookName: selectedPlaybookName,
+            folderPath: folderPath.trim(),
+            concurrency,
+          })) as { total_rows: number })
+        : ((await invoke("start_folder_replay", {
+            playbookName: selectedPlaybookName,
+            folderPath: folderPath.trim(),
+            intervalMs,
+            wiggleMs,
+          })) as { total_rows: number });
       setStatus({
         running: true,
         total_rows: res.total_rows,
@@ -177,9 +185,10 @@ export function ReplayTab({ playbooks, playbookName, onSuccess }: ReplayTabProps
         className="text-muted text-sm mt-5 mb-20"
         style={{ lineHeight: "1.5" }}
       >
-        Replay data files from a folder to this playbook at a fixed rate with
-        optional random jitter. Supports CSV, JSON, JSONL, Parquet, and Arrow
-        IPC files. Files are processed in alphabetical order.
+        Replay data files from a folder to this playbook. Choose <strong>Timed</strong> mode
+        for rate-controlled replay with optional jitter, or <strong>Parallel</strong> mode
+        to process as fast as possible with K concurrent jobs. Supports CSV, JSON,
+        JSONL, Parquet, and Arrow IPC files. Files are processed in alphabetical order.
       </p>
 
       {errorMsg && (
@@ -243,6 +252,55 @@ export function ReplayTab({ playbooks, playbookName, onSuccess }: ReplayTabProps
             </select>
           </div>
         )}
+
+        {/* Mode Toggle */}
+        <div>
+          <label
+            style={{
+              display: "block",
+              marginBottom: "6px",
+              fontWeight: 600,
+              fontSize: "13px",
+            }}
+          >
+            Replay Mode
+          </label>
+          <div style={{ display: "flex", gap: "0", borderRadius: "6px", overflow: "hidden", border: "1px solid var(--bg-card-border)", width: "fit-content" }}>
+            <button
+              onClick={() => setMode("timed")}
+              disabled={isRunning || starting}
+              style={{
+                padding: "6px 16px",
+                fontSize: "12px",
+                fontWeight: 600,
+                border: "none",
+                cursor: isRunning || starting ? "not-allowed" : "pointer",
+                background: mode === "timed" ? "var(--color-primary)" : "var(--bg-input)",
+                color: mode === "timed" ? "#fff" : "var(--text-muted)",
+                transition: "all 0.15s ease",
+              }}
+            >
+              ⏱ Timed
+            </button>
+            <button
+              onClick={() => setMode("parallel")}
+              disabled={isRunning || starting}
+              style={{
+                padding: "6px 16px",
+                fontSize: "12px",
+                fontWeight: 600,
+                border: "none",
+                borderLeft: "1px solid var(--bg-card-border)",
+                cursor: isRunning || starting ? "not-allowed" : "pointer",
+                background: mode === "parallel" ? "var(--color-primary)" : "var(--bg-input)",
+                color: mode === "parallel" ? "#fff" : "var(--text-muted)",
+                transition: "all 0.15s ease",
+              }}
+            >
+              ⚡ Parallel
+            </button>
+          </div>
+        </div>
         {/* Folder Path */}
         <div>
           <label
@@ -277,11 +335,77 @@ export function ReplayTab({ playbooks, playbookName, onSuccess }: ReplayTabProps
           />
         </div>
 
-        {/* Rate Controls */}
-        <div style={{ display: "flex", gap: "20px" }}>
-          <div style={{ flex: 1 }}>
+        {/* Rate Controls - shown in timed mode */}
+        {mode === "timed" && (
+          <div style={{ display: "flex", gap: "20px" }}>
+            <div style={{ flex: 1 }}>
+              <label
+                htmlFor="replay-interval"
+                style={{
+                  display: "block",
+                  marginBottom: "6px",
+                  fontWeight: 600,
+                  fontSize: "13px",
+                }}
+              >
+                Interval{" "}
+                <span
+                  className="text-muted"
+                  style={{ fontSize: "11px", fontWeight: "normal" }}
+                >
+                  (ms between rows)
+                </span>
+              </label>
+              <input
+                id="replay-interval"
+                type="number"
+                min={0}
+                value={intervalMs}
+                onChange={(e) =>
+                  setIntervalMs(Math.max(0, parseInt(e.target.value) || 0))
+                }
+                disabled={isRunning || starting}
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label
+                htmlFor="replay-wiggle"
+                style={{
+                  display: "block",
+                  marginBottom: "6px",
+                  fontWeight: 600,
+                  fontSize: "13px",
+                }}
+              >
+                Wiggle{" "}
+                <span
+                  className="text-muted"
+                  style={{ fontSize: "11px", fontWeight: "normal" }}
+                >
+                  (± random jitter in ms)
+                </span>
+              </label>
+              <input
+                id="replay-wiggle"
+                type="number"
+                min={0}
+                value={wiggleMs}
+                onChange={(e) =>
+                  setWiggleMs(Math.max(0, parseInt(e.target.value) || 0))
+                }
+                disabled={isRunning || starting}
+                style={{ width: "100%" }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Concurrency Control - shown in parallel mode */}
+        {mode === "parallel" && (
+          <div>
             <label
-              htmlFor="replay-interval"
+              htmlFor="replay-concurrency"
               style={{
                 display: "block",
                 marginBottom: "6px",
@@ -289,57 +413,28 @@ export function ReplayTab({ playbooks, playbookName, onSuccess }: ReplayTabProps
                 fontSize: "13px",
               }}
             >
-              Interval{" "}
+              Concurrency{" "}
               <span
                 className="text-muted"
                 style={{ fontSize: "11px", fontWeight: "normal" }}
               >
-                (ms between rows)
+                (number of parallel jobs)
               </span>
             </label>
             <input
-              id="replay-interval"
+              id="replay-concurrency"
               type="number"
-              min={0}
-              value={intervalMs}
+              min={1}
+              max={256}
+              value={concurrency}
               onChange={(e) =>
-                setIntervalMs(Math.max(0, parseInt(e.target.value) || 0))
+                setConcurrency(Math.max(1, Math.min(256, parseInt(e.target.value) || 1)))
               }
               disabled={isRunning || starting}
-              style={{ width: "100%" }}
+              style={{ width: "120px" }}
             />
           </div>
-          <div style={{ flex: 1 }}>
-            <label
-              htmlFor="replay-wiggle"
-              style={{
-                display: "block",
-                marginBottom: "6px",
-                fontWeight: 600,
-                fontSize: "13px",
-              }}
-            >
-              Wiggle{" "}
-              <span
-                className="text-muted"
-                style={{ fontSize: "11px", fontWeight: "normal" }}
-              >
-                (± random jitter in ms)
-              </span>
-            </label>
-            <input
-              id="replay-wiggle"
-              type="number"
-              min={0}
-              value={wiggleMs}
-              onChange={(e) =>
-                setWiggleMs(Math.max(0, parseInt(e.target.value) || 0))
-              }
-              disabled={isRunning || starting}
-              style={{ width: "100%" }}
-            />
-          </div>
-        </div>
+        )}
       </div>
 
       {/* Action Buttons */}
@@ -370,7 +465,7 @@ export function ReplayTab({ playbooks, playbookName, onSuccess }: ReplayTabProps
           </button>
         )}
 
-        {isRunning && (
+        {isRunning && mode === "timed" && (
           <span
             style={{
               fontSize: "13px",

@@ -102,6 +102,7 @@ fn main() {
             commands::list_sessions,
             commands::set_http_address,
             commands::start_folder_replay,
+            commands::start_parallel_folder_replay,
             commands::get_replay_status,
             commands::stop_folder_replay
         ])

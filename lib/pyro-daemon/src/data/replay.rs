@@ -34,13 +34,20 @@ fn is_supported_file(path: &Path) -> bool {
 }
 
 impl DaemonDataManager {
-    pub async fn start_replay(
+    /// Shared setup: validates playbook, scans files, parses batches, creates handle.
+    /// Returns (server, spec, file_batches, total_rows, status, cancel_rx).
+    async fn prepare_replay(
         &self,
         playbook_name: &str,
         folder_path: &str,
-        interval_ms: u64,
-        wiggle_ms: u64,
-    ) -> Result<usize> {
+    ) -> Result<(
+        pyroduct::pipeline::PipelineServer,
+        std::sync::Arc<pyro_artifacts::artifacts::PlaybookSpec>,
+        Vec<(String, Vec<pyro_file::ArrowIpc>)>,
+        usize,
+        Arc<Mutex<ReplayStatus>>,
+        watch::Receiver<bool>,
+    )> {
         // 1. Check if a replay is already running for this playbook
         {
             let replays = self.replays.lock().await;
@@ -146,8 +153,21 @@ impl DaemonDataManager {
             replays.insert(playbook_name.to_string(), handle);
         }
 
-        // 6. Spawn background replay task
         let spec = server.spec();
+        Ok((server, spec, file_batches, total_rows, status, cancel_rx))
+    }
+
+    /// Start a timed replay: one row at a time with interval + wiggle delay.
+    pub async fn start_replay(
+        &self,
+        playbook_name: &str,
+        folder_path: &str,
+        interval_ms: u64,
+        wiggle_ms: u64,
+    ) -> Result<usize> {
+        let (server, spec, file_batches, total_rows, status, cancel_rx) =
+            self.prepare_replay(playbook_name, folder_path).await?;
+
         let playbook_name_owned = playbook_name.to_string();
         let replays_ref = self.replays.clone();
 
@@ -169,7 +189,7 @@ impl DaemonDataManager {
                 s.running = false;
             }
 
-            if let Err(e) = result {
+            if let Err(e) = &result {
                 tracing::error!(
                     playbook = %playbook_name_owned,
                     "Replay task failed: {:?}",
@@ -185,7 +205,72 @@ impl DaemonDataManager {
             // Clean up handle after a delay so status can still be polled
             tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
             let mut replays = replays_ref.lock().await;
-            // Only remove if it's still the same (not replaced by a new replay)
+            if let Some(h) = replays.get(&playbook_name_owned) {
+                let s = h.status.lock().await;
+                if !s.running {
+                    drop(s);
+                    replays.remove(&playbook_name_owned);
+                }
+            }
+        });
+
+        Ok(total_rows)
+    }
+
+    /// Start a parallel replay: process rows as fast as possible with K concurrent jobs.
+    pub async fn start_parallel_replay(
+        &self,
+        playbook_name: &str,
+        folder_path: &str,
+        concurrency: usize,
+    ) -> Result<usize> {
+        let concurrency = concurrency.max(1);
+        let (server, spec, file_batches, total_rows, status, cancel_rx) =
+            self.prepare_replay(playbook_name, folder_path).await?;
+
+        let playbook_name_owned = playbook_name.to_string();
+        let replays_ref = self.replays.clone();
+
+        tracing::info!(
+            playbook = %playbook_name_owned,
+            concurrency = concurrency,
+            "Starting parallel replay with {} concurrent jobs",
+            concurrency
+        );
+
+        tokio::spawn(async move {
+            let result = run_replay_parallel(
+                server,
+                &spec,
+                file_batches,
+                concurrency,
+                status.clone(),
+                cancel_rx,
+            )
+            .await;
+
+            // Mark as finished
+            {
+                let mut s = status.lock().await;
+                s.running = false;
+            }
+
+            if let Err(e) = &result {
+                tracing::error!(
+                    playbook = %playbook_name_owned,
+                    "Parallel replay task failed: {:?}",
+                    e
+                );
+            } else {
+                tracing::info!(
+                    playbook = %playbook_name_owned,
+                    "Parallel replay task completed"
+                );
+            }
+
+            // Clean up handle after a delay so status can still be polled
+            tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+            let mut replays = replays_ref.lock().await;
             if let Some(h) = replays.get(&playbook_name_owned) {
                 let s = h.status.lock().await;
                 if !s.running {
@@ -294,6 +379,110 @@ async fn run_replay_loop(
 
                 if delay > 0 {
                     tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Parallel replay: dispatches rows as fast as possible with at most `concurrency` in flight.
+async fn run_replay_parallel(
+    server: pyroduct::pipeline::PipelineServer,
+    spec: &std::sync::Arc<pyro_artifacts::artifacts::PlaybookSpec>,
+    file_batches: Vec<(String, Vec<pyro_file::ArrowIpc>)>,
+    concurrency: usize,
+    status: Arc<Mutex<ReplayStatus>>,
+    cancel_rx: watch::Receiver<bool>,
+) -> Result<()> {
+    use pyroduct::format::value::arrow::Rowable;
+    use tokio::task::JoinSet;
+
+    let mut join_set: JoinSet<(bool, Option<String>)> = JoinSet::new();
+
+    for (file_name, batches) in file_batches {
+        // Update current file
+        {
+            let mut s = status.lock().await;
+            s.current_file = file_name.clone();
+        }
+
+        for batch_ipc in batches {
+            let batch = batch_ipc.to_batch();
+            for i in 0..batch.num_rows() {
+                // Check cancellation
+                if *cancel_rx.borrow() {
+                    tracing::info!("Replay cancelled by user");
+                    // Wait for in-flight tasks to finish
+                    while let Some(res) = join_set.join_next().await {
+                        if let Ok((success, _)) = res {
+                            let mut s = status.lock().await;
+                            s.rows_completed += 1;
+                            if success {
+                                s.successes += 1;
+                            } else {
+                                s.errors += 1;
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+
+                // Wait if we're at capacity
+                while join_set.len() >= concurrency {
+                    if let Some(res) = join_set.join_next().await {
+                        if let Ok((success, err_msg)) = res {
+                            let mut s = status.lock().await;
+                            s.rows_completed += 1;
+                            if success {
+                                s.successes += 1;
+                            } else {
+                                s.errors += 1;
+                                if let Some(msg) = err_msg {
+                                    tracing::warn!("Parallel replay row failed: {}", msg);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Extract and repair row
+                let pyro_row = batch.row(i).map_err(|e| {
+                    pyroduct::capture!("Row extraction failed at index {}: {:?}", i, e)
+                })?;
+
+                let repaired_row = pyro_row
+                    .project_repair(spec.func.input.fields())
+                    .map_err(|e| {
+                        pyroduct::capture!(
+                            "Failed to repair input according to module spec: {:?}",
+                            e
+                        )
+                    })?;
+
+                let server_clone = server.clone();
+                join_set.spawn(async move {
+                    match server_clone.call(repaired_row).await {
+                        Ok(_) => (true, None),
+                        Err(e) => (false, Some(format!("{:?}", e))),
+                    }
+                });
+            }
+        }
+    }
+
+    // Drain remaining in-flight tasks
+    while let Some(res) = join_set.join_next().await {
+        if let Ok((success, err_msg)) = res {
+            let mut s = status.lock().await;
+            s.rows_completed += 1;
+            if success {
+                s.successes += 1;
+            } else {
+                s.errors += 1;
+                if let Some(msg) = err_msg {
+                    tracing::warn!("Parallel replay row failed: {}", msg);
                 }
             }
         }
