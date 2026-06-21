@@ -20,7 +20,7 @@ async fn test_daemon_callback_rpc_commands() {
     let control_socket = working_dir.join("control");
 
     // Spawn Daemon
-    let daemon = PyroDaemon::new(working_dir.clone());
+    let daemon = PyroDaemon::new(working_dir.clone()).await;
     let daemon_handle = tokio::spawn(async move {
         daemon.run().await.unwrap();
     });

@@ -106,7 +106,14 @@ impl CacheManager {
     pub async fn from_env() -> Result<Self, CacheError> {
         tracing::debug!("Loading CacheManager from environment");
         let root = std::env::var("PYRODUCT")
-            .map(PathBuf::from)
+            .map(|dir| {
+                let path = PathBuf::from(&dir);
+                // Canonicalize to resolve relative paths (e.g. "../test" set by
+                // process-compose / nix dev shells) against the current working
+                // directory.  Fall back to the raw path if canonicalization fails
+                // (e.g. the directory doesn't exist yet).
+                path.canonicalize().unwrap_or(path)
+            })
             .unwrap_or_else(|_| {
                 // Check the standard systemd service cache location (Linux)
                 let system_cache = PathBuf::from("/var/lib/pyro-daemon/cache");

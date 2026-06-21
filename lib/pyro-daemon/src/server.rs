@@ -6,6 +6,8 @@ use pyroduct::format::header::{PyroHeader, PyroHeaderMut};
 use pyroduct::transport::socket::{PyroListener, PyroSocket};
 use tokio::fs;
 
+use std::sync::Arc;
+use pyro_artifacts::cache::CacheManager;
 use crate::capability::CapabilityManager;
 use crate::data::DaemonDataManager;
 use crate::playbook::PlaybooksManager;
@@ -64,9 +66,10 @@ impl PyroDaemon {
             let playbooks_clone = self.playbooks_manager.clone();
             let capability_clone = self.capability_manager.clone();
             let data_clone = self.data_manager.clone();
+            let cache_clone = self.cache_manager.clone();
             tokio::spawn(async move {
                 if let Err(e) =
-                    handle_client(socket, playbooks_clone, capability_clone, data_clone).await
+                    handle_client(socket, playbooks_clone, capability_clone, data_clone, cache_clone).await
                 {
                     tracing::error!("Error handling control client: {:?}", e);
                 }
@@ -80,6 +83,7 @@ async fn handle_client(
     playbooks_manager: std::sync::Arc<PlaybooksManager>,
     capability_manager: CapabilityManager,
     data_manager: DaemonDataManager,
+    cache_manager: Arc<CacheManager>,
 ) -> Result<()> {
     loop {
         let view = match socket.recv().await {
@@ -97,6 +101,7 @@ async fn handle_client(
         let playbooks_manager = playbooks_manager.clone();
         let capability_manager = capability_manager.clone();
         let data_manager = data_manager.clone();
+        let cache_manager = cache_manager.clone();
         let socket = socket.clone();
 
         tokio::spawn(async move {
@@ -124,7 +129,7 @@ async fn handle_client(
                     DaemonResponse::Capability(capability_manager.handle_request(capability_req).await)
                 }
                 DaemonRequest::Cache(cache_req) => {
-                    DaemonResponse::Cache(crate::cache::handle_request(cache_req).await)
+                    DaemonResponse::Cache(crate::cache::handle_request(&cache_manager, cache_req).await)
                 }
                 DaemonRequest::Data(data_req) => {
                     DaemonResponse::Data(data_manager.handle_request(data_req, &socket, Some(mux_id)).await)

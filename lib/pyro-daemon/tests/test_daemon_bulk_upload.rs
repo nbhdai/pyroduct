@@ -51,7 +51,7 @@ async fn test_daemon_bulk_upload() {
     let control_socket = working_dir.join("control");
 
     // Spawn Daemon
-    let daemon = PyroDaemon::new(working_dir.clone());
+    let daemon = PyroDaemon::new(working_dir.clone()).await;
     let daemon_handle = tokio::spawn(async move {
         daemon.run().await.unwrap();
     });

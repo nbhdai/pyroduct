@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
         .unwrap_or_else(PyroDaemon::default_working_dir);
 
     // 3. Handle termination signals for clean shutdown
-    let daemon = PyroDaemon::new(working_dir).with_bind_tcp(args.bind_tcp);
+    let daemon = PyroDaemon::new(working_dir).await.with_bind_tcp(args.bind_tcp);
     let control_socket_clone = daemon.control_socket_path.clone();
 
     tokio::spawn(async move {

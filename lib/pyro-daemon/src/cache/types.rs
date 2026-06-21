@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// Covers every operation exposed by [`pyro_artifacts::cache::CacheManager`]
 /// that is meaningful over a remote connection.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "action", rename_all = "snake_case")]
 pub enum CacheRequest {
     // ── Capabilities ────────────────────────────────────────────────────────
 
@@ -87,7 +87,7 @@ pub enum CacheRequest {
 
 /// Responses sent back by the [`super::CacheServer`].
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "status", rename_all = "snake_case")]
 pub enum CacheResponse {
     /// A list of `(author, name, version)` tuples.
     ArtifactList { items: Vec<(String, String, String)> },

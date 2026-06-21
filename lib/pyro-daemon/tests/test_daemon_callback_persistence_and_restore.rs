@@ -16,7 +16,7 @@ async fn test_daemon_callback_persistence_and_restore() {
     let working_dir = test_dir.path().to_path_buf();
 
     // 1. Spawn PyroDaemon
-    let daemon = PyroDaemon::new(working_dir.clone());
+    let daemon = PyroDaemon::new(working_dir.clone()).await;
     let db = daemon.playbooks_manager.db.clone();
 
     // 2. Add some mock callback mappings directly to the DB to verify persist/restore

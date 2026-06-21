@@ -45,7 +45,7 @@ fn main() {
             let rt = tokio::runtime::Runtime::new()
                 .expect("Failed to create Tokio runtime for embedded daemon");
             rt.block_on(async move {
-                let daemon = pyro_daemon::PyroDaemon::new(daemon_working_dir.clone());
+                let daemon = pyro_daemon::PyroDaemon::new(daemon_working_dir.clone()).await;
                 let socket_path = daemon.control_socket_path.clone();
 
                 // Clean up socket on Ctrl+C

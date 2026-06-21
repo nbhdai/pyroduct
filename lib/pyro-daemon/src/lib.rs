@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Arc;
+
+use pyro_artifacts::cache::CacheManager;
 
 // =============================================================================
 // RPC Message Types
@@ -65,6 +68,7 @@ pub struct PyroDaemon {
     pub playbooks_manager: std::sync::Arc<PlaybooksManager>,
     pub capability_manager: CapabilityManager,
     pub data_manager: DaemonDataManager,
+    pub cache_manager: Arc<CacheManager>,
     pub bind_tcp: Option<String>,
 }
 
@@ -72,7 +76,10 @@ impl PyroDaemon {
     pub fn default_working_dir() -> PathBuf {
         // 1. Explicit env var always wins
         if let Ok(dir) = std::env::var("PYRO_DAEMON_DIR") {
-            return PathBuf::from(dir);
+            let path = PathBuf::from(&dir);
+            // Canonicalize to resolve relative paths (e.g. "../test" from
+            // process-compose) against the current working directory.
+            return path.canonicalize().unwrap_or(path);
         }
 
         // 2. Check the standard systemd service location (Linux)
@@ -102,18 +109,65 @@ impl PyroDaemon {
         home.join(".pyroduct")
     }
 
-    pub fn new(working_dir: PathBuf) -> Self {
+    pub async fn new(working_dir: PathBuf) -> Self {
         let control_socket_path = working_dir.join("control");
         let playbooks_manager = std::sync::Arc::new(PlaybooksManager::new(working_dir.clone()));
         let capability_manager = CapabilityManager::new();
         let data_manager =
             DaemonDataManager::new(working_dir.join("data"), playbooks_manager.clone());
+
+        // Initialise the cache manager from the daemon's working directory.
+        // The working dir doubles as the cache root (it contains config.toml,
+        // capabilities/, modules/, etc.).  We read the local config.toml for
+        // `author` and `pyroduct` settings rather than calling
+        // CacheManager::from_env(), because environment variables like
+        // PYRODUCT may not survive the full process chain
+        // (process-compose → bacon → cargo → daemon binary).
+        let config_path = working_dir.join("config.toml");
+        let (author, pyroduct_dep) = match tokio::fs::read_to_string(&config_path).await {
+            Ok(content) => {
+                match toml::from_str::<pyro_artifacts::cache::PyroductConfig>(&content) {
+                    Ok(cfg) => {
+                        tracing::info!(
+                            config_path = %config_path.display(),
+                            author = %cfg.author,
+                            "Loaded pyroduct config from working directory"
+                        );
+                        (cfg.author, cfg.pyroduct)
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            config_path = %config_path.display(),
+                            error = ?e,
+                            "Failed to parse config.toml, using defaults"
+                        );
+                        ("anon".to_string(), None)
+                    }
+                }
+            }
+            Err(_) => {
+                tracing::warn!(
+                    config_path = %config_path.display(),
+                    "No config.toml found in working directory, using defaults"
+                );
+                ("anon".to_string(), None)
+            }
+        };
+
+        let cache_manager = Arc::new(
+            CacheManager::new(&working_dir, pyroduct_dep, author)
+                .await
+                .expect("Failed to create CacheManager from working directory"),
+        );
+        tracing::info!(cache_root = %cache_manager.root.display(), "CacheManager initialized");
+
         Self {
             working_dir,
             control_socket_path,
             playbooks_manager,
             capability_manager,
             data_manager,
+            cache_manager,
             bind_tcp: None,
         }
     }

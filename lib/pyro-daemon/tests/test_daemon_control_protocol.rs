@@ -20,7 +20,7 @@ async fn test_daemon_control_protocol() {
     let control_socket = working_dir.join("control");
 
     // 1. Spawn PyroDaemon in the background
-    let daemon = PyroDaemon::new(working_dir.clone());
+    let daemon = PyroDaemon::new(working_dir.clone()).await;
 
     let daemon_handle = tokio::spawn(async move {
         daemon.run().await.unwrap();
