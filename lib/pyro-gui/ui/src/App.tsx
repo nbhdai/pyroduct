@@ -187,6 +187,7 @@ export function App() {
       outputDir?: string | null;
       pinnedVersion?: string | null;
       configurations?: any[];
+      numWorkers?: number | null;
     }) => {
       try {
         setStartModalOpen(false);
@@ -203,6 +204,7 @@ export function App() {
           outputDir: params.outputDir || null,
           pinnedVersion: params.pinnedVersion || null,
           configurations: params.configurations || null,
+          numWorkers: params.numWorkers || null,
         })) as string;
 
         addLog(msg, "success");

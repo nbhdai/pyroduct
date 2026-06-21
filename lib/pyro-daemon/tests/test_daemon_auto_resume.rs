@@ -38,6 +38,7 @@ async fn test_daemon_auto_resume() {
         Some(working_dir.join("output")),
         None,
         None,
+        None,
     )
     .await
     .unwrap();

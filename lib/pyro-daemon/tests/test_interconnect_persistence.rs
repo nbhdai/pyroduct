@@ -112,6 +112,7 @@ async fn test_interconnect_persistence() {
         Some(working_dir.join("output")),
         None,
         None,
+        None,
     )
     .await
     .unwrap();

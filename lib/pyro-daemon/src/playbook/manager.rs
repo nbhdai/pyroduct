@@ -54,6 +54,8 @@ pub enum PlaybookRequest {
         pinned_version: Option<String>,
         #[serde(default)]
         configurations: Option<Vec<ConfiguredCapability>>,
+        #[serde(default)]
+        num_workers: Option<usize>,
     },
     Stop {
         name: String,
@@ -167,6 +169,7 @@ impl PlaybooksManager {
                 output_dir,
                 pinned_version,
                 configurations,
+                num_workers,
             } => {
                 tracing::info!(playbook = %name, playbook = ?pipeline_config, "Received Start request for playbook");
                 match self
@@ -179,6 +182,7 @@ impl PlaybooksManager {
                         output_dir,
                         pinned_version,
                         configurations,
+                        num_workers,
                     )
                     .await
                 {
@@ -441,6 +445,7 @@ impl PlaybooksManager {
         output_dir_override: Option<PathBuf>,
         pinned_version: Option<String>,
         configurations: Option<Vec<ConfiguredCapability>>,
+        num_workers: Option<usize>,
     ) -> Result<()> {
         if self.workers.lock().await.contains_key(&name) {
             tracing::warn!(playbook = %name, "Name conflict detected: playbook is already running");
@@ -480,7 +485,7 @@ impl PlaybooksManager {
             wal_capacity: 1000,
             success_log_retention_secs: 3600,
             error_log_retention_secs: 86400 * 7,
-            num_workers: 4,
+            num_workers: num_workers.unwrap_or(4),
             log_dir,
             input_dir,
             output_dir,
@@ -1281,6 +1286,7 @@ impl PlaybooksManager {
                     None,
                     None, // Still not pinned
                     None, // No config overrides for auto-update
+                    None, // Keep default num_workers
                 )
                 .await
             {
@@ -1305,6 +1311,7 @@ impl PlaybooksManager {
                             current.clone(),
                             socket_path,
                             http_address,
+                            None,
                             None,
                             None,
                             None,

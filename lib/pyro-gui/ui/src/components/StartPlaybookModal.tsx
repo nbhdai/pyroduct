@@ -22,6 +22,7 @@ interface StartPlaybookModalProps {
     outputDir?: string | null;
     pinnedVersion?: string | null;
     configurations?: ConfiguredCapability[];
+    numWorkers?: number | null;
   }) => void;
 }
 
@@ -38,6 +39,7 @@ export function StartPlaybookModal({
   const [inputDir, setInputDir] = useState("");
   const [outputDir, setOutputDir] = useState("");
   const [pinVersion, setPinVersion] = useState(false);
+  const [numWorkers, setNumWorkers] = useState("");
   
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
@@ -55,6 +57,7 @@ export function StartPlaybookModal({
       setInputDir("");
       setOutputDir("");
       setPinVersion(false);
+      setNumWorkers("");
       setShowAdvanced(false);
       setShowConfig(false);
       setPlaybookSpec(null);
@@ -142,6 +145,7 @@ export function StartPlaybookModal({
       outputDir: outputDir.trim() || null,
       pinnedVersion: pinVersion ? selected.version : null,
       configurations: configurations.length > 0 ? configurations : undefined,
+      numWorkers: numWorkers.trim() ? parseInt(numWorkers.trim(), 10) : null,
     });
   };
 
@@ -278,6 +282,18 @@ export function StartPlaybookModal({
                   <label htmlFor="pin-version" style={{ margin: 0 }}>
                     Pin version (disable auto-updates)
                   </label>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="num-workers">Number of Workers (Optional, default: 4)</label>
+                  <input
+                    type="number"
+                    id="num-workers"
+                    value={numWorkers}
+                    onChange={(e) => setNumWorkers(e.target.value)}
+                    placeholder="4"
+                    min="1"
+                    max="64"
+                  />
                 </div>
               </div>
             )}

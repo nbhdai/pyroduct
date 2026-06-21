@@ -44,6 +44,7 @@ pub async fn start_playbook(
     output_dir: Option<String>,
     pinned_version: Option<String>,
     configurations: Option<Vec<pyro_artifacts::cargo::ConfiguredCapability>>,
+    num_workers: Option<usize>,
 ) -> Result<String, String> {
     info!("Tauri command: start_playbook for '{}'{}", name,
         if configurations.as_ref().map_or(false, |c| !c.is_empty()) {
@@ -63,6 +64,7 @@ pub async fn start_playbook(
         output_dir: output_dir.clone().map(std::path::PathBuf::from),
         pinned_version,
         configurations,
+        num_workers,
     });
     debug!(
         "Sending PlaybookRequest::Start to daemon: name='{}', socket={:?}, http={:?}, input={:?}, output={:?}",
