@@ -95,7 +95,7 @@ fn call_playbook_internal(
     };
 
     if let Some(sid) = session_id {
-        input_vec.set_mux_id(sid);
+        input_vec.set_mux_id(sid + 1);
     }
 
     let result_ptr =
@@ -124,7 +124,7 @@ fn call_playbook_internal(
         }
     };
 
-    let returned_session_id = result_vec.mux_id();
+    let returned_session_id = result_vec.mux_id().saturating_sub(1);
 
     if let Err(err) = result_vec.parse_as_error() {
         super::store_error(err.encode());

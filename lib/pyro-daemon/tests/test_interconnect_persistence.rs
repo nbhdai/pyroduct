@@ -119,13 +119,6 @@ async fn test_interconnect_persistence() {
     // Verify 2 running playbooks ("caller" and the automatically started "caller_test_interconnect_persistence_chatbot")
     assert_eq!(pm.active_workers_count().await, 2);
 
-    // Make a dummy call to chatbot to consume session ID 0
-    let chatbot_name = format!("caller_{}", target_binary.spec.ident.package);
-    let _ = pm
-        .call_playbook_record(&chatbot_name, serde_json::json!({ "input": "dummy" }), None)
-        .await
-        .unwrap();
-
     // Call caller. Inside caller, it will start session with chatbot and call it 10 times.
     let payload = serde_json::json!({ "input": "go" });
     let result = pm
@@ -145,6 +138,7 @@ async fn test_interconnect_persistence() {
     }
 
     // Stop workers
+    let chatbot_name = format!("caller_{}", target_binary.spec.ident.package);
     if let Some(worker) = pm.workers.lock().await.remove("caller") {
         worker.shutdown().await.unwrap();
     }

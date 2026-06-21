@@ -123,7 +123,7 @@ pub fn link_interconnect(
 
                     let input_view_ref = io.borrow_argument(input_ptr).await?;
                     let session_id = if input_view_ref.mux_id() != 0 {
-                        Some(input_view_ref.mux_id())
+                        Some(input_view_ref.mux_id() - 1)
                     } else {
                         current_session_id
                     };
@@ -145,7 +145,7 @@ pub fn link_interconnect(
                             let mut result_vec = row.ship().map_err(|e| {
                                 WasmError::OutputMemory(wasmtime::Error::msg(e.to_string()))
                             })?;
-                            result_vec.set_mux_id(session_id);
+                            result_vec.set_mux_id(session_id + 1);
                             tracing::debug!(
                                 header = ?result_vec.header(),
                                 status = ?result_vec.status(),
