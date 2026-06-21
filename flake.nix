@@ -103,7 +103,7 @@
           commonPyroArgs
           // {
             pname = "pyroduct";
-            version = "0.2.1";
+            version = "0.2.3";
             cargoArtifacts = pyroductDeps;
             doCheck = false;
             cargoExtraArgs = "-p pyroduct --features cli";
@@ -114,7 +114,7 @@
           commonPyroArgs
           // {
             pname = "pyro-daemon";
-            version = "0.2.1";
+            version = "0.2.3";
             cargoArtifacts = pyroductDeps;
             doCheck = false;
             cargoExtraArgs = "-p pyro-daemon";
@@ -216,6 +216,7 @@
             packages = [
               wasmToolchain
               pyroduct
+              pyro-daemon
               installTests.bin
               miriTests.bin
               rustTests.bin

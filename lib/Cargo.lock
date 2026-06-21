@@ -4947,7 +4947,7 @@ dependencies = [
 
 [[package]]
 name = "pyro-artifacts"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "cargo_toml",
  "flate2",
@@ -4974,7 +4974,7 @@ dependencies = [
 
 [[package]]
 name = "pyro-daemon"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5002,7 +5002,7 @@ dependencies = [
 
 [[package]]
 name = "pyro-derive"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "pyro-macro",
  "quote",
@@ -5011,7 +5011,7 @@ dependencies = [
 
 [[package]]
 name = "pyro-file"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "arrow",
  "bytes",
@@ -5026,7 +5026,7 @@ dependencies = [
 
 [[package]]
 name = "pyro-gui"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "arrow",
  "pyro-artifacts",
@@ -5044,7 +5044,7 @@ dependencies = [
 
 [[package]]
 name = "pyro-macro"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "heck 0.5.0",
  "prettyplease",
@@ -5059,7 +5059,7 @@ dependencies = [
 
 [[package]]
 name = "pyro-spec"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "arrow-schema",
  "serde",
@@ -5069,7 +5069,7 @@ dependencies = [
 
 [[package]]
 name = "pyroduct"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "arrow",
