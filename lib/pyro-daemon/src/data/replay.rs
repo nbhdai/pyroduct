@@ -459,7 +459,8 @@ async fn run_replay_parallel(
                             "Failed to repair input according to module spec: {:?}",
                             e
                         )
-                    })?;
+                    })?
+                    .to_static();
 
                 let server_clone = server.clone();
                 join_set.spawn(async move {
