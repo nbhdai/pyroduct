@@ -384,7 +384,7 @@ export function ReplayTab({ playbooks, playbookName, onSuccess }: ReplayTabProps
       </div>
 
       {/* Progress Section */}
-      {status && (status.running || status.rows_completed > 0) && (
+      {(isRunning || isCompleted) && (
         <div
           style={{
             display: "flex",
@@ -436,7 +436,7 @@ export function ReplayTab({ playbooks, playbookName, onSuccess }: ReplayTabProps
                   }}
                 />
               )}
-              {isRunning ? "Replaying..." : "Replay Complete"}
+              {isRunning ? "Replaying..." : isCompleted ? "Replay Complete" : "Replay Stopped"}
             </span>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: "13px" }}>
               {status.rows_completed} / {status.total_rows} rows ({progressPct}
