@@ -61,6 +61,7 @@ async fn test_daemon_data_streaming() {
         output_dir: Some(working_dir.join("output_a")),
         pinned_version: None,
         configurations: None,
+        num_workers: None,
     });
     let resp = client.request(req).await.unwrap();
     match resp {

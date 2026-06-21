@@ -79,6 +79,7 @@ async fn test_daemon_bulk_upload() {
         output_dir: Some(working_dir.join("output")),
         pinned_version: None,
         configurations: None,
+        num_workers: None,
     });
     client.request(req).await.unwrap();
 
