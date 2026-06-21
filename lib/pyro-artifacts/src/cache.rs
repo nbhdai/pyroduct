@@ -752,7 +752,18 @@ impl CacheManager {
                         })?;
                     let mut manifest = interface.manifest.clone();
                     if let Some(pyroduct) = &self.pyroduct {
-                        manifest.pyroduct = pyroduct.clone();
+                        // Only override the manifest's pyroduct dep if the
+                        // CacheManager's dep is NOT path-based.  Path-based
+                        // deps are machine-local and must not be baked into
+                        // interface Cargo.toml files that need to be portable
+                        // across machines (e.g. shipped to a remote server).
+                        let is_path_dep = match pyroduct {
+                            Dependency::Detailed(d) => d.path.is_some(),
+                            _ => false,
+                        };
+                        if !is_path_dep {
+                            manifest.pyroduct = pyroduct.clone();
+                        }
                     }
                     let cargo_path = path.join("Cargo.toml");
                     let cargo = manifest.clone().to_interface_manifest();

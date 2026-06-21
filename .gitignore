@@ -15,6 +15,7 @@ examples/**/logs
 .antigravity
 
 **/test/.cargo
+**/test/gui_config.json
 **/test/anon
 **/test/capabilities
 **/test/interfaces
