@@ -228,10 +228,7 @@ impl CacheManager {
     #[tracing::instrument(skip(self))]
     pub async fn purge_capabilities(&self) -> Result<(), CacheError> {
         tracing::debug!("Purging Capabilities from CacheManager");
-        let dirs = [
-            self.capabilities_base_dir(),
-            self.interfaces_base_dir(),
-        ];
+        let dirs = [self.capabilities_base_dir(), self.interfaces_base_dir()];
         for dir in dirs {
             if dir.exists() {
                 fs::remove_dir_all(&dir).await.map_err(|e| CacheError::Io {
@@ -257,7 +254,6 @@ impl CacheManager {
         self.init().await?;
         Ok(())
     }
-
 
     pub async fn list_available_capabilities(
         &self,
@@ -498,7 +494,9 @@ impl CacheManager {
         name: &str,
         version: &str,
     ) -> Result<pyro_spec::InterfaceSpec<'static>, CacheError> {
-        let json = self.capability_interface_spec(author, name, version).await?;
+        let json = self
+            .capability_interface_spec(author, name, version)
+            .await?;
         serde_json::from_str(&json).map_err(|e| CacheError::Io {
             context: format!(
                 "Failed to parse interface.json for {}/{}/{}",
@@ -542,15 +540,13 @@ impl CacheManager {
 
             // If the class defines a config schema and the user provided a JSON object,
             // validate that the top-level keys match schema field names.
-            if let (Some(schema), Some(Some(json_val))) =
-                (&class_spec.config, config_value.as_ref().map(Some).or(Some(None)))
-            {
+            if let (Some(schema), Some(Some(json_val))) = (
+                &class_spec.config,
+                config_value.as_ref().map(Some).or(Some(None)),
+            ) {
                 if let Some(obj) = json_val.as_object() {
-                    let schema_fields: Vec<String> = schema
-                        .fields()
-                        .iter()
-                        .map(|f| f.name.to_string())
-                        .collect();
+                    let schema_fields: Vec<String> =
+                        schema.fields().iter().map(|f| f.name.to_string()).collect();
                     for key in obj.keys() {
                         if !schema_fields.iter().any(|f| f == key) {
                             return Err(ConfigValidationError::UnknownConfigField {
@@ -752,18 +748,7 @@ impl CacheManager {
                         })?;
                     let mut manifest = interface.manifest.clone();
                     if let Some(pyroduct) = &self.pyroduct {
-                        // Only override the manifest's pyroduct dep if the
-                        // CacheManager's dep is NOT path-based.  Path-based
-                        // deps are machine-local and must not be baked into
-                        // interface Cargo.toml files that need to be portable
-                        // across machines (e.g. shipped to a remote server).
-                        let is_path_dep = match pyroduct {
-                            Dependency::Detailed(d) => d.path.is_some(),
-                            _ => false,
-                        };
-                        if !is_path_dep {
-                            manifest.pyroduct = pyroduct.clone();
-                        }
+                        manifest.pyroduct = pyroduct.clone();
                     }
                     let cargo_path = path.join("Cargo.toml");
                     let cargo = manifest.clone().to_interface_manifest();
