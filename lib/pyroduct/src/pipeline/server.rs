@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 use pyro_artifacts::artifacts::PlaybookSpec;
 use pyro_artifacts::cache::LoadedPlaybook;
@@ -70,7 +70,7 @@ impl ServerExecutionRecord {
 /// session execution without holding the top-level lock during WASM calls.
 #[derive(Clone)]
 pub struct PipelineServer {
-    pipeline: Arc<Mutex<ServerPipeline>>,
+    pipeline: Arc<RwLock<ServerPipeline>>,
     spec: Arc<PlaybookSpec>,
 }
 
@@ -199,14 +199,14 @@ impl PipelineServer {
         };
 
         Ok(Self {
-            pipeline: Arc::new(Mutex::new(server_pipeline)),
+            pipeline: Arc::new(RwLock::new(server_pipeline)),
             spec,
         })
     }
 
     /// Add a callback dynamically to the running pipeline.
     pub async fn add_callback(&self, uuid: uuid::Uuid, callback: crate::pipeline::Callback) {
-        let pipeline = self.pipeline.lock().await;
+        let pipeline = self.pipeline.read().await;
         match &*pipeline {
             ServerPipeline::Normal(p) => {
                 let mut cbs = p.callbacks.lock().await;
@@ -225,7 +225,7 @@ impl PipelineServer {
 
     /// Delete a callback dynamically from the running pipeline by UUID.
     pub async fn delete_callback(&self, uuid: uuid::Uuid) {
-        let pipeline = self.pipeline.lock().await;
+        let pipeline = self.pipeline.read().await;
         match &*pipeline {
             ServerPipeline::Normal(p) => {
                 let mut cbs = p.callbacks.lock().await;
@@ -249,7 +249,7 @@ impl PipelineServer {
 
     /// Get the current number of samples.
     pub async fn len(&self) -> usize {
-        let pipeline = self.pipeline.lock().await;
+        let pipeline = self.pipeline.read().await;
         match &*pipeline {
             ServerPipeline::Normal(p) => p.input_manager.len().await,
             ServerPipeline::Session(p) => p.output_manager.len().await,
@@ -263,7 +263,7 @@ impl PipelineServer {
         offset: usize,
         limit: usize,
     ) -> Result<Option<arrow::array::RecordBatch>, PyroError> {
-        let pipeline = self.pipeline.lock().await;
+        let pipeline = self.pipeline.read().await;
         match &*pipeline {
             ServerPipeline::Normal(p) => p.input_manager.get_batch_slice(offset, limit).await,
             ServerPipeline::Session(_) => Ok(None),
@@ -277,7 +277,7 @@ impl PipelineServer {
         offset: usize,
         limit: usize,
     ) -> Result<Option<arrow::array::RecordBatch>, PyroError> {
-        let pipeline = self.pipeline.lock().await;
+        let pipeline = self.pipeline.read().await;
         match &*pipeline {
             ServerPipeline::Normal(p) => p.output_manager.get_batch_slice(offset, limit).await,
             ServerPipeline::Session(p) => p.output_manager.get_batch_slice(offset, limit).await,
@@ -290,7 +290,7 @@ impl PipelineServer {
         &self,
         filter: Option<SessionStatusFilter>,
     ) -> Result<Vec<(u32, String)>, PyroError> {
-        let pipeline = self.pipeline.lock().await;
+        let pipeline = self.pipeline.read().await;
         match &*pipeline {
             ServerPipeline::Normal(_) => Ok(Vec::new()),
             ServerPipeline::Session(p) => p.list_sessions(filter),
@@ -300,7 +300,7 @@ impl PipelineServer {
 
     /// Retrieve a single execution record by its global ID.
     pub async fn get(&self, id: u32) -> Result<ServerExecutionRecord, PyroError> {
-        let pipeline = self.pipeline.lock().await;
+        let pipeline = self.pipeline.read().await;
         match &*pipeline {
             ServerPipeline::Normal(p) => {
                 let rec = p.get_record(id as usize).await?;
@@ -321,9 +321,9 @@ impl PipelineServer {
     /// For session-based pipelines, this will generate a new session ID.
     /// Returns `(session_id, success_row)`.
     pub async fn call(&self, row: PyroRow<'_>) -> Result<ServerExecutionRecord, CapturedError> {
-        let mut pipeline = self.pipeline.lock().await;
+        let pipeline = self.pipeline.read().await;
         let native_row = row.to_static();
-        match &mut *pipeline {
+        match &*pipeline {
             ServerPipeline::Normal(p) => match p.call(&native_row).await {
                 Ok(r) => Ok(ServerExecutionRecord::Normal(r)),
                 Err(e) => Err(CapturedError::new(e.to_string())),
@@ -380,8 +380,8 @@ impl PipelineServer {
         client_id: u32,
         row: PyroRow<'_>,
     ) -> Result<ServerExecutionRecord, CapturedError> {
-        let mut pipeline = self.pipeline.lock().await;
-        match &mut *pipeline {
+        let pipeline = self.pipeline.read().await;
+        match &*pipeline {
             ServerPipeline::Normal(p) => match p.process(client_id as usize, &row).await {
                 Ok(r) => Ok(ServerExecutionRecord::Normal(r)),
                 Err(e) => Err(CapturedError::new(e.to_string())),
