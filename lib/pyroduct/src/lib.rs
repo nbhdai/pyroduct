@@ -22,7 +22,7 @@ pub use wasm::interconnect::{
 #[cfg(feature = "host")]
 pub mod pipeline;
 
-#[cfg(feature = "host")]
+#[cfg(any(feature = "host", feature = "transport"))]
 pub mod transport;
 
 #[cfg(any(feature = "host", feature = "capability"))]

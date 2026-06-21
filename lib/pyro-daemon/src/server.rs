@@ -123,6 +123,9 @@ async fn handle_client(
                 DaemonRequest::Capability(capability_req) => {
                     DaemonResponse::Capability(capability_manager.handle_request(capability_req).await)
                 }
+                DaemonRequest::Cache(cache_req) => {
+                    DaemonResponse::Cache(crate::cache::handle_request(cache_req).await)
+                }
                 DaemonRequest::Data(data_req) => {
                     DaemonResponse::Data(data_manager.handle_request(data_req, &socket, Some(mux_id)).await)
                 }

@@ -10,6 +10,7 @@ use std::path::PathBuf;
 pub enum DaemonRequest {
     Playbook(playbook::PlaybookRequest),
     Capability(capability::CapabilityRequest),
+    Cache(cache::CacheRequest),
     Data(data::DataRequest),
     Status,
 }
@@ -19,6 +20,7 @@ pub enum DaemonRequest {
 pub enum DaemonResponse {
     Playbook(playbook::PlaybookResponse),
     Capability(capability::CapabilityResponse),
+    Cache(cache::CacheResponse),
     Data(data::DataResponse),
     StatusInfo {
         active_workers: usize,
@@ -31,6 +33,7 @@ pub enum DaemonResponse {
 }
 
 pub mod capability;
+pub mod cache;
 pub mod client;
 pub mod data;
 pub mod playbook;
@@ -38,6 +41,7 @@ pub mod server;
 pub mod state;
 
 pub use capability::CapabilityManager;
+pub use cache::{CacheRequest, CacheResponse};
 pub use data::DaemonDataManager;
 pub use state::DbStateStore;
 
