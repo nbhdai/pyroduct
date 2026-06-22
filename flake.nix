@@ -118,6 +118,12 @@
             cargoArtifacts = pyroductDeps;
             doCheck = false;
             cargoExtraArgs = "-p pyro-daemon";
+            # autoPatchelfHook rewrites ELF RPATH so the binary finds its
+            # shared libs (libssl.so.3, libbz2.so.1, etc.) via Nix store
+            # paths without needing LD_LIBRARY_PATH at runtime.
+            nativeBuildInputs = commonPyroArgs.nativeBuildInputs ++ [ pkgs.autoPatchelfHook ];
+            # Daemon-only runtime deps (no GUI libs needed here).
+            buildInputs = with pkgs; [ openssl bzip2 ] ++ lib.optionals pkgs.stdenv.isLinux [ systemd ];
           }
         );
 
