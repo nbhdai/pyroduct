@@ -103,7 +103,7 @@ impl CacheManager {
             })
             .unwrap_or_else(|_| {
                 // Check the standard systemd service cache location (Linux)
-                let system_cache = PathBuf::from("/var/lib/pyro-daemon/cache");
+                let system_cache = PathBuf::from("/var/lib/pyroduct");
                 if system_cache.join("config.toml").exists() {
                     return system_cache;
                 }

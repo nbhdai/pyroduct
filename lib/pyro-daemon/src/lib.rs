@@ -83,7 +83,7 @@ impl PyroDaemon {
         }
 
         // 2. Check the standard systemd service location (Linux)
-        let system_dir = PathBuf::from("/var/lib/pyro-daemon");
+        let system_dir = PathBuf::from("/var/lib/pyroduct");
         if system_dir.join("control").exists() {
             return system_dir;
         }

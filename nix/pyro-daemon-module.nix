@@ -86,7 +86,7 @@ in
     users.users.pyroduct = {
       isSystemUser = true;
       group = "pyroduct";
-      home = "/var/lib/pyro-daemon";
+      home = "/var/lib/pyroduct";
       description = "Pyroduct daemon service user";
     };
 
@@ -99,17 +99,17 @@ in
     # -------------------------------------------------------------------------
     systemd.tmpfiles.rules = [
       # Daemon working directory — pyroduct:pyroduct, 0750
-      "d /var/lib/pyro-daemon        0750 pyroduct pyroduct -"
-      "d /var/lib/pyro-daemon/data   0750 pyroduct pyroduct -"
-      "d /var/lib/pyro-daemon/playbooks   0750 pyroduct pyroduct -"
+      "d /var/lib/pyroduct        0750 pyroduct pyroduct -"
+      "d /var/lib/pyroduct/data   0750 pyroduct pyroduct -"
+      "d /var/lib/pyroduct/playbooks   0750 pyroduct pyroduct -"
 
       # Shared cache — setgid (2775) so group members can write
-      "d /var/lib/pyro-daemon/capabilities  2775 pyroduct pyroduct -"
-      "d /var/lib/pyro-daemon/interfaces    2775 pyroduct pyroduct -"
-      "d /var/lib/pyro-daemon/modules       2775 pyroduct pyroduct -"
+      "d /var/lib/pyroduct/capabilities  2775 pyroduct pyroduct -"
+      "d /var/lib/pyroduct/interfaces    2775 pyroduct pyroduct -"
+      "d /var/lib/pyroduct/modules       2775 pyroduct pyroduct -"
 
       # Cache config file
-      "C /var/lib/pyro-daemon/config.toml  0664 pyroduct pyroduct - ${cacheConfigFile}"
+      "C /var/lib/pyroduct/config.toml  0664 pyroduct pyroduct - ${cacheConfigFile}"
     ];
 
     # -------------------------------------------------------------------------
@@ -122,8 +122,8 @@ in
       wantedBy = [ "multi-user.target" ];
 
       environment = {
-        PYRODUCT = "/var/lib/pyro-daemon";
-        PYRO_DAEMON_DIR = "/var/lib/pyro-daemon";
+        PYRODUCT = "/var/lib/pyroduct";
+        PYRO_DAEMON_DIR = "/var/lib/pyroduct";
         # Expose openssl (and systemd client libs) to the dynamically-linked binary.
         # crane/Rust builds link against the Nix store paths; without this the
         # dynamic linker cannot find libssl.so.3 / libsystemd.so at runtime.
@@ -135,12 +135,12 @@ in
         User = "pyroduct";
         Group = "pyroduct";
 
-        ExecStart = "${cfg.package}/bin/pyro-daemond --working-dir /var/lib/pyro-daemon"
+        ExecStart = "${cfg.package}/bin/pyro-daemond --working-dir /var/lib/pyroduct"
           + lib.optionalString (cfg.bindTcp != null) " --bind-tcp ${cfg.bindTcp}";
 
         # State
-        StateDirectory = "pyro-daemon";
-        WorkingDirectory = "/var/lib/pyro-daemon";
+        StateDirectory = "pyroduct";
+        WorkingDirectory = "/var/lib/pyroduct";
 
         # Group-accessible socket & files
         UMask = "0007";
@@ -149,12 +149,12 @@ in
         Restart = "on-failure";
         RestartSec = 5;
 
-        # Sandboxing: daemon only accesses /var/lib/pyro-daemon
+        # Sandboxing: daemon only accesses /var/lib/pyroduct
         ProtectSystem = "strict";
         ProtectHome = true;
         PrivateTmp = true;
         NoNewPrivileges = true;
-        ReadWritePaths = [ "/var/lib/pyro-daemon" ];
+        ReadWritePaths = [ "/var/lib/pyroduct" ];
       };
     };
 
@@ -164,8 +164,8 @@ in
     environment.etc."profile.d/pyroduct.sh" = {
       text = ''
         # Pyroduct environment variables
-        export PYRODUCT="/var/lib/pyro-daemon"
-        export PYRO_DAEMON_DIR="/var/lib/pyro-daemon"
+        export PYRODUCT="/var/lib/pyroduct"
+        export PYRO_DAEMON_DIR="/var/lib/pyroduct"
       '';
       mode = "0644";
     };

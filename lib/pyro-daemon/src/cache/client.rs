@@ -314,7 +314,7 @@ fn default_cache_socket_path() -> std::path::PathBuf {
     if let Ok(dir) = std::env::var("PYRODUCT") {
         return std::path::PathBuf::from(dir).join("cache.sock");
     }
-    let system_cache = std::path::PathBuf::from("/var/lib/pyro-daemon/cache.sock");
+    let system_cache = std::path::PathBuf::from("/var/lib/pyroduct/cache.sock");
     if system_cache.exists() {
         return system_cache;
     }
