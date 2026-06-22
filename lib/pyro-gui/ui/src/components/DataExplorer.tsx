@@ -121,6 +121,46 @@ export function DataExplorer({ playbookName, refreshTrigger }: DataExplorerProps
     }
   };
 
+  const handleExport = async (format: "csv" | "jsonl" | "parquet") => {
+    if (!playbookName) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const bytes = (await invoke("export_playbook_data", {
+        playbookName,
+        format,
+      })) as number[];
+      
+      if (bytes.length === 0) {
+        alert("No data available to export.");
+        return;
+      }
+      
+      const uint8 = new Uint8Array(bytes);
+      let mimeType = "text/csv";
+      let ext = "csv";
+      if (format === "jsonl") {
+        mimeType = "application/x-jsonlines";
+        ext = "jsonl";
+      } else if (format === "parquet") {
+        mimeType = "application/octet-stream";
+        ext = "parquet";
+      }
+      
+      const blob = new Blob([uint8], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${playbookName}_data.${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Re-fetch data whenever playbookName changes, refreshTrigger increments, or limit changes
   useEffect(() => {
     setOffset(0);
@@ -237,6 +277,32 @@ export function DataExplorer({ playbookName, refreshTrigger }: DataExplorerProps
               >
                 Fetch Data
               </button>
+              <div style={{ display: "flex", gap: "8px", marginLeft: "auto" }}>
+                <button
+                  onClick={() => handleExport("csv")}
+                  className="btn btn-secondary"
+                  disabled={loading || !playbookName}
+                  style={{ height: "38px", padding: "0 16px" }}
+                >
+                  📥 Export CSV
+                </button>
+                <button
+                  onClick={() => handleExport("jsonl")}
+                  className="btn btn-secondary"
+                  disabled={loading || !playbookName}
+                  style={{ height: "38px", padding: "0 16px" }}
+                >
+                  📥 Export JSONL
+                </button>
+                <button
+                  onClick={() => handleExport("parquet")}
+                  className="btn btn-secondary"
+                  disabled={loading || !playbookName}
+                  style={{ height: "38px", padding: "0 16px" }}
+                >
+                  📥 Export Parquet
+                </button>
+              </div>
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>

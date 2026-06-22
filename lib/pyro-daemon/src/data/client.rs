@@ -238,4 +238,13 @@ impl DaemonClient {
             _ => pyroduct::bail!("Unexpected response from daemon"),
         }
     }
+
+    pub async fn export_playbook_data(&self, playbook_name: String) -> Result<Vec<u8>> {
+        let req = DaemonRequest::Data(DataRequest::ExportPlaybookData { playbook_name });
+        match self.request(req).await? {
+            DaemonResponse::Data(DataResponse::PlaybookData { ipc_bytes }) => Ok(ipc_bytes),
+            DaemonResponse::Data(DataResponse::Error { message }) => pyroduct::bail!("{}", message),
+            _ => pyroduct::bail!("Unexpected response from daemon"),
+        }
+    }
 }

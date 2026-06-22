@@ -350,3 +350,71 @@ pub async fn stop_folder_replay(
     }
 }
 
+#[tauri::command]
+pub async fn export_playbook_data(
+    playbook_name: String,
+    format: String,
+) -> Result<Vec<u8>, String> {
+    info!(
+        "Tauri command: export_playbook_data for playbook='{}' format='{}'",
+        playbook_name, format
+    );
+    let client = super::connect_to_active_daemon().await?;
+
+    let ipc_bytes = client
+        .export_playbook_data(playbook_name)
+        .await
+        .map_err(|e| format!("Failed to export playbook data: {:?}", e))?;
+
+    if ipc_bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Parse Arrow IPC bytes to RecordBatches
+    let mut reader = arrow::ipc::reader::FileReader::try_new(std::io::Cursor::new(ipc_bytes), None)
+        .map_err(|e| format!("Failed to parse Arrow IPC: {:?}", e))?;
+
+    let mut batches = Vec::new();
+    while let Some(batch_res) = reader.next() {
+        let batch = batch_res.map_err(|e| format!("Failed to read batch: {:?}", e))?;
+        batches.push(batch);
+    }
+
+    if batches.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Now convert the batches to the requested format using pyro_file
+    let temp_file = tempfile::NamedTempFile::new()
+        .map_err(|e| format!("Failed to create temp file: {:?}", e))?;
+    let temp_path = temp_file.path().to_path_buf();
+
+    // Make sure we close the file handle so writing works properly on all systems
+    let _ = temp_file.close();
+
+    match format.as_str() {
+        "csv" => {
+            pyro_file::write_csv(&batches, &temp_path, None)
+                .map_err(|e| format!("Failed to write CSV: {:?}", e))?;
+        }
+        "jsonl" => {
+            pyro_file::write_jsonl(&batches, &temp_path, None)
+                .map_err(|e| format!("Failed to write JSONL: {:?}", e))?;
+        }
+        "parquet" => {
+            pyro_file::write_parquet(&batches, &temp_path)
+                .map_err(|e| format!("Failed to write Parquet: {:?}", e))?;
+        }
+        _ => return Err(format!("Unsupported export format: {}", format)),
+    }
+
+    // Read the serialized bytes from the temp file
+    let bytes = std::fs::read(&temp_path)
+        .map_err(|e| format!("Failed to read temporary export file: {:?}", e))?;
+
+    // Delete the temp file explicitly (just to be clean)
+    let _ = std::fs::remove_file(&temp_path);
+
+    Ok(bytes)
+}
+

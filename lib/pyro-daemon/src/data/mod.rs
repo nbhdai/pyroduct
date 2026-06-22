@@ -29,6 +29,9 @@ pub enum DataRequest {
         offset: usize,
         limit: usize,
     },
+    ExportPlaybookData {
+        playbook_name: String,
+    },
     GetPlaybookFailures {
         playbook_name: String,
     },
@@ -134,6 +137,14 @@ impl DaemonDataManager {
                 Err(e) => DataResponse::Error {
                     message: format!("Failed to get playbook data: {:?}", e),
                 },
+            },
+            DataRequest::ExportPlaybookData { playbook_name } => {
+                match self.export_playbook_data(&playbook_name).await {
+                    Ok(ipc_bytes) => DataResponse::PlaybookData { ipc_bytes },
+                    Err(e) => DataResponse::Error {
+                        message: format!("Failed to export playbook data: {:?}", e),
+                    },
+                }
             },
             DataRequest::GetPlaybookFailures { playbook_name } => {
                 match self.get_playbook_failures(&playbook_name).await {

@@ -163,6 +163,16 @@ enum Commands {
         #[arg(long)]
         cap_config: Option<String>,
     },
+    /// Converts a dataset WAL (.pyrowal) file to a Parquet file
+    WalToParquet {
+        /// Path to the dataset WAL file
+        #[arg(value_name = "WAL_PATH")]
+        wal: PathBuf,
+
+        /// Path to the output Parquet file
+        #[arg(value_name = "PARQUET_PATH")]
+        output: PathBuf,
+    },
 }
 
 pub fn start_logging() {
@@ -250,6 +260,9 @@ async fn main() -> Result<()> {
                 cap_config.as_deref(),
             )
             .await
+        }
+        Commands::WalToParquet { wal, output } => {
+            commands::wal_to_parquet::wal_to_parquet(&wal, &output).await
         }
     }
 }

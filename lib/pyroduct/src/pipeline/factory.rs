@@ -53,7 +53,7 @@ fn default_error_retention() -> u64 {
     86400 * 7
 }
 fn default_num_workers() -> usize {
-    4
+    15
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -135,7 +135,10 @@ impl PipelineFactory {
     ///
     /// Compiles and instantiates the single wasm module, configuring it with WAL.
     pub async fn build(&self) -> Result<Pipeline, PipelineError> {
-        tracing::debug!(num_workers = self.num_workers, "Building wasm module(s) for playbook");
+        tracing::debug!(
+            num_workers = self.num_workers,
+            "Building wasm module(s) for playbook"
+        );
         let mut shards = Vec::with_capacity(self.num_workers);
         for _ in 0..self.num_workers {
             let instance = self.factory.instantiate().await?;
@@ -148,13 +151,15 @@ impl PipelineFactory {
             shards,
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,
-            log_manager: tokio::sync::Mutex::new(LogWal::open(self.log_dir.clone(), self.wal_capacity)
-                .await
-                .map_err(|io| {
-                    PyroError::local_io(
-                        CapturedError::new("Unable to make the log wal").with_source(io),
-                    )
-                })?),
+            log_manager: tokio::sync::Mutex::new(
+                LogWal::open(self.log_dir.clone(), self.wal_capacity)
+                    .await
+                    .map_err(|io| {
+                        PyroError::local_io(
+                            CapturedError::new("Unable to make the log wal").with_source(io),
+                        )
+                    })?,
+            ),
             input_manager: super::data::DataManager::new(self.input_dir.clone(), input_schema),
             output_manager: super::data::DataManager::new(self.output_dir.clone(), output_schema),
             callbacks: tokio::sync::Mutex::new(Vec::new()),
@@ -165,7 +170,10 @@ impl PipelineFactory {
     ///
     /// Compiles and instantiates the single wasm module, configuring it with WAL.
     pub async fn build_session(&self) -> Result<SessionPipeline, PipelineError> {
-        tracing::debug!(num_workers = self.num_workers, "Building wasm module(s) for session playbook");
+        tracing::debug!(
+            num_workers = self.num_workers,
+            "Building wasm module(s) for session playbook"
+        );
         let mut shards = Vec::with_capacity(self.num_workers);
         for _ in 0..self.num_workers {
             let instance = self.factory.instantiate().await?;
@@ -223,13 +231,15 @@ impl PipelineFactory {
             spec: std::sync::Arc::new(spec),
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,
-            log_manager: tokio::sync::Mutex::new(LogWal::open(self.log_dir.clone(), self.wal_capacity)
-                .await
-                .map_err(|io| {
-                    PyroError::local_io(
-                        CapturedError::new("Unable to make the log wal").with_source(io),
-                    )
-                })?),
+            log_manager: tokio::sync::Mutex::new(
+                LogWal::open(self.log_dir.clone(), self.wal_capacity)
+                    .await
+                    .map_err(|io| {
+                        PyroError::local_io(
+                            CapturedError::new("Unable to make the log wal").with_source(io),
+                        )
+                    })?,
+            ),
             output_manager: super::data::DataManager::new(self.output_dir.clone(), output_schema),
             log_dir: self.log_dir.clone(),
             output_dir: self.output_dir.clone(),
@@ -244,7 +254,10 @@ impl PipelineFactory {
     ///
     /// Compiles and instantiates the single wasm module, configuring it with WAL.
     pub async fn build_session_diff(&self) -> Result<SessionDiffPipeline, PipelineError> {
-        tracing::debug!(num_workers = self.num_workers, "Building wasm module(s) for session_diff playbook");
+        tracing::debug!(
+            num_workers = self.num_workers,
+            "Building wasm module(s) for session_diff playbook"
+        );
         let mut shards = Vec::with_capacity(self.num_workers);
         for _ in 0..self.num_workers {
             let instance = self.factory.instantiate().await?;
@@ -301,13 +314,15 @@ impl PipelineFactory {
             spec: std::sync::Arc::new(spec),
             success_log_retention_secs: self.success_log_retention_secs,
             error_log_retention_secs: self.error_log_retention_secs,
-            log_manager: tokio::sync::Mutex::new(LogWal::open(self.log_dir.clone(), self.wal_capacity)
-                .await
-                .map_err(|io| {
-                    PyroError::local_io(
-                        CapturedError::new("Unable to make the log wal").with_source(io),
-                    )
-                })?),
+            log_manager: tokio::sync::Mutex::new(
+                LogWal::open(self.log_dir.clone(), self.wal_capacity)
+                    .await
+                    .map_err(|io| {
+                        PyroError::local_io(
+                            CapturedError::new("Unable to make the log wal").with_source(io),
+                        )
+                    })?,
+            ),
             output_manager: super::data::DataManager::new(
                 self.output_dir.clone(),
                 overall_output_schema,

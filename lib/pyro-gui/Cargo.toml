@@ -23,6 +23,8 @@ pyro-daemon.workspace = true
 pyro-artifacts.workspace = true
 pyroduct.workspace = true
 arrow.workspace = true
+pyro-file.workspace = true
+tempfile.workspace = true
 
 [features]
 default = []

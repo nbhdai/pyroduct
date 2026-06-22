@@ -97,6 +97,7 @@ fn main() {
             commands::purge_playbooks_cache,
             commands::get_playbook_data,
             commands::query_playbook_data,
+            commands::export_playbook_data,
             commands::get_playbook_failures,
             commands::get_playbook_execution_record,
             commands::list_sessions,

@@ -257,6 +257,16 @@ impl PipelineServer {
         }
     }
 
+    /// Get the current number of output samples.
+    pub async fn output_len(&self) -> usize {
+        let pipeline = self.pipeline.read().await;
+        match &*pipeline {
+            ServerPipeline::Normal(p) => p.output_manager.len().await,
+            ServerPipeline::Session(p) => p.output_manager.len().await,
+            ServerPipeline::SessionDiff(p) => p.output_manager.len().await,
+        }
+    }
+
     /// Get a chunk of input data with pagination, returning up to limit elements.
     pub async fn get_input_batch(
         &self,

@@ -144,4 +144,76 @@ impl DaemonDataManager {
         }
         Ok(failures)
     }
+
+    pub async fn export_playbook_data(
+        &self,
+        playbook_name: &str,
+    ) -> Result<Vec<u8>> {
+        // 1. Check if the playbook is currently running and query the server directly
+        let workers = self.playbooks_manager.workers.lock().await;
+        let batch_opt = if let Some(worker) = workers.get(playbook_name) {
+            let total_len = worker.server.output_len().await;
+            worker
+                .server
+                .get_output_batch(0, total_len)
+                .await
+                .map_err(|e| pyroduct::capture!("{:?}", e))?
+        } else {
+            drop(workers);
+            // 2. If not running, load the config from playbooks_manager's database
+            let db_entry = self
+                .playbooks_manager
+                .db
+                .get_playbook(playbook_name)
+                .await?;
+            let (_status, pipeline_config, _socket_path, _pinned_version, _http_address) =
+                match db_entry {
+                    Some(entry) => entry,
+                    None => {
+                        pyroduct::bail!("Playbook '{}' does not exist in state store", playbook_name)
+                    }
+                };
+
+            // 3. Load factory to get output schema
+            let cache = CacheManager::from_env()
+                .await
+                .capture("Failed to initialize CacheManager")?;
+
+            let loaded = pipeline_config
+                .load(&cache)
+                .await
+                .map_err(|e| pyroduct::capture!("{:?}", e))?;
+            let factory = loaded
+                .factory()
+                .map_err(|e| pyroduct::capture!("{:?}", e))?;
+            let output_schema = factory.factory.spec().func.output.clone();
+
+            // 4. Create and restore DataManager for output_dir
+            let dm = DataManager::new(factory.output_dir, output_schema);
+            dm.restore()
+                .await
+                .map_err(|e| pyroduct::capture!("{:?}", e))?;
+
+            let total_len = dm.len().await;
+            dm.get_batch_slice(0, total_len)
+                .await
+                .map_err(|e| pyroduct::capture!("{:?}", e))?
+        };
+
+        // 5. Serialize to Arrow IPC bytes using FileWriter
+        let mut buffer = Vec::new();
+        if let Some(batch) = batch_opt {
+            let schema = batch.schema();
+            let mut writer = arrow::ipc::writer::FileWriter::try_new(&mut buffer, &schema)
+                .capture("Failed to create Arrow IPC FileWriter")?;
+            writer
+                .write(&batch)
+                .capture("Failed to write RecordBatch to Arrow IPC")?;
+            writer
+                .finish()
+                .capture("Failed to finish Arrow IPC FileWriter")?;
+        }
+
+        Ok(buffer)
+    }
 }
