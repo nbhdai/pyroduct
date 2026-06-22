@@ -160,8 +160,16 @@ impl PipelineFactory {
                         )
                     })?,
             ),
-            input_manager: super::data::DataManager::new(self.input_dir.clone(), input_schema, self.wal_capacity),
-            output_manager: super::data::DataManager::new(self.output_dir.clone(), output_schema, self.wal_capacity),
+            input_manager: super::data::DataManager::new(
+                self.input_dir.clone(),
+                input_schema,
+                self.wal_capacity,
+            ),
+            output_manager: super::data::DataManager::new(
+                self.output_dir.clone(),
+                output_schema,
+                self.wal_capacity,
+            ),
             callbacks: tokio::sync::Mutex::new(Vec::new()),
         })
     }
@@ -180,42 +188,17 @@ impl PipelineFactory {
             shards.push(tokio::sync::Mutex::new(instance));
         }
         let input_schema = self.factory.spec().func.input.clone();
-        let output_schema_from_func = self.factory.spec().func.output.clone();
 
-        // Standard session list elements will have either an input row (with the "input" field)
-        // or an output row (with the output fields from the guest function).
-        // To support both while satisfying the validation schema, we define a unified group
-        // schema containing the last input field (which represents "input") and all output fields,
-        // with all of them marked as nullable (nullable = true).
-        // If the Wasm output field has an empty Group type (which occurs when SessionResponse<T> ok type
-        // is resolved as an unknown struct/enum), we fallback to the type of the last input field.
-        let last_input_field = input_schema.fields.last().cloned();
-        let last_input_type = last_input_field
-            .as_ref()
-            .map(|f| f.data_type.clone())
+        // Session input and output are the same type. The data WAL stores
+        // raw rows of that type. Use it directly as the list element type.
+        let element_type = input_schema
+            .fields
+            .last()
+            .map(|f| f.data_type.clone().into_owned())
             .unwrap_or(crate::format::value::PyroType::Null);
 
-        let mut group_fields = Vec::new();
-        if let Some(mut f) = last_input_field {
-            f.nullable = true;
-            group_fields.push(f);
-        }
-        for mut out_field in output_schema_from_func.fields.iter().cloned() {
-            out_field.nullable = true;
-            if let crate::format::value::PyroType::Group(ref fields) = out_field.data_type
-                && fields.is_empty()
-            {
-                out_field.data_type = last_input_type.clone();
-            }
-            group_fields.push(out_field);
-        }
-
-        let session_type = crate::format::value::PyroType::List(
-            Box::new(crate::format::value::PyroType::Group(
-                std::borrow::Cow::Owned(group_fields),
-            )),
-            false,
-        );
+        let session_type =
+            crate::format::value::PyroType::List(Box::new(element_type), true);
         let output_schema =
             crate::format::value::PyroSchema::new(vec![crate::format::value::PyroField::new(
                 "session",
@@ -240,7 +223,11 @@ impl PipelineFactory {
                         )
                     })?,
             ),
-            output_manager: super::data::DataManager::new(self.output_dir.clone(), output_schema, self.wal_capacity),
+            output_manager: super::data::DataManager::new(
+                self.output_dir.clone(),
+                output_schema,
+                self.wal_capacity,
+            ),
             log_dir: self.log_dir.clone(),
             output_dir: self.output_dir.clone(),
             wal_capacity: self.wal_capacity,
