@@ -20,24 +20,22 @@ Each conversation is identified by a numeric **session ID**.
 
 ## curl Examples
 
-Assume the chatbot is running on `http://localhost:8080`.
+Assume the chatbot is running on `http://naked-chatbot:8080`.
 
 ### Check the schema (optional)
 
 ```bash
-curl http://localhost:8080/schema
+curl http://naked-chatbot:8080/schema
 ```
 
 ### Start a conversation
 
 ```bash
-curl -X POST http://localhost:8080/ \
+curl -X POST http://naked-chatbot:8080/ \
   -H 'Content-Type: application/json' \
   -d '{
-    "input": {
-      "role": "user",
-      "content": "Hello, who are you?"
-    }
+    "role": "user",
+    "content": "Hello, who are you?"
   }'
 ```
 
@@ -59,13 +57,11 @@ Response:
 Use the `session_id` in the URL path:
 
 ```bash
-curl -X POST http://localhost:8080/1 \
+curl -X POST http://naked-chatbot:8080/1 \
   -H 'Content-Type: application/json' \
   -d '{
-    "input": {
-      "role": "user",
-      "content": "Tell me a joke about programming"
-    }
+    "role": "user",
+    "content": "Tell me a joke about programming"
   }'
 ```
 
@@ -90,13 +86,13 @@ After a session ends, that `session_id` is no longer usable.
 ```python
 import requests
 
-BASE_URL = "http://localhost:8080"
+BASE_URL = "http://naked-chatbot:8080"
 
 def start_conversation(message: str) -> tuple[int, dict]:
     """Send the first message. Returns (session_id, response)."""
     resp = requests.post(
         f"{BASE_URL}/",
-        json={"input": {"role": "user", "content": message}},
+        json={"role": "user", "content": message},
     )
     resp.raise_for_status()
     data = resp.json()
@@ -106,7 +102,7 @@ def send_message(session_id: int, message: str) -> dict:
     """Send a follow-up message in an existing session."""
     resp = requests.post(
         f"{BASE_URL}/{session_id}",
-        json={"input": {"role": "user", "content": message}},
+        json={"role": "user", "content": message},
     )
     resp.raise_for_status()
     data = resp.json()
@@ -132,14 +128,14 @@ print(f"Bot: {reply['content']}")
 ```bash
 curl -s -X POST http://HOST:PORT/ \
   -H 'Content-Type: application/json' \
-  -d '{"input": {"role": "user", "content": "YOUR MESSAGE"}}'
+  -d '{"role": "user", "content": "YOUR MESSAGE"}'
 ```
 
 **Continue a session:**
 ```bash
 curl -s -X POST http://HOST:PORT/SESSION_ID \
   -H 'Content-Type: application/json' \
-  -d '{"input": {"role": "user", "content": "YOUR MESSAGE"}}'
+  -d '{"role": "user", "content": "YOUR MESSAGE"}'
 ```
 
 **Check the schema:**
@@ -154,7 +150,7 @@ curl -s http://HOST:PORT/schema | python3 -m json.tool
 | Problem | Fix |
 |---------|-----|
 | Forgot `Content-Type` header | Add `-H 'Content-Type: application/json'` (or set `json=` in `requests`). |
-| Sending conversation history yourself | Don't — the server manages it. Only send the current `input`. |
-| Wrong field names in `input` | Check `/schema`. For a chat module it's `{"role": "...", "content": "..."}`. |
+| Sending conversation history yourself | Don't — the server manages it. Only send the current message. |
+| Wrong field names | Check `/schema`. For a chat module it's `{"role": "...", "content": "..."}`. |
 | Using a string session ID in the URL | The `session_id` is a **number**, not a string UUID. |
 | Posting to `/` every time | That creates a **new** session each time. Use `/{session_id}` to continue. |
