@@ -9,7 +9,7 @@ use std::borrow::Cow;
 pub fn router(server: PipelineServer) -> Router {
     Router::new()
         .route("/", post(handle_playbook_query))
-        .route("/{session_id}", post(handle_playbook_session_query))
+        .route("/:session_id", post(handle_playbook_session_query))
         .route("/schema", axum::routing::get(handle_playbook_schema))
         .with_state(server)
 }
@@ -58,14 +58,9 @@ pub fn run(
     shutdown_tx
 }
 
-/// For session/session-diff modules, the full input schema contains fields like
-/// `[prior, input]` (or `[prior_inputs, prior_outputs, input]`).  HTTP callers
-/// should only supply the *last* field (the current user input).  This helper
-/// repairs the incoming JSON against only that last field's inner type and
-/// returns the bare row (e.g. `{role, content}`) — **not** wrapped in
-/// `{input: {…}}` — because the WASM session entry point receives bare rows.
-///
-/// For normal (non-session) modules the full schema is used as before.
+/// For session modules, repair the incoming JSON against only the last
+/// input field's type (e.g. `ChatMessage`), returning a bare row.
+/// For normal modules, use the full schema as before.
 fn repair_row_for_spec(
     input_row: PyroRow<'static>,
     server: &PipelineServer,
@@ -75,46 +70,29 @@ fn repair_row_for_spec(
     let all_fields = spec.func.input.fields();
 
     if kind != pyro_spec::ModuleKind::Normal {
-        // Session / SessionDiff — only validate against the last input field.
+        // Session / SessionDiff — validate against the last input field only.
         if let Some(last_field) = all_fields.last() {
-            let field_name = last_field.name();
-
-            // If the caller wrapped in {"input": {...}}, extract the inner row.
-            let bare_row = if input_row.0.len() == 1 && input_row.0[0].key == field_name {
-                match &input_row.0[0].value {
-                    PyroValue::Group(inner) => inner.clone(),
-                    _ => input_row,
-                }
-            } else {
-                // Already bare (e.g. {"role":"user","content":"hi"}).
-                input_row
-            };
-
-            // Repair the bare row against the field's inner type.
-            let inner_value = PyroValue::Group(bare_row);
-            let repaired = match inner_value.repair(&last_field.data_type) {
+            let repaired = match PyroValue::Group(input_row).repair(&last_field.data_type) {
                 Ok(v) => v,
                 Err(e) => {
                     return Err((
                         StatusCode::BAD_REQUEST,
                         Json(serde_json::json!({
-                            "error": format!("Failed to repair input JSON according to module spec: {:?}", e)
+                            "error": format!("Failed to repair input: {:?}", e)
                         })),
                     )
                         .into_response());
                 }
             };
 
-            // Return the repaired value as a bare row (unwrap the Group).
             match repaired {
                 PyroValue::Group(row) => Ok(row),
                 other => Ok(PyroRow(vec![RowItem {
-                    key: Cow::Owned(field_name.to_string()),
+                    key: Cow::Owned(last_field.name().to_string()),
                     value: other,
                 }])),
             }
         } else {
-            // Degenerate case: no fields at all — just pass through.
             Ok(input_row)
         }
     } else {
@@ -124,13 +102,14 @@ fn repair_row_for_spec(
             Err(e) => Err((
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
-                    "error": format!("Failed to repair input JSON according to module spec: {:?}", e)
+                    "error": format!("Failed to repair input: {:?}", e)
                 })),
             )
                 .into_response()),
         }
     }
 }
+
 
 
 async fn handle_playbook_query(
