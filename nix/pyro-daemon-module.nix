@@ -101,15 +101,15 @@ in
       # Daemon working directory — pyroduct:pyroduct, 0750
       "d /var/lib/pyro-daemon        0750 pyroduct pyroduct -"
       "d /var/lib/pyro-daemon/data   0750 pyroduct pyroduct -"
+      "d /var/lib/pyro-daemon/playbooks   0750 pyroduct pyroduct -"
 
       # Shared cache — setgid (2775) so group members can write
-      "d /var/lib/pyro-daemon/cache              2775 pyroduct pyroduct -"
-      "d /var/lib/pyro-daemon/cache/capabilities  2775 pyroduct pyroduct -"
-      "d /var/lib/pyro-daemon/cache/interfaces    2775 pyroduct pyroduct -"
-      "d /var/lib/pyro-daemon/cache/modules       2775 pyroduct pyroduct -"
+      "d /var/lib/pyro-daemon/capabilities  2775 pyroduct pyroduct -"
+      "d /var/lib/pyro-daemon/interfaces    2775 pyroduct pyroduct -"
+      "d /var/lib/pyro-daemon/modules       2775 pyroduct pyroduct -"
 
       # Cache config file
-      "C /var/lib/pyro-daemon/cache/config.toml  0664 pyroduct pyroduct - ${cacheConfigFile}"
+      "C /var/lib/pyro-daemon/config.toml  0664 pyroduct pyroduct - ${cacheConfigFile}"
     ];
 
     # -------------------------------------------------------------------------
@@ -122,7 +122,7 @@ in
       wantedBy = [ "multi-user.target" ];
 
       environment = {
-        PYRODUCT = "/var/lib/pyro-daemon/cache";
+        PYRODUCT = "/var/lib/pyro-daemon";
         PYRO_DAEMON_DIR = "/var/lib/pyro-daemon";
         # Expose openssl (and systemd client libs) to the dynamically-linked binary.
         # crane/Rust builds link against the Nix store paths; without this the
