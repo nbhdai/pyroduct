@@ -160,8 +160,8 @@ impl PipelineFactory {
                         )
                     })?,
             ),
-            input_manager: super::data::DataManager::new(self.input_dir.clone(), input_schema),
-            output_manager: super::data::DataManager::new(self.output_dir.clone(), output_schema),
+            input_manager: super::data::DataManager::new(self.input_dir.clone(), input_schema, self.wal_capacity),
+            output_manager: super::data::DataManager::new(self.output_dir.clone(), output_schema, self.wal_capacity),
             callbacks: tokio::sync::Mutex::new(Vec::new()),
         })
     }
@@ -240,7 +240,7 @@ impl PipelineFactory {
                         )
                     })?,
             ),
-            output_manager: super::data::DataManager::new(self.output_dir.clone(), output_schema),
+            output_manager: super::data::DataManager::new(self.output_dir.clone(), output_schema, self.wal_capacity),
             log_dir: self.log_dir.clone(),
             output_dir: self.output_dir.clone(),
             wal_capacity: self.wal_capacity,
@@ -326,6 +326,7 @@ impl PipelineFactory {
             output_manager: super::data::DataManager::new(
                 self.output_dir.clone(),
                 overall_output_schema,
+                self.wal_capacity,
             ),
             log_dir: self.log_dir.clone(),
             output_dir: self.output_dir.clone(),

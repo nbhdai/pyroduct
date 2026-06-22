@@ -59,7 +59,11 @@ pub struct DataManager {
 }
 
 impl DataManager {
-    pub fn new(output_dir: impl AsRef<Path>, schema: PyroSchema<'static>) -> Self {
+    pub fn new(
+        output_dir: impl AsRef<Path>,
+        schema: PyroSchema<'static>,
+        wal_capacity: usize,
+    ) -> Self {
         let output_dir_buf = output_dir.as_ref().to_path_buf();
         let _ = std::fs::create_dir_all(&output_dir_buf);
         let db_path = output_dir_buf.join("index.db");
@@ -112,7 +116,7 @@ impl DataManager {
                 ipc_row_counts: HashMap::new(),
                 total_parquet_rows: 0,
                 parquet_row_counts: HashMap::new(),
-                wal_capacity: 10_000,
+                wal_capacity,
                 ipc_capacity: 10,
                 sqlite_conn: conn,
                 metadata_prefix: None,
@@ -1233,7 +1237,7 @@ mod tests {
     async fn test_data_manager_flow() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
-        let manager = DataManager::new(dir.path(), schema);
+        let manager = DataManager::new(dir.path(), schema, 1000);
         manager.set_capacities(2, 2).await;
 
         // 1. Push records
@@ -1279,7 +1283,7 @@ mod tests {
     async fn test_recovery() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
-        let manager = DataManager::new(dir.path(), schema);
+        let manager = DataManager::new(dir.path(), schema, 1000);
 
         // Manually create a WAL file via push
         manager
@@ -1301,7 +1305,7 @@ mod tests {
 
         // We don't flush, so WAL has 2 rows.
         // Now let's simulate a crash by creating a new manager and recovering
-        let manager2 = DataManager::new(dir.path(), setup_schema());
+        let manager2 = DataManager::new(dir.path(), setup_schema(), 1000);
         manager2.restore().await.unwrap();
 
         assert_eq!(manager2.len().await, 2);
@@ -1317,7 +1321,7 @@ mod tests {
     async fn test_manual_flush_and_rollout() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
-        let manager = DataManager::new(dir.path(), schema);
+        let manager = DataManager::new(dir.path(), schema, 1000);
 
         manager
             .push_record(0, &make_success_record(0, 1, "alice"))
@@ -1344,7 +1348,7 @@ mod tests {
     async fn test_sqlite_index_and_metadata_prefix() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
-        let manager = DataManager::new(dir.path(), schema);
+        let manager = DataManager::new(dir.path(), schema, 1000);
         manager.set_metadata_prefix("pyro").await;
 
         manager
@@ -1391,7 +1395,7 @@ mod tests {
     async fn test_get_record_not_found_on_odd_entries() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
-        let manager = DataManager::new(dir.path(), schema);
+        let manager = DataManager::new(dir.path(), schema, 1000);
 
         // Put data with indices 0, 2, 4
         manager
@@ -1437,7 +1441,7 @@ mod tests {
     async fn test_get_batch_slice() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
-        let manager = DataManager::new(dir.path(), schema);
+        let manager = DataManager::new(dir.path(), schema, 1000);
 
         // Set small capacities to trigger flush and rollout
         // wal_capacity = 2, ipc_capacity = 2

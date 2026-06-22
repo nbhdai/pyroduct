@@ -56,7 +56,7 @@ impl DaemonDataManager {
         let output_schema = factory.factory.spec().func.output.clone();
 
         // 4. Create and restore DataManager for output_dir
-        let dm = DataManager::new(factory.output_dir, output_schema);
+        let dm = DataManager::new(factory.output_dir, output_schema, factory.wal_capacity);
         dm.restore()
             .await
             .map_err(|e| pyroduct::capture!("{:?}", e))?;

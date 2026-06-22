@@ -278,7 +278,7 @@ mod tests {
     async fn test_sql_provider_scan() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
-        let manager = DataManager::new(dir.path(), schema);
+        let manager = DataManager::new(dir.path(), schema, 1000);
         manager.set_capacities(2, 2).await;
 
         // Push 1 record into the WAL (active in-memory)
@@ -308,7 +308,7 @@ mod tests {
     async fn test_sql_provider_ipc_guard_deferred_deletion() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
-        let manager = DataManager::new(dir.path(), schema);
+        let manager = DataManager::new(dir.path(), schema, 1000);
         manager.set_capacities(2, 2).await;
 
         // 1. Push 2 records to trigger flush_wal (creates 1 IPC file)
@@ -370,7 +370,7 @@ mod tests {
     async fn test_sql_provider_metadata() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
-        let manager = DataManager::new(dir.path(), schema);
+        let manager = DataManager::new(dir.path(), schema, 1000);
         let provider = manager.sql_provider().await.unwrap();
 
         // 1. Verify schema()
@@ -398,7 +398,7 @@ mod tests {
 
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
-        let manager = DataManager::new(dir.path(), schema);
+        let manager = DataManager::new(dir.path(), schema, 1000);
         manager.set_capacities(2, 2).await;
 
         // 1. Push 4 records -> triggers two WAL flushes and one Parquet rollout (records 0..=3)
@@ -499,7 +499,7 @@ mod tests {
     async fn test_sql_provider_empty() {
         let dir = TempDir::new().unwrap();
         let schema = setup_schema();
-        let manager = DataManager::new(dir.path(), schema);
+        let manager = DataManager::new(dir.path(), schema, 1000);
 
         let provider = manager.sql_provider().await.unwrap();
         let ctx = SessionContext::new();
@@ -529,10 +529,10 @@ mod tests {
         ]);
         let output_schema = PyroSchema::new(vec![PyroField::new("result", PyroType::Str, true)]);
 
-        let input_manager = DataManager::new(dir_input.path(), input_schema);
+        let input_manager = DataManager::new(dir_input.path(), input_schema, 1000);
         input_manager.set_metadata_prefix("_input_meta").await;
 
-        let output_manager = DataManager::new(dir_output.path(), output_schema);
+        let output_manager = DataManager::new(dir_output.path(), output_schema, 1000);
         output_manager.set_metadata_prefix("_output_meta").await;
 
         // Push records to input_manager
@@ -628,10 +628,10 @@ mod tests {
         ]);
         let output_schema = PyroSchema::new(vec![PyroField::new("result", PyroType::Str, true)]);
 
-        let input_manager = DataManager::new(dir_input.path(), input_schema);
+        let input_manager = DataManager::new(dir_input.path(), input_schema, 1000);
         input_manager.set_metadata_prefix("_input_meta").await;
 
-        let output_manager = DataManager::new(dir_output.path(), output_schema);
+        let output_manager = DataManager::new(dir_output.path(), output_schema, 1000);
         output_manager.set_metadata_prefix("_output_meta").await;
 
         // Push records
@@ -703,7 +703,7 @@ mod tests {
     async fn test_data_manager_sql_validation() {
         let dir_input = TempDir::new().unwrap();
         let input_schema = setup_schema();
-        let input_manager = DataManager::new(dir_input.path(), input_schema);
+        let input_manager = DataManager::new(dir_input.path(), input_schema, 1000);
         input_manager.set_metadata_prefix("_input_meta").await;
 
         let input_provider = Arc::new(input_manager.sql_provider().await.unwrap());
