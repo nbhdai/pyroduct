@@ -357,8 +357,26 @@ impl SessionPipeline {
     #[instrument(skip(self), fields(session_id = session_id))]
     async fn rollup_and_cleanup_session(&self, session_id: u32) -> Result<(), PyroError> {
         debug!("Rolling up and cleaning up session");
-        let data_path = self.output_dir.join(format!("session_val_{}", session_id));
-        let inputs = crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
+
+        // Use in-memory prebatch data (which is guaranteed to have all rows
+        // including the just-appended output) instead of recovering from disk
+        // where the last write may not have been flushed yet.
+        let inputs = {
+            let active_sessions = self.active_sessions.lock().await;
+            if let Some(active) = active_sessions.get(&session_id) {
+                let mut rows = Vec::with_capacity(active.data_wal.prebatch.len());
+                for i in 0..active.data_wal.prebatch.len() {
+                    if let Some(row) = active.data_wal.prebatch.get(i) {
+                        rows.push(row.clone());
+                    }
+                }
+                rows
+            } else {
+                // Fallback: session not in memory, recover from disk
+                let data_path = self.output_dir.join(format!("session_val_{}", session_id));
+                crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default()
+            }
+        };
         debug!(inputs_count = inputs.len(), "Recovered data WAL inputs");
 
         let mut list_vals = Vec::with_capacity(inputs.len());
