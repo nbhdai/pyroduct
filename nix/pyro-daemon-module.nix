@@ -164,7 +164,7 @@ in
     environment.etc."profile.d/pyroduct.sh" = {
       text = ''
         # Pyroduct environment variables
-        export PYRODUCT="/var/lib/pyro-daemon/cache"
+        export PYRODUCT="/var/lib/pyro-daemon"
         export PYRO_DAEMON_DIR="/var/lib/pyro-daemon"
       '';
       mode = "0644";
