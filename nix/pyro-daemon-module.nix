@@ -124,6 +124,10 @@ in
       environment = {
         PYRODUCT = "/var/lib/pyro-daemon/cache";
         PYRO_DAEMON_DIR = "/var/lib/pyro-daemon";
+        # Expose openssl (and systemd client libs) to the dynamically-linked binary.
+        # crane/Rust builds link against the Nix store paths; without this the
+        # dynamic linker cannot find libssl.so.3 / libsystemd.so at runtime.
+        LD_LIBRARY_PATH = lib.makeLibraryPath (with pkgs; [ openssl systemd bzip2 ]);
       };
 
       serviceConfig = {
