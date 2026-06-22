@@ -189,8 +189,8 @@ impl PipelineFactory {
         }
         let input_schema = self.factory.spec().func.input.clone();
 
-        // Session input and output are the same type. The data WAL stores
-        // raw rows of that type. Use it directly as the list element type.
+        // Session list element type is the raw value type — Str for String,
+        // Group({role,content}) for ChatMessage, etc. Not wrapped in field names.
         let element_type = input_schema
             .fields
             .last()

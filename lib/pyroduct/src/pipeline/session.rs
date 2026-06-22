@@ -381,7 +381,14 @@ impl SessionPipeline {
 
         let mut list_vals = Vec::with_capacity(inputs.len());
         for row in inputs {
-            list_vals.push(crate::format::value::PyroValue::Group(row));
+            let val = if row.0.len() == 1 {
+                // Single-field row (scalar session) — extract the inner value
+                row.0.into_iter().next().unwrap().value
+            } else {
+                // Multi-field row (struct session) — the row IS the value
+                crate::format::value::PyroValue::Group(row)
+            };
+            list_vals.push(val);
         }
 
         let rolled_up_row =
@@ -538,21 +545,34 @@ impl SessionPipeline {
         let mut active_sessions = self.active_sessions.lock().await;
         let active = active_sessions.get_mut(&session_id).unwrap();
         for (i, row) in prior.iter().enumerate() {
-            if i >= existing.len()
-                && let Err(e) = active.data_wal.append(i, row).await
-            {
-                error!(index = i, ?e, "Failed to append prior row to data WAL");
-                let _ = self.set_session_status(session_id as usize, "failed");
-                return Err(PyroFailure {
-                    row_index: session_id,
-                    result: Err(e.to_string()),
-                    logs: active_logs.clone(),
-                });
+            if i >= existing.len() {
+                let unwrapped = Self::unwrap_for_wal(row);
+                if let Err(e) = active.data_wal.append(i, &unwrapped).await {
+                    error!(index = i, ?e, "Failed to append prior row to data WAL");
+                    let _ = self.set_session_status(session_id as usize, "failed");
+                    return Err(PyroFailure {
+                        row_index: session_id,
+                        result: Err(e.to_string()),
+                        logs: active_logs.clone(),
+                    });
+                }
             }
         }
 
         debug!("Session prep complete");
         Ok(())
+    }
+
+    /// Unwrap a row for WAL storage: if the row has a single field whose value
+    /// is a Group, return that inner Group row. Otherwise return the row as-is.
+    /// This strips field name wrappers like {input: Group({role, content})} → {role, content}.
+    fn unwrap_for_wal<'a>(row: &PyroRow<'a>) -> PyroRow<'a> {
+        if row.0.len() == 1 {
+            if let crate::format::value::PyroValue::Group(ref inner) = row.0[0].value {
+                return inner.clone();
+            }
+        }
+        row.clone()
     }
 
     #[instrument(skip(self, input), fields(session_id = session_id))]
@@ -578,7 +598,8 @@ impl SessionPipeline {
             let active = active_sessions.get_mut(&session_id).unwrap();
             let record_index = active.data_wal.records_written() as usize;
             debug!(record_index, "Appending input row to data WAL");
-            if let Err(e) = active.data_wal.append(record_index, input).await {
+            let unwrapped_input = Self::unwrap_for_wal(input);
+            if let Err(e) = active.data_wal.append(record_index, &unwrapped_input).await {
                 error!(?e, "Failed to append input to data WAL");
                 let _ = self.set_session_status(session_id as usize, "failed");
                 let shard = self.shard(session_id).lock().await;
@@ -636,7 +657,8 @@ impl SessionPipeline {
             {
                 let record_index = active.data_wal.records_written() as usize;
                 debug!(record_index, "Appending output row to data WAL");
-                let _ = active.data_wal.append(record_index, output_row).await;
+                let unwrapped_output = Self::unwrap_for_wal(output_row);
+                let _ = active.data_wal.append(record_index, &unwrapped_output).await;
             }
         }
 
@@ -743,8 +765,13 @@ impl SessionPipeline {
             if item.key == "session" {
                 if let crate::format::value::PyroValue::List(list_vals) = item.value {
                     for val in list_vals {
-                        if let crate::format::value::PyroValue::Group(r) = val {
-                            session_rows.push(r);
+                        match val {
+                            crate::format::value::PyroValue::Group(r) => {
+                                session_rows.push(r);
+                            }
+                            other => {
+                                session_rows.push(PyroRow::from([("value", other)]));
+                            }
                         }
                     }
                 }

@@ -172,6 +172,7 @@ async fn test_session_recovery_lifecycle() {
 
     // Verify get_record returns Success with rolled-up state
     let rec_succeeded = pipeline.get_record(session_id_1).await.unwrap();
+    println!("{rec_succeeded:?}");
     match rec_succeeded {
         SessionExecutionRecord::Success {
             row_index,
@@ -182,10 +183,10 @@ async fn test_session_recovery_lifecycle() {
         } => {
             assert_eq!(row_index, session_id_1 as usize);
             assert_eq!(prior.len(), 2);
-            assert_eq!(prior[0].get_str("input").unwrap(), "Hello!");
-            assert_eq!(prior[1].get_str("message").unwrap(), "Hello! Turn 1");
-            assert_eq!(input.get_str("input").unwrap(), "How are you?");
-            assert_eq!(success.get_str("message").unwrap(), "Goodbye! Turn 2");
+            assert_eq!(prior[0].get_str("value").unwrap(), "Hello!");
+            assert_eq!(prior[1].get_str("value").unwrap(), "Hello! Turn 1");
+            assert_eq!(input.get_str("value").unwrap(), "How are you?");
+            assert_eq!(success.get_str("value").unwrap(), "Goodbye! Turn 2");
         }
         other => panic!("Expected Success execution record, got {:?}", other),
     }
@@ -219,7 +220,7 @@ async fn test_session_recovery_lifecycle() {
         } => {
             assert_eq!(row_index, session_id_2 as usize);
             assert!(prior.is_empty());
-            assert_eq!(input.get_str("input").unwrap(), "error");
+            assert_eq!(input.get_str("value").unwrap(), "error");
             assert!(failure.is_ok());
             assert_eq!(
                 failure.unwrap().to_string(),
@@ -258,7 +259,7 @@ async fn test_session_recovery_lifecycle() {
         } => {
             assert_eq!(row_index, session_id_3 as usize);
             assert!(prior.is_empty());
-            assert_eq!(input.get_str("input").unwrap(), "panic");
+            assert_eq!(input.get_str("value").unwrap(), "panic");
             assert!(failure.is_ok());
             let captured_err = failure.unwrap();
             assert!(
