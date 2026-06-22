@@ -1,7 +1,9 @@
 use crate::PyroRow;
+use crate::format::value::{PyroValue, RowItem};
 use crate::pipeline::PipelineServer;
 use axum::response::Response;
 use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::post};
+use std::borrow::Cow;
 
 /// Return the Axum `Router` configured for the playbook.
 pub fn router(server: PipelineServer) -> Router {
@@ -56,6 +58,85 @@ pub fn run(
     shutdown_tx
 }
 
+/// For session/session-diff modules, the full input schema contains fields like
+/// `[prior, input]` (or `[prior_inputs, prior_outputs, input]`).  HTTP callers
+/// should only supply the *last* field (the current user input).  This helper
+/// repairs the incoming JSON against only that last field's type, then wraps
+/// the result back into a row keyed by the field name so the pipeline receives
+/// the shape it expects.
+///
+/// For normal (non-session) modules the full schema is used as before.
+fn repair_row_for_spec(
+    input_row: PyroRow<'static>,
+    server: &PipelineServer,
+) -> Result<PyroRow<'static>, axum::response::Response> {
+    let spec = server.spec();
+    let kind = spec.func.kind;
+    let all_fields = spec.func.input.fields();
+
+    if kind != pyro_spec::ModuleKind::Normal {
+        // Session / SessionDiff — only validate against the last input field.
+        if let Some(last_field) = all_fields.last() {
+            let field_name = last_field.name();
+
+            // If the caller already wrapped in {"input": {...}}, unwrap it first.
+            let inner_row = if input_row.0.len() == 1 && input_row.0[0].key == field_name {
+                // Already wrapped — repair against the single-field slice.
+                match input_row.project_repair(&[last_field.clone()]) {
+                    Ok(row) => return Ok(row),
+                    Err(e) => {
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({
+                                "error": format!("Failed to repair input JSON according to module spec: {:?}", e)
+                            })),
+                        )
+                            .into_response());
+                    }
+                }
+            } else {
+                input_row
+            };
+
+            // The caller sent the bare payload (e.g. {"role":"user","content":"hi"}).
+            // Repair it against the field's inner type, then wrap it.
+            let inner_value = PyroValue::Group(inner_row);
+            let repaired = match inner_value.repair(&last_field.data_type) {
+                Ok(v) => v,
+                Err(e) => {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": format!("Failed to repair input JSON according to module spec: {:?}", e)
+                        })),
+                    )
+                        .into_response());
+                }
+            };
+
+            Ok(PyroRow(vec![RowItem {
+                key: Cow::Owned(field_name.to_string()),
+                value: repaired,
+            }]))
+        } else {
+            // Degenerate case: no fields at all — just pass through.
+            Ok(input_row)
+        }
+    } else {
+        // Normal module — use full schema.
+        match input_row.project_repair(all_fields) {
+            Ok(row) => Ok(row),
+            Err(e) => Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("Failed to repair input JSON according to module spec: {:?}", e)
+                })),
+            )
+                .into_response()),
+        }
+    }
+}
+
 async fn handle_playbook_query(
     State(server): State<PipelineServer>,
     Json(payload): Json<serde_json::Value>,
@@ -72,18 +153,10 @@ async fn handle_playbook_query(
         }
     };
 
-    // 2. Repair input PyroRow based on the input schema from the playbook spec!
-    let repaired_row = match input_row.project_repair(server.spec().func.input.fields()) {
+    // 2. Repair input PyroRow (session-aware: only validates the user input field)
+    let repaired_row = match repair_row_for_spec(input_row, &server) {
         Ok(row) => row,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": format!("Failed to repair input JSON according to module spec: {:?}", e)
-                })),
-            )
-                .into_response();
-        }
+        Err(resp) => return resp,
     };
 
     // 3. Process the repaired row in the pipeline server
@@ -129,18 +202,10 @@ async fn handle_playbook_session_query(
         }
     };
 
-    // 2. Repair input PyroRow
-    let repaired_row = match input_row.project_repair(server.spec().func.input.fields()) {
+    // 2. Repair input PyroRow (session-aware)
+    let repaired_row = match repair_row_for_spec(input_row, &server) {
         Ok(row) => row,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": format!("Failed to repair input JSON according to module spec: {:?}", e)
-                })),
-            )
-                .into_response();
-        }
+        Err(resp) => return resp,
     };
 
     // 3. Validate that the pipeline supports sessions
