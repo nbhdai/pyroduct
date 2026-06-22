@@ -271,3 +271,43 @@ pub async fn set_http_address(
         }
     }
 }
+
+#[tauri::command]
+pub async fn add_playbook_callback(source: String, target_playbook: String) -> Result<String, String> {
+    info!("Tauri command: add_playbook_callback from '{}' to '{}'", source, target_playbook);
+    let client = super::connect_to_active_daemon().await?;
+    client.add_playbook_callback(source, target_playbook).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn add_http_callback(source: String, url: String) -> Result<String, String> {
+    info!("Tauri command: add_http_callback from '{}' to '{}'", source, url);
+    let client = super::connect_to_active_daemon().await?;
+    client.add_http_callback(source, url).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn add_socket_callback(source: String, socket_path: String) -> Result<String, String> {
+    info!("Tauri command: add_socket_callback from '{}' to '{}'", source, socket_path);
+    let client = super::connect_to_active_daemon().await?;
+    client.add_socket_callback(source, socket_path).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn list_callbacks(source: String) -> Result<Value, String> {
+    info!("Tauri command: list_callbacks for '{}'", source);
+    let client = super::connect_to_active_daemon().await?;
+    match client.list_callbacks(source).await {
+        Ok(callbacks) => serde_json::to_value(callbacks).map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn delete_callback(uuid_str: String) -> Result<String, String> {
+    info!("Tauri command: delete_callback with uuid '{}'", uuid_str);
+    let uuid = uuid::Uuid::parse_str(&uuid_str).map_err(|e| e.to_string())?;
+    let client = super::connect_to_active_daemon().await?;
+    client.delete_callback(uuid).await.map_err(|e| e.to_string())
+}
+

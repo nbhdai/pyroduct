@@ -127,4 +127,11 @@ export interface GuiSettings {
   daemons: Record<string, DaemonConnection>;
 }
 
+export interface CallbackMapping {
+  uuid: string;
+  source: string;
+  callback_type: "playbook" | "http" | "socket";
+  target: string;
+}
+
 

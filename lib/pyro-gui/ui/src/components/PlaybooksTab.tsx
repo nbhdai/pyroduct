@@ -26,6 +26,7 @@ export function PlaybooksTab({
         <div className="tab-content active">
           <PlaybookDetailView
             playbook={selectedPlaybook}
+            playbooks={playbooks}
             onBack={() => setSelectedPlaybookName(null)}
             onSubmitCall={onSubmitCall}
           />
