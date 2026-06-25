@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use arrow::array::RecordBatch;
@@ -75,6 +76,8 @@ pub struct SessionDiffPipeline {
     pub active_sessions: Mutex<std::collections::HashMap<u32, ActiveSession>>,
     pub callbacks: Mutex<Vec<(uuid::Uuid, crate::pipeline::Callback)>>,
     pub session_status_manager: SessionStatusManager,
+    pub max_active_sessions: usize,
+    pub lru_order: Mutex<VecDeque<u32>>,
 }
 
 impl SessionDiffPipeline {
@@ -167,90 +170,131 @@ impl SessionDiffPipeline {
         max_id
     }
 
+    /// Evict the oldest active session(s) to stay within `max_active_sessions`.
+    ///
+    /// Eviction drops file handles (LogWal + WalWriter) and calls `free_session`
+    /// on the owning shard to release WASM linear memory. The session WAL files
+    /// remain on disk and will be re-opened by `get_or_open_session` on next access.
+    async fn evict_if_needed(&self) {
+        let mut active = self.active_sessions.lock().await;
+        let mut lru = self.lru_order.lock().await;
+
+        while active.len() >= self.max_active_sessions {
+            if let Some(victim_id) = lru.pop_front() {
+                if active.remove(&victim_id).is_some() {
+                    debug!(session_id = victim_id, "Evicting session from active cache");
+                    // Free WASM memory in the owning shard
+                    let mut shard = self.shard(victim_id).lock().await;
+                    if let Err(e) = shard.close_session(victim_id).await {
+                        warn!(session_id = victim_id, ?e, "Failed to free evicted session in shard");
+                    }
+                } else {
+                    // Stale LRU entry (already removed by rollup), skip it
+                    continue;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
     #[instrument(skip(self), fields(session_id = session_id))]
     async fn get_or_open_session(&self, session_id: u32) -> Result<(), PyroError> {
-        let already_active = {
+        // Fast path: already active — just touch LRU
+        {
             let active = self.active_sessions.lock().await;
-            active.contains_key(&session_id)
-        };
-
-        if !already_active {
-            debug!("Opening session");
-            if let Ok(Some(status)) = self.get_session_status(session_id as usize) {
-                if status == "succeeded" || status == "failed" {
-                    warn!(status, "Cannot resume closed session");
-                    return Err(PyroError::validation(crate::capture!(
-                        "Cannot resume closed session {}",
-                        session_id
-                    )));
+            if active.contains_key(&session_id) {
+                let mut lru = self.lru_order.lock().await;
+                if let Some(pos) = lru.iter().position(|&id| id == session_id) {
+                    lru.remove(pos);
                 }
+                lru.push_back(session_id);
+                return Ok(());
             }
+        }
 
-            let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
-            let data_path = self.output_dir.join(format!("session_val_{}", session_id));
+        debug!("Opening session");
+        if let Ok(Some(status)) = self.get_session_status(session_id as usize) {
+            if status == "succeeded" || status == "failed" {
+                warn!(status, "Cannot resume closed session");
+                return Err(PyroError::validation(crate::capture!(
+                    "Cannot resume closed session {}",
+                    session_id
+                )));
+            }
+        }
 
-            let log_wal = LogWal::open(log_dir, self.wal_capacity)
-                .await
+        // Evict oldest sessions if at capacity before opening new file handles
+        self.evict_if_needed().await;
+
+        let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
+        let data_path = self.output_dir.join(format!("session_val_{}", session_id));
+
+        let log_wal = LogWal::open(log_dir, self.wal_capacity)
+            .await
+            .map_err(|io| {
+                PyroError::local_io(
+                    CapturedError::new("Unable to open individual log wal").with_source(io),
+                )
+            })?;
+        let input_schema = self.spec.func.input.clone();
+        let output_schema = self.spec.func.output.clone();
+        let wal_schema = crate::format::value::PyroSchema::new(vec![
+            crate::format::value::PyroField::new(
+                "input",
+                crate::format::value::PyroType::Group(std::borrow::Cow::Owned(
+                    input_schema.fields.into_owned(),
+                )),
+                true,
+            ),
+            crate::format::value::PyroField::new(
+                "output",
+                crate::format::value::PyroType::Group(std::borrow::Cow::Owned(
+                    output_schema.fields.into_owned(),
+                )),
+                true,
+            ),
+        ]);
+        let data_wal =
+            crate::format::value::arrow::wal::WalWriter::open(data_path.clone(), wal_schema)
                 .map_err(|io| {
                     PyroError::local_io(
-                        CapturedError::new("Unable to open individual log wal").with_source(io),
+                        CapturedError::new("Unable to open individual data wal")
+                            .with_source(io),
                     )
                 })?;
-            let input_schema = self.spec.func.input.clone();
-            let output_schema = self.spec.func.output.clone();
-            let wal_schema = crate::format::value::PyroSchema::new(vec![
-                crate::format::value::PyroField::new(
-                    "input",
-                    crate::format::value::PyroType::Group(std::borrow::Cow::Owned(
-                        input_schema.fields.into_owned(),
-                    )),
-                    true,
-                ),
-                crate::format::value::PyroField::new(
-                    "output",
-                    crate::format::value::PyroType::Group(std::borrow::Cow::Owned(
-                        output_schema.fields.into_owned(),
-                    )),
-                    true,
-                ),
-            ]);
-            let data_wal =
-                crate::format::value::arrow::wal::WalWriter::open(data_path.clone(), wal_schema)
-                    .map_err(|io| {
-                        PyroError::local_io(
-                            CapturedError::new("Unable to open individual data wal")
-                                .with_source(io),
-                        )
-                    })?;
 
-            debug!("Reactivating session, preloading history into step");
-            let wal_rows =
-                crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
-            let mut inputs = Vec::new();
-            let mut outputs = Vec::new();
-            for row in wal_rows {
-                if let Some(in_val) = row.get("input")
-                    && let crate::format::value::PyroValue::Group(g) = in_val
-                {
-                    inputs.push(g.clone());
-                }
-                if let Some(out_val) = row.get("output")
-                    && let crate::format::value::PyroValue::Group(g) = out_val
-                {
-                    outputs.push(g.clone());
-                }
-            }
+        debug!("Reactivating session, preloading history into step");
+        let wal_rows =
+            crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
+        let mut inputs = Vec::new();
+        let mut outputs = Vec::new();
+        for row in wal_rows {
+            if let Some(in_val) = row.get("input")
+                && let crate::format::value::PyroValue::Group(g) = in_val
             {
-                let mut shard = self.shard(session_id).lock().await;
-                if let Err(e) = shard.prep_session(session_id, &inputs, &outputs).await {
-                    warn!(?e, "Failed to prep reactivated session_diff");
-                }
+                inputs.push(g.clone());
             }
-
-            debug!("Successfully opened session files, inserting active session");
-            let mut active = self.active_sessions.lock().await;
-            active.insert(session_id, ActiveSession { log_wal, data_wal });
+            if let Some(out_val) = row.get("output")
+                && let crate::format::value::PyroValue::Group(g) = out_val
+            {
+                outputs.push(g.clone());
+            }
         }
+        {
+            let mut shard = self.shard(session_id).lock().await;
+            if let Err(e) = shard.prep_session(session_id, &inputs, &outputs).await {
+                warn!(?e, "Failed to prep reactivated session_diff");
+            }
+        }
+
+        debug!("Successfully opened session files, inserting active session");
+        let mut active = self.active_sessions.lock().await;
+        active.insert(session_id, ActiveSession { log_wal, data_wal });
+
+        let mut lru = self.lru_order.lock().await;
+        lru.push_back(session_id);
+
         Ok(())
     }
 
@@ -341,6 +385,11 @@ impl SessionDiffPipeline {
         {
             let mut active = self.active_sessions.lock().await;
             active.remove(&session_id);
+
+            let mut lru = self.lru_order.lock().await;
+            if let Some(pos) = lru.iter().position(|&id| id == session_id) {
+                lru.remove(pos);
+            }
         }
 
         let data_path = self.output_dir.join(format!("session_val_{}", session_id));

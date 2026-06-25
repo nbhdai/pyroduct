@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use arrow::array::RecordBatch;
@@ -206,6 +207,8 @@ pub struct SessionPipeline {
     pub active_sessions: Mutex<std::collections::HashMap<u32, ActiveSession>>,
     pub callbacks: Mutex<Vec<(uuid::Uuid, crate::pipeline::Callback)>>,
     pub session_status_manager: SessionStatusManager,
+    pub max_active_sessions: usize,
+    pub lru_order: Mutex<VecDeque<u32>>,
 }
 
 impl SessionPipeline {
@@ -298,59 +301,100 @@ impl SessionPipeline {
         max_id
     }
 
+    /// Evict the oldest active session(s) to stay within `max_active_sessions`.
+    ///
+    /// Eviction drops file handles (LogWal + WalWriter) and calls `free_session`
+    /// on the owning shard to release WASM linear memory. The session WAL files
+    /// remain on disk and will be re-opened by `get_or_open_session` on next access.
+    async fn evict_if_needed(&self) {
+        let mut active = self.active_sessions.lock().await;
+        let mut lru = self.lru_order.lock().await;
+
+        while active.len() >= self.max_active_sessions {
+            if let Some(victim_id) = lru.pop_front() {
+                if active.remove(&victim_id).is_some() {
+                    debug!(session_id = victim_id, "Evicting session from active cache");
+                    // Free WASM memory in the owning shard
+                    let mut shard = self.shard(victim_id).lock().await;
+                    if let Err(e) = shard.close_session(victim_id).await {
+                        warn!(session_id = victim_id, ?e, "Failed to free evicted session in shard");
+                    }
+                } else {
+                    // Stale LRU entry (already removed by rollup), skip it
+                    continue;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
     #[instrument(skip(self), fields(session_id = session_id))]
     async fn get_or_open_session(&self, session_id: u32) -> Result<(), PyroError> {
-        let already_active = {
+        // Fast path: already active — just touch LRU
+        {
             let active = self.active_sessions.lock().await;
-            active.contains_key(&session_id)
-        };
-
-        if !already_active {
-            debug!("Opening session");
-            if let Ok(Some(status)) = self.get_session_status(session_id as usize) {
-                if status == "succeeded" || status == "failed" {
-                    warn!(status, "Cannot resume closed session");
-                    return Err(PyroError::validation(crate::capture!(
-                        "Cannot resume closed session {}",
-                        session_id
-                    )));
+            if active.contains_key(&session_id) {
+                let mut lru = self.lru_order.lock().await;
+                if let Some(pos) = lru.iter().position(|&id| id == session_id) {
+                    lru.remove(pos);
                 }
+                lru.push_back(session_id);
+                return Ok(());
             }
+        }
 
-            let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
-            let data_path = self.output_dir.join(format!("session_val_{}", session_id));
+        debug!("Opening session");
+        if let Ok(Some(status)) = self.get_session_status(session_id as usize) {
+            if status == "succeeded" || status == "failed" {
+                warn!(status, "Cannot resume closed session");
+                return Err(PyroError::validation(crate::capture!(
+                    "Cannot resume closed session {}",
+                    session_id
+                )));
+            }
+        }
 
-            let log_wal = LogWal::open(log_dir, self.wal_capacity)
-                .await
-                .map_err(|io| {
-                    PyroError::local_io(
-                        CapturedError::new("Unable to open individual log wal").with_source(io),
-                    )
-                })?;
-            let data_wal = crate::format::value::arrow::wal::WalWriter::open(
-                data_path.clone(),
-                self.spec.func.input.clone(),
-            )
+        // Evict oldest sessions if at capacity before opening new file handles
+        self.evict_if_needed().await;
+
+        let log_dir = self.log_dir.join(format!("session_log_{}", session_id));
+        let data_path = self.output_dir.join(format!("session_val_{}", session_id));
+
+        let log_wal = LogWal::open(log_dir, self.wal_capacity)
+            .await
             .map_err(|io| {
                 PyroError::local_io(
-                    CapturedError::new("Unable to open individual data wal").with_source(io),
+                    CapturedError::new("Unable to open individual log wal").with_source(io),
                 )
             })?;
+        let data_wal = crate::format::value::arrow::wal::WalWriter::open(
+            data_path.clone(),
+            self.spec.func.input.clone(),
+        )
+        .map_err(|io| {
+            PyroError::local_io(
+                CapturedError::new("Unable to open individual data wal").with_source(io),
+            )
+        })?;
 
-            debug!("Reactivating session, preloading history into step");
-            let existing =
-                crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
-            {
-                let mut shard = self.shard(session_id).lock().await;
-                if let Err(e) = shard.prep_session(session_id, &existing, &[]).await {
-                    warn!(?e, "Failed to prep reactivated session");
-                }
+        debug!("Reactivating session, preloading history into step");
+        let existing =
+            crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
+        {
+            let mut shard = self.shard(session_id).lock().await;
+            if let Err(e) = shard.prep_session(session_id, &existing, &[]).await {
+                warn!(?e, "Failed to prep reactivated session");
             }
-
-            debug!("Successfully opened session files, inserting active session");
-            let mut active = self.active_sessions.lock().await;
-            active.insert(session_id, ActiveSession { log_wal, data_wal });
         }
+
+        debug!("Successfully opened session files, inserting active session");
+        let mut active = self.active_sessions.lock().await;
+        active.insert(session_id, ActiveSession { log_wal, data_wal });
+
+        let mut lru = self.lru_order.lock().await;
+        lru.push_back(session_id);
+
         Ok(())
     }
 
@@ -436,6 +480,11 @@ impl SessionPipeline {
         {
             let mut active = self.active_sessions.lock().await;
             active.remove(&session_id);
+
+            let mut lru = self.lru_order.lock().await;
+            if let Some(pos) = lru.iter().position(|&id| id == session_id) {
+                lru.remove(pos);
+            }
         }
 
         let data_path = self.output_dir.join(format!("session_val_{}", session_id));
@@ -546,8 +595,7 @@ impl SessionPipeline {
         let active = active_sessions.get_mut(&session_id).unwrap();
         for (i, row) in prior.iter().enumerate() {
             if i >= existing.len() {
-                let unwrapped = Self::unwrap_for_wal(row);
-                if let Err(e) = active.data_wal.append(i, &unwrapped).await {
+                if let Err(e) = active.data_wal.append(i, row).await {
                     error!(index = i, ?e, "Failed to append prior row to data WAL");
                     let _ = self.set_session_status(session_id as usize, "failed");
                     return Err(PyroFailure {
@@ -563,17 +611,7 @@ impl SessionPipeline {
         Ok(())
     }
 
-    /// Unwrap a row for WAL storage: if the row has a single field whose value
-    /// is a Group, return that inner Group row. Otherwise return the row as-is.
-    /// This strips field name wrappers like {input: Group({role, content})} → {role, content}.
-    fn unwrap_for_wal<'a>(row: &PyroRow<'a>) -> PyroRow<'a> {
-        if row.0.len() == 1 {
-            if let crate::format::value::PyroValue::Group(ref inner) = row.0[0].value {
-                return inner.clone();
-            }
-        }
-        row.clone()
-    }
+
 
     #[instrument(skip(self, input), fields(session_id = session_id))]
     pub async fn call(
@@ -598,8 +636,7 @@ impl SessionPipeline {
             let active = active_sessions.get_mut(&session_id).unwrap();
             let record_index = active.data_wal.records_written() as usize;
             debug!(record_index, "Appending input row to data WAL");
-            let unwrapped_input = Self::unwrap_for_wal(input);
-            if let Err(e) = active.data_wal.append(record_index, &unwrapped_input).await {
+            if let Err(e) = active.data_wal.append(record_index, input).await {
                 error!(?e, "Failed to append input to data WAL");
                 let _ = self.set_session_status(session_id as usize, "failed");
                 let shard = self.shard(session_id).lock().await;
@@ -657,8 +694,7 @@ impl SessionPipeline {
             {
                 let record_index = active.data_wal.records_written() as usize;
                 debug!(record_index, "Appending output row to data WAL");
-                let unwrapped_output = Self::unwrap_for_wal(output_row);
-                let _ = active.data_wal.append(record_index, &unwrapped_output).await;
+                let _ = active.data_wal.append(record_index, output_row).await;
             }
         }
 

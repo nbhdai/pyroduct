@@ -231,7 +231,9 @@ impl PipelineFactory {
             log_dir: self.log_dir.clone(),
             output_dir: self.output_dir.clone(),
             wal_capacity: self.wal_capacity,
+            max_active_sessions: 10 * self.num_workers,
             active_sessions: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+            lru_order: tokio::sync::Mutex::new(std::collections::VecDeque::new()),
             callbacks: tokio::sync::Mutex::new(Vec::new()),
             session_status_manager,
         })
@@ -318,7 +320,9 @@ impl PipelineFactory {
             log_dir: self.log_dir.clone(),
             output_dir: self.output_dir.clone(),
             wal_capacity: self.wal_capacity,
+            max_active_sessions: 10 * self.num_workers,
             active_sessions: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+            lru_order: tokio::sync::Mutex::new(std::collections::VecDeque::new()),
             callbacks: tokio::sync::Mutex::new(Vec::new()),
             session_status_manager,
         })

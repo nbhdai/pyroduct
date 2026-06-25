@@ -163,7 +163,9 @@ impl PipelineServer {
                     log_dir: playbook.log_dir.clone(),
                     output_dir: playbook.output_dir.clone(),
                     wal_capacity: 1000,
+                    max_active_sessions: 10 * num_workers,
                     active_sessions: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+                    lru_order: tokio::sync::Mutex::new(std::collections::VecDeque::new()),
                     callbacks: tokio::sync::Mutex::new(Vec::new()),
                     session_status_manager,
                 };
@@ -194,7 +196,9 @@ impl PipelineServer {
                     log_dir: playbook.log_dir.clone(),
                     output_dir: playbook.output_dir.clone(),
                     wal_capacity: 1000,
+                    max_active_sessions: 10 * num_workers,
                     active_sessions: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+                    lru_order: tokio::sync::Mutex::new(std::collections::VecDeque::new()),
                     callbacks: tokio::sync::Mutex::new(Vec::new()),
                     session_status_manager,
                 };
