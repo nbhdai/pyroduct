@@ -73,6 +73,18 @@ in
         If null, the daemon will only bind to the local UNIX domain socket.
       '';
     };
+
+    replayPaths = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "/home/user/replay" "/data/replay" ];
+      description = ''
+        List of directories the daemon is allowed to read for folder replay.
+        Needed because the service runs with ProtectHome = true, which makes
+        /home inaccessible by default.  Paths are added as ReadOnlyPaths in
+        the systemd sandbox so the daemon can stat and read them.
+      '';
+    };
   };
 
   # ===========================================================================
@@ -155,6 +167,10 @@ in
         PrivateTmp = true;
         NoNewPrivileges = true;
         ReadWritePaths = [ "/var/lib/pyroduct" ];
+        # Allow read-only access to any paths the operator needs for replay.
+        # ProtectHome blocks /home by default; adding paths here overrides that
+        # restriction for the specific directories listed in cfg.replayPaths.
+        ReadOnlyPaths = cfg.replayPaths;
       };
     };
 
