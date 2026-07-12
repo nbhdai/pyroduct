@@ -140,6 +140,20 @@ impl PipelineServer {
             }
             pyro_spec::ModuleKind::Session => {
                 let session_status_manager = SessionStatusManager::new(&playbook.output_dir)?;
+                // Build the session output schema: { session: List[element_type] }
+                // The element type is the type of the last input field (the per-turn message type).
+                let element_type = input_schema
+                    .fields
+                    .last()
+                    .map(|f| f.data_type.clone().into_owned())
+                    .unwrap_or(pyro_spec::PyroType::Null);
+                let session_output_schema = pyro_spec::PyroSchema::new(vec![
+                    pyro_spec::PyroField::new(
+                        "session",
+                        pyro_spec::PyroType::List(Box::new(element_type), true),
+                        false,
+                    ),
+                ]);
                 let pipeline = SessionPipeline {
                     shards,
                     spec: spec.clone(),
@@ -157,7 +171,7 @@ impl PipelineServer {
                     ),
                     output_manager: crate::pipeline::data::DataManager::new(
                         playbook.output_dir.clone(),
-                        output_schema,
+                        session_output_schema,
                         1000,
                     ),
                     log_dir: playbook.log_dir.clone(),
@@ -171,6 +185,7 @@ impl PipelineServer {
                 };
                 ServerPipeline::Session(pipeline)
             }
+
             pyro_spec::ModuleKind::SessionDiff => {
                 let session_status_manager = SessionStatusManager::new(&playbook.output_dir)?;
                 let pipeline = SessionDiffPipeline {

@@ -317,7 +317,11 @@ impl SessionPipeline {
                     // Free WASM memory in the owning shard
                     let mut shard = self.shard(victim_id).lock().await;
                     if let Err(e) = shard.close_session(victim_id).await {
-                        warn!(session_id = victim_id, ?e, "Failed to free evicted session in shard");
+                        warn!(
+                            session_id = victim_id,
+                            ?e,
+                            "Failed to free evicted session in shard"
+                        );
                     }
                 } else {
                     // Stale LRU entry (already removed by rollup), skip it
@@ -379,8 +383,7 @@ impl SessionPipeline {
         })?;
 
         debug!("Reactivating session, preloading history into step");
-        let existing =
-            crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
+        let existing = crate::format::value::arrow::wal::recover(&data_path).unwrap_or_default();
         {
             let mut shard = self.shard(session_id).lock().await;
             if let Err(e) = shard.prep_session(session_id, &existing, &[]).await {
@@ -435,8 +438,9 @@ impl SessionPipeline {
             list_vals.push(val);
         }
 
-        let rolled_up_row =
-            PyroRow::from([("session", crate::format::value::PyroValue::List(list_vals))]);
+        let rolled_up_row = PyroRow::from([
+            ("session", crate::format::value::PyroValue::List(list_vals)),
+        ]);
 
         self.output_manager
             .push_record(session_id as usize, &rolled_up_row)
@@ -610,8 +614,6 @@ impl SessionPipeline {
         debug!("Session prep complete");
         Ok(())
     }
-
-
 
     #[instrument(skip(self, input), fields(session_id = session_id))]
     pub async fn call(

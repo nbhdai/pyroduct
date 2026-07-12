@@ -168,9 +168,14 @@ in
         NoNewPrivileges = true;
         ReadWritePaths = [ "/var/lib/pyroduct" ];
         # Allow read-only access to any paths the operator needs for replay.
-        # ProtectHome blocks /home by default; adding paths here overrides that
-        # restriction for the specific directories listed in cfg.replayPaths.
-        ReadOnlyPaths = cfg.replayPaths;
+        # NOTE: ReadOnlyPaths cannot pierce ProtectHome = true because that
+        # directive mounts an empty tmpfs over /home before the namespace is
+        # sealed, making any /home sub-path invisible regardless of
+        # ReadOnlyPaths.  BindReadOnlyPaths performs an explicit bind-mount
+        # that is applied *after* ProtectHome's tmpfs, so the real directory
+        # becomes visible at its original path inside the service's mount
+        # namespace.
+        BindReadOnlyPaths = cfg.replayPaths;
       };
     };
 
