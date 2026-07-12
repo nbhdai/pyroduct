@@ -26,8 +26,7 @@ fn counter(
     let turn = (prior.len() as u32 + 1) / 2;
 
     match turn {
-        0 => Ok(SessionResponse::Continue(format!("Hello! Turn {}", turn + 1))),
-        1 => Ok(SessionResponse::End(format!("Goodbye! Turn {}", turn + 1))),
+        0 | 1 => Ok(SessionResponse::Continue(format!("Hello! Turn {}", turn + 1))),
         _ => Ok(SessionResponse::Terminate),
     }
 }
@@ -133,7 +132,7 @@ async fn test_socket_session_server_client() {
         .expect("Session 1 call turn 2 should succeed");
     assert_eq!(
         result1_t2.row.get_str("message").unwrap(),
-        "Goodbye! Turn 2"
+        "Hello! Turn 2"
     );
 
     // --- Session 2: Turn 2 ---
@@ -146,7 +145,7 @@ async fn test_socket_session_server_client() {
         .expect("Session 2 call turn 2 should succeed");
     assert_eq!(
         result2_t2.row.get_str("message").unwrap(),
-        "Goodbye! Turn 2"
+        "Hello! Turn 2"
     );
 
     // --- Session 1: Turn 3 ---

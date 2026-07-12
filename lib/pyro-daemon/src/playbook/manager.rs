@@ -983,13 +983,62 @@ impl PlaybooksManager {
     pub async fn call(
         &self,
         playbook: &str,
-        _row_index: usize,
+        row_index: usize,
         row: pyroduct::PyroRow<'static>,
     ) -> Result<()> {
-        tracing::debug!(playbook = %playbook, "Invoking playbook callback with input row");
-        let workers = self.workers.lock().await;
-        if let Some(worker) = workers.get(playbook) {
-            let (_session_id, _res) = worker.call(row).await?;
+        tracing::debug!(playbook = %playbook, row_index, "Invoking playbook callback with input row");
+        // Clone the server out of the workers map before releasing the lock.
+        // This avoids holding `workers` for the full duration of the callback
+        // execution, which would block all other playbook operations and could
+        // deadlock if the target playbook's callbacks also call back into the manager.
+        let server = {
+            let workers = self.workers.lock().await;
+            let s = workers
+                .get(playbook)
+                .map(|worker| worker.server.clone());
+            if s.is_none() {
+                tracing::warn!(playbook = %playbook, row_index, "Playbook callback target is not running — skipping");
+            } else {
+                tracing::debug!(playbook = %playbook, row_index, "Found running playbook worker for callback");
+            }
+            s
+        };
+        if let Some(server) = server {
+            // Use call_session so the target (Normal) pipeline stores its output at
+            // the same row_index as the session that triggered this callback, keeping
+            // outputs from both playbooks correlated by index.
+            tracing::debug!(playbook = %playbook, row_index, "Dispatching call_session to playbook callback target");
+            match server.call_session(row_index as u32, row).await {
+                Ok(rec) => match rec.into_result() {
+                    Ok((result_index, result_row)) => {
+                        tracing::debug!(
+                            playbook = %playbook,
+                            row_index,
+                            result_index,
+                            result_row = ?result_row,
+                            "Playbook callback completed successfully"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            playbook = %playbook,
+                            row_index,
+                            error = ?e,
+                            "Playbook callback execution record indicated failure"
+                        );
+                        return Err(pyroduct::capture!("Playbook callback failed: {:?}", e));
+                    }
+                },
+                Err(e) => {
+                    tracing::error!(
+                        playbook = %playbook,
+                        row_index,
+                        error = ?e,
+                        "call_session failed for playbook callback"
+                    );
+                    return Err(pyroduct::capture!("Failed to call playbook callback: {:?}", e));
+                }
+            }
         }
         Ok(())
     }
