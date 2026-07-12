@@ -12,6 +12,35 @@ pub struct DaemonClient {
 }
 
 impl DaemonClient {
+    /// Connect to a running PyroDaemon using the default socket path.
+    ///
+    /// Resolves the control socket automatically using the same priority chain
+    /// as `pyro-daemond` itself:
+    ///
+    /// 1. `$PYRO_DAEMON_DIR` environment variable
+    /// 2. `/var/lib/pyroduct/control` (Linux systemd)
+    /// 3. `~/.pyroduct/control` (installed via install.sh / macOS)
+    /// 4. `~/Library/Application Support/pyro-daemon/control` (legacy macOS)
+    ///
+    /// This is the recommended entry point when depending on `pyro-daemon`
+    /// from crates.io.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use pyro_daemon::client::DaemonClient;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> anyhow::Result<()> {
+    ///     let client = DaemonClient::connect_default().await?;
+    ///     println!("Connected: {}", client.is_connected());
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn connect_default() -> Result<Self> {
+        let socket_path = crate::PyroDaemon::default_working_dir().join("control");
+        Self::connect(socket_path).await
+    }
+
     /// Connect to a running PyroDaemon unix socket
     pub async fn connect(path: impl AsRef<Path>) -> Result<Self> {
         let socket = PyroSocket::connect_unix(path)
