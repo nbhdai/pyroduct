@@ -30,7 +30,7 @@ impl DaemonClient {
     /// use pyro_daemon::client::DaemonClient;
     ///
     /// #[tokio::main]
-    /// async fn main() -> anyhow::Result<()> {
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ///     let client = DaemonClient::connect_default().await?;
     ///     println!("Connected: {}", client.is_connected());
     ///     Ok(())

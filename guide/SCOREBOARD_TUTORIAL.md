@@ -100,7 +100,7 @@ Add `pyro-daemon` from crates.io to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-pyro-daemon = "0.2.5"
+pyro-daemon = "0.2.6"
 arrow       = "57"
 tokio       = { version = "1", features = ["full"] }
 anyhow      = "1"
@@ -184,7 +184,7 @@ Expose the scoreboard over HTTP as a JSON endpoint. Add Axum to your
 
 ```toml
 [dependencies]
-pyro-daemon = "0.2.5"
+pyro-daemon = "0.2.6"
 arrow       = "57"
 tokio       = { version = "1", features = ["full"] }
 anyhow      = "1"
@@ -260,7 +260,7 @@ Add it to your binary's `Cargo.toml`:
 
 ```toml
 [dependencies]
-pyro-daemon = "0.2.5"
+pyro-daemon = "0.2.6"
 arrow       = "57"
 tokio       = { version = "1", features = ["full"] }
 anyhow      = "1"
