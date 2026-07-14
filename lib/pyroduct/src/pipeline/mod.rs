@@ -14,7 +14,7 @@ pub use callback::Callback;
 pub use factory::{PipelineConfig, PipelineFactory};
 pub use interconnect::PlaybookCollection;
 pub use normal::{ExecutionRecord, Failure, Pipeline};
-pub use server::{PipelineServer, ServerExecutionRecord, ServerPipeline};
+pub use server::{DEFAULT_RESTART_INTERVAL, PipelineServer, ServerExecutionRecord, ServerPipeline};
 use thiserror::Error;
 
 use crate::PyroError;

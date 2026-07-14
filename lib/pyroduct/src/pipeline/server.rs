@@ -14,6 +14,9 @@ use crate::pipeline::{
 };
 use crate::{CapturedError, PyroError};
 
+/// Default interval for [`PipelineServer::start_periodic_restart`].
+pub const DEFAULT_RESTART_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub enum ServerPipeline {
     Normal(Pipeline),
     Session(SessionPipeline),
@@ -68,10 +71,18 @@ impl ServerExecutionRecord {
 ///
 /// For Session and SessionDiff pipelines, per-shard locking enables concurrent
 /// session execution without holding the top-level lock during WASM calls.
+///
+/// The server stores its [`LoadedPlaybook`] and optional interconnect so it can
+/// rebuild and hot-swap the inner pipeline at any time via [`PipelineServer::restart`].
+/// Call [`PipelineServer::start_periodic_restart`] to schedule automatic restarts.
 #[derive(Clone)]
 pub struct PipelineServer {
     pipeline: Arc<RwLock<ServerPipeline>>,
     spec: Arc<PlaybookSpec>,
+    /// The playbook this server was built from, kept so we can rebuild on restart.
+    playbook: Arc<LoadedPlaybook>,
+    /// Optional interconnect forwarded to the inner pipeline on restart.
+    interconnect: Option<Arc<dyn PlaybookInterconnect>>,
 }
 
 impl PipelineServer {
@@ -93,8 +104,8 @@ impl PipelineServer {
         interconnect: Option<Arc<dyn PlaybookInterconnect>>,
     ) -> Result<Self, PipelineError> {
         let mut factory = PyroFactory::from_playbook(playbook)?;
-        if let Some(ic) = interconnect {
-            factory.set_interconnect(ic);
+        if let Some(ref ic) = interconnect {
+            factory.set_interconnect(ic.clone());
         }
         let spec = Arc::new(factory.spec().clone());
         let input_schema = factory.spec().func.input.clone();
@@ -110,6 +121,24 @@ impl PipelineServer {
 
         let server_pipeline = match kind {
             pyro_spec::ModuleKind::Normal => {
+                let input_manager = {
+                    let dm = crate::pipeline::data::DataManager::new(
+                        playbook.input_dir.clone(),
+                        input_schema,
+                        1000,
+                    );
+                    dm.set_metadata_prefix("_input_meta").await;
+                    dm
+                };
+                let output_manager = {
+                    let dm = crate::pipeline::data::DataManager::new(
+                        playbook.output_dir.clone(),
+                        output_schema,
+                        1000,
+                    );
+                    dm.set_metadata_prefix("_output_meta").await;
+                    dm
+                };
                 let pipeline = Pipeline {
                     shards,
                     success_log_retention_secs: 3600,
@@ -124,16 +153,8 @@ impl PipelineServer {
                                 )
                             })?,
                     ),
-                    input_manager: crate::pipeline::data::DataManager::new(
-                        playbook.input_dir.clone(),
-                        input_schema,
-                        1000,
-                    ),
-                    output_manager: crate::pipeline::data::DataManager::new(
-                        playbook.output_dir.clone(),
-                        output_schema,
-                        1000,
-                    ),
+                    input_manager,
+                    output_manager,
                     callbacks: tokio::sync::Mutex::new(Vec::new()),
                 };
                 ServerPipeline::Normal(pipeline)
@@ -147,13 +168,12 @@ impl PipelineServer {
                     .last()
                     .map(|f| f.data_type.clone().into_owned())
                     .unwrap_or(pyro_spec::PyroType::Null);
-                let session_output_schema = pyro_spec::PyroSchema::new(vec![
-                    pyro_spec::PyroField::new(
+                let session_output_schema =
+                    pyro_spec::PyroSchema::new(vec![pyro_spec::PyroField::new(
                         "session",
                         pyro_spec::PyroType::List(Box::new(element_type), true),
                         false,
-                    ),
-                ]);
+                    )]);
                 let pipeline = SessionPipeline {
                     shards,
                     spec: spec.clone(),
@@ -224,7 +244,55 @@ impl PipelineServer {
         Ok(Self {
             pipeline: Arc::new(RwLock::new(server_pipeline)),
             spec,
+            playbook: Arc::new(playbook.clone()),
+            interconnect,
         })
+    }
+
+    /// Rebuild the inner pipeline from the stored playbook and atomically swap it in.
+    ///
+    /// In-flight calls hold a read lock and will complete before the swap takes effect.
+    /// If rebuilding fails the existing pipeline is left untouched.
+    pub async fn restart(&self) -> Result<(), PipelineError> {
+        let fresh = Self::new_internal(&self.playbook, self.interconnect.clone()).await?;
+        // The fresh server has exactly one Arc reference, so try_unwrap succeeds.
+        let fresh_pipeline = Arc::try_unwrap(fresh.pipeline)
+            .unwrap_or_else(|_| panic!("fresh PipelineServer Arc has no other owners"))
+            .into_inner();
+        *self.pipeline.write().await = fresh_pipeline;
+        Ok(())
+    }
+
+    /// Spawn a background task that calls [`Self::restart`] every `interval`.
+    ///
+    /// The first restart fires after one full `interval` (not immediately).
+    /// Returns an [`tokio::task::AbortHandle`] that can be used to cancel the
+    /// task — for example inside a `PlaybookWorker::shutdown` path.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let abort = server.start_periodic_restart(DEFAULT_RESTART_INTERVAL);
+    /// // … later …
+    /// abort.abort();
+    /// ```
+    pub fn start_periodic_restart(
+        &self,
+        interval: std::time::Duration,
+    ) -> tokio::task::AbortHandle {
+        let server = self.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            // Consume the immediate first tick so we wait a full interval before restarting.
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                match server.restart().await {
+                    Ok(()) => tracing::info!("Periodic playbook restart succeeded"),
+                    Err(e) => tracing::error!(error = ?e, "Periodic playbook restart failed"),
+                }
+            }
+        })
+        .abort_handle()
     }
 
     /// Add a callback dynamically to the running pipeline.
