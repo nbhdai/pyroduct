@@ -160,16 +160,24 @@ impl PipelineFactory {
                         )
                     })?,
             ),
-            input_manager: super::data::DataManager::new(
-                self.input_dir.clone(),
-                input_schema,
-                self.wal_capacity,
-            ),
-            output_manager: super::data::DataManager::new(
-                self.output_dir.clone(),
-                output_schema,
-                self.wal_capacity,
-            ),
+            input_manager: {
+                let dm = super::data::DataManager::new(
+                    self.input_dir.clone(),
+                    input_schema,
+                    self.wal_capacity,
+                );
+                dm.set_metadata_prefix("_input_meta").await;
+                dm
+            },
+            output_manager: {
+                let dm = super::data::DataManager::new(
+                    self.output_dir.clone(),
+                    output_schema,
+                    self.wal_capacity,
+                );
+                dm.set_metadata_prefix("_output_meta").await;
+                dm
+            },
             callbacks: tokio::sync::Mutex::new(Vec::new()),
         })
     }

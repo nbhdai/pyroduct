@@ -690,11 +690,12 @@ impl DataManager {
     }
 
     /// Pushes a single WAL record to the current WAL and the in-memory buffer.
+    /// Returns the augmented row as it was stored (including any injected metadata fields).
     pub async fn push_record(
         &self,
         row_index: usize,
         record: &PyroRow<'_>,
-    ) -> Result<(), PyroError> {
+    ) -> Result<PyroRow<'static>, PyroError> {
         let mut s = self.state.lock().await;
         let wal_manager = self.ensure_wal_manager(&mut s).await?;
 
@@ -736,7 +737,7 @@ impl DataManager {
             self.flush_wal_inner(&mut s).await?;
         }
 
-        Ok(())
+        Ok(record_to_push)
     }
 
     /// Rolls up the in-memory buffer into a memmapable Arrow IPC file.

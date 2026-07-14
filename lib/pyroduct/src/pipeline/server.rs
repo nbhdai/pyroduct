@@ -110,6 +110,24 @@ impl PipelineServer {
 
         let server_pipeline = match kind {
             pyro_spec::ModuleKind::Normal => {
+                let input_manager = {
+                    let dm = crate::pipeline::data::DataManager::new(
+                        playbook.input_dir.clone(),
+                        input_schema,
+                        1000,
+                    );
+                    dm.set_metadata_prefix("_input_meta").await;
+                    dm
+                };
+                let output_manager = {
+                    let dm = crate::pipeline::data::DataManager::new(
+                        playbook.output_dir.clone(),
+                        output_schema,
+                        1000,
+                    );
+                    dm.set_metadata_prefix("_output_meta").await;
+                    dm
+                };
                 let pipeline = Pipeline {
                     shards,
                     success_log_retention_secs: 3600,
@@ -124,16 +142,8 @@ impl PipelineServer {
                                 )
                             })?,
                     ),
-                    input_manager: crate::pipeline::data::DataManager::new(
-                        playbook.input_dir.clone(),
-                        input_schema,
-                        1000,
-                    ),
-                    output_manager: crate::pipeline::data::DataManager::new(
-                        playbook.output_dir.clone(),
-                        output_schema,
-                        1000,
-                    ),
+                    input_manager,
+                    output_manager,
                     callbacks: tokio::sync::Mutex::new(Vec::new()),
                 };
                 ServerPipeline::Normal(pipeline)

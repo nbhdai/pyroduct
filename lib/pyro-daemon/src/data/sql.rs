@@ -53,22 +53,50 @@ impl DaemonDataManager {
         let factory = loaded
             .factory()
             .map_err(|e| pyroduct::capture!("{:?}", e))?;
+        let input_schema = factory.factory.spec().func.input.clone();
         let output_schema = factory.factory.spec().func.output.clone();
 
-        // 4. Create and restore DataManager for output_dir
-        let dm = DataManager::new(factory.output_dir, output_schema, factory.wal_capacity);
-        dm.restore()
+        // 4. Create and restore DataManagers for input_dir and output_dir.
+        //    Prefixes must be set before restore() so that WAL recovery uses
+        //    the same schema that the pipeline wrote the data with.
+        let input_dm = DataManager::new(factory.input_dir, input_schema, factory.wal_capacity);
+        input_dm.set_metadata_prefix("_input_meta").await;
+        input_dm
+            .restore()
             .await
             .map_err(|e| pyroduct::capture!("{:?}", e))?;
 
-        // 5. Get SQL Provider and execute query
-        let provider = dm
+        let output_dm = DataManager::new(factory.output_dir, output_schema, factory.wal_capacity);
+        output_dm.set_metadata_prefix("_output_meta").await;
+        output_dm
+            .restore()
+            .await
+            .map_err(|e| pyroduct::capture!("{:?}", e))?;
+
+        // 5. Register both tables and execute query.
+        //    - "inputs"  → input WAL   (schema: module input)
+        //    - "outputs" → output WAL  (schema: module output)
+        //    - "data"    → alias for outputs (backward-compatible)
+        //
+        //    Join key: inputs._input_meta.index = outputs._output_meta.index
+        let input_provider = input_dm
             .sql_provider()
             .await
             .map_err(|e| pyroduct::capture!("{:?}", e))?;
+        let output_provider = output_dm
+            .sql_provider()
+            .await
+            .map_err(|e| pyroduct::capture!("{:?}", e))?;
+        let output_provider = std::sync::Arc::new(output_provider);
+
         let ctx = SessionContext::new();
-        ctx.register_table("data", std::sync::Arc::new(provider))
-            .capture("Failed to register table in DataFusion")?;
+        ctx.register_table("inputs", std::sync::Arc::new(input_provider))
+            .capture("Failed to register 'inputs' table in DataFusion")?;
+        ctx.register_table("outputs", output_provider.clone())
+            .capture("Failed to register 'outputs' table in DataFusion")?;
+        // Keep "data" pointing at outputs for backward compatibility
+        ctx.register_table("data", output_provider)
+            .capture("Failed to register 'data' table in DataFusion")?;
 
         let df = ctx
             .sql(sql_query)

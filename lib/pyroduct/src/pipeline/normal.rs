@@ -88,7 +88,7 @@ impl Pipeline {
         input: &PyroRow<'_>,
     ) -> Result<ExecutionRecord, PyroError> {
         debug!(row_index, "Processing row");
-        self.input_manager.push_record(row_index, input).await?;
+        let stored_input = self.input_manager.push_record(row_index, input).await?;
 
         let mut shard = self.shard(row_index).lock().await;
         match shard.call(row_index as u32, input).await {
@@ -103,7 +103,8 @@ impl Pipeline {
                     }
                 }
 
-                self.output_manager
+                let stored_success = self
+                    .output_manager
                     .push_record(row_index, &output.row)
                     .await?;
 
@@ -114,10 +115,11 @@ impl Pipeline {
                     failure: None,
                 };
                 self.log_manager.lock().await.append(&log_entry).await?;
+
                 let record = ExecutionRecord::Success {
                     row_index,
-                    input: input.clone().into_owned(),
-                    success: output.row,
+                    input: stored_input,
+                    success: stored_success,
                     logs: output.logs,
                 };
                 Ok(record)
@@ -137,9 +139,10 @@ impl Pipeline {
                     failure: Some(f.result.clone()),
                 };
                 self.log_manager.lock().await.append(&log_entry).await?;
+
                 let record = ExecutionRecord::Failure {
                     row_index,
-                    input: input.clone().into_owned(),
+                    input: stored_input,
                     failure: f.result,
                     logs: f.logs,
                 };
