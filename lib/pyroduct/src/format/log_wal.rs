@@ -586,11 +586,42 @@ impl LogWalReader {
     }
 
     /// Retrieve a single LogEntry by its global index in O(1) file access.
+    ///
+    /// The fast path assumes entries were appended in gapless, increasing `row_index`
+    /// order (position `index` in the log == the entry whose `row_index == index`).
+    /// That assumption breaks the moment a row is skipped (e.g. a failed row that
+    /// never gets logged, or out-of-order/concurrent appends), which would silently
+    /// return the *wrong* entry. So the fast-read result is always verified against
+    /// the entry's own `row_index`, and on any mismatch (or missing expected file)
+    /// we fall back to a full scan that finds the entry by its actual `row_index`.
     pub async fn get(&self, index: usize, capacity: usize) -> tokio::io::Result<Option<LogEntry>> {
         debug!(index = index, "Retrieving log entry by index");
         if capacity == 0 {
             return Ok(None);
         }
+
+        if let Some(record) = self.get_fast_path(index, capacity).await? {
+            if record.row_index == index {
+                return Ok(Some(record));
+            }
+            debug!(
+                index = index,
+                found_row_index = record.row_index,
+                "Fast-path log lookup returned mismatched row_index; falling back to full scan"
+            );
+        }
+
+        self.scan_for_index(index).await
+    }
+
+    /// Attempts to read the entry at the arithmetic position for `index` without
+    /// verifying its `row_index`. Returns `Ok(None)` if the expected file/offset
+    /// isn't present rather than erroring, so the caller can fall back to a scan.
+    async fn get_fast_path(
+        &self,
+        index: usize,
+        capacity: usize,
+    ) -> tokio::io::Result<Option<LogEntry>> {
         let file_index = index / capacity;
         let entry_index = index % capacity;
 
@@ -653,6 +684,19 @@ impl LogWalReader {
 
         let record = serde_json::from_slice::<LogEntry>(&payload)?;
         Ok(Some(record))
+    }
+
+    /// Falls back to a linear scan of the whole log, matching on the entry's own
+    /// `row_index` field rather than its position. Correct regardless of gaps or
+    /// ordering, at the cost of O(n) worst case.
+    async fn scan_for_index(&self, index: usize) -> tokio::io::Result<Option<LogEntry>> {
+        let mut reader = LogWalReader::open(&self.dir).await?;
+        while let Some(entry) = reader.next().await? {
+            if entry.row_index == index {
+                return Ok(Some(entry));
+            }
+        }
+        Ok(None)
     }
 
     /// Reads the next `LogRecord` from the log directory.
@@ -905,6 +949,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_log_wal_get_with_gap() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let path = tmp_dir.path();
+
+        // capacity is 2, so the positional fast path expects index 3 at file 1, slot 1.
+        let mut wal = LogWal::open(path, 2).await.unwrap();
+
+        // Row 1 failed and was never logged: appended row_index values are 0, 2, 3
+        // instead of 0, 1, 2, 3. This breaks the position == row_index assumption:
+        // position 2 ("file 1, slot 0") now holds row_index 2, and the fast path for
+        // index 1 would otherwise land on row_index 2's slot.
+        wal.append(&create_test_entry(0)).await.unwrap();
+        wal.append(&create_test_entry(2)).await.unwrap();
+        wal.append(&create_test_entry(3)).await.unwrap();
+        wal.flush().await.unwrap();
+
+        // Index 1 was never logged, must be None rather than returning row_index 2's entry.
+        assert!(wal.get(1).await.unwrap().is_none());
+
+        // Every logged index must resolve to the entry with that exact row_index,
+        // not whatever entry happens to sit at the arithmetic position.
+        for expected in [0usize, 2, 3] {
+            let entry = wal
+                .get(expected)
+                .await
+                .unwrap()
+                .expect("Should find record by its own row_index");
+            assert_eq!(entry.row_index, expected);
+        }
+    }
+
+    #[tokio::test]
     async fn test_log_wal_retention_and_ranges() {
         let tmp_dir = tempfile::tempdir().unwrap();
         let path = tmp_dir.path();
@@ -979,8 +1055,8 @@ mod tests {
         manager.send(entry).await.unwrap();
         assert_eq!(manager.total_len(), 1);
 
-        // Retrieve the entry via get
-        let retrieved = manager.get(0).await.unwrap().expect("Should find entry");
+        // Retrieve the entry via get, by its own row_index (42), not its position (0).
+        let retrieved = manager.get(42).await.unwrap().expect("Should find entry");
         assert_eq!(retrieved.row_index, 42);
 
         manager.interrupt().await.unwrap();

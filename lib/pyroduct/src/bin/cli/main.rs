@@ -173,6 +173,33 @@ enum Commands {
         #[arg(value_name = "PARQUET_PATH")]
         output: PathBuf,
     },
+    /// Dumps every error-free (input, output) pair for a playbook run to Parquet files,
+    /// keyed by the same row_index used by the daemon.
+    DumpPairs {
+        /// Directory containing the playbook's execution logs
+        #[arg(long)]
+        log_dir: PathBuf,
+
+        /// Directory containing the playbook's input DataManager
+        #[arg(long)]
+        input_dir: PathBuf,
+
+        /// Directory containing the playbook's output DataManager
+        #[arg(long)]
+        output_dir: PathBuf,
+
+        /// WAL capacity used by the playbook's DataManagers and log WAL
+        #[arg(long, default_value_t = 1000)]
+        wal_capacity: usize,
+
+        /// Destination directory for the generated Parquet files
+        #[arg(long)]
+        dest: PathBuf,
+
+        /// Maximum number of pairs per output Parquet file
+        #[arg(long, default_value_t = 50_000)]
+        rows_per_file: usize,
+    },
 }
 
 pub fn start_logging() {
@@ -263,6 +290,24 @@ async fn main() -> Result<()> {
         }
         Commands::WalToParquet { wal, output } => {
             commands::wal_to_parquet::wal_to_parquet(&wal, &output).await
+        }
+        Commands::DumpPairs {
+            log_dir,
+            input_dir,
+            output_dir,
+            wal_capacity,
+            dest,
+            rows_per_file,
+        } => {
+            commands::dump_pairs::dump_pairs(
+                &log_dir,
+                &input_dir,
+                &output_dir,
+                wal_capacity,
+                &dest,
+                rows_per_file,
+            )
+            .await
         }
     }
 }
