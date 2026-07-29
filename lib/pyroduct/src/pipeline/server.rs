@@ -128,6 +128,7 @@ impl PipelineServer {
                         1000,
                     );
                     dm.set_metadata_prefix("_input_meta").await;
+                    dm.restore().await?;
                     dm
                 };
                 let output_manager = {
@@ -137,6 +138,7 @@ impl PipelineServer {
                         1000,
                     );
                     dm.set_metadata_prefix("_output_meta").await;
+                    dm.restore().await?;
                     dm
                 };
                 let pipeline = Pipeline {
@@ -174,6 +176,14 @@ impl PipelineServer {
                         pyro_spec::PyroType::List(Box::new(element_type), true),
                         false,
                     )]);
+                let output_manager = crate::pipeline::data::DataManager::new(
+                    playbook.output_dir.clone(),
+                    session_output_schema,
+                    1000,
+                );
+                // See the Normal branch above: session ids are derived from
+                // `output_manager.len()`, so this must reflect on-disk state.
+                output_manager.restore().await?;
                 let pipeline = SessionPipeline {
                     shards,
                     spec: spec.clone(),
@@ -189,11 +199,7 @@ impl PipelineServer {
                                 )
                             })?,
                     ),
-                    output_manager: crate::pipeline::data::DataManager::new(
-                        playbook.output_dir.clone(),
-                        session_output_schema,
-                        1000,
-                    ),
+                    output_manager,
                     log_dir: playbook.log_dir.clone(),
                     output_dir: playbook.output_dir.clone(),
                     wal_capacity: 1000,
@@ -208,6 +214,14 @@ impl PipelineServer {
 
             pyro_spec::ModuleKind::SessionDiff => {
                 let session_status_manager = SessionStatusManager::new(&playbook.output_dir)?;
+                let output_manager = crate::pipeline::data::DataManager::new(
+                    playbook.output_dir.clone(),
+                    output_schema,
+                    1000,
+                );
+                // See the Normal branch above: session ids are derived from
+                // `output_manager.len()`, so this must reflect on-disk state.
+                output_manager.restore().await?;
                 let pipeline = SessionDiffPipeline {
                     shards,
                     spec: spec.clone(),
@@ -223,11 +237,7 @@ impl PipelineServer {
                                 )
                             })?,
                     ),
-                    output_manager: crate::pipeline::data::DataManager::new(
-                        playbook.output_dir.clone(),
-                        output_schema,
-                        1000,
-                    ),
+                    output_manager,
                     log_dir: playbook.log_dir.clone(),
                     output_dir: playbook.output_dir.clone(),
                     wal_capacity: 1000,
