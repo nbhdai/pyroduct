@@ -1,0 +1,8 @@
+error[E0515]: cannot return value referencing local variable `buf`
+ --> tests/compile_fail_io/borrowed_ref_cannot_outlive_its_buffer.rs:7:5
+  |
+7 |     buf.as_ref()
+  |     ---^^^^^^^^^
+  |     |
+  |     returns a value referencing data owned by the current function
+  |     `buf` is borrowed here

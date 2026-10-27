@@ -1,0 +1,5 @@
+error[E0599]: no method named `view` found for struct `PyroVec` in the current scope
+ --> tests/compile_fail_io/pyrovec_has_no_view.rs:8:15
+  |
+8 |     let _ = v.view();
+  |               ^^^^ method not found in `PyroVec`

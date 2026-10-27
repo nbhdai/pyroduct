@@ -1,0 +1,5 @@
+error: this field nests 6 list levels; at most 5 are supported
+  --> tests/compile_fail/list_too_deep_numeric.rs:10:14
+   |
+10 |     numbers: Vec<Vec<Vec<Vec<Vec<Vec<u8>>>>>>,
+   |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

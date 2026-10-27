@@ -1,0 +1,5 @@
+error: Option<Option<T>> is not supported
+ --> tests/compile_fail/option_option.rs:7:12
+  |
+7 |     value: Option<Option<u32>>,
+  |            ^^^^^^^^^^^^^^^^^^^

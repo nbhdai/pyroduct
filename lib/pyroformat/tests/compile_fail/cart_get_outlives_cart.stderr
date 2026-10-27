@@ -1,0 +1,8 @@
+error[E0515]: cannot return value referencing local variable `cart`
+  --> tests/compile_fail/cart_get_outlives_cart.rs:18:5
+   |
+18 |     cart.get()
+   |     ----^^^^^^
+   |     |
+   |     returns a value referencing data owned by the current function
+   |     `cart` is borrowed here

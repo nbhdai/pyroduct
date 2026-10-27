@@ -1,0 +1,5 @@
+error: #[derive(Layout, Writer, Reader)] does not support generic type or const parameters yet
+  --> tests/compile_fail/generic_struct.rs:13:15
+   |
+13 | struct Wrapper<T> {
+   |               ^^^

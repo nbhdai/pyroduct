@@ -1,0 +1,13 @@
+error[E0277]: the trait bound `PyroView: PyroSink` is not satisfied
+  --> tests/compile_fail_io/pyroview_is_not_a_pyrosink.rs:11:35
+   |
+11 |     let _ = PyroSink::payload_mut(&mut view);
+   |             --------------------- ^^^^^^^^^ the trait `PyroSink` is not implemented for `PyroView`
+   |             |
+   |             required by a bound introduced by this call
+   |
+help: the trait `PyroSink` is implemented for `LocalMemSink`
+  --> src/buf/sink.rs
+   |
+   | impl PyroSink for LocalMemSink {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

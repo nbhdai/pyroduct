@@ -1,0 +1,5 @@
+error: this field nests 6 list levels (a `String`, bytes or `BitVec` is a list level of its own); at most 5 are supported
+ --> tests/compile_fail/list_too_deep_string.rs:9:14
+  |
+9 |     strings: Vec<Vec<Vec<Vec<Vec<String>>>>>,
+  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -1,0 +1,5 @@
+error: Option<BitVec<u8, Lsb0>> is not supported (out of scope for v1) — use BitVec<u8, Lsb0> directly; an empty BitVec already represents "no bits"
+  --> tests/compile_fail/bitvec_option.rs:10:12
+   |
+10 |     flags: Option<BitVec<u8, Lsb0>>,
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^

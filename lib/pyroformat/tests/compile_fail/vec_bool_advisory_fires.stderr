@@ -1,0 +1,12 @@
+error: use of deprecated unit struct `__PyroformatVecBoolAdvisory_WithUnsuppressedVecBool_0`: field `flags`: `Vec<bool>` is packed bit-by-bit on write; use `pyroformat::BitVec` (bitvec::vec::BitVec<u8, Lsb0>) for a memcpy-fast write/read path — silence with #[pyro(allow(vec_bool))]
+  --> tests/compile_fail/vec_bool_advisory_fires.rs:12:12
+   |
+12 |     flags: Vec<bool>,
+   |            ^^^
+   |
+note: the lint level is defined here
+  --> tests/compile_fail/vec_bool_advisory_fires.rs:6:9
+   |
+ 6 | #![deny(warnings)]
+   |         ^^^^^^^^
+   = note: `#[deny(deprecated)]` implied by `#[deny(warnings)]`

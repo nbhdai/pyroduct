@@ -1,0 +1,5 @@
+error: `Rc<T>` fields are not supported by #[derive(Layout, Writer, Reader)] — use `T` directly
+ --> tests/compile_fail/rc_field.rs:8:12
+  |
+8 |     value: Rc<u32>,
+  |            ^^^^^^^

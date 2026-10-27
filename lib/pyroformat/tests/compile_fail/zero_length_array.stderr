@@ -1,0 +1,17 @@
+error: a fixed array must have at least one element
+ --> tests/compile_fail/zero_length_array.rs:9:8
+  |
+9 |     a: [u8; 0],
+  |        ^^^^^^^
+
+error: a fixed array must have at least one element
+  --> tests/compile_fail/zero_length_array.rs:15:15
+   |
+15 |     a: Option<[u8; 0]>,
+   |               ^^^^^^^
+
+error: a fixed array must have at least one element
+  --> tests/compile_fail/zero_length_array.rs:21:19
+   |
+21 |     a: Vec<Option<[u16; 0]>>,
+   |                   ^^^^^^^^

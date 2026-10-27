@@ -1,0 +1,5 @@
+error: tuple fields are not supported by #[derive(Layout, Writer, Reader)] — use a named struct instead
+ --> tests/compile_fail/tuple_field.rs:7:12
+  |
+7 |     value: (u32, String),
+  |            ^^^^^^^^^^^^^

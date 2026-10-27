@@ -1,0 +1,13 @@
+error[E0080]: evaluation panicked: `TooWide` needs more than MAX_INODES (1024) inodes, counting the inodes of every struct nested in it
+ --> tests/compile_fail/too_many_inodes.rs:7:10
+  |
+7 | #[derive(Layout)]
+  |          ^^^^^^ evaluation of `_::__RAW_LEN` failed here
+
+note: erroneous constant encountered
+ --> tests/compile_fail/too_many_inodes.rs:7:10
+  |
+7 | #[derive(Layout)]
+  |          ^^^^^^
+  |
+  = note: this note originates in the derive macro `Layout` (in Nightly builds, run with -Z macro-backtrace for more info)

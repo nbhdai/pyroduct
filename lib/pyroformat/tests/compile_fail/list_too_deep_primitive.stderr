@@ -1,0 +1,5 @@
+error: this field nests 6 list levels; at most 5 are supported
+ --> tests/compile_fail/list_too_deep_primitive.rs:8:13
+  |
+8 |     shorts: Vec<Vec<Vec<Vec<Vec<Vec<u16>>>>>>,
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -1,0 +1,104 @@
+[package]
+name = "pyroformat"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+keywords.workspace = true
+repository.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+
+[features]
+default = ["trace-logging"]
+trace-logging = []
+arrow = ["dep:arrow", "dep:parquet", "dep:arrow-schema", "pyro_schema/arrow"]
+# Schema rendering (`pyro_schema::human`) plus its JSON serialization — a
+# property of the deploying system, not of the library, so off by default
+# (docs/pyro-schema-crate-plan.md, Step 4).
+human = ["pyro_schema/human"]
+# Debug-only tooling not meant for normal builds or CI: exhaustive/expensive
+# checks (loom's interleaving exploration), and a home for similar debug-only
+# additions going forward. Off by default; see `nix run .#loom` in flake.nix.
+debug = ["dep:loom"]
+# Exposes `pyroformat::wire::tests::*` (normally `#[cfg(test)]`-only) as
+# real `pub` items — the golden `expected_buf`/`expected_inodes` consts
+# each hand-built value/wire test owns, importable from `tests/` so an
+# integration test can assert against the exact bytes/inodes a unit test
+# already checked, instead of a second hand-copied literal.
+fixtures = ["human"]
+# `compio_buf::IoBuf` for `PyroBuf`, so a sealed message goes straight to a
+# compio write without a wrapper (src/buf/compio.rs).
+compio = ["dep:compio-buf"]
+
+[dependencies]
+pyroformat-derive = { path = "../pyroformat-derive" }
+pyro_schema = { package = "pyro-schema", path = "../pyro-schema" }
+# Arrow
+arrow = { version = "57.2.0", optional = true }
+parquet = { version = "57.2.0", optional = true }
+arrow-schema = { version = "57.2.0", optional = true }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+
+half = { version = "2.7.1", features = ["serde"] }
+paste = "1.0.15"
+bytes = "1"
+chrono = { version = "0.4.43", default-features = false, features = ["alloc"] }
+thiserror = "2.0.17"
+tracing = "0.1.44"
+bitvec = { version = "1.0.1", features = ["serde"] }
+
+
+loom = { version = "0.7.2", optional = true }
+# The buffer traits `compio` 0.19 re-exports as `compio::buf`.
+compio-buf = { version = "0.8.3", optional = true }
+
+[dev-dependencies]
+tracing-test = "0.2.5"
+trybuild = "1.0"
+macrotest = "1.0"
+tempfile = "3.24.0"
+pprof = { version = "0.15.0", features = ["flamegraph", "criterion"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+half = "2.7.1"
+rkyv = "0.8"
+pyro_schema = { package = "pyro-schema", path = "../pyro-schema", features = ["human"] }
+
+[[bench]]
+name = "roundtrip"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+
+# [[test]]
+# name = "loom_buf"
+# path = "tests/loom_buf.rs"
+# required-features = ["debug"]
+
+# [[test]]
+# name = "value_match_slow"
+# path = "tests/value_match_slow.rs"
+# required-features = ["debug", "fixtures"]
+
+# [[test]]
+# name = "value_match_fast"
+# path = "tests/value_match_fast.rs"
+# required-features = ["debug", "fixtures"]
+
+# [[test]]
+# name = "optimize_fast_block"
+# path = "tests/optimize_fast_block.rs"
+# required-features = ["debug"]
+
+# [[test]]
+# name = "mode_matrix"
+# path = "tests/mode_matrix.rs"
+# required-features = ["debug"]
+
+# [[test]]
+# name = "value_match"
+# path = "tests/value_match.rs"
+# required-features = ["fixtures"]

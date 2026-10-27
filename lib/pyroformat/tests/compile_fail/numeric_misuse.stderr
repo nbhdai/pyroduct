@@ -1,0 +1,5 @@
+error: #[pyro(numeric)] only applies to a numeric field (`u8`, `u32`, `Vec<i64>`, `Vec<Vec<f64>>`, ...)
+ --> tests/compile_fail/numeric_misuse.rs:8:11
+  |
+8 |     name: String,
+  |           ^^^^^^

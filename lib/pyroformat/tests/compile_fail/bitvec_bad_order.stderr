@@ -1,0 +1,5 @@
+error: pyroformat only supports `BitVec<u8, Lsb0>` — other bit orders (e.g. Msb0) don't match the wire's byte layout
+  --> tests/compile_fail/bitvec_bad_order.rs:10:12
+   |
+10 |     flags: BitVec<u8, Msb0>,
+   |            ^^^^^^^^^^^^^^^^

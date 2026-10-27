@@ -1,0 +1,5 @@
+error: #[pyro(allow(vec_bool))] only applies to a `Vec<bool>` field, at any list depth
+  --> tests/compile_fail/vec_bool_allow_misuse.rs:10:12
+   |
+10 |     count: u32,
+   |            ^^^

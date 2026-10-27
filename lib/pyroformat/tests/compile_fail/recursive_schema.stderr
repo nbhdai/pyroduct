@@ -1,0 +1,155 @@
+error[E0391]: cycle detected when simplifying constant for the type system `_::__RAW_LEN`
+  --> tests/compile_fail/recursive_schema.rs:23:10
+   |
+23 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+   |
+note: ...which requires const-evaluating + checking `_::__RAW_LEN`...
+  --> tests/compile_fail/recursive_schema.rs:23:10
+   |
+23 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires simplifying constant for the type system `_::<impl at $DIR/tests/compile_fail/recursive_schema.rs:28:10: 28:16>::RAW_LEN`...
+  --> tests/compile_fail/recursive_schema.rs:28:10
+   |
+28 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires const-evaluating + checking `_::<impl at $DIR/tests/compile_fail/recursive_schema.rs:28:10: 28:16>::RAW_LEN`...
+  --> tests/compile_fail/recursive_schema.rs:28:10
+   |
+28 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires caching mir of `_::<impl at $DIR/tests/compile_fail/recursive_schema.rs:28:10: 28:16>::RAW_LEN` for CTFE...
+  --> tests/compile_fail/recursive_schema.rs:28:10
+   |
+28 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires elaborating drops for `_::<impl at $DIR/tests/compile_fail/recursive_schema.rs:28:10: 28:16>::RAW_LEN`...
+  --> tests/compile_fail/recursive_schema.rs:28:10
+   |
+28 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires simplifying constant for the type system `_::__RAW_LEN`...
+  --> tests/compile_fail/recursive_schema.rs:28:10
+   |
+28 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires const-evaluating + checking `_::__RAW_LEN`...
+  --> tests/compile_fail/recursive_schema.rs:28:10
+   |
+28 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires simplifying constant for the type system `_::<impl at $DIR/tests/compile_fail/recursive_schema.rs:23:10: 23:16>::RAW_LEN`...
+  --> tests/compile_fail/recursive_schema.rs:23:10
+   |
+23 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires const-evaluating + checking `_::<impl at $DIR/tests/compile_fail/recursive_schema.rs:23:10: 23:16>::RAW_LEN`...
+  --> tests/compile_fail/recursive_schema.rs:23:10
+   |
+23 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires caching mir of `_::<impl at $DIR/tests/compile_fail/recursive_schema.rs:23:10: 23:16>::RAW_LEN` for CTFE...
+  --> tests/compile_fail/recursive_schema.rs:23:10
+   |
+23 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires elaborating drops for `_::<impl at $DIR/tests/compile_fail/recursive_schema.rs:23:10: 23:16>::RAW_LEN`...
+  --> tests/compile_fail/recursive_schema.rs:23:10
+   |
+23 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+   = note: ...which again requires simplifying constant for the type system `_::__RAW_LEN`, completing the cycle
+note: cycle used when const-evaluating + checking `_::__RAW::{constant#0}`
+  --> tests/compile_fail/recursive_schema.rs:23:10
+   |
+23 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+   = note: see https://rustc-dev-guide.rust-lang.org/overview.html#queries and https://rustc-dev-guide.rust-lang.org/query.html for more information
+   = note: this error originates in the derive macro `Layout` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0391]: cycle detected when simplifying constant for the type system `_::__FLAT_LEN`
+  --> tests/compile_fail/recursive_schema.rs:23:10
+   |
+23 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+   |
+note: ...which requires const-evaluating + checking `_::__FLAT_LEN`...
+  --> tests/compile_fail/recursive_schema.rs:23:10
+   |
+23 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires simplifying constant for the type system `_::<impl at $DIR/tests/compile_fail/recursive_schema.rs:28:10: 28:16>::FLAT_LEN`...
+  --> tests/compile_fail/recursive_schema.rs:28:10
+   |
+28 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires const-evaluating + checking `_::<impl at $DIR/tests/compile_fail/recursive_schema.rs:28:10: 28:16>::FLAT_LEN`...
+  --> tests/compile_fail/recursive_schema.rs:28:10
+   |
+28 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires caching mir of `_::<impl at $DIR/tests/compile_fail/recursive_schema.rs:28:10: 28:16>::FLAT_LEN` for CTFE...
+  --> tests/compile_fail/recursive_schema.rs:28:10
+   |
+28 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires elaborating drops for `_::<impl at $DIR/tests/compile_fail/recursive_schema.rs:28:10: 28:16>::FLAT_LEN`...
+  --> tests/compile_fail/recursive_schema.rs:28:10
+   |
+28 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires simplifying constant for the type system `_::__FLAT_LEN`...
+  --> tests/compile_fail/recursive_schema.rs:28:10
+   |
+28 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires const-evaluating + checking `_::__FLAT_LEN`...
+  --> tests/compile_fail/recursive_schema.rs:28:10
+   |
+28 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires simplifying constant for the type system `_::<impl at $DIR/tests/compile_fail/recursive_schema.rs:23:10: 23:16>::FLAT_LEN`...
+  --> tests/compile_fail/recursive_schema.rs:23:10
+   |
+23 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires const-evaluating + checking `_::<impl at $DIR/tests/compile_fail/recursive_schema.rs:23:10: 23:16>::FLAT_LEN`...
+  --> tests/compile_fail/recursive_schema.rs:23:10
+   |
+23 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires caching mir of `_::<impl at $DIR/tests/compile_fail/recursive_schema.rs:23:10: 23:16>::FLAT_LEN` for CTFE...
+  --> tests/compile_fail/recursive_schema.rs:23:10
+   |
+23 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+note: ...which requires elaborating drops for `_::<impl at $DIR/tests/compile_fail/recursive_schema.rs:23:10: 23:16>::FLAT_LEN`...
+  --> tests/compile_fail/recursive_schema.rs:23:10
+   |
+23 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+   = note: ...which again requires simplifying constant for the type system `_::__FLAT_LEN`, completing the cycle
+note: cycle used when const-evaluating + checking `_::__FLAT_NAMES::{constant#0}`
+  --> tests/compile_fail/recursive_schema.rs:23:10
+   |
+23 | #[derive(Layout, Writer, Reader)]
+   |          ^^^^^^
+   = note: see https://rustc-dev-guide.rust-lang.org/overview.html#queries and https://rustc-dev-guide.rust-lang.org/query.html for more information
+   = note: this error originates in the derive macro `Layout` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: reached the recursion limit finding the struct tail for `BSlice<'a, __W>`
+  |
+  = help: consider increasing the recursion limit by adding a `#![recursion_limit = "256"]`
+
+error: reached the recursion limit finding the struct tail for `pyroformat::refs::GroupNested<'a, __W, BSlice<'a, __W>, 1>`
+  |
+  = help: consider increasing the recursion limit by adding a `#![recursion_limit = "256"]`
+
+error: reached the recursion limit finding the struct tail for `ASlice<'a, __W>`
+  |
+  = help: consider increasing the recursion limit by adding a `#![recursion_limit = "256"]`
+
+error: reached the recursion limit finding the struct tail for `pyroformat::refs::GroupNested<'a, __W, ASlice<'a, __W>, 1>`
+  |
+  = help: consider increasing the recursion limit by adding a `#![recursion_limit = "256"]`

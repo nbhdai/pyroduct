@@ -1,0 +1,5 @@
+error: Option<String> is not supported — an empty String already represents "no value"; use String directly
+ --> tests/compile_fail/option.rs:7:19
+  |
+7 |     optional_str: Option<String>,
+  |                   ^^^^^^^^^^^^^^

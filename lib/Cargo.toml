@@ -7,7 +7,7 @@ members = [
     "pyro-spec",
     "pyro-artifacts",
     "pyro-daemon",
-    "pyro-gui",
+    "pyro-gui", "pyroformat", "pyro-schema", "pyroformat-derive",
 ]
 
 default-members = [

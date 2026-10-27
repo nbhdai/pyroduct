@@ -1,0 +1,5 @@
+error: Option<HashMap<K, V>> (or BTreeMap/IndexMap) is not supported — an empty map already represents "no value"; use the map directly
+ --> tests/compile_fail/option_map.rs:8:12
+  |
+8 |     value: Option<HashMap<String, u32>>,
+  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^

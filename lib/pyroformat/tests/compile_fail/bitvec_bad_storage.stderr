@@ -1,0 +1,5 @@
+error: pyroformat only supports `BitVec<u8, Lsb0>` — other backing storage types (e.g. u16/u32/u64) don't match the wire's byte layout
+  --> tests/compile_fail/bitvec_bad_storage.rs:10:12
+   |
+10 |     flags: BitVec<u16, Lsb0>,
+   |            ^^^^^^^^^^^^^^^^^

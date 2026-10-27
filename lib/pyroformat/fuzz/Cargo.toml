@@ -1,0 +1,60 @@
+# Standalone crate: cargo-fuzz builds it outside the parent workspace.
+[workspace]
+
+[package]
+name = "pyroformat-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+half = { version = "2.7.1", features = ["serde"] }
+
+[dependencies.pyroformat]
+path = ".."
+
+[[bin]]
+name = "inode_data"
+path = "fuzz_targets/inode_data.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "basic_inodes"
+path = "fuzz_targets/basic_inodes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "nested_lists_groups"
+path = "fuzz_targets/nested_lists_groups.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "general_read"
+path = "fuzz_targets/general_read.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "schema_fuzz_read"
+path = "fuzz_targets/schema_fuzz_read.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "io_header"
+path = "fuzz_targets/io_header.rs"
+test = false
+doc = false
+bench = false

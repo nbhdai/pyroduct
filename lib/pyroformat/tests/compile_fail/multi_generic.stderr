@@ -1,0 +1,5 @@
+error: #[derive(Layout, Writer, Reader)] does not support generic type or const parameters yet
+  --> tests/compile_fail/multi_generic.rs:13:14
+   |
+13 | struct Person<S, T> {
+   |              ^^^^^^

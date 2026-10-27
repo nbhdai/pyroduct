@@ -1,0 +1,5 @@
+error: `Box<T>` fields are not supported by #[derive(Layout, Writer, Reader)] — use `T` directly
+ --> tests/compile_fail/box_field.rs:7:12
+  |
+7 |     value: Box<u32>,
+  |            ^^^^^^^^

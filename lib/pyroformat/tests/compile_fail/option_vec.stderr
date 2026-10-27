@@ -1,0 +1,5 @@
+error: Option<Vec<T>> is not supported — an empty Vec already represents "no value"; use Vec<T> directly
+ --> tests/compile_fail/option_vec.rs:8:12
+  |
+8 |     value: Option<Vec<u32>>,
+  |            ^^^^^^^^^^^^^^^^
