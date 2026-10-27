@@ -7,7 +7,6 @@ edition = "2024"
 proc-macro = true
 
 [dependencies]
-syn = { version = "2", features = ["full", "extra-traits"] }
-quote = "1"
-proc-macro2 = "1"
-pyro_schema = { package = "pyro-schema", path = "../pyro-schema" }
+pyroformat-macro.workspace = true
+syn.workspace = true
+quote.workspace = true
