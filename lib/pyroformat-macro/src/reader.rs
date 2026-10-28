@@ -41,7 +41,7 @@ use syn::spanned::Spanned;
 
 use crate::parse::{ResolvedType, StructInput};
 
-pub(crate) fn expand(input: &StructInput) -> TokenStream {
+pub fn expand(input: &StructInput) -> TokenStream {
     let name = &input.name;
     let pf = &input.krate;
     let vis = &input.vis;

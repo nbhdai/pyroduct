@@ -12,7 +12,7 @@ use quote::{format_ident, quote};
 
 use crate::parse::{Leaf, ResolvedType, StructInput};
 
-pub(crate) fn expand(input: &StructInput) -> TokenStream {
+pub fn expand(input: &StructInput) -> TokenStream {
     let name = &input.name;
     let pf = &input.krate;
     // The structure word: `Layout::Word`, and what `INODES` are laid out in.

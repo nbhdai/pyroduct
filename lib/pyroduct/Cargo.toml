@@ -31,7 +31,7 @@ host = [
     "dep:pyro-artifacts",
     "dep:pyro-file",
     "dep:rusqlite",
-    "pyro-spec/arrow",
+    "pyro-schema/arrow",
     "dep:reqwest",
     "dep:uuid",
 ]
@@ -57,9 +57,9 @@ cli = [
 
 [dependencies]
 pyro-artifacts = { workspace = true, optional = true }
-pyro-spec.workspace = true
+pyro-schema.workspace = true
+pyroformat.workspace = true
 pyro-derive.workspace = true
-rkyv.workspace = true
 tracing.workspace = true
 
 # Errors

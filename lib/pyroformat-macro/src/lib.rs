@@ -1,48 +1,26 @@
-//! Derives for `pyroformat`, one per trait:
+//! Code generation for `pyroformat`'s derives — [`Layout`](layout),
+//! [`Writer`](expand_writer), [`Reader`](reader) — for `pyroformat-derive` to
+//! call into.
 //!
-//! ```rust,ignore
-//! #[derive(Layout, Writer, Reader)]
-//! pub struct LogEntry {
-//!     pub id: u64,
-//!     pub level: Option<i32>,
-//!     pub msg: String,
-//! }
-//! ```
-//!
-//! * [`Layout`](macro@Layout): the struct's const inode table,
-//!   as `impl Layout`, including the `SCHEMA_HASH` `Writer::encode`
-//!   seals a buffer with.
-//!   Both of the others need it.
-//! * [`Writer`](macro@Writer): `impl Writer`,
-//! * [`Reader`](macro@Reader): `impl GroupForeignReader` plus the
-//!   `LogEntryRef<'a>` / `LogEntrySlice<'a>` views, and so `Reader`.
-//!
-//! None of them know how to write or read a field: each field goes through
-//! its own type's `ForeignWriter`/`ForeignReader`, so a nested struct is
-//! just another field type that has those impls.
+//! This crate is not a proc-macro crate: it has no `#[proc_macro_derive]` of
+//! its own. It parses nothing from a `proc_macro::TokenStream` either — that
+//! type only exists inside a proc-macro crate. `pyroformat-derive` parses the
+//! `DeriveInput` into a [`parse::StructInput`] and hands it to the functions
+//! here, which return plain `proc_macro2::TokenStream`.
 
-mod layout;
+pub mod layout;
 mod offsets;
-mod parse;
-mod reader;
+pub mod parse;
+pub mod reader;
 mod writer;
 
-use proc_macro::TokenStream;
-use syn::{DeriveInput, parse_macro_input};
+use proc_macro2::TokenStream;
+use quote::quote;
 
 use parse::StructInput;
 
-#[proc_macro_derive(Layout, attributes(pyro))]
-pub fn derive_pyro_layout(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    match StructInput::parse(&input) {
-        Ok(input) => layout::expand(&input).into(),
-        Err(err) => err.to_compile_error().into(),
-    }
-}
-
 /// The strategies' group impls and `impl Writer` over the chosen one.
-fn expand_writer(input: &StructInput) -> proc_macro2::TokenStream {
+pub fn expand_writer(input: &StructInput) -> TokenStream {
     let name = &input.name;
     let pf = &input.krate;
 
@@ -51,7 +29,7 @@ fn expand_writer(input: &StructInput) -> proc_macro2::TokenStream {
     let write = writer::write_body(input);
     let variable_length = writer::variable_length_body(input);
 
-    quote::quote! {
+    quote! {
         #group
 
         impl #pf::Writer for #name {
@@ -76,23 +54,5 @@ fn expand_writer(input: &StructInput) -> proc_macro2::TokenStream {
                 #variable_length
             }
         }
-    }
-}
-
-#[proc_macro_derive(Writer, attributes(pyro))]
-pub fn derive_writer(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    match StructInput::parse(&input) {
-        Ok(input) => expand_writer(&input).into(),
-        Err(err) => err.to_compile_error().into(),
-    }
-}
-
-#[proc_macro_derive(Reader, attributes(pyro))]
-pub fn derive_reader(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    match StructInput::parse(&input) {
-        Ok(input) => reader::expand(&input).into(),
-        Err(err) => err.to_compile_error().into(),
     }
 }

@@ -5385,7 +5385,7 @@ dependencies = [
  "object 0.38.1",
  "prettyplease",
  "pyro-macro",
- "pyro-spec",
+ "pyro-schema",
  "semver",
  "serde",
  "serde_json",
@@ -5411,7 +5411,7 @@ dependencies = [
  "datafusion",
  "pyro-artifacts",
  "pyro-file",
- "pyro-spec",
+ "pyro-schema",
  "pyroduct",
  "rand 0.9.4",
  "rusqlite",
@@ -5481,7 +5481,7 @@ dependencies = [
  "heck 0.5.0",
  "prettyplease",
  "proc-macro2",
- "pyro-spec",
+ "pyro-schema",
  "quote",
  "serde",
  "serde_json",
@@ -5491,22 +5491,12 @@ dependencies = [
 
 [[package]]
 name = "pyro-schema"
-version = "0.1.0"
+version = "0.2.6"
 dependencies = [
  "arrow-schema",
  "proptest",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
-name = "pyro-spec"
-version = "0.2.6"
-dependencies = [
- "arrow-schema",
- "serde",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -5545,11 +5535,11 @@ dependencies = [
  "pyro-derive",
  "pyro-file",
  "pyro-macro",
- "pyro-spec",
+ "pyro-schema",
+ "pyroformat",
  "ratatui",
  "ratatui-code-editor",
  "reqwest 0.12.28",
- "rkyv",
  "rusqlite",
  "serde",
  "serde_json",
@@ -5600,17 +5590,16 @@ dependencies = [
 
 [[package]]
 name = "pyroformat-derive"
-version = "0.1.0"
+version = "0.2.6"
 dependencies = [
- "proc-macro2",
- "pyro-schema",
+ "pyroformat-macro",
  "quote",
  "syn 2.0.117",
 ]
 
 [[package]]
 name = "pyroformat-macro"
-version = "0.1.0"
+version = "0.2.6"
 dependencies = [
  "proc-macro2",
  "pyro-schema",

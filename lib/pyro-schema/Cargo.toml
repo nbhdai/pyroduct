@@ -1,7 +1,13 @@
 [package]
 name = "pyro-schema"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+keywords.workspace = true
+repository.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
 
 [features]
 default = ["serde"]

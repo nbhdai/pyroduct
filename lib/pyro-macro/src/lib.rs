@@ -11,9 +11,7 @@
 //! and assertion helpers for diff-based code comparison.
 
 pub mod ffi;
-pub mod format;
 pub mod module;
-pub mod struct_doc;
 pub(crate) mod utils;
 
 #[cfg(test)]

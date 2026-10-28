@@ -30,8 +30,8 @@ pub mod ffi;
 
 pub use captured::{Capture, CapturedError};
 pub use error::PyroError;
-pub use format::{PyroRow, PyroValue};
-pub use rkyv::rancor::Error as RancorError;
+// Rexport of the format system
+pub use pyroformat::*;
 pub use tracing;
 
 // Documented by the lib.

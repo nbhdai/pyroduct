@@ -1,5 +1,3 @@
-//! The one struct shape every derive in this crate works from.
-
 mod type_map;
 
 use pyro_schema::Word;
@@ -7,19 +5,24 @@ pub(crate) use type_map::{Leaf, Prim, ResolvedType};
 
 use syn::{Data, DeriveInput, Error, Fields, Result};
 
-pub(crate) struct StructInput {
-    pub name: syn::Ident,
+/// The one struct shape every derive in this crate works from.
+///
+/// Opaque outside this crate: `pyroformat-derive` only parses one and hands
+/// it to [`crate::layout::expand`], [`crate::expand_writer`] and
+/// [`crate::reader::expand`].
+pub struct StructInput {
+    pub(crate) name: syn::Ident,
     /// The path every generated item is reached through: `::pyroformat`, or
     /// whatever `#[pyro(import = "...")]` on the struct names, for a crate
     /// that re-exports `pyroformat` under its own name.
-    pub krate: proc_macro2::TokenStream,
-    pub vis: syn::Visibility,
+    pub(crate) krate: proc_macro2::TokenStream,
+    pub(crate) vis: syn::Visibility,
     /// The struct's `///` documentation, or empty.
-    pub doc: String,
+    pub(crate) doc: String,
     /// In declaration order, which is also inode order.
-    pub fields: Vec<Field>,
+    pub(crate) fields: Vec<Field>,
     /// The word size we're using.
-    pub word: Word,
+    pub(crate) word: Word,
 }
 
 impl StructInput {

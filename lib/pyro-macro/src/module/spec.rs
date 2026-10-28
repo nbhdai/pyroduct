@@ -23,7 +23,7 @@
 
 use std::borrow::Cow;
 
-use pyro_spec::{ModuleFunc, ModuleKind, PyroField, PyroSchema};
+use pyro_schema::{ModuleFunc, ModuleKind, PyroField, PyroSchema};
 use syn::{Attribute, Expr, FnArg, ItemFn, Lit, Meta, Pat, ReturnType, Type};
 
 use crate::struct_doc::SchemaBuilder;
@@ -40,7 +40,7 @@ use super::parse::{ModuleAttrs, OutputSpec};
 /// Returns `None` when no `#[module(...)]` function is found.
 pub fn generate_module_spec(
     content: &str,
-    dep_interfaces: &[pyro_spec::InterfaceSpec<'static>],
+    dep_interfaces: &[pyro_schema::InterfaceSpec<'static>],
 ) -> syn::Result<Option<ModuleFunc<'static>>> {
     let file = syn::parse_file(content)?;
     let builder = SchemaBuilder::from_file(&file).with_foreign_specs(dep_interfaces);
@@ -380,8 +380,8 @@ mod tests {
 
     #[test]
     fn test_session_foreign_struct() {
+        use pyro_schema::{InterfaceSpec, PyroField, PyroSchema, PyroType};
         use std::collections::BTreeMap;
-        use pyro_spec::{InterfaceSpec, PyroField, PyroSchema, PyroType};
 
         let src = r#"
             #[module(session, output = ChatMessage)]
@@ -413,13 +413,13 @@ mod tests {
         let v = generate_module_spec(src, &[dep]).unwrap().unwrap();
 
         assert_eq!(v.name, "process");
-        assert_eq!(v.kind, pyro_spec::ModuleKind::Session);
+        assert_eq!(v.kind, pyro_schema::ModuleKind::Session);
 
         // Check input fields
         let in_fields = &v.input.fields;
         assert_eq!(in_fields.len(), 2);
         assert_eq!(in_fields[0].name, "prior");
-        
+
         // prior should be Vec<ChatMessage> which resolves to List(Group([role, content]), false)
         if let PyroType::List(inner, nullable) = &in_fields[0].data_type {
             assert!(!nullable);
