@@ -10,8 +10,8 @@ rust-version.workspace = true
 homepage.workspace = true
 
 [dependencies]
-pyroformat = { path = ".." }
-pyro_schema = { package = "pyro-schema", path = "../pyro-schema" }
+pyroformat.workspace = true
+pyro-schema.workspace = true
 compio = { version = "0.19.2", default-features = false, features = ["fs", "io-uring"] }
 crc-fast = "1.10"
 thiserror = "2.0.17"
