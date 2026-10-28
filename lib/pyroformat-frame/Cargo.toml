@@ -1,0 +1,31 @@
+[package]
+name = "pyroformat-frame"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+keywords.workspace = true
+repository.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+
+[dependencies]
+async-trait = "0.1.89"
+compio = { version = "0.19.2", default-features = false, features = ["fs", "io-uring"] }
+futures = "0.3.31"
+vortex-array = "0.88.0"
+vortex-btrblocks = "0.88.0"
+vortex-buffer = "0.88.0"
+vortex-edition = "0.88.0"
+vortex-error = "0.88.0"
+vortex-file = "0.88.0"
+vortex-io = "0.88.0"
+vortex-layout = "0.88.0"
+vortex-session = "0.88.0"
+vortex-utils = "0.88.0"
+
+[dev-dependencies]
+compio = { version = "0.19.2", default-features = false, features = ["fs", "io-uring", "macros"] }
+rstest = "0.26.1"
+tempfile = "3.24.0"
+vortex-array = { version = "0.88.0", features = ["_test-harness"] }

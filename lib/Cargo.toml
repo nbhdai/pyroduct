@@ -11,6 +11,8 @@ members = [
     "pyro-schema",
     "pyroformat-derive",
     "pyroformat-macro",
+    "pyroformat-frame",
+    "pyroformat-wal",
 ]
 
 default-members = [
@@ -24,6 +26,8 @@ default-members = [
     "pyro-schema",
     "pyroformat-derive",
     "pyroformat-macro",
+    "pyroformat-frame",
+    "pyroformat-wal",
 ]
 resolver = "2"
 
@@ -50,7 +54,8 @@ pyroformat = { path = "pyroformat", version = "0.2.6" }
 pyroformat-macro = { path = "pyroformat-macro", version = "0.2.6" }
 pyroformat-derive = { path = "pyroformat-derive", version = "0.2.6" }
 pyro-schema = { path = "pyro-schema", version = "0.2.6" }
-
+pyroformat-wal = { path = "pyroformat-wal", version = "0.2.6" }
+pyroformat-format = { path = "pyroformat-format", version = "0.2.6" }
 
 # Errors and reporting
 anyhow = "1.0.100"

@@ -9,7 +9,7 @@ use crate::{
     command::{CommandError, format_syn_error, run_command},
 };
 use pyro_macro::{ffi::generate_capability, module::generate_module};
-use pyro_spec::InterfaceSpec;
+use pyro_schema::interface::InterfaceSpec;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
@@ -393,9 +393,7 @@ impl Environment {
                                 .capability_interface_spec(&cap.author, &cap.package, &cap.version)
                                 .await
                             {
-                                if let Ok(spec) =
-                                    serde_json::from_str::<pyro_spec::InterfaceSpec>(&spec_str)
-                                {
+                                if let Ok(spec) = serde_json::from_str::<InterfaceSpec>(&spec_str) {
                                     dep_interfaces.push(spec);
                                 }
                             }
@@ -540,9 +538,7 @@ impl Environment {
                             .capability_interface_spec(&cap.author, &cap.package, &cap.version)
                             .await
                         {
-                            if let Ok(spec) =
-                                serde_json::from_str::<pyro_spec::InterfaceSpec>(&spec_str)
-                            {
+                            if let Ok(spec) = serde_json::from_str::<InterfaceSpec>(&spec_str) {
                                 dep_interfaces.push(spec);
                             }
                         }
@@ -660,9 +656,7 @@ impl Environment {
                             )
                             .await
                         {
-                            if let Ok(spec) =
-                                serde_json::from_str::<pyro_spec::InterfaceSpec>(&spec_str)
-                            {
+                            if let Ok(spec) = serde_json::from_str::<InterfaceSpec>(&spec_str) {
                                 dep_interfaces.push(spec);
                             }
                         }
@@ -803,9 +797,7 @@ impl Environment {
                         )
                         .await
                     {
-                        if let Ok(spec) =
-                            serde_json::from_str::<pyro_spec::InterfaceSpec>(&spec_str)
-                        {
+                        if let Ok(spec) = serde_json::from_str::<InterfaceSpec>(&spec_str) {
                             dep_interfaces.push(spec);
                         }
                     }

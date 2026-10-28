@@ -2,7 +2,7 @@ use cargo_toml::Dependency;
 use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use pyro_spec::{InterfaceSpec, ModuleFunc};
+use pyro_schema::interface::{InterfaceSpec, ModuleFunc};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;

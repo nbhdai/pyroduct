@@ -480,7 +480,7 @@ impl CacheManager {
         author: &str,
         name: &str,
         version: &str,
-    ) -> Result<pyro_spec::InterfaceSpec<'static>, CacheError> {
+    ) -> Result<pyro_schema::interface::InterfaceSpec<'static>, CacheError> {
         let json = self
             .capability_interface_spec(author, name, version)
             .await?;
@@ -533,7 +533,7 @@ impl CacheManager {
             ) {
                 if let Some(obj) = json_val.as_object() {
                     let schema_fields: Vec<String> =
-                        schema.fields().iter().map(|f| f.name.to_string()).collect();
+                        schema.fields().map(|f| f.name().to_string()).collect();
                     for key in obj.keys() {
                         if !schema_fields.iter().any(|f| f == key) {
                             return Err(ConfigValidationError::UnknownConfigField {
@@ -944,8 +944,8 @@ impl CacheManager {
                         ),
                         error: e,
                     })?;
-            let mut manifest: crate::cargo::CapabilityManifest =
-                toml::from_str(&cap_toml_str).map_err(|e| CacheError::Io {
+            let mut manifest: crate::cargo::CapabilityManifest = toml::from_str(&cap_toml_str)
+                .map_err(|e| CacheError::Io {
                     context: format!(
                         "Failed to parse Capability.toml at {}",
                         cap_toml_path.display()
@@ -980,7 +980,6 @@ impl CacheManager {
         }
     }
 }
-
 
 pub(crate) fn resolve_dependency_path(dep: &mut Dependency, base: &std::path::Path) {
     if let Dependency::Detailed(detail) = dep

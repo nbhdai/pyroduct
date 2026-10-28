@@ -5482,6 +5482,7 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "pyro-schema",
+ "pyroformat-macro",
  "quote",
  "serde",
  "serde_json",

@@ -1,10 +1,14 @@
 //! This crate provides proc macros to generate FFI boilerplate for capabilities.
-use ::pyro_spec::InterfaceSpec;
-use syn::parse_file;
+use proc_macro2::TokenStream;
+use pyro_schema::interface::InterfaceSpec;
+use syn::{Attribute, ItemStruct, Meta, Path, Token, parse_file, punctuated::Punctuated};
 
 use crate::{
-    ffi::{capability::CapabilityImpl, config::CapConfig, spec::build_spec},
-    format::{BridgeableArgs, DocRec, magma},
+    ffi::{
+        capability::CapabilityImpl,
+        config::{CapConfig, DocRec, WireStruct},
+        spec::build_spec,
+    },
     utils::has_attr,
 };
 
@@ -22,7 +26,7 @@ pub fn generate_interface(
     cap_version: &str,
 ) -> syn::Result<(syn::File, InterfaceSpec<'static>)> {
     let file = parse_file(content)?;
-    let spec = build_spec(cap_name, &file);
+    let spec = build_spec(cap_name, &file)?;
     let import_location: syn::Path = syn::parse_quote!(::pyroduct);
 
     let mut generated_code = quote::quote! {
@@ -37,11 +41,9 @@ pub fn generate_interface(
                 let cap = CapabilityImpl::new(item_impl, true, cap_name, cap_version)?;
                 generated_code.extend(cap.expand_module());
             }
-            syn::Item::Struct(mut item_struct) => {
-                if let Some(args) = extract_magma_args(&item_struct.attrs)? {
-                    item_struct.attrs.retain(|a| !is_magma_attr(a));
-                    let expanded = magma(args, &mut item_struct, &import_location)?;
-                    generated_code.extend(expanded);
+            syn::Item::Struct(item_struct) => {
+                if item_struct.attrs.iter().any(is_magma_attr) {
+                    generated_code.extend(magma(item_struct, &import_location)?);
                 }
             }
             _ => {}
@@ -72,10 +74,9 @@ pub fn generate_capability(
                 let cap = CapabilityImpl::new(item_impl, true, cap_name, cap_version)?;
                 generated_code.extend(cap.expand_capability());
             }
-            syn::Item::Struct(mut item_struct) => {
-                if let Some(args) = extract_magma_args(&item_struct.attrs)? {
-                    let expanded = magma(args, &mut item_struct, &import_location)?;
-                    generated_code.extend(expanded);
+            syn::Item::Struct(item_struct) => {
+                if item_struct.attrs.iter().any(is_magma_attr) {
+                    generated_code.extend(magma(item_struct, &import_location)?);
                 } else if has_attr(&item_struct.attrs, "config") {
                     let found_config = CapConfig::new(item_struct, DocRec::StructDoc)?;
                     generated_code.extend(found_config.expand());
@@ -89,34 +90,52 @@ pub fn generate_capability(
     Ok(code)
 }
 
-/// Extract `BridgeableArgs` from a `#[magma(...)]` attribute.
-/// Handles both `#[magma]` (no args) and `#[magma(derive(Debug))]`.
-fn extract_magma_args(attrs: &[syn::Attribute]) -> syn::Result<Option<BridgeableArgs>> {
-    for attr in attrs {
-        if is_magma_attr(attr) {
-            return match &attr.meta {
-                syn::Meta::List(list) => {
-                    syn::parse2::<BridgeableArgs>(list.tokens.clone()).map(Some)
-                }
-                syn::Meta::Path(_) => {
-                    // Bare #[magma] with no arguments
-                    Ok(Some(BridgeableArgs {
-                        derives_to_pass: Vec::new(),
-                        compares_to_add: Vec::new(),
-                        doc_rec: DocRec::NoReq,
-                    }))
-                }
-                syn::Meta::NameValue(nv) => Err(syn::Error::new_spanned(
-                    nv,
-                    "Invalid magma attribute format",
-                )),
-            };
-        }
-    }
-    Ok(None)
+/// A `#[magma]` struct, carried over the wire by pyroformat:
+/// `#[magma(derive(Debug, ...))]` becomes a `derive` on the struct itself.
+/// `import` is the path generated code reaches `pyroformat` through.
+pub fn magma(mut item: ItemStruct, import: &Path) -> syn::Result<TokenStream> {
+    let derives = magma_derives(&item.attrs)?;
+    item.attrs.extend(derives);
+    Ok(WireStruct::new(item, DocRec::NoReq, import)?.expand())
 }
 
-fn is_magma_attr(attr: &syn::Attribute) -> bool {
+/// The `derive(...)`s in `#[magma(...)]`, as attributes of their own.
+/// Handles both `#[magma]` (no args) and `#[magma(derive(Debug))]`.
+fn magma_derives(attrs: &[Attribute]) -> syn::Result<Vec<Attribute>> {
+    let mut derives = Vec::new();
+    for attr in attrs.iter().filter(|a| is_magma_attr(a)) {
+        match &attr.meta {
+            // Bare #[magma] with no arguments
+            Meta::Path(_) => {}
+            Meta::List(list) => {
+                let metas =
+                    list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)?;
+                for meta in metas {
+                    match &meta {
+                        Meta::List(derive) if derive.path.is_ident("derive") => {
+                            derives.push(syn::parse_quote!(#[#meta]));
+                        }
+                        other => {
+                            return Err(syn::Error::new_spanned(
+                                other,
+                                "unexpected magma argument; expected `derive(...)`",
+                            ));
+                        }
+                    }
+                }
+            }
+            Meta::NameValue(nv) => {
+                return Err(syn::Error::new_spanned(
+                    nv,
+                    "Invalid magma attribute format",
+                ));
+            }
+        }
+    }
+    Ok(derives)
+}
+
+fn is_magma_attr(attr: &Attribute) -> bool {
     if attr.path().is_ident("magma") {
         return true;
     }
@@ -127,4 +146,94 @@ fn is_magma_attr(attr: &syn::Attribute) -> bool {
         return true;
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CAPABILITY: &str = r#"
+        /// A point
+        #[magma(derive(Debug, PartialEq))]
+        pub struct Point {
+            pub x: f32,
+            pub y: f32,
+        }
+
+        /// The client
+        #[config]
+        pub struct MyClient {
+            pub id: u32,
+        }
+
+        /// The server
+        #[capability]
+        impl MyServer {
+            type Client = MyClient;
+
+            fn new() -> Result<Self, CapturedError> { Ok(Self) }
+            fn reset(&mut self) -> Result<(), CapturedError> { Ok(()) }
+            fn register(&self, c: &MyClient) -> Result<(), CapturedError> { Ok(()) }
+
+            /// Moves to a point
+            fn update(&mut self, c: &MyClient, to: Point, label: &str) -> Result<(), CapturedError> {
+                Ok(())
+            }
+        }
+    "#;
+
+    #[test]
+    fn test_magma_is_laid_out_by_pyroformat() {
+        let item: ItemStruct = syn::parse_quote! {
+            #[magma(derive(Debug, PartialEq))]
+            pub struct Point {
+                pub x: f32,
+            }
+        };
+        let out = magma(item, &syn::parse_quote!(::pyroduct))
+            .unwrap()
+            .to_string();
+        assert!(out.contains("# [derive (Debug , PartialEq)] pub struct Point"));
+        assert!(!out.contains("magma"));
+        assert!(out.contains("impl :: pyroduct :: Layout for Point"));
+        assert!(out.contains("impl :: pyroduct :: Writer for Point"));
+    }
+
+    #[test]
+    fn test_magma_rejects_other_args() {
+        let item: ItemStruct = syn::parse_quote! {
+            #[magma(Document)]
+            pub struct Point { pub x: f32 }
+        };
+        let err = magma(item, &syn::parse_quote!(::pyroduct)).unwrap_err();
+        assert!(err.to_string().contains("expected `derive(...)`"));
+    }
+
+    #[test]
+    fn test_interface_describes_function_inputs() {
+        let (code, spec) = generate_interface(CAPABILITY, "my_server", "0.1.0").unwrap();
+        let code = quote::quote!(#code).to_string();
+        assert!(code.contains("impl :: pyroduct :: Writer for Point"));
+        assert!(code.contains("fn update (& self , to : Point , label : & str)"));
+
+        // The spec names the method's parameters, never the struct carrying them.
+        let update = &spec.classes[0].methods[0];
+        let names: Vec<_> = update
+            .input
+            .fields()
+            .map(|f| f.name().to_string())
+            .collect();
+        assert_eq!(names, ["to", "label"]);
+        assert!(!format!("{spec:?}").contains("__PyroFormat"));
+        assert!(!spec.structs.keys().any(|k| k.starts_with("__")));
+    }
+
+    #[test]
+    fn test_capability_lays_out_config_and_magma() {
+        let code = generate_capability(CAPABILITY, "my_server", "0.1.0").unwrap();
+        let code = quote::quote!(#code).to_string();
+        assert!(code.contains("impl :: pyroduct :: Writer for Point"));
+        assert!(code.contains("impl :: pyroduct :: Writer for MyClient"));
+        assert!(!code.contains("# [config]"));
+    }
 }

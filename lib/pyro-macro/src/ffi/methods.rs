@@ -10,11 +10,12 @@
 use std::rc::Rc;
 
 use proc_macro2::TokenStream;
+use pyroformat_macro::parse::StructInput;
 use quote::quote;
 use syn::{Error, FnArg, Ident, ImplItemFn, Pat, Type};
 
-use super::paths::{CapabilityIdent, FnName, FnOutput};
-use crate::{ffi::paths::InputParams, utils::extract_ident_from_type};
+use super::paths::{CapabilityIdent, FnName, FnOutput, input_struct};
+use crate::utils::extract_ident_from_type;
 
 /// Represents a validated method within a capability impl block.
 #[derive(Debug, Clone)]
@@ -22,7 +23,9 @@ pub struct ImplMethod {
     pub name: FnName,
     pub class: Rc<CapabilityIdent>,
     pub client_param: Ident,
-    pub inputs: InputParams,
+    /// `__PyroFormat{Fn}Input`: the parameters after the client, as sent
+    /// over the wire. `original_fields` gives them as the user wrote them.
+    pub inputs: StructInput,
     pub output: FnOutput,
     pub is_async: bool,
     pub is_mutable_self: bool,
@@ -117,7 +120,7 @@ impl ImplMethod {
         };
 
         // 3. Collect remaining inputs
-        let mut inputs = Vec::new();
+        let mut params = Vec::new();
         for arg in sig.inputs.iter().skip(2) {
             if let FnArg::Typed(pt) = arg {
                 let arg_name = if let Pat::Ident(pi) = &*pt.pat {
@@ -128,24 +131,17 @@ impl ImplMethod {
                         "Method arguments must be named identifiers",
                     ));
                 };
-                inputs.push((arg_name, (*pt.ty).clone()));
+                params.push((arg_name, (*pt.ty).clone()));
             }
         }
-
-        let inputs = if inputs.is_empty() {
-            InputParams::None
-        } else if inputs.len() == 1 {
-            let (n, t) = inputs.pop().unwrap();
-            InputParams::One(n, t.into())
-        } else {
-            InputParams::Many(inputs)
-        };
+        let name = FnName(name);
+        let inputs = input_struct(&name, &params)?;
 
         // 4. Validate return type
         let output = FnOutput::parse(&sig.output)?;
 
         Ok(Self {
-            name: FnName(name),
+            name,
             class: class.clone(),
             client_param: client_param_ident,
             inputs,
@@ -157,8 +153,14 @@ impl ImplMethod {
         })
     }
 
+    /// The input struct and its pyroformat impls, or nothing when the method
+    /// takes no parameters.
     pub fn generate_input_struct(&self) -> TokenStream {
-        self.inputs.input_struct(&self.name, Some(&self.class))
+        if self.inputs.is_empty() {
+            quote! {}
+        } else {
+            pyroformat_macro::expand_struct(&self.inputs)
+        }
     }
 
     /// Generate the server-side impl method.
@@ -184,7 +186,11 @@ impl ImplMethod {
             quote!(&self)
         };
 
-        let args: Vec<_> = self.inputs.iter().map(|(n, t)| quote!(#n: #t)).collect();
+        let args: Vec<_> = self
+            .inputs
+            .original_fields()
+            .map(|(n, t)| quote!(#n: #t))
+            .collect();
 
         quote! {
             #(#attrs)*
@@ -194,7 +200,7 @@ impl ImplMethod {
 
     pub fn generate_server_ffi(&self) -> TokenStream {
         let fn_ffi_name = self.class.ffi_name(&self.name);
-        let input_struct = self.inputs.input_struct(&self.name, Some(&self.class));
+        let input_struct = self.generate_input_struct();
         let state_tn = &self.class.state_tn;
         let client_tn = &self.class.client_tn;
         let mut call_args = Vec::new();
@@ -214,28 +220,21 @@ impl ImplMethod {
             };
         };
         call_args.push(quote! { &client });
-        let input_retrieval = match &self.inputs {
-            InputParams::One(_, ty) => {
-                call_args.push(quote!(input));
-                quote! {
-                    let input: #ty = match ::pyroduct::ffi::guest::deserialize_input(input_ptr) {
-                        Ok(buf) => buf,
-                        Err(err) => return err.encode().view(),
-                    };
-                }
+        let input_retrieval = if self.inputs.is_empty() {
+            quote! {}
+        } else {
+            let input_struct_name = self.inputs.name();
+            // A borrowed parameter (`foo: &str`) is lent the owned field.
+            call_args.extend(self.inputs.original_fields().map(|(n, t)| match t {
+                Type::Reference(_) => quote!(&input.#n),
+                _ => quote!(input.#n),
+            }));
+            quote! {
+                let input: #input_struct_name = match ::pyroduct::ffi::guest::deserialize_input(input_ptr) {
+                    Ok(buf) => buf,
+                    Err(err) => return err.encode().view(),
+                };
             }
-            InputParams::Many(items) => {
-                let input_struct_name = self.class.input_struct(&self.name);
-                let args = items.iter().map(|(n, _)| quote!(input.#n));
-                call_args.extend(args);
-                quote! {
-                    let input: #input_struct_name = match ::pyroduct::ffi::guest::deserialize_input(input_ptr) {
-                        Ok(buf) => buf,
-                        Err(err) => return err.encode().view(),
-                    };
-                }
-            }
-            InputParams::None => quote! {},
         };
         let fn_name = &self.name.0;
         let method_call = quote!(state.#fn_name(#(#call_args),*));
@@ -267,15 +266,17 @@ impl ImplMethod {
             )
         };
 
+        // The input struct lives inside the function, so two classes with a
+        // method of the same name don't both define it at the top level.
         quote! {
-            #input_struct
-
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn #fn_ffi_name (
                 capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
                 client_state_ptr: ::pyroduct::format::PyroRefPtr,
                 input_ptr: ::pyroduct::format::PyroRefPtr,
             ) -> #ffi_ret {
+                #input_struct
+
                 let (_client_id, mux_id, _class_id, _fn_id) = ::pyroduct::format::get_ref_ids(input_ptr);
                 #body
             }
@@ -327,14 +328,24 @@ impl ImplMethod {
         };
 
         // Client method forces &self (immutable)
-        let mut args: Vec<_> = self.inputs.iter().map(|(n, t)| quote!(#n: #t)).collect();
+        let mut args: Vec<_> = self
+            .inputs
+            .original_fields()
+            .map(|(n, t)| quote!(#n: #t))
+            .collect();
         args.insert(0, quote!(&self));
 
-        let i_struct = self.inputs.input_struct(&self.name, Some(&self.class));
-        let i_name = self.inputs.input_type(&self.name, Some(&self.class));
-        let i_fill = self
-            .inputs
-            .input_serialization(&self.name, Some(&self.class));
+        let i_struct = self.generate_input_struct();
+        let (i_name, i_fill) = if self.inputs.is_empty() {
+            (quote!(()), quote!(None))
+        } else {
+            let i_name = self.inputs.name();
+            let fields = self.inputs.original_fields().map(|(n, t)| match t {
+                Type::Reference(_) => quote!(#n: ::std::borrow::ToOwned::to_owned(#n)),
+                _ => quote!(#n),
+            });
+            (quote!(#i_name), quote!(Some(&#i_name { #(#fields),* })))
+        };
         let output_type = &self.output.ty();
         let output_return = &self.output.to_return_type();
 
@@ -466,6 +477,47 @@ mod tests {
         assert!(err.to_string().contains("not value self"));
     }
 
+    fn with_params(ffi: &mut ImplMethod, params: Vec<(Ident, Type)>) {
+        ffi.inputs = input_struct(&ffi.name, &params).unwrap();
+    }
+
+    #[test]
+    fn test_input_struct_owns_borrowed_params() {
+        let class = mock_class();
+        let f: ImplItemFn = parse_quote! {
+            fn update(&mut self, ctx: &MyClient, val: u32, foo: &str, bar: &[u8]) -> Result<(), CapturedError> {
+                self.val = val;
+                Ok(())
+            }
+        };
+
+        let method = ImplMethod::parse(&f, &class, false).unwrap();
+        assert_eq!(method.inputs.name(), "__PyroFormatUpdateInput");
+        let fields: Vec<_> = method
+            .inputs
+            .fields()
+            .map(|(n, t)| quote!(#n: #t).to_string())
+            .collect();
+        assert_eq!(fields, ["val : u32", "foo : String", "bar : Vec < u8 >"]);
+        let original: Vec<_> = method
+            .inputs
+            .original_fields()
+            .map(|(n, t)| quote!(#n: #t).to_string())
+            .collect();
+        assert_eq!(original, ["val : u32", "foo : & str", "bar : & [u8]"]);
+    }
+
+    #[test]
+    fn test_reject_mut_ref_param() {
+        let class = mock_class();
+        let f: ImplItemFn = parse_quote! {
+            fn update(&self, ctx: &MyClient, foo: &mut String) -> Result<(), CapturedError> { Ok(()) }
+        };
+
+        let err = ImplMethod::parse(&f, &class, false).unwrap_err();
+        assert!(err.to_string().contains("`&mut`"));
+    }
+
     fn mock_method_base(name: &str, is_async: bool) -> ImplMethod {
         let output = FnOutput {
             ok_type: parse_quote!(u32),
@@ -479,11 +531,12 @@ mod tests {
             client_tn: format_ident!("MockClient"),
         });
 
+        let name = FnName(format_ident!("{}", name));
         ImplMethod {
-            name: FnName(format_ident!("{}", name)),
+            inputs: input_struct(&name, &[]).unwrap(),
+            name,
             class,
             client_param: format_ident!("client"),
-            inputs: InputParams::None,
             output,
             is_async,
             is_mutable_self: false,
@@ -566,7 +619,8 @@ mod tests {
     #[test]
     fn test_case_5_sync_single_input_with_client() {
         let mut ffi = mock_method_base("test_sync_client_input", false);
-        ffi.inputs = InputParams::One(format_ident!("x"), parse_quote!(i32));
+        with_params(&mut ffi, vec![(format_ident!("x"), parse_quote!(i32))]);
+        let input_struct = pyroformat_macro::expand_struct(&ffi.inputs);
         let capability_tokens = ffi.generate_server_ffi();
         let module_tokens = ffi.generate_client_method(None);
         let module_tokens = quote! {
@@ -582,6 +636,8 @@ mod tests {
                 client_state_ptr: ::pyroduct::format::PyroRefPtr,
                 input_ptr: ::pyroduct::format::PyroRefPtr,
             ) -> ::pyroduct::format::PyroViewPtr {
+                #input_struct
+
                 let (_client_id, mux_id, _class_id, _fn_id) = ::pyroduct::format::get_ref_ids(input_ptr);
                 ::pyroduct::ffi::guest::execute_safe(|| {
                     let mut state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
@@ -595,11 +651,11 @@ mod tests {
                         Err(err) => return err.encode().view(),
                     };
 
-                    let input: i32 = match ::pyroduct::ffi::guest::deserialize_input(input_ptr) {
+                    let input: __PyroFormatTestSyncClientInputInput = match ::pyroduct::ffi::guest::deserialize_input(input_ptr) {
                         Ok(buf) => buf,
                         Err(err) => return err.encode().view(),
                     };
-                    ::pyroduct::ffi::guest::serialize_result(state.test_sync_client_input(&client, input))
+                    ::pyroduct::ffi::guest::serialize_result(state.test_sync_client_input(&client, input.x))
                 }, capability_state_ptr.object_id, mux_id)
             }
         };
@@ -609,12 +665,13 @@ mod tests {
         let output_module = quote! {
             impl Mod {
                 fn test_sync_client_input(&self, x: i32) -> Result<u32, ::pyroduct::CapturedError> {
+                    #input_struct
                     self.__call_result_from_wasm::<
-                            i32,
+                            __PyroFormatTestSyncClientInputInput,
                             u32,
                             _,
                         >(
-                        Some(&x),
+                        Some(&__PyroFormatTestSyncClientInputInput { x }),
                         |client_state_ptr: *const u8,
                             input_ptr: *const u8| {
                             unsafe {
@@ -638,10 +695,14 @@ mod tests {
     #[test]
     fn test_case_full_sci() {
         let mut ffi = mock_method_base("test_sci_multi", true);
-        ffi.inputs = InputParams::Many(vec![
-            (format_ident!("a"), parse_quote!(i32)),
-            (format_ident!("b"), parse_quote!(i32)),
-        ]);
+        with_params(
+            &mut ffi,
+            vec![
+                (format_ident!("a"), parse_quote!(i32)),
+                (format_ident!("b"), parse_quote!(&str)),
+            ],
+        );
+        let input_struct = pyroformat_macro::expand_struct(&ffi.inputs);
 
         let capability_tokens = ffi.generate_server_ffi();
         let module_tokens = ffi.generate_client_method(None);
@@ -652,18 +713,14 @@ mod tests {
         };
 
         let output_capability = quote! {
-            #[::pyroduct::magma]
-            struct p__MockServer__TestSciMulti__Input {
-                pub a: i32,
-                pub b: i32,
-            }
-
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn p__mock_server__test_sci_multi__ffi(
                 capability_state_ptr: ::pyroduct::ffi::PyroRefObjectPtr,
                 client_state_ptr: ::pyroduct::format::PyroRefPtr,
                 input_ptr: ::pyroduct::format::PyroRefPtr,
             ) -> ::pyroduct::ffi::FuturePyroView {
+                #input_struct
+
                 let (_client_id, mux_id, _class_id, _fn_id) = ::pyroduct::format::get_ref_ids(input_ptr);
                 ::pyroduct::ffi::guest::execute_safe_async(|| async move {
                     let mut state_ptr = match unsafe { ::pyroduct::ffi::PyroObjectRef::from_raw(capability_state_ptr) } {
@@ -677,11 +734,11 @@ mod tests {
                         Err(err) => return err.encode().view(),
                     };
 
-                    let input: p__MockServer__TestSciMulti__Input = match ::pyroduct::ffi::guest::deserialize_input(input_ptr) {
+                    let input: __PyroFormatTestSciMultiInput = match ::pyroduct::ffi::guest::deserialize_input(input_ptr) {
                         Ok(buf) => buf,
                         Err(err) => return err.encode().view(),
                     };
-                    ::pyroduct::ffi::guest::serialize_result(state.test_sci_multi(&client, input.a, input.b).await)
+                    ::pyroduct::ffi::guest::serialize_result(state.test_sci_multi(&client, input.a, &input.b).await)
                 }, capability_state_ptr.object_id, mux_id)
             }
         };
@@ -691,21 +748,17 @@ mod tests {
 
         let output_module = quote! {
             impl Mod {
-                fn test_sci_multi(&self, a: i32, b: i32) -> Result<u32, ::pyroduct::CapturedError> {
-                    #[::pyroduct::magma]
-                    struct p__MockServer__TestSciMulti__Input {
-                        pub a: i32,
-                        pub b: i32,
-                    }
+                fn test_sci_multi(&self, a: i32, b: &str) -> Result<u32, ::pyroduct::CapturedError> {
+                    #input_struct
                     self.__call_result_from_wasm::<
-                            p__MockServer__TestSciMulti__Input,
+                            __PyroFormatTestSciMultiInput,
                             u32,
                             _,
                         >(
                         Some(
-                            &p__MockServer__TestSciMulti__Input {
+                            &__PyroFormatTestSciMultiInput {
                                 a,
-                                b,
+                                b: ::std::borrow::ToOwned::to_owned(b),
                             },
                         ),
                         |client_state_ptr: *const u8,

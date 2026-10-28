@@ -1,0 +1,21 @@
+[package]
+name = "pyroformat-wal"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+keywords.workspace = true
+repository.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+
+[dependencies]
+pyroformat = { path = ".." }
+pyro_schema = { package = "pyro-schema", path = "../pyro-schema" }
+compio = { version = "0.19.2", default-features = false, features = ["fs", "io-uring"] }
+crc-fast = "1.10"
+thiserror = "2.0.17"
+
+[dev-dependencies]
+compio = { version = "0.19.2", default-features = false, features = ["fs", "io-uring", "macros"] }
+tempfile = "3.24.0"

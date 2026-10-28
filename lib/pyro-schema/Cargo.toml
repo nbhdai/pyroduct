@@ -14,9 +14,8 @@ default = ["serde"]
 serde = ["dep:serde"]
 human = ["serde", "dep:serde_json"]
 arrow = ["dep:arrow-schema", "dep:tracing", "serde"]
-# Stub only (docs/pyro-schema-crate-plan.md, Step 6) — the function/interface
-# spec itself is a follow-up design, not part of this move.
-interface = []
+# The function/interface spec. Serialized through the `human` schema form.
+interface = ["human"]
 
 [dependencies]
 thiserror = "2.0.17"

@@ -3,10 +3,10 @@
 //! This module centralizes all naming conventions used throughout the capability system
 //! to ensure consistency between client and server sides.
 
-use std::{ops::Deref, slice::Iter};
+use std::ops::Deref;
 
 use heck::{AsSnakeCase, AsUpperCamelCase};
-use proc_macro2::TokenStream;
+use pyroformat_macro::parse::StructInput;
 use quote::{format_ident, quote};
 use syn::{
     Error, GenericArgument, Ident, PathArguments, ReturnType, Type, parse_quote, token::RArrow,
@@ -77,13 +77,6 @@ impl CapabilityIdent {
         let snake = AsSnakeCase(name.0.to_string()).to_string();
         format_ident!("p__{}__{}__wasm", state_snake, snake)
     }
-
-    /// Input struct name for a method with multiple parameters
-    pub fn input_struct(&self, name: &FnName) -> Ident {
-        let state_snake = AsUpperCamelCase(self.state_tn.to_string()).to_string();
-        let snake = AsUpperCamelCase(name.0.to_string()).to_string();
-        format_ident!("p__{}__{}__Input", state_snake, snake)
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -111,10 +104,10 @@ impl FnName {
         format_ident!("p__{}__wasm", AsSnakeCase(self.0.to_string()).to_string())
     }
 
-    /// Get the input struct name (if multiple parameters)
+    /// The input struct's name, e.g. `__PyroFormatUpdateInput`
     pub fn input_struct_name(&self) -> Ident {
         format_ident!(
-            "p__{}__Input",
+            "__PyroFormat{}Input",
             AsUpperCamelCase(self.0.to_string()).to_string()
         )
     }
@@ -128,110 +121,17 @@ impl Deref for FnName {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InputParams {
-    None,
-    One(Ident, Box<Type>),
-    Many(Vec<(Ident, Type)>),
-}
-
-pub enum InputParamsIter<'a> {
-    None,
-    One(Option<(&'a Ident, &'a Type)>),
-    Many(Iter<'a, (Ident, Type)>),
-}
-
-impl<'a> Iterator for InputParamsIter<'a> {
-    type Item = (&'a Ident, &'a Type);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            InputParamsIter::None => None,
-            InputParamsIter::One(t) => t.take(),
-            InputParamsIter::Many(params) => params.next().map(|(i, t)| (i, t)),
-        }
-    }
-}
-
-impl InputParams {
-    pub fn is_empty(&self) -> bool {
-        match self {
-            InputParams::None => true,
-            InputParams::One(_, _) => false,
-            InputParams::Many(_) => false,
-        }
-    }
-
-    pub fn iter(&self) -> InputParamsIter<'_> {
-        match self {
-            InputParams::None => InputParamsIter::None,
-            InputParams::One(i, t) => InputParamsIter::One(Some((i, t))),
-            InputParams::Many(params) => InputParamsIter::Many(params.iter()),
-        }
-    }
-
-    pub fn input_type(&self, fn_name: &FnName, class: Option<&CapabilityIdent>) -> TokenStream {
-        match &self {
-            InputParams::Many(_) => {
-                let input_struct_name = class
-                    .map(|c| c.input_struct(fn_name))
-                    .unwrap_or(fn_name.input_struct_name());
-                quote!(#input_struct_name)
-            }
-            InputParams::One(_, param_ty) => quote!(#param_ty),
-            InputParams::None => quote!(()),
-        }
-    }
-
-    pub fn input_serialization(
-        &self,
-        fn_name: &FnName,
-        class: Option<&CapabilityIdent>,
-    ) -> TokenStream {
-        match &self {
-            InputParams::Many(params) => {
-                let input_struct_name = class
-                    .map(|c| c.input_struct(fn_name))
-                    .unwrap_or(fn_name.input_struct_name());
-                let args = params.iter().map(|(n, _)| quote!(#n));
-                quote!(Some(&#input_struct_name { #(#args),* }))
-            }
-            InputParams::One(param_name, _) => quote!(Some(&#param_name)),
-            InputParams::None => quote!(None),
-        }
-    }
-
-    pub fn input_args(&self) -> Vec<TokenStream> {
-        match &self {
-            InputParams::Many(params) => params.iter().map(|(n, _)| quote!(input.#n)).collect(),
-            InputParams::One(..) => vec![quote!(input)],
-            InputParams::None => Vec::new(),
-        }
-    }
-
-    pub fn input_struct(&self, fn_name: &FnName, class: Option<&CapabilityIdent>) -> TokenStream {
-        match &self {
-            InputParams::Many(params) => {
-                let input_struct_name = class
-                    .map(|c| c.input_struct(fn_name))
-                    .unwrap_or(fn_name.input_struct_name());
-                let fields: Vec<_> = params.iter().map(|(n, t)| quote! { pub #n: #t }).collect();
-                quote! {
-                    #[::pyroduct::magma]
-                    struct #input_struct_name {
-                        #(#fields),*
-                    }
-                }
-            }
-            InputParams::One(_, _) => quote! {},
-            InputParams::None => quote! {},
-        }
-    }
+/// `__PyroFormat{Fn}Input`: a method's parameters after `self` and the
+/// client, as the struct that carries them over the wire.
+pub fn input_struct(fn_name: &FnName, params: &[(Ident, Type)]) -> syn::Result<StructInput> {
+    StructInput::from_params(fn_name.input_struct_name(), quote!(::pyroduct), params)
 }
 
 pub fn is_captured_error(ty: &Type) -> bool {
     let ty_str = quote!(#ty).to_string().replace(" ", "");
-    ty_str == "CapturedError" || ty_str == "pyroduct::CapturedError" || ty_str == "::pyroduct::CapturedError"
+    ty_str == "CapturedError"
+        || ty_str == "pyroduct::CapturedError"
+        || ty_str == "::pyroduct::CapturedError"
 }
 
 pub fn verify_result_return_type(ret: &ReturnType) -> syn::Result<(Type, Type)> {
@@ -245,10 +145,8 @@ pub fn verify_result_return_type(ret: &ReturnType) -> syn::Result<(Type, Type)> 
                 {
                     if args.args.len() == 2 {
                         let mut iter = args.args.iter();
-                        if let (
-                            Some(GenericArgument::Type(t)),
-                            Some(GenericArgument::Type(e)),
-                        ) = (iter.next(), iter.next())
+                        if let (Some(GenericArgument::Type(t)), Some(GenericArgument::Type(e))) =
+                            (iter.next(), iter.next())
                         {
                             if !is_captured_error(e) {
                                 let actual_err_str = quote!(#e).to_string().replace(" ", "");

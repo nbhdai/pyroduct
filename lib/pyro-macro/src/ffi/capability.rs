@@ -240,7 +240,11 @@ impl CapabilityImpl {
             .map(|m| {
                 let name = &m.name.0;
                 let output = &m.output.to_return_type();
-                let args: Vec<_> = m.inputs.iter().map(|(n, t)| quote!(#n: #t)).collect();
+                let args: Vec<_> = m
+                    .inputs
+                    .original_fields()
+                    .map(|(n, t)| quote!(#n: #t))
+                    .collect();
                 let docs = m.doc_attrs();
 
                 quote! {
@@ -614,9 +618,10 @@ mod tests {
 
         // 3. Generate Output
         let output = cap.generate_client_impl();
+        let input_struct = pyroformat_macro::expand_struct(&cap.methods[1].inputs);
 
         // 4. Define Expected Output
-        // Checks constructor generation (using rkyv for config) and normal method generation.
+        // Checks constructor generation and normal method generation.
         let expected = quote! {
             impl MyClient {
                 pub fn register(self) -> Result<::pyroduct::wasm::Client<Self>, ::pyroduct::CapturedError> {
@@ -642,11 +647,12 @@ mod tests {
                 }
 
                 fn get_other_info(&self, data: f32) -> Result<u32, ::pyroduct::CapturedError> {
+                    #input_struct
                     self.__call_result_from_wasm::<
-                        f32,
+                        __PyroFormatGetOtherInfoInput,
                         u32,
                         _,
-                    >(Some(&data),
+                    >(Some(&__PyroFormatGetOtherInfoInput { data }),
                         |client_state_ptr: *const u8,
                             input_ptr: *const u8| {
                             unsafe {
@@ -690,6 +696,7 @@ mod tests {
 
         // 3. Generate Output
         let output = cap.generate_client_impl();
+        let input_struct = pyroformat_macro::expand_struct(&cap.methods[0].inputs);
 
         // 4. Define Expected Output
         // - new_client constructor should return Result<Self, CapturedError>.
@@ -705,18 +712,14 @@ mod tests {
             }
             impl AdvancedClientMethods for ::pyroduct::wasm::Client<AdvancedClient> {
                 fn process(&self, val: u32, flag: bool) -> Result<u32, ::pyroduct::CapturedError> {
-                    #[::pyroduct::magma]
-                    struct p__AdvancedStruct__Process__Input {
-                        pub val: u32,
-                        pub flag: bool
-                    }
+                    #input_struct
 
                     self.__call_result_from_wasm::<
-                        p__AdvancedStruct__Process__Input,
+                        __PyroFormatProcessInput,
                         u32,
                         _
                     >(
-                        Some(&p__AdvancedStruct__Process__Input { val, flag }),
+                        Some(&__PyroFormatProcessInput { val, flag }),
                         |client_state_ptr: *const u8,
                          input_ptr: *const u8| {
                             unsafe {

@@ -402,7 +402,7 @@ name = "mod_slot"
                 .capability_interface_spec(&cap.author, &cap.package, &cap.version)
                 .await
             {
-                if let Ok(spec) = serde_json::from_str::<pyro_spec::InterfaceSpec>(&spec_str) {
+                if let Ok(spec) = serde_json::from_str::<pyro_schema::interface::InterfaceSpec>(&spec_str) {
                     dep_interfaces.push(spec);
                 }
             }

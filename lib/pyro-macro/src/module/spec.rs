@@ -9,7 +9,8 @@
 //! ------------
 //! Every typed parameter of the annotated function becomes a [`PyroField`] in
 //! the input [`PyroSchema`].  Type resolution is delegated to
-//! [`SchemaBuilder`], so struct parameters expand into `Group(fields)`.
+//! [`SchemaBuilder`], so struct parameters expand into `Group`s, and a
+//! borrowed parameter is described by the owned type it travels as.
 //!
 //! Output schema
 //! -------------
@@ -21,12 +22,12 @@
 //! | `(f1, f2, …)`      | `{ f1: T1, f2: T2, … }` (from tuple return type)  |
 //! | `StructName`       | fields of the named struct looked up in the file   |
 
-use std::borrow::Cow;
-
-use pyro_schema::{ModuleFunc, ModuleKind, PyroField, PyroSchema};
+use pyro_schema::interface::{InterfaceSpec, ModuleFunc, ModuleKind};
+use pyro_schema::{PyroField, PyroSchema};
+use pyroformat_macro::schema::SchemaBuilder;
 use syn::{Attribute, Expr, FnArg, ItemFn, Lit, Meta, Pat, ReturnType, Type};
 
-use crate::struct_doc::SchemaBuilder;
+use crate::ffi::spec::schema_builder;
 
 use super::parse::{ModuleAttrs, OutputSpec};
 
@@ -40,10 +41,10 @@ use super::parse::{ModuleAttrs, OutputSpec};
 /// Returns `None` when no `#[module(...)]` function is found.
 pub fn generate_module_spec(
     content: &str,
-    dep_interfaces: &[pyro_schema::InterfaceSpec<'static>],
+    dep_interfaces: &[InterfaceSpec<'static>],
 ) -> syn::Result<Option<ModuleFunc<'static>>> {
     let file = syn::parse_file(content)?;
-    let builder = SchemaBuilder::from_file(&file).with_foreign_specs(dep_interfaces);
+    let builder = schema_builder(&file, dep_interfaces)?;
 
     for item in &file.items {
         if let syn::Item::Fn(item_fn) = item {
@@ -93,20 +94,12 @@ impl ModuleSpecBuilder {
                 if let FnArg::Typed(pat_type) = arg
                     && let Pat::Ident(pat_ident) = &*pat_type.pat
                 {
-                    let field_name = pat_ident.ident.to_string();
-                    let ty = &*pat_type.ty;
-                    let data_type = builder.resolve_type(ty);
-                    let nullable = SchemaBuilder::is_option(ty);
-                    let doc = extract_doc_string(&pat_type.attrs);
-                    let mut field = PyroField::new(Cow::Owned(field_name), data_type, nullable);
-                    if let Some(d) = doc {
-                        field = field.add_docstring(Cow::Owned(d));
-                    }
-                    return Some(field);
+                    let doc = extract_doc_string(&pat_type.attrs).unwrap_or_default();
+                    return Some(builder.field(&pat_ident.ident.to_string(), &pat_type.ty, &doc));
                 }
                 None
             })
-            .collect();
+            .collect::<syn::Result<_>>()?;
 
         let input = PyroSchema::new(input_fields);
 
@@ -142,8 +135,8 @@ impl ModuleSpecBuilder {
         };
 
         let func = ModuleFunc {
-            name: Cow::Owned(name),
-            description: description.map(Cow::Owned),
+            name: name.into(),
+            description: description.map(Into::into),
             input,
             output,
             kind,
@@ -166,12 +159,11 @@ fn build_output_schema(
 ) -> syn::Result<PyroSchema<'static>> {
     match spec {
         // output = single_field  →  { single_field: <ok_type> }
-        OutputSpec::SingleField(field_name) => {
-            let data_type = builder.resolve_type(ok_type);
-            let nullable = SchemaBuilder::is_option(ok_type);
-            let field = PyroField::new(Cow::Owned(field_name.to_string()), data_type, nullable);
-            Ok(PyroSchema::new(vec![field]))
-        }
+        OutputSpec::SingleField(field_name) => Ok(PyroSchema::new(vec![builder.field(
+            &field_name.to_string(),
+            ok_type,
+            "",
+        )?])),
 
         // output = (f1, f2, …)  →  one field per tuple element
         OutputSpec::TupleFields(field_names) => {
@@ -191,12 +183,8 @@ fn build_output_schema(
             let fields: Vec<PyroField<'static>> = field_names
                 .iter()
                 .zip(tuple_types.iter())
-                .map(|(name, ty)| {
-                    let data_type = builder.resolve_type(ty);
-                    let nullable = SchemaBuilder::is_option(ty);
-                    PyroField::new(Cow::Owned(name.to_string()), data_type, nullable)
-                })
-                .collect();
+                .map(|(name, ty)| builder.field(&name.to_string(), ty, ""))
+                .collect::<syn::Result<_>>()?;
 
             Ok(PyroSchema::new(fields))
         }
@@ -206,26 +194,18 @@ fn build_output_schema(
             // The return type must be a simple path — use it to look up the
             // schema from the builder registry.
             let schema = match ok_type {
-                Type::Path(type_path) => {
-                    if let Some(seg) = type_path.path.segments.last() {
-                        builder.schema_for(&seg.ident.to_string())
-                    } else {
-                        None
-                    }
-                }
+                Type::Path(type_path) => match type_path.path.segments.last() {
+                    Some(seg) => builder.schema_for(&seg.ident.to_string())?,
+                    None => None,
+                },
                 _ => None,
             };
 
-            Ok(schema.map(|s| s.into_owned()).unwrap_or_else(|| {
+            match schema {
+                Some(schema) => Ok(schema),
                 // Fallback: resolve as a single anonymous field
-                let data_type = builder.resolve_type(ok_type);
-                let nullable = SchemaBuilder::is_option(ok_type);
-                PyroSchema::new(vec![PyroField::new(
-                    Cow::Borrowed("output"),
-                    data_type,
-                    nullable,
-                )])
-            }))
+                None => Ok(PyroSchema::new(vec![builder.field("output", ok_type, "")?])),
+            }
         }
     }
 }
@@ -298,6 +278,18 @@ fn extract_doc_string(attrs: &[Attribute]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pyro_schema::{PrimitiveDataType, PyroType};
+
+    fn names(schema: &PyroSchema<'_>) -> Vec<String> {
+        schema.fields().map(|f| f.name().to_string()).collect()
+    }
+
+    /// The names of the groups a field reaches, in pre-order.
+    fn children(field: pyro_schema::ChildField<'_>) -> Vec<String> {
+        (0..field.child_names_len())
+            .map(|i| field.child_name(i).to_string())
+            .collect()
+    }
 
     // ── Single field output ──────────────────────────────────────────────────
 
@@ -314,14 +306,15 @@ mod tests {
 
         assert_eq!(v.name, "call");
         assert!(v.description.is_none());
+        assert_eq!(v.kind, ModuleKind::Normal);
 
-        // input: one field called `input` of type Str
-        let in_fields = &v.input.fields;
-        assert_eq!(in_fields[0].name, "input");
+        // input: one field called `input`, a `&str` travelling as a `String`
+        assert_eq!(names(&v.input), ["input"]);
+        assert_eq!(v.input.field(0).datatype(), &PyroType::Str);
 
         // output: one field called `message` of type Str
-        let out_fields = &v.output.fields;
-        assert_eq!(out_fields[0].name, "message");
+        assert_eq!(names(&v.output), ["message"]);
+        assert_eq!(v.output.field(0).datatype(), &PyroType::Str);
     }
 
     // ── Tuple field output ───────────────────────────────────────────────────
@@ -337,9 +330,14 @@ mod tests {
 
         let v = generate_module_spec(src, &[]).unwrap().unwrap();
 
-        let out_fields = &v.output.fields;
-        assert_eq!(out_fields[0].name, "score");
-        assert_eq!(out_fields[1].name, "label");
+        assert_eq!(names(&v.output), ["score", "label"]);
+        assert_eq!(
+            v.output.types(),
+            [
+                PyroType::PrimitiveScalar(PrimitiveDataType::F32),
+                PyroType::Str
+            ]
+        );
     }
 
     // ── Struct output ────────────────────────────────────────────────────────
@@ -349,6 +347,7 @@ mod tests {
         let src = r#"
             #[config]
             struct Output {
+                /// One per dimension
                 embedding: Vec<f32>,
                 tokens: u32,
             }
@@ -365,22 +364,21 @@ mod tests {
         assert_eq!(v.name, "embed");
         assert_eq!(v.description.unwrap(), "Embed a piece of text.");
 
-        // input: text and model
-        let in_fields = &v.input.fields;
-        assert_eq!(in_fields.len(), 2);
-        assert_eq!(in_fields[0].name, "text");
-        assert_eq!(in_fields[1].name, "model");
+        assert_eq!(names(&v.input), ["text", "model"]);
 
-        let out_fields = &v.output.fields;
-        assert_eq!(out_fields[0].name, "embedding");
-        assert_eq!(out_fields[1].name, "tokens");
+        assert_eq!(names(&v.output), ["embedding", "tokens"]);
+        assert_eq!(v.output.field(0).doc(), "One per dimension");
+        assert_eq!(
+            v.output.field(0).datatype(),
+            &PyroType::PrimitiveList(PrimitiveDataType::F32)
+        );
     }
 
     // ── Session module with foreign struct output ────────────────────────────
 
     #[test]
     fn test_session_foreign_struct() {
-        use pyro_schema::{InterfaceSpec, PyroField, PyroSchema, PyroType};
+        use pyro_schema::PyroField;
         use std::collections::BTreeMap;
 
         let src = r#"
@@ -396,15 +394,15 @@ mod tests {
         // Create a mock dependency interface that declares ChatMessage struct
         let mut structs = BTreeMap::new();
         structs.insert(
-            Cow::Borrowed("ChatMessage"),
+            "ChatMessage".into(),
             PyroSchema::new(vec![
-                PyroField::new("role", PyroType::Str, false),
-                PyroField::new("content", PyroType::Str, false),
+                PyroField::new("role", PyroType::Str),
+                PyroField::new("content", PyroType::Str),
             ]),
         );
 
         let dep = InterfaceSpec {
-            capability: Cow::Borrowed("llm"),
+            capability: "llm".into(),
             description: None,
             classes: vec![],
             structs,
@@ -413,49 +411,27 @@ mod tests {
         let v = generate_module_spec(src, &[dep]).unwrap().unwrap();
 
         assert_eq!(v.name, "process");
-        assert_eq!(v.kind, pyro_schema::ModuleKind::Session);
+        assert_eq!(v.kind, ModuleKind::Session);
 
-        // Check input fields
-        let in_fields = &v.input.fields;
-        assert_eq!(in_fields.len(), 2);
-        assert_eq!(in_fields[0].name, "prior");
+        let message = PyroType::Group(vec![PyroType::Str, PyroType::Str].into());
 
-        // prior should be Vec<ChatMessage> which resolves to List(Group([role, content]), false)
-        if let PyroType::List(inner, nullable) = &in_fields[0].data_type {
-            assert!(!nullable);
-            if let PyroType::Group(fields) = inner.as_ref() {
-                assert_eq!(fields.len(), 2);
-                assert_eq!(fields[0].name, "role");
-                assert_eq!(fields[1].name, "content");
-            } else {
-                panic!("Expected Group inner type for prior list");
-            }
-        } else {
-            panic!("Expected List type for prior field");
-        }
+        // prior: Vec<ChatMessage> is a list of the dependency's group
+        assert_eq!(names(&v.input), ["prior", "input"]);
+        assert_eq!(
+            v.input.field(0).datatype(),
+            &PyroType::List(pyro_schema::Bow::new(message.clone()))
+        );
+        assert_eq!(children(v.input.field(0)), ["role", "content"]);
 
-        // input should be ChatMessageRef which resolves to Group([role, content])
-        assert_eq!(in_fields[1].name, "input");
-        if let PyroType::Group(fields) = &in_fields[1].data_type {
-            assert_eq!(fields.len(), 2);
-            assert_eq!(fields[0].name, "role");
-            assert_eq!(fields[1].name, "content");
-        } else {
-            panic!("Expected Group type for input field");
-        }
+        // input: ChatMessageRef is the view of ChatMessage, so the same group
+        assert_eq!(v.input.field(1).datatype(), &message);
+        assert_eq!(children(v.input.field(1)), ["role", "content"]);
 
-        // Check output field (which was output = ChatMessage)
-        // Since it returns SessionResponse<ChatMessage>, we extract ChatMessage and fallback to a single field "output"
-        let out_fields = &v.output.fields;
-        assert_eq!(out_fields.len(), 1);
-        assert_eq!(out_fields[0].name, "output");
-        if let PyroType::Group(fields) = &out_fields[0].data_type {
-            assert_eq!(fields.len(), 2);
-            assert_eq!(fields[0].name, "role");
-            assert_eq!(fields[1].name, "content");
-        } else {
-            panic!("Expected Group type for output field");
-        }
+        // ChatMessage isn't declared in this file, so the output falls back to
+        // a single `output` field of the dependency's group.
+        assert_eq!(names(&v.output), ["output"]);
+        assert_eq!(v.output.field(0).datatype(), &message);
+        assert_eq!(children(v.output.field(0)), ["role", "content"]);
     }
 
     // ── No module function ───────────────────────────────────────────────────

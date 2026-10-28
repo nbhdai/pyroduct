@@ -2,15 +2,15 @@
 //!
 //! This crate provides proc-macro functionality for Pyroduct capabilities:
 //! - [`ffi`] — FFI binding generation for capability interfaces
-//! - [`format`] — Token formatting and diffing utilities
+//! - [`library`] — The `library!` identity
 //! - [`module`] — Module scaffolding and generation
-//! - [`struct_doc`] — Struct documentation generation
-//! - [`utils`] — Internal helper utilities
+//! - `utils` — Internal helper utilities
 //!
 //! Test infrastructure includes a `fmt` submodule with token pretty-printing
 //! and assertion helpers for diff-based code comparison.
 
 pub mod ffi;
+pub mod library;
 pub mod module;
 pub(crate) mod utils;
 

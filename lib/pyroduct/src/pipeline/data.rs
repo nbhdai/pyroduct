@@ -5,10 +5,10 @@ use tracing::{debug, error, info, warn};
 
 use crate::captured::CapturedError;
 use crate::error::PyroError;
+use crate::format::arrow::PreBatch;
+use crate::format::arrow::Rowable;
+use crate::format::arrow::wal::{WalManager, WalWriter};
 use crate::format::value::PyroSchema;
-use crate::format::value::arrow::PreBatch;
-use crate::format::value::arrow::Rowable;
-use crate::format::value::arrow::wal::{WalManager, WalWriter};
 use crate::{PyroRow, PyroValue};
 use arrow::array::RecordBatch;
 use pyro_file;

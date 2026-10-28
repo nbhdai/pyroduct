@@ -1,4 +1,4 @@
-mod type_map;
+pub(crate) mod type_map;
 
 use pyro_schema::Word;
 pub(crate) use type_map::{Leaf, Prim, ResolvedType};
@@ -10,6 +10,7 @@ use syn::{Data, DeriveInput, Error, Fields, Result};
 /// Opaque outside this crate: `pyroformat-derive` only parses one and hands
 /// it to [`crate::layout::expand`], [`crate::expand_writer`] and
 /// [`crate::reader::expand`].
+#[derive(Debug, Clone)]
 pub struct StructInput {
     pub(crate) name: syn::Ident,
     /// The path every generated item is reached through: `::pyroformat`, or
@@ -26,6 +27,34 @@ pub struct StructInput {
 }
 
 impl StructInput {
+    /// Reach `pyroformat` through `krate` (e.g. `::pyroduct`) instead of
+    /// what `#[pyro(import = "...")]` gave, for a macro that knows where it
+    /// expands.
+    pub fn with_krate(mut self, krate: proc_macro2::TokenStream) -> Self {
+        self.krate = krate;
+        self
+    }
+
+    /// The struct's name.
+    pub fn name(&self) -> &syn::Ident {
+        &self.name
+    }
+
+    /// Each field's name and wire type, in declaration order.
+    pub fn fields(&self) -> impl Iterator<Item = (&syn::Ident, &syn::Type)> {
+        self.fields.iter().map(|f| (&f.ident, &f.ty))
+    }
+
+    /// Each field's name and the type it was written as, in declaration
+    /// order: `foo: &str` where [`Self::fields`] gives `foo: String`.
+    pub fn original_fields(&self) -> impl Iterator<Item = (&syn::Ident, &syn::Type)> {
+        self.fields.iter().map(|f| (&f.ident, &f.original))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty()
+    }
+
     /// The struct's own word as a type: `u16` or `u32`.
     pub(crate) fn word_ty(&self) -> proc_macro2::TokenStream {
         match self.word {
@@ -35,9 +64,15 @@ impl StructInput {
     }
 }
 
+#[derive(Debug, Clone)]
 pub(crate) struct Field {
     pub ident: syn::Ident,
+    /// The type on the wire, which every derive works from.
     pub ty: syn::Type,
+    /// The type as it was written, before [`wire_type`]: `&str` for a
+    /// `String` field built by [`StructInput::from_params`]. The same as
+    /// `ty` on a derived struct, whose fields are always owned.
+    pub original: syn::Type,
     pub resolved: ResolvedType,
     /// The field's `///` documentation, or empty.
     pub doc: String,
@@ -144,6 +179,7 @@ impl StructInput {
             fields.push(Field {
                 ident: field.ident.clone().expect("named field"),
                 ty: field.ty.clone(),
+                original: field.ty.clone(),
                 resolved,
                 doc: parse_doc(&field.attrs),
                 numeric,
@@ -159,6 +195,59 @@ impl StructInput {
             fields,
             word: parse_word(&input.attrs)?,
         })
+    }
+}
+
+impl StructInput {
+    /// A struct built from a function's parameters rather than one the user
+    /// wrote: each borrowed parameter becomes its owned [`wire_type`], and
+    /// keeps the borrowed one as its original type. `krate` is the path the
+    /// generated code reaches `pyroformat` through, e.g. `::pyroduct`.
+    pub fn from_params(
+        name: syn::Ident,
+        krate: proc_macro2::TokenStream,
+        params: &[(syn::Ident, syn::Type)],
+    ) -> Result<Self> {
+        let fields = params
+            .iter()
+            .map(|(n, t)| wire_type(t).map(|t| quote::quote!(pub #n: #t)))
+            .collect::<Result<Vec<_>>>()?;
+        let input: DeriveInput = syn::parse_quote! {
+            struct #name {
+                #(#fields),*
+            }
+        };
+        let mut input = Self::parse(&input)?.with_krate(krate);
+        for (field, (_, original)) in input.fields.iter_mut().zip(params) {
+            field.original = original.clone();
+        }
+        Ok(input)
+    }
+}
+
+/// The owned type a borrowed one travels as: `&str` → `String`,
+/// `&[T]` → `Vec<T>`, `&T` → `T`. Anything else is already owned.
+pub fn wire_type(ty: &syn::Type) -> Result<syn::Type> {
+    match ty {
+        syn::Type::Reference(r) => {
+            if r.mutability.is_some() {
+                return Err(Error::new_spanned(
+                    r,
+                    "a `&mut` parameter can't be sent over the wire",
+                ));
+            }
+            Ok(match &*r.elem {
+                syn::Type::Path(p) if p.qself.is_none() && p.path.is_ident("str") => {
+                    syn::parse_quote!(String)
+                }
+                syn::Type::Slice(slice) => {
+                    let elem = &slice.elem;
+                    syn::parse_quote!(Vec<#elem>)
+                }
+                elem => elem.clone(),
+            })
+        }
+        ty => Ok(ty.clone()),
     }
 }
 

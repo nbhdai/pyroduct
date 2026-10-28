@@ -15,7 +15,7 @@ default = ["compiler"]
 compiler = []
 
 [dependencies]
-pyro-schema.workspace = true
+pyro-schema = { workspace = true, features = ["interface"] }
 
 cargo_toml.workspace = true
 flate2.workspace = true
